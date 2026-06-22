@@ -1,0 +1,42 @@
+# Gitleaks Secret Detection Workflow
+# Detects secrets in commits and PRs before they reach main
+#
+# Usage: Copy to .github/workflows/gitleaks.yml in your repo
+
+name: Gitleaks Secret Scan
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:  # Allow manual runs
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  gitleaks:
+    name: Detect Secrets
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0  # Full history for scanning all commits
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}  # Optional for enterprise features
+
+      # Optional: Upload results as artifact
+      - name: Upload Results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gitleaks-results
+          path: results.sarif
+          retention-days: 5

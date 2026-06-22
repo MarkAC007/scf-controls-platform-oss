@@ -1,0 +1,117 @@
+{
+  "description": "KSI-aligned capability themes for grouping SCF controls into assessable capabilities. Inspired by FedRAMP 20x Key Security Indicators (RFC-0006).",
+  "catalog_version": "2025.4",
+  "themes": [
+    {
+      "theme_code": "AUTH",
+      "name": "Authorization & Compliance Posture",
+      "description": "Encompasses security assessment, authorization processes, and overall compliance posture management. Covers continuous authorization, security planning, and compliance monitoring activities.",
+      "ksi_reference": "KSI-AFR",
+      "display_order": 1,
+      "icon": "shield-check"
+    },
+    {
+      "theme_code": "CM",
+      "name": "Change Management",
+      "description": "Covers configuration management, change control processes, version management, and deployment practices. Ensures changes to information systems are formally identified, controlled, and tracked.",
+      "ksi_reference": "KSI-CM",
+      "display_order": 2,
+      "icon": "git-branch"
+    },
+    {
+      "theme_code": "CNA",
+      "name": "Cloud Native Architecture",
+      "description": "Addresses cloud-native design principles, system and communications protection, high availability, network architecture, and resilient infrastructure patterns.",
+      "ksi_reference": "KSI-CNA",
+      "display_order": 3,
+      "icon": "cloud"
+    },
+    {
+      "theme_code": "CE",
+      "name": "Cybersecurity Education",
+      "description": "Covers security awareness training, role-specific cybersecurity education, phishing awareness, and workforce security competency development.",
+      "ksi_reference": "KSI-CE",
+      "display_order": 4,
+      "icon": "graduation-cap"
+    },
+    {
+      "theme_code": "IAM",
+      "name": "Identity & Access Management",
+      "description": "Encompasses authentication, authorization, least privilege enforcement, multi-factor authentication, access control policies, and identity lifecycle management.",
+      "ksi_reference": "KSI-IAM",
+      "display_order": 5,
+      "icon": "key"
+    },
+    {
+      "theme_code": "IR",
+      "name": "Incident Response",
+      "description": "Covers incident detection, analysis, containment, eradication, recovery, and post-incident activities. Includes incident response planning, testing, and coordination.",
+      "ksi_reference": "KSI-IR",
+      "display_order": 6,
+      "icon": "alert-triangle"
+    },
+    {
+      "theme_code": "MLA",
+      "name": "Monitoring, Logging & Auditing",
+      "description": "Addresses audit record generation, log management, SIEM integration, continuous monitoring, information system monitoring, and security event correlation.",
+      "ksi_reference": "KSI-MLA",
+      "display_order": 7,
+      "icon": "eye"
+    },
+    {
+      "theme_code": "PI",
+      "name": "Policy & Inventory",
+      "description": "Encompasses security policy management, asset inventory, risk assessment, system development lifecycle, program management, personnel security, and privacy controls.",
+      "ksi_reference": "KSI-PI",
+      "display_order": 8,
+      "icon": "clipboard-list"
+    },
+    {
+      "theme_code": "RP",
+      "name": "Recovery Planning",
+      "description": "Covers business continuity planning, backup and restoration procedures, disaster recovery, contingency plan testing, and recovery time/point objectives.",
+      "ksi_reference": "KSI-RP",
+      "display_order": 9,
+      "icon": "refresh-cw"
+    },
+    {
+      "theme_code": "SC",
+      "name": "Service Configuration",
+      "description": "Addresses system hardening, encryption standards, patch management, maintenance procedures, media protection, and physical/environmental protection of information systems.",
+      "ksi_reference": "KSI-SC",
+      "display_order": 10,
+      "icon": "settings"
+    },
+    {
+      "theme_code": "SCR",
+      "name": "Supply Chain Risk",
+      "description": "Covers third-party risk management, software bill of materials (SBOM), supply chain risk assessment, zero trust principles for external dependencies, and vendor security evaluation.",
+      "ksi_reference": "KSI-SCR",
+      "display_order": 11,
+      "icon": "link"
+    }
+  ],
+  "nist_family_mappings": {
+    "_description": "Maps NIST 800-53 R5 control families to capability themes. Used to compute SCF-to-theme mappings via the existing NIST 800-53 crosswalk in control_guidance.json.",
+    "AC": {"primary": "IAM"},
+    "AT": {"primary": "CE"},
+    "AU": {"primary": "MLA"},
+    "CA": {"primary": "AUTH", "supporting": ["MLA"]},
+    "CM": {"primary": "CM", "supporting": ["SC"]},
+    "CP": {"primary": "RP", "supporting": ["CNA"]},
+    "IA": {"primary": "IAM"},
+    "IR": {"primary": "IR"},
+    "MA": {"primary": "SC"},
+    "MP": {"primary": "SC"},
+    "PE": {"primary": "SC"},
+    "PL": {"primary": "PI", "supporting": ["AUTH"]},
+    "PM": {"primary": "PI", "supporting": ["AUTH"]},
+    "PS": {"primary": "PI"},
+    "PT": {"primary": "PI"},
+    "RA": {"primary": "PI", "supporting": ["SCR"]},
+    "SA": {"primary": "PI", "supporting": ["SCR", "CM"]},
+    "SC": {"primary": "CNA", "supporting": ["SC"]},
+    "SI": {"primary": "MLA", "supporting": ["SC", "CNA"]},
+    "SR": {"primary": "SCR"}
+  }
+}

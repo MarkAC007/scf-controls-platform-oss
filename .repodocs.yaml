@@ -1,0 +1,9 @@
+repo_path: /Users/markalmeida-cardy/GitHub/scf-controls-platform
+docs_path: docs-site
+site_title: SCF Controls Platform
+github_url:
+base_url:
+audiences:
+  - user
+  - admin
+sections:

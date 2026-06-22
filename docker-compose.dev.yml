@@ -1,0 +1,28 @@
+# Docker Compose development override
+# Use with: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+#
+# This enables hot-reload for frontend development without rebuilding
+
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend.dev
+    volumes:
+      # Mount source code for hot reload
+      - ./webclient/src:/app/src:ro
+      - ./webclient/public:/app/public:ro
+      - ./webclient/index.html:/app/index.html:ro
+      - ./webclient/vite.config.ts:/app/vite.config.ts:ro
+      - ./webclient/tsconfig.json:/app/tsconfig.json:ro
+      - ./webclient/tsconfig.node.json:/app/tsconfig.node.json:ro
+      # Mount .env file for environment variables
+      - ./webclient/.env:/app/.env:ro
+    ports:
+      - "5173:5173"  # Vite dev server port
+    environment:
+      # These can be overridden by .env file
+      VITE_API_URL: ${VITE_API_URL:-http://localhost:8000/api}
+      VITE_API_KEY: ${VITE_API_KEY}
+      VITE_GOOGLE_AUTH_ENABLED: ${VITE_GOOGLE_AUTH_ENABLED}
+    command: npm run dev -- --host 0.0.0.0

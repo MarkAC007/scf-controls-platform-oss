@@ -1,0 +1,44 @@
+# Node modules - always use container's own install
+**/node_modules
+webclient/node_modules
+
+# Build outputs
+webclient/dist
+**/dist
+
+# Git
+.git
+.gitignore
+.gitmodules
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Local environment files (handled separately)
+.env.local
+.env.*.local
+
+# Test files
+**/*.test.ts
+**/*.spec.ts
+**/__tests__
+
+# Documentation
+docs/
+*.md
+!README.md
+
+# Archives
+_archive/
+
+# Terraform state
+**/*.tfstate
+**/*.tfstate.*
+.terraform/

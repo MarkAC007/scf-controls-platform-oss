@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Setup & usage help
+    url: https://github.com/MarkAC007/scf-controls-platform-oss/blob/main/README.md
+    about: Read the README for installation, Docker Compose setup, the SCF workbook importer, and configuration.
+  - name: Questions & discussion
+    url: https://github.com/MarkAC007/scf-controls-platform-oss/discussions
+    about: Ask questions, share ideas, and discuss usage with the community.
+  - name: Report a security vulnerability
+    url: https://github.com/MarkAC007/scf-controls-platform-oss/security/policy
+    about: Please report vulnerabilities privately. Do not open a public issue.

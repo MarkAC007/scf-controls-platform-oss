@@ -1,0 +1,6 @@
+# Dependencies for the one-shot SCF catalogue importer (scripts/extract_scf_data.py).
+# Kept separate from backend/requirements.txt so the runtime image stays slim — the
+# importer only runs at install time to extract a user-supplied SCF Excel catalogue.
+# Registry packages only, pinned for reproducible installs.
+pandas==2.2.3
+openpyxl==3.1.5

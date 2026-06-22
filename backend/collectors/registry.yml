@@ -1,0 +1,164 @@
+# Collector registry — declarative (collector_id, source_label) → artifact_type(s)
+# mapping for the windowed evidence assessment engine (M2, #572).
+#
+# SOURCE LABEL CONTRACT
+# =====================
+# Each row's `source_label` MUST match the literal string emitted by the
+# corresponding collector via `sign_and_post(..., source="X", ...)`. The
+# webhook ingest stores that string verbatim in `webhook_deliveries.payload_json`,
+# the windowed assessment service surfaces it as `_FileInWindow.source_label`,
+# and the resolver (`collectors.registry.resolve_artifact_types`) keys into
+# `by_source` / `by_collector_source` using that exact value.
+#
+# Drift between the registry's `source_label` and the collector's emit string
+# causes the resolver to miss, fall through to the M1a heuristic, and silently
+# regress coverage. Fixed in #572 PR 4 — every row below is empirically
+# verified against either source code (`scf-evidence-collectors` repo) or
+# prod evidence files (filename pattern `webhook_{source}_{uuid}.json` set
+# by `backend/api/evidence_inbox.py:466`).
+#
+# VOCABULARY CONTRACT
+# ===================
+# The `type` strings below MUST appear in some control's
+# `required_artifact_types` (populated by extract_artifact_types.py). When
+# ENABLE_COLLECTOR_REGISTRY=true, the resolver emits these types and the
+# coverage layer keys into `expected_artifact_types[type]` to mark presence.
+# A type that does not appear in any control's expected vocabulary contributes
+# zero — silently regressing the assessment compared to the M1a heuristic.
+#
+# When extract_artifact_types runs against a new domain, audit the rows whose
+# collectors feed that domain's evidences. The regression test
+# `TestProductionRegistryVocabularyAlignment` in
+# tests/test_collectors_registry.py locks the alignment for sources whose
+# mapped controls already have extracted vocabulary.
+
+registry_version: 1
+
+sources:
+  - source_label: EntraID
+    collector_id: entra_id
+    artifact_types:
+      - type: identity_inventory
+        confidence: declared
+        notes: Entra ID user and group enumeration
+      - type: mfa_enrollment_snapshot
+        confidence: declared
+        notes: Per-user MFA method registration state
+
+  - source_label: AzureBackup
+    collector_id: azure_backup
+    artifact_types:
+      - type: backup_execution_logs
+        confidence: declared
+        notes: >
+          Daily JSON enumerating Azure Backup vaults and recent job status —
+          aligns with BCD-11's expected `backup_execution_logs` (system-generated
+          logs of completed backup jobs, timestamps, success/failure status).
+          Pre-M2 PR 2 this row declared `backup_status_snapshot`, which did not
+          appear in any control's expected_artifact_types and would zero coverage
+          signal under flag-on. See #572 PR 2 / #569.
+      - type: backup_schedule_configuration
+        confidence: declared
+        notes: >
+          M2 multi-artifact pattern (#572): the AzureBackup collector now sends
+          a second submission per run with payload-declared
+          `artifact_type=backup_schedule_configuration` carrying the vault's
+          retention/geo-redundancy/backup-type config (Postgres Flex Server PITR
+          props). Aligns with BCD-11's expected `backup_schedule_configuration`
+          (high weight, mandatory). The registry mapping here is the
+          fallback/redundancy path for files older than the collector update
+          that lack the payload `artifact_type` field — the resolver prefers
+          payload-declared over registry, so new files are credited via payload
+          and historical files fall through to this registry row.
+
+  - source_label: DefenderForCloud
+    collector_id: defender
+    artifact_types:
+      - type: endpoint_security_posture
+        confidence: declared
+        notes: Defender endpoint configuration and compliance state
+      - type: threat_alert_log
+        confidence: declared
+        notes: Security alerts raised by Defender
+
+  - source_label: GitHub-Extended
+    collector_id: github_extended
+    artifact_types:
+      - type: code_review_record
+        confidence: declared
+        notes: PR review approvals and merge events
+      - type: branch_protection_config
+        confidence: declared
+        notes: Repository branch protection rule snapshot
+
+  - source_label: Database-Baseline
+    collector_id: database_baseline
+    artifact_types:
+      - type: database_config_snapshot
+        confidence: declared
+        notes: Database engine configuration baseline
+
+  - source_label: Cloudflare-Security
+    collector_id: cloudflare_security
+    artifact_types:
+      - type: edge_security_events
+        confidence: declared
+        notes: Cloudflare WAF and rate-limit events
+
+  - source_label: macOS-Endpoint
+    collector_id: macos_endpoint
+    artifact_types:
+      - type: endpoint_config_snapshot
+        confidence: declared
+        notes: macOS configuration and security posture
+
+  - source_label: macOS-Extended
+    collector_id: macos_extended
+    artifact_types:
+      - type: endpoint_config_snapshot
+        confidence: declared
+        notes: Extended macOS configuration capture
+      - type: endpoint_installed_software
+        confidence: declared
+        notes: Installed application inventory
+
+  - source_label: PAI-Local
+    collector_id: pai_collector
+    artifact_types:
+      - type: ai_activity_log
+        confidence: declared
+        notes: PAI session and command audit log
+
+  - source_label: SCFPlatform
+    collector_id: scf_platform
+    artifact_types:
+      - type: platform_audit_log
+        confidence: declared
+        notes: SCF Controls Platform audit events
+
+  - source_label: SCF-Platform-Extended
+    collector_id: scf_platform_extended
+    artifact_types:
+      - type: platform_audit_log
+        confidence: declared
+        notes: Extended SCF platform audit capture
+      - type: platform_config_snapshot
+        confidence: declared
+        notes: SCF platform configuration state
+
+  - source_label: Training-Log
+    collector_id: training_log
+    artifact_types:
+      - type: training_completion_record
+        confidence: declared
+        notes: Security awareness training completion events
+
+  - source_label: Doc-Gen-Pipeline
+    collector_id: doc_gen_pipeline
+    artifact_types:
+      - type: policy_document
+        confidence: declared
+        notes: Generated policy documents
+      - type: procedure_document
+        confidence: declared
+        notes: Generated procedure documents

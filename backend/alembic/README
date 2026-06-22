@@ -1,0 +1,19 @@
+Alembic Migration Directory for CG SCF Backend
+==============================================
+
+This directory contains database migration scripts managed by Alembic.
+
+Directory Structure:
+- env.py          : Alembic environment configuration (async SQLAlchemy)
+- script.py.mako  : Template for generating new migration files
+- versions/       : Migration scripts (timestamped and revision-numbered)
+
+Quick Commands (run from backend/ directory):
+- alembic upgrade head     : Apply all pending migrations
+- alembic downgrade -1     : Roll back the last migration
+- alembic revision -m "..."  : Create a new manual migration
+- alembic revision --autogenerate -m "..."  : Generate migration from model changes
+- alembic history          : Show migration history
+- alembic current          : Show current database revision
+
+For detailed documentation, see docs/MIGRATIONS.md in the project root.

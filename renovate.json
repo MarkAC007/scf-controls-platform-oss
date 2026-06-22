@@ -1,0 +1,95 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Compliance Genie standard Renovate configuration",
+  "extends": [
+    "config:recommended",
+    ":dependencyDashboard",
+    ":semanticCommits",
+    ":automergeMinor",
+    ":automergeDigest",
+    "group:allNonMajor"
+  ],
+  "labels": ["dependencies", "automated"],
+  "prHourlyLimit": 5,
+  "prConcurrentLimit": 10,
+  "timezone": "Europe/London",
+  "schedule": ["before 9am on monday"],
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "labels": ["security", "priority:high"],
+    "schedule": ["at any time"]
+  },
+  "packageRules": [
+    {
+      "description": "Security updates - immediate, no grouping",
+      "matchUpdateTypes": ["patch", "minor"],
+      "matchCategories": ["security"],
+      "automerge": true,
+      "schedule": ["at any time"],
+      "groupName": null
+    },
+    {
+      "description": "Major updates require manual review",
+      "matchUpdateTypes": ["major"],
+      "automerge": false,
+      "labels": ["dependencies", "major-update", "needs-review"]
+    },
+    {
+      "description": "Group Python dependencies",
+      "matchManagers": ["pip_requirements", "pip_setup", "poetry", "pipenv"],
+      "groupName": "python dependencies"
+    },
+    {
+      "description": "Group Node.js dependencies",
+      "matchManagers": ["npm"],
+      "groupName": "npm dependencies"
+    },
+    {
+      "description": "Group TypeScript and type definitions",
+      "matchPackagePatterns": ["^@types/"],
+      "groupName": "typescript types"
+    },
+    {
+      "description": "Group Terraform providers",
+      "matchManagers": ["terraform"],
+      "groupName": "terraform dependencies"
+    },
+    {
+      "description": "Group Docker base images",
+      "matchManagers": ["dockerfile"],
+      "groupName": "docker base images"
+    },
+    {
+      "description": "Pin GitHub Actions to major versions",
+      "matchManagers": ["github-actions"],
+      "automerge": true,
+      "groupName": "github actions"
+    },
+    {
+      "description": "Dev dependencies - lower priority",
+      "matchDepTypes": ["devDependencies", "dev"],
+      "automerge": true,
+      "schedule": ["before 9am on monday"]
+    },
+    {
+      "description": "Production dependencies - careful review",
+      "matchDepTypes": ["dependencies", "default"],
+      "automerge": false,
+      "labels": ["dependencies", "production"]
+    }
+  ],
+  "python": {
+    "enabled": true,
+    "fileMatch": [
+      "(^|/)requirements\\.txt$",
+      "(^|/)requirements-.*\\.txt$",
+      "(^|/)pyproject\\.toml$"
+    ]
+  },
+  "terraform": {
+    "enabled": true
+  },
+  "docker": {
+    "enabled": true
+  }
+}

@@ -1,0 +1,70 @@
+# Dockerfile for CG CCF Backend API
+# Python FastAPI application
+
+FROM python:3.11-slim
+
+# Set working directory
+WORKDIR /app
+
+# Pin /app on sys.path regardless of cwd. Celery's prefork pool changes the
+# child worker's cwd, so a lazy `from x import y` inside a task body resolves
+# `sys.path[0]=''` against the new cwd and misses /app — surfacing as
+# `ModuleNotFoundError`. Setting PYTHONPATH at the image level guarantees
+# absolute resolution for every container started from this image (API on
+# the VM, celery worker / beat on Container Apps, db-init job, etc.).
+ENV PYTHONPATH=/app
+
+# Install system dependencies (includes WeasyPrint rendering libs for PDF export)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    postgresql-client \
+    git \
+    libpango-1.0-0 \
+    libpangoft2-1.0-0 \
+    libpangocairo-1.0-0 \
+    libgdk-pixbuf-2.0-0 \
+    libcairo2 \
+    libffi-dev \
+    shared-mime-info \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements first for better caching
+COPY backend/requirements.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY backend/ .
+
+# Ship the SCF catalogue extractor so the worker can run the live "bring your own
+# SCF Excel" import task (tasks_catalog.py) even without the dev bind mounts. The
+# extractor is CODE ONLY — it never contains SCF's licensed catalogue content.
+COPY scripts/extract_scf_data.py /app/scripts/extract_scf_data.py
+
+# Copy curated (non-SCF) catalog JSON used by catalog_seeder.py.
+# The SCF-licensed catalog JSON (control_guidance / domains / erl / assessment_objectives) is
+# deliberately NOT baked into the image. It is generated at install time by the catalogue
+# importer from the operator's SCF Excel workbook and provided to the container at runtime via
+# the ./webclient/public/data:/app/data/json bind mount (see docker-compose.yml + README:
+# "Bring your own SCF Excel catalogue"). This keeps licensed content out of built images.
+COPY webclient/public/data/collection_interfaces.json /app/data/json/
+COPY webclient/public/data/system_collection_recipes.json /app/data/json/
+COPY webclient/public/data/capability_themes.json /app/data/json/
+
+# Create non-root user and set permissions for app and data directories
+RUN useradd -m -u 1001 apiuser && \
+    chown -R apiuser:apiuser /app
+
+# Switch to non-root user
+USER apiuser
+
+# Expose port
+EXPOSE 8000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()" || exit 1
+
+# Start the application with uvicorn
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

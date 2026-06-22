@@ -1,0 +1,269 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: cg-scf-postgres
+    environment:
+      POSTGRES_DB: cg_scf
+      POSTGRES_USER: cg
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # init-db.sql disabled - using Alembic migrations instead
+      # - ./backend/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cg -d cg_scf"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cg-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: cg-scf-redis
+    # No port mapping - only accessible within Docker network (more secure)
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cg-network
+
+  # Self-hosted, S3-compatible object storage for evidence files. Ships by
+  # default so the platform needs no AWS/Azure account. API on :9000, web
+  # console on :9001 (login with MINIO_ROOT_USER / MINIO_ROOT_PASSWORD).
+  minio:
+    image: minio/minio:latest
+    container_name: cg-scf-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    ports:
+      - "9000:9000"   # S3 API (presigned upload/download URLs)
+      - "9001:9001"   # web console
+    volumes:
+      - minio_data:/data
+    networks:
+      - cg-network
+    restart: unless-stopped
+
+  # One-shot: wait for MinIO, then create the evidence bucket if absent.
+  # Exits 0 once done; `docker compose up` runs it automatically.
+  minio-init:
+    image: minio/mc:latest
+    container_name: cg-scf-minio-init
+    depends_on:
+      minio:
+        condition: service_started
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      EVIDENCE_BUCKET: ${EVIDENCE_BUCKET:-evidence}
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set local http://minio:9000 \"$$MINIO_ROOT_USER\" \"$$MINIO_ROOT_PASSWORD\" >/dev/null 2>&1; do
+        echo 'waiting for minio...'; sleep 2;
+      done;
+      mc mb --ignore-existing local/\"$$EVIDENCE_BUCKET\";
+      echo \"bucket ready: $$EVIDENCE_BUCKET\";
+      "
+    networks:
+      - cg-network
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: cg-scf-backend
+    environment:
+      DATABASE_URL: postgresql+asyncpg://cg:${DB_PASSWORD}@postgres:5432/cg_scf
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      CORS_ORIGINS: http://localhost:3000,http://localhost:5173
+      RATE_LIMITING_ENABLED: "false"  # Temporarily disabled - needs debugging
+      LOG_LEVEL: ${LOG_LEVEL}
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      # Version info (fallbacks - actual versions read from package.json and git)
+      PLATFORM_VERSION: ${PLATFORM_VERSION:-0.0.0}
+      CATALOG_VERSION: ${CATALOG_VERSION:-unknown}
+      # Authentication (set these in .env file - REQUIRED)
+      API_KEY: ${API_KEY}
+      # Self-hosted single-tenant mode: when truthy (see .env.example), grants the
+      # master API_KEY admin on the single org. Leave UNSET for multi-tenant/SaaS. (#662)
+      OSS_SINGLE_TENANT: ${OSS_SINGLE_TENANT:-}
+      GOOGLE_AUTH_ENABLED: ${GOOGLE_AUTH_ENABLED}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      # Email notifications (optional - set in .env file)
+      RESEND_API_KEY: ${RESEND_API_KEY}
+      RESEND_FROM_EMAIL: ${RESEND_FROM_EMAIL}
+      APP_URL: ${APP_URL}
+      # Evidence storage — defaults to the bundled MinIO (S3-compatible) so the
+      # stack is self-contained with no cloud account. Point AWS_* at real S3
+      # (and clear AWS_ENDPOINT_URL), or set AZURE_STORAGE_* instead, to use a
+      # managed backend. EVIDENCE_PUBLIC_ENDPOINT is the URL browsers use for
+      # presigned upload/download (AWS_ENDPOINT_URL is the internal one).
+      EVIDENCE_BUCKET: ${EVIDENCE_BUCKET:-evidence}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-eu-west-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-minioadmin}
+      AWS_ENDPOINT_URL: ${AWS_ENDPOINT_URL-http://minio:9000}
+      EVIDENCE_PUBLIC_ENDPOINT: ${EVIDENCE_PUBLIC_ENDPOINT-http://localhost:9000}
+      # Azure Blob Storage (set these for Azure deployments)
+      AZURE_STORAGE_ACCOUNT_NAME: ${AZURE_STORAGE_ACCOUNT_NAME:-}
+      AZURE_STORAGE_ACCOUNT_KEY: ${AZURE_STORAGE_ACCOUNT_KEY:-}
+      EVIDENCE_CONTAINER: ${EVIDENCE_CONTAINER:-evidence}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - ./webclient/public/data:/app/data/json:ro
+      # Platform version read dynamically from package.json (mounted outside /app
+      # to avoid conflicts). Catalogue version comes from the CATALOG_VERSION env
+      # var (see .env.example); the old ./catalog git-submodule mounts are not used
+      # in this Docker-only release — get_catalog_version() falls back to the env var.
+      - ./webclient/package.json:/version/package.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    networks:
+      - cg-network
+    restart: unless-stopped
+
+  celery-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: cg-scf-celery-worker
+    command: celery -A celery_app worker --loglevel=info --concurrency=2 -Q default,high_priority,low_priority,tprm_research,dpsia,evidence_assessment,evidence_window,evidence_composite,cdm,catalog
+    environment:
+      DATABASE_URL: postgresql+asyncpg://cg:${DB_PASSWORD}@postgres:5432/cg_scf
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      LOG_LEVEL: ${LOG_LEVEL}
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      # Self-hosted single-tenant guard for the live catalogue-import task (#660).
+      # The catalog.import task refuses to reseed unless this is truthy.
+      OSS_SINGLE_TENANT: ${OSS_SINGLE_TENANT:-}
+      # Vendor research API keys (Issue #59)
+      HIBP_API_KEY: ${HIBP_API_KEY:-}
+      NVD_API_KEY: ${NVD_API_KEY:-}
+      # DPSIA Lambda Integration
+      DPSIA_LAMBDA_FUNCTION_NAME: ${DPSIA_LAMBDA_FUNCTION_NAME:-DPSIAStack-DPSIAFunctionEFA10949-SSk3OeKB2BwT}
+      DPSIA_LAMBDA_REGION: ${DPSIA_LAMBDA_REGION:-eu-west-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-minioadmin}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-eu-west-1}
+      # Evidence storage — defaults to the bundled MinIO (see backend service)
+      EVIDENCE_BUCKET: ${EVIDENCE_BUCKET:-evidence}
+      AWS_ENDPOINT_URL: ${AWS_ENDPOINT_URL-http://minio:9000}
+      EVIDENCE_PUBLIC_ENDPOINT: ${EVIDENCE_PUBLIC_ENDPOINT-http://localhost:9000}
+      AZURE_STORAGE_ACCOUNT_NAME: ${AZURE_STORAGE_ACCOUNT_NAME:-}
+      AZURE_STORAGE_ACCOUNT_KEY: ${AZURE_STORAGE_ACCOUNT_KEY:-}
+      EVIDENCE_CONTAINER: ${EVIDENCE_CONTAINER:-evidence}
+      # AI Assessment (Anthropic Claude)
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # Application Insights (telemetry)
+      APPLICATIONINSIGHTS_CONNECTION_STRING: ${APPLICATIONINSIGHTS_CONNECTION_STRING:-}
+    volumes:
+      - ./backend:/app
+      # Live catalogue import (catalog.import task): the worker needs the SCF
+      # extractor, and must write the generated seeder JSON to the SAME host dir
+      # the backend reads from (so an uploaded SCF .xlsx seeds the running app).
+      - ./scripts:/app/scripts:ro
+      - ./webclient/public/data:/app/data/json
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    networks:
+      - cg-network
+    restart: unless-stopped
+
+  celery-beat:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: cg-scf-celery-beat
+    command: celery -A celery_app beat --loglevel=info
+    environment:
+      DATABASE_URL: postgresql+asyncpg://cg:${DB_PASSWORD}@postgres:5432/cg_scf
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      LOG_LEVEL: ${LOG_LEVEL}
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+    volumes:
+      - ./backend:/app
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - cg-network
+    restart: unless-stopped
+
+  # One-shot SCF catalogue importer — "bring your own SCF Excel" install step.
+  # Not part of the normal stack (profile: init), so `docker compose up` never starts it.
+  # Run once after supplying your SCF .xlsx:
+  #   docker compose --profile init run --rm catalog-importer
+  # It extracts the catalogue into webclient/public/data/*.json (mounted here at /app/data/json),
+  # which the backend mounts read-only and seeds into the DB on startup.
+  # The repo ships the importer code ONLY — SCF catalogue content is licensed; bring your own.
+  catalog-importer:
+    build:
+      context: .
+      dockerfile: Dockerfile.importer
+    container_name: cg-scf-catalog-importer
+    profiles:
+      - init
+    volumes:
+      # Your SCF workbook (override path with SCF_XLSX in .env); read-only.
+      - ${SCF_XLSX:-./catalog-source/scf.xlsx}:/input/scf.xlsx:ro
+      # Generated JSON lands alongside the curated (non-SCF) catalogue files.
+      - ./webclient/public/data:/app/data/json
+    networks:
+      - cg-network
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend.dev
+      args:
+        # No VITE_API_URL needed - uses relative URLs
+        VITE_GOOGLE_AUTH_ENABLED: ${VITE_GOOGLE_AUTH_ENABLED}
+        VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID}
+        VITE_API_KEY: ${VITE_API_KEY}
+    container_name: cg-scf-frontend
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+    networks:
+      - cg-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    name: cg-scf-postgres-data
+  redis_data:
+    name: cg-scf-redis-data
+  minio_data:
+    name: cg-scf-minio-data
+
+networks:
+  cg-network:
+    name: cg-scf-network
+    driver: bridge

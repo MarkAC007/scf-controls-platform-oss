@@ -1,0 +1,23 @@
+# PDF to Markdown Converter with LightRAG Integration
+# Requirements for convert_pdfs_to_markdown_with_lightrag.py
+
+# Core dependencies
+docling>=2.0.0
+requests>=2.31.0
+
+# Docling automatically includes:
+# - docling-core
+# - docling-parse
+# - PyPDF2/pdfminer for PDF processing
+# - pillow for image handling
+# - other necessary dependencies
+
+# Agentic Genetic Control Extractor
+# Requirements for genetic_control_extractor.py
+openai>=1.40.0  # For LLM-powered agents (GPT-4/GPT-5) - Requires 1.40+ for GPT-5 support
+PyYAML>=6.0  # For YAML-based configuration (pf-extractor)
+pocketflow==0.0.3  # PocketFlow core framework for agent orchestration
+
+# Markdown to Word Converter
+# Requirements for md_2.py
+pypandoc>=1.11  # Python wrapper for Pandoc document converter

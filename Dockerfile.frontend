@@ -1,0 +1,57 @@
+# Dockerfile for CG CCF Frontend (React SPA)
+# Multi-stage build: Node.js for building, nginx for serving
+
+# Stage 1: Build
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+# Copy package files
+COPY webclient/package*.json ./
+
+# Install dependencies
+RUN npm ci && npm cache clean --force
+
+# Copy source code
+COPY webclient/ ./
+
+# Build arguments (only for Google Auth, not API URL)
+ARG VITE_GOOGLE_AUTH_ENABLED
+ARG VITE_GOOGLE_CLIENT_ID
+ARG VITE_API_KEY
+ARG VITE_DEBUG_API
+
+# Set as environment variables for Vite build
+ENV VITE_GOOGLE_AUTH_ENABLED=$VITE_GOOGLE_AUTH_ENABLED
+ENV VITE_GOOGLE_CLIENT_ID=$VITE_GOOGLE_CLIENT_ID
+ENV VITE_API_KEY=$VITE_API_KEY
+ENV VITE_DEBUG_API=$VITE_DEBUG_API
+
+# Build the application
+RUN npm run build
+
+# Stage 2: Production with nginx
+FROM nginx:alpine
+
+# Install envsubst for environment variable substitution
+RUN apk add --no-cache gettext
+
+# Copy built files from builder
+COPY --from=builder /app/dist /usr/share/nginx/html
+
+# Copy nginx configuration template
+COPY nginx.conf /etc/nginx/nginx.conf.template
+
+# Copy entrypoint script
+COPY docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh
+
+# Backend URL will be injected at runtime via environment variable
+# Nginx will use envsubst to substitute BACKEND_URL in nginx.conf
+ENV BACKEND_URL=""
+
+# Expose port
+EXPOSE 80
+
+# Use entrypoint script to substitute BACKEND_URL and start nginx
+CMD ["/docker-entrypoint.sh"]

@@ -1,0 +1,1881 @@
+{
+  "CI-AM-API-001": {
+    "domain": "Asset Management",
+    "title": "CMDB Asset Inventory API",
+    "description": "Retrieves comprehensive asset inventory data from Configuration Management Database systems via REST API, including hardware, software, and cloud resources with their relationships and attributes.",
+    "system_types": [
+      "cmdb",
+      "cloud_provider"
+    ],
+    "collection_method": "api",
+    "data_formats": [
+      "json",
+      "csv"
+    ],
+    "typical_fields": [
+      "asset_id",
+      "hostname",
+      "ip_address",
+      "os",
+      "owner",
+      "location",
+      "status",
+      "last_seen"
+    ],
+    "example_systems": [
+      "ServiceNow CMDB",
+      "Freshservice",
+      "AWS Config",
+      "Azure Resource Graph"
+    ],
+    "automation_potential": "high",
+    "frequency_recommendation": "daily",
+    "maturity_range": {
+      "min": "L2",
+      "max": "L5"
+    }
+  },
+  "CI-AM-EXP-001": {
+    "domain": "Asset Management",
+    "title": "Asset Register Export",
+    "description": "Exports asset register data from CMDB or spreadsheet-based tracking systems in tabular format for offline analysis, auditing, and compliance reporting.",
+    "system_types": [
+      "cmdb",
+      "spreadsheet"
+    ],
+    "collection_method": "export",
+    "data_formats": [
+      "csv",
+      "xlsx"
+    ],
+    "typical_fields": [
+      "asset_id",
+      "asset_name",
+      "asset_type",
+      "owner",
+      "department",
+      "acquisition_date"
+    ],
+    "example_systems": [
+      "Excel Asset Register",
+      "Google Sheets",
+      "ServiceNow Export"
+    ],
+    "automation_potential": "medium",
+    "frequency_recommendation": "weekly",
+    "maturity_range": {
+      "min": "L0",
+      "max": "L3"
+    }
+  },
+  "CI-AM-API-002": {
+    "domain": "Asset Management",
+    "title": "Cloud Resource Discovery API",
+    "description": "Queries cloud provider APIs to discover and enumerate all cloud resources across accounts, subscriptions, or projects including compute, storage, networking, and managed services.",
+    "system_types": [
+      "cloud_provider"
+    ],
+    "collection_method": "api",
+    "data_formats": [
+      "json"
+    ],
+    "typical_fields": [
+      "resource_id",
+      "resource_type",
+      "region",
+      "tags",
+      "creation_date",
+      "state"
+    ],
+    "example_systems": [
+      "AWS Resource Explorer",
+      "Azure Resource Graph",
+      "GCP Asset Inventory"
+    ],
+    "automation_potential": "high",
+    "frequency_recommendation": "daily",
+    "maturity_range": {
+      "min": "L2",
+      "max": "L5"
+    }
+  },
+  "CI-AM-LOG-001": {
+    "domain": "Asset Management",
+    "title": "Network Discovery Scan Logs",
+    "description": "Collects network discovery scan results that identify devices, services, and systems on the network through active or passive scanning techniques.",
+    "system_types": [
+      "network_scanner"
+    ],
+    "collection_method": "log_query",
+    "data_formats": [
+      "json",
+      "csv",
+      "xml"
+    ],
+    "typical_fields": [
+      "ip_address",
+      "mac_address",
+      "hostname",
+      "open_ports",
+      "os_fingerprint",
+      "scan_date"
+    ],
+    "example_systems": [
+      "Nmap",
+      "Qualys Asset Discovery",
+      "Tenable.io"
+    ],
+    "automation_potential": "high",
+    "frequency_recommendation": "daily",
+    "maturity_range": {
+      "min": "L1",
+      "max": "L4"
+    }
+  },
+  "CI-AM-MAN-001": {
+    "domain": "Asset Management",
+    "title": "Manual Asset Verification",
+    "description": "Documents physical verification of assets through manual inspection, typically used for annual audits or when automated discovery is not possible.",
+    "system_types": [
+      "manual"
+    ],
+    "collection_method": "manual",
+    "data_formats": [
+      "pdf",
+      "xlsx"
+    ],
+    "typical_fields": [
+      "asset_id",
+      "physical_location",
+      "verification_date",
+      "verifier",
+      "condition",
+      "notes"
+    ],
+    "example_systems": [
+      "Physical Audit Checklist",
+      "Asset Verification Form"
+    ],
+    "automation_potential": "low",
+    "frequency_recommendation": "quarterly",
+    "maturity_range": {
+      "min": "L0",
+      "max": "L2"
+    }
+  },
+  "CI-IAM-API-001": {
+    "domain": "Identity and Access Management",
+    "title": "Identity Provider User List API",
+    "description": "Retrieves comprehensive user directory data from identity providers via API, including user attributes, status, group memberships, and role assignments for access governance and compliance reporting.",
+    "system_types": [
+      "identity_provider"
+    ],
+    "collection_method": "api",
+    "data_formats": [
+      "json"
+    ],
+    "typical_fields": [
+      "user_id",
+      "email",
+      "display_name",
+      "status",
+      "created_date",
+      "last_login",
+      "groups",
+      "roles"
+    ],
+    "example_systems": [
+      "Okta Users API",
+      "Azure AD Graph API",
+      "Google Workspace Directory API"
+    ],
+    "automation_potential": "high",
+    "frequency_recommendation": "daily",
+    "maturity_range": {
+      "min": "L2",
+      "max": "L5"
+    }
+  },
+  "CI-IAM-API-002": {
+    "domain": "Identity and Access Management",
+    "title": "Access Review Report API",
+    "description": "Collects access certification and review campaign data from identity governance platforms, including reviewer decisions, access entitlements under review, and remediation actions taken.",
+    "system_types": [
+      "identity_provider",
+      "iga_platform"
+    ],
+    "collection_method": "api",
+    "data_formats": [
+      "json",
+      "csv"
+    ],
+    "typical_fields": [
+      "review_id",
+      "user_id",
+      "resource",
+      "access_level",
+      "reviewer",
+      "decision",
+      "review_date"
+    ],
+    "example_systems": [
+      "SailPoint Access Reviews",
+      "Saviynt",
+      "Okta Access Certifications"
+    ],
+    "automation_potential": "high",
+    "frequency_recommendation": "weekly",
+    "maturity_range": {
+      "min": "L2",
+      "max": "L5"
+    }
+  },
+  "CI-IAM-EXP-001": {
+    "domain": "Identity and Access Management",
+    "title": "User Access Matrix Export",
+    "description": "Exports user-to-application access mappings in tabular format showing which users have access to which systems, their permission levels, and when access was granted.",
+    "system_types": [
+      "identity_provider",
+      "spreadsheet"
+    ],
+    "collection_method": "export",
+    "data_formats": [
+      "csv",
+      "xlsx"
+    ],
+    "typical_fields": [
+      "user_id",
+      "user_name",
+      "application",
+      "role",
+      "permissions",
+      "granted_date",
+      "granted_by"
+    ],
+    "example_systems": [
+      "Okta Export",
+      "Azure AD Export",
+      "Access Matrix Spreadsheet"
+    ],
+    "automation_potential": "medium",
+    "frequency_recommendation": "weekly",
+    "maturity_range": {
+      "min": "L0",
+      "max": "L3"
+    }
+  },
+  "CI-IAM-LOG-001": {
+    "domain": "Identity and Access Management",
+    "title": "Authentication Log Query",
+    "description": "Queries authentication and sign-in event logs from identity providers or SIEM platforms to provide evidence of authentication activity, including successful logins, failures, and MFA usage.",
+    "system_types": [
+      "identity_provider",
+      "siem"
+    ],
+    "collection_method": "log_query",
+    "data_formats": [
+      "json",
+      "logs"
+    ],
+    "typical_fields": [
+      "timestamp",
+      "user_id",
+      "event_type",
+      "source_ip",
+      "user_agent",
+      "result",
+      "mfa_used"
+    ],
+    "example_systems": [
+      "Okta System Log",
+      "Azure AD Sign-in Logs",
+      "Splunk",
+      "Elastic SIEM"
+    ],
+    "automation_potential": "high",
+    "frequency_recommendation": "daily",
+    "maturity_range": {
+      "min": "L1",
+      "max": "L4"
+    }
+  },
+  "CI-IAM-API-003": {
+    "domain": "Identity and Access Management",
+    "title": "Privileged Access Management API",
+    "description": "Retrieves privileged session recordings, checkout logs, and credential usage data from PAM solutions to evidence secure management of privileged accounts.",
+    "system_types": [
+      "pam_tool"
+    ],
+    "collection_method": "api",
+    "data_formats": [
+      "json"
+    ],
+    "typical_fields": [
+      "session_id",
+      "user",
+      "target_system",
+      "checkout_time",
+      "duration",
+      "commands_executed"
+    ],
+    "example_systems": [
+      "CyberArk",
+      "BeyondTrust",
+      "Delinea Secret Server"
+    ],
+    "automation_potential": "high",
+    "frequency_recommendation": "daily",
+    "maturity_range": {
+      "min": "L2",
+      "max": "L5"
+    }
+  },
+  "CI-IAM-WBH-001": {
+    "domain": "Identity and Access Management",
+    "title": "Real-time Access Event Webhook",
+    "description": "Receives real-time push notifications of access-related events from identity providers, enabling immediate detection of access changes, provisioning events, and security-relevant activities.",
+    "system_types": [
+      "identity_provider"
+    ],
+    "collection_method": "webhook",
+    "data_formats": [
+      "json"
+    ],
+    "typical_fields": [
+      "event_id",
+      "event_type",
+      "timestamp",
+      "actor",
+      "target",
+      "changes"
+    ],
+    "example_systems": [
+      "Okta Event Hooks",
+      "Azure AD Webhooks",
+      "Auth0 Hooks"
+    ],
+    "automation_potential": "high",
+    "frequency_recommendation": "real_time",
+    "maturity_range": {
+      "min": "L3",
+      "max": "L5"
+    }
+  },
+  "CI-IAM-MAN-001": {
+    "domain": "Identity and Access Management",
+    "title": "Manual Access Documentation",
+    "description": "Documents access management policies, procedures, and role definitions that are maintained manually, providing evidence of governance framework for identity and access management.",
+    "system_types": [
+      "manual",
+      "document_management"
+    ],
+    "collection_method": "manual",
+    "data_formats": [
+      "pdf",
+      "xlsx"
+    ],
+    "typical_fields": [
+      "policy_name",
+      "version",
+      "approval_date",
+      "approver",
+      "review_cycle"
+    ],
+    "example_systems": [
+      "Access Management Policy Document",
+      "Role Definition Matrix"
+    ],
+    "automation_potential": "low",
+    "frequency_recommendation": "quarterly",
+    "maturity_range": {
+      "min": "L0",
+      "max": "L2"
+    }
+  },
+  "CI-VM-API-001": {
+    "domain": "Vulnerability Management",
+    "title": "Vulnerability Scanner Results API",
+    "description": "Retrieves vulnerability scan results from automated scanning platforms via API, including identified vulnerabilities, severity ratings, affected assets, and remediation guidance.",
+    "system_types": [
+      "vulnerability_scanner"
+    ],
+    "collection_method": "api",
+    "data_formats": [
+      "json",
+      "xml"
+    ],
+    "typical_fields": [
+      "vuln_id",
+      "cve",
+      "severity",
+      "cvss_score",
+      "affected_asset",
+      "status",
+      "discovered_date",
+      "remediation"
+    ],
+    "example_systems": [
+      "Qualys API",
+      "Tenable.io API",
+      "Rapid7 InsightVM API",
+      "Nessus API"
+    ],
+    "automation_potential": "high",
+    "frequency_recommendation": "daily",
+    "maturity_range": {
+      "min": "L2",
+      "max": "L5"
+    }
+  },
+  "CI-VM-EXP-001": {
+    "domain": "Vulnerability Management",
+    "title": "Vulnerability Scan Export",
+    "description": "Exports vulnerability scan reports in document or tabular format for offline analysis, executive reporting, and compliance evidence collection.",
+    "system_types": [
+      "vulnerability_scanner"
+    ],
+    "collection_method": "export",
+    "data_formats": [
+      "csv",
+      "pdf",
+      "xlsx"
+    ],
+    "typical_fields": [
+      "scan_id",
+      "scan_date",
+      "asset",
+      "vulnerability",
+      "severity",
+      "solution",
+      "plugin_id"
+    ],
+    "example_systems": [
+      "Qualys Report Export",
+      "Nessus Export",
+      "Tenable Report Download"
+    ],
+    "automation_potential": "medium",
+    "frequency_recommendation": "weekly",
+    "maturity_range": {
+      "min": "L0",
+      "max": "L3"
+    }
+  },
+  "CI-VM-API-002": {
+    "domain": "Vulnerability Management",
+    "title": "Patch Management Status API",
+    "description": "Queries patch management systems to retrieve patch deployment status, compliance levels, and outstanding patches across the managed infrastructure.",
+    "system_types": [
+      "patch_management"
+    ],
+    "collection_method": "api",
+    "data_formats": [
+      "json"
+    ],
+    "typical_fields": [
+      "patch_id",
+      "kb_number",
+      "target_systems",
+      "deployment_status",
+      "compliance_percentage",
+      "deadline"
+    ],
+    "example_systems": [
+      "Microsoft SCCM",
+      "WSUS",
+      "Ivanti Patch",
+      "ManageEngine"
+    ],
+    "automation_potential": "high",
+    "frequency_recommendation": "daily",
+    "maturity_range": {
+      "min": "L2",
+      "max": "L5"
+    }
+  },
+  "CI-VM-LOG-001": {
+    "domain": "Vulnerability Management",
+    "title": "Security Tool Alert Logs",
+    "description": "Queries security tool and SIEM alert logs for vulnerability-related detections, threat indicators, and security events requiring investigation or remediation.",
+    "system_types": [
+      "security_tool",
+      "siem"
+    ],
+    "collection_method": "log_query",
+    "data_formats": [
+      "json",
+      "logs"
+    ],
+    "typical_fields": [
+      "alert_id",
+      "timestamp",
+      "severity",
+      "source",
+      "destination",
+      "threat_type",
+      "action_taken"
+    ],
+    "example_systems": [
+      "CrowdStrike Falcon",
+      "SentinelOne",
+      "Splunk Security",
+      "Microsoft Sentinel"
+    ],
+    "automation_potential": "high",
+    "frequency_recommendation": "daily",
+    "maturity_range": {
+      "min": "L1",
+      "max": "L4"
+    }
+  },
+  "CI-VM-API-003": {
+    "domain": "Vulnerability Management",
+    "title": "Penetration Test Results API",
+    "description": "Retrieves penetration testing findings from bug bounty platforms or pentest management systems via API, including vulnerability details, proof of concepts, and remediation tracking.",
+    "system_types": [
+      "security_testing"
+    ],
+    "collection_method": "api",
+    "data_formats": [
+      "json",
+      "pdf"
+    ],
+    "typical_fields": [
+      "finding_id",
+      "title",
+      "severity",
+      "affected_system",
+      "proof_of_concept",
+      "recommendation",
+      "status"
+    ],
+    "example_systems": [
+      "Cobalt API",
+      "HackerOne API",
+      "Bugcrowd API",
+      "Plextrac"
+    ],
+    "automation_potential": "medium",
+    "frequency_recommendation": "weekly",
+    "maturity_range": {
+      "min": "L2",
+      "max": "L5"
+    }
+  },
+  "CI-VM-MAN-001": {
+    "domain": "Vulnerability Management",
+    "title": "Manual Penetration Test Report",
+    "description": "Documents comprehensive penetration test findings from manual security assessments, including scope, methodology, detailed findings, risk ratings, and remediation recommendations.",
+    "system_types": [
+      "manual",
+      "security_testing"
+    ],
+    "collection_method": "manual",
+    "data_formats": [
+      "pdf",
+      "xlsx"
+    ],
+    "typical_fields": [
+      "engagement_id",
+      "scope",
+      "methodology",
+      "findings",
+      "risk_rating",
+      "remediation_plan",
+      "retest_date"
+    ],
+    "example_systems": [
+      "Third-party Pentest Report",
+      "Internal Red Team Report"
+    ],
+    "automation_potential": "low",
+    "frequency_recommendation": "annually",
+    "maturity_range": {
+      "min": "L0",
+      "max": "L2"
+    }
+  },
+  "CI-VM-WBH-001": {
+    "domain": "Vulnerability Management",
+    "title": "Real-time Vulnerability Alert Webhook",
+    "description": "Receives real-time push notifications of critical vulnerability discoveries, enabling immediate response to newly identified security issues and zero-day threats.",
+    "system_types": [
+      "vulnerability_scanner",
+      "security_tool"
+    ],
+    "collection_method": "webhook",
+    "data_formats": [
+      "json"
+    ],
+    "typical_fields": [
+      "alert_type",
+      "cve",
+      "severity",
+      "affected_assets",
+      "timestamp",
+      "recommended_action"
+    ],
+    "example_systems": [
+      "Qualys Notifications",
+      "Tenable Alerts",
+      "CrowdStrike Webhooks"
+    ],
+    "automation_potential": "high",
+    "frequency_recommendation": "real_time",
+    "maturity_range": {
+      "min": "L3",
+      "max": "L5"
+    }
+  },
+  "CI-VM-RPT-001": {
+    "domain": "Vulnerability Management",
+    "title": "Scheduled Vulnerability Report",
+    "description": "Automated scheduled reports from vulnerability scanners providing summary statistics on vulnerability counts, severity distribution, remediation progress, and trending data.",
+    "system_types": [
+      "vulnerability_scanner"
+    ],
+    "collection_method": "scheduled_report",
+    "data_formats": [
+      "pdf",
+      "csv",
+      "xlsx"
+    ],
+    "typical_fields": [
+      "report_date",
+      "scan_coverage",
+      "total_vulns",
+      "critical",
+      "high",
+      "medium",
+      "low",
+      "remediated"
+    ],
+    "example_systems": [
+      "Qualys Reports",
+      "Tenable Reports",
+      "Rapid7 Reports",
+      "Nessus Reports"
+    ],
+    "automation_potential": "high",
+    "frequency_recommendation": "weekly",
+    "maturity_range": {
+      "min": "L2",
+      "max": "L4"
+    }
+  },
+  "CI-CFM-API-001": {
+    "domain": "Configuration Management",
+    "title": "Configuration Baseline API",
+    "description": "Retrieves system configuration baselines and current state from configuration management databases, enabling comparison between desired and actual configurations across infrastructure.",
+    "system_types": [
+      "cmdb",
+      "cloud_provider"
+    ],
+    "collection_method": "api",
+    "data_formats": [
+      "json",
+      "xml"
+    ],
+    "typical_fields": [
+      "config_id",
+      "system_name",
+      "baseline_version",
+      "current_config",
+      "drift_status",
+      "last_checked"
+    ],
+    "example_systems": [
+      "AWS Config",
+      "Azure Policy",
+      "Puppet Enterprise",
+      "Chef Automate"
+    ],
+    "automation_potential": "high",
+    "frequency_recommendation": "daily",
+    "maturity_range": {
+      "min": "L2",
+      "max": "L5"
+    }
+  },
+  "CI-CFM-API-002": {
+    "domain": "Configuration Management",
+    "title": "Configuration Drift Detection API",
+    "description": "Queries configuration management tools to identify systems that have drifted from their approved baseline configurations, highlighting unauthorized or unplanned changes.",
+    "system_types": [
+      "cmdb",
+      "security_tool"
+    ],
+    "collection_method": "api",
+    "data_formats": [
+      "json"
+    ],
+    "typical_fields": [
+      "system_id",
+      "drift_type",
+      "expected_value",
+      "actual_value",
+      "detected_time",
+      "severity"
+    ],
+    "example_systems": [
+      "AWS Config Rules",
+      "Tripwire",
+      "OSSEC",
+      "Chef InSpec"
+    ],
+    "automation_potential": "high",
+    "frequency_recommendation": "daily",
+    "maturity_range": {
+      "min": "L2",
+      "max": "L5"
+    }
+  },
+  "CI-CFM-LOG-001": {
+    "domain": "Configuration Management",
+    "title": "Configuration Change Audit Logs",
+    "description": "Collects audit logs of configuration changes from systems and infrastructure, providing evidence of who changed what and when for compliance and forensics.",
+    "system_types": [
+      "siem",
+      "logging"
+    ],
+    "collection_method": "log_query",
+    "data_formats": [
+      "json",
+      "logs"
+    ],
+    "typical_fields": [
+      "timestamp",
+      "user",
+      "system",
+      "change_type",
+      "old_value",
+      "new_value",
+      "approval_ticket"
+    ],
+    "example_systems": [
+      "Splunk",
+      "CloudTrail",
+      "Azure Activity Log",
+      "Windows Event Log"
+    ],
+    "automation_potential": "high",
+    "frequency_recommendation": "daily",
+    "maturity_range": {
+      "min": "L1",
+      "max": "L4"
+    }
+  },
+  "CI-CFM-EXP-001": {
+    "domain": "Configuration Management",
+    "title": "Configuration Standards Export",
+    "description": "Exports configuration standards and hardening guidelines in document format for review, audit evidence, and comparison against implemented configurations.",
+    "system_types": [
+      "document_management",
+      "grc_platform"
+    ],
+    "collection_method": "export",
+    "data_formats": [
+      "pdf",
+      "xlsx",
+      "csv"
+    ],
+    "typical_fields": [
+      "standard_id",
+      "category",
+      "requirement",
+      "benchmark_source",
+      "applicability",
+      "implementation_status"
+    ],
+    "example_systems": [
+      "CIS Benchmark Export",
+      "DISA STIG Export",
+      "Custom Hardening Guide"
+    ],
+    "automation_potential": "medium",
+    "frequency_recommendation": "quarterly",
+    "maturity_range": {
+      "min": "L0",
+      "max": "L3"
+    }
+  },
+  "CI-CFM-MAN-001": {
+    "domain": "Configuration Management",
+    "title": "Manual Configuration Review",
+    "description": "Documents manual configuration assessments and reviews performed by administrators or auditors, typically for systems not covered by automated tools.",
+    "system_types": [
+      "manual"
+    ],
+    "collection_method": "manual",
+    "data_formats": [
+      "pdf",
+      "xlsx"
+    ],
+    "typical_fields": [
+      "review_date",
+      "reviewer",
+      "system",
+      "findings",
+      "compliance_status",
+      "recommendations"
+    ],
+    "example_systems": [
+      "Configuration Review Checklist",
+      "Audit Workpaper"
+    ],
+    "automation_potential": "low",
+    "frequency_recommendation": "quarterly",
+    "maturity_range": {
+      "min": "L0",
+      "max": "L2"
+    }
+  },
+  "CI-SM-API-001": {
+    "domain": "Systems Monitoring",
+    "title": "Infrastructure Monitoring API",
+    "description": "Retrieves real-time and historical monitoring data from infrastructure monitoring platforms, including system health, performance metrics, and availability statistics.",
+    "system_types": [
+      "monitoring"
+    ],
+    "collection_method": "api",
+    "data_formats": [
+      "json"
+    ],
+    "typical_fields": [
+      "host",
+      "metric_name",
+      "value",
+      "timestamp",
+      "threshold",
+      "alert_status",
+      "availability_pct"
+    ],
+    "example_systems": [
+      "Datadog API",
+      "New Relic API",
+      "Prometheus API",
+      "Zabbix API"
+    ],
+    "automation_potential": "high",
+    "frequency_recommendation": "real_time",
+    "maturity_range": {
+      "min": "L2",
+      "max": "L5"
+    }
+  },
+  "CI-SM-API-002": {
+    "domain": "Systems Monitoring",
+    "title": "Log Management Platform API",
+    "description": "Queries centralized log management systems to retrieve aggregated logs, search results, and log analytics for security monitoring and compliance evidence.",
+    "system_types": [
+      "siem",
+      "logging"
+    ],
+    "collection_method": "api",
+    "data_formats": [
+      "json",
+      "logs"
+    ],
+    "typical_fields": [
+      "timestamp",
+      "source",
+      "log_level",
+      "message",
+      "host",
+      "application",
+      "correlation_id"
+    ],
+    "example_systems": [
+      "Splunk REST API",
+      "Elastic API",
+      "Sumo Logic API",
+      "Graylog API"
+    ],
+    "automation_potential": "high",
+    "frequency_recommendation": "daily",
+    "maturity_range": {
+      "min": "L2",
+      "max": "L5"
+    }
+  },
+  "CI-SM-LOG-001": {
+    "domain": "Systems Monitoring",
+    "title": "Security Event Log Query",
+    "description": "Queries SIEM and security monitoring platforms for security-relevant events including alerts, anomalies, and potential threats requiring investigation.",
+    "system_types": [
+      "siem",
+      "security_tool"
+    ],
+    "collection_method": "log_query",
+    "data_formats": [
+      "json",
+      "logs"
+    ],
+    "typical_fields": [
+      "event_id",
+      "timestamp",
+      "severity",
+      "event_type",
+      "source_ip",
+      "destination",
+      "action",
+      "rule_name"
+    ],
+    "example_systems": [
+      "Microsoft Sentinel",
+      "Splunk Enterprise Security",
+      "QRadar",
+      "LogRhythm"
+    ],
+    "automation_potential": "high",
+    "frequency_recommendation": "daily",
+    "maturity_range": {
+      "min": "L1",
+      "max": "L4"
+    }
+  },
+  "CI-SM-EXP-001": {
+    "domain": "Systems Monitoring",
+    "title": "Uptime and SLA Reports Export",
+    "description": "Exports uptime reports, SLA compliance data, and availability metrics from monitoring platforms for management reporting and audit evidence.",
+    "system_types": [
+      "monitoring",
+      "ticketing"
+    ],
+    "collection_method": "export",
+    "data_formats": [
+      "pdf",
+      "csv",
+      "xlsx"
+    ],
+    "typical_fields": [
+      "service",
+      "period",
+      "uptime_pct",
+      "downtime_minutes",
+      "incidents",
+      "sla_target",
+      "compliance"
+    ],
+    "example_systems": [
+      "StatusPage Export",
+      "PagerDuty Reports",
+      "Datadog SLA Reports"
+    ],
+    "automation_potential": "medium",
+    "frequency_recommendation": "monthly",
+    "maturity_range": {
+      "min": "L0",
+      "max": "L3"
+    }
+  },
+  "CI-SM-WBH-001": {
+    "domain": "Systems Monitoring",
+    "title": "Real-time Alert Webhook",
+    "description": "Receives real-time push notifications of monitoring alerts and threshold breaches, enabling immediate response to system issues and potential security events.",
+    "system_types": [
+      "monitoring",
+      "siem"
+    ],
+    "collection_method": "webhook",
+    "data_formats": [
+      "json"
+    ],
+    "typical_fields": [
+      "alert_id",
+      "severity",
+      "host",
+      "metric",
+      "threshold",
+      "current_value",
+      "timestamp"
+    ],
+    "example_systems": [
+      "PagerDuty Webhooks",
+      "Datadog Webhooks",
+      "Prometheus Alertmanager"
+    ],
+    "automation_potential": "high",
+    "frequency_recommendation": "real_time",
+    "maturity_range": {
+      "min": "L3",
+      "max": "L5"
+    }
+  },
+  "CI-NO-API-001": {
+    "domain": "Network Operations",
+    "title": "Network Device Configuration API",
+    "description": "Retrieves network device configurations from network management systems, including firewall rules, router configs, and switch settings for compliance verification.",
+    "system_types": [
+      "cmdb",
+      "security_tool"
+    ],
+    "collection_method": "api",
+    "data_formats": [
+      "json",
+      "text"
+    ],
+    "typical_fields": [
+      "device_id",
+      "hostname",
+      "config_version",
+      "interfaces",
+      "acls",
+      "routing_table",
+      "last_modified"
+    ],
+    "example_systems": [
+      "Cisco DNA Center",
+      "Palo Alto Panorama",
+      "Fortinet FortiManager",
+      "Juniper Space"
+    ],
+    "automation_potential": "high",
+    "frequency_recommendation": "daily",
+    "maturity_range": {
+      "min": "L2",
+      "max": "L5"
+    }
+  },
+  "CI-NO-API-002": {
+    "domain": "Network Operations",
+    "title": "Firewall Rule Analysis API",
+    "description": "Queries firewall management platforms to retrieve and analyze firewall rules, identifying overly permissive rules, unused rules, and compliance violations.",
+    "system_types": [
+      "security_tool"
+    ],
+    "collection_method": "api",
+    "data_formats": [
+      "json",
+      "csv"
+    ],
+    "typical_fields": [
+      "rule_id",
+      "source",
+      "destination",
+      "port",
+      "action",
+      "hit_count",
+      "last_hit",
+      "risk_score"
+    ],
+    "example_systems": [
+      "Tufin",
+      "AlgoSec",
+      "FireMon",
+      "Skybox"
+    ],
+    "automation_potential": "high",
+    "frequency_recommendation": "weekly",
+    "maturity_range": {
+      "min": "L2",
+      "max": "L5"
+    }
+  },
+  "CI-NO-LOG-001": {
+    "domain": "Network Operations",
+    "title": "Network Traffic Flow Logs",
+    "description": "Collects network flow data and traffic logs from network monitoring tools and cloud providers for security analysis and compliance evidence.",
+    "system_types": [
+      "siem",
+      "cloud_provider"
+    ],
+    "collection_method": "log_query",
+    "data_formats": [
+      "json",
+      "logs"
+    ],
+    "typical_fields": [
+      "timestamp",
+      "source_ip",
+      "dest_ip",
+      "source_port",
+      "dest_port",
+      "protocol",
+      "bytes",
+      "action"
+    ],
+    "example_systems": [
+      "AWS VPC Flow Logs",
+      "Azure NSG Flow Logs",
+      "NetFlow/IPFIX",
+      "Zeek"
+    ],
+    "automation_potential": "high",
+    "frequency_recommendation": "daily",
+    "maturity_range": {
+      "min": "L1",
+      "max": "L4"
+    }
+  },
+  "CI-NO-EXP-001": {
+    "domain": "Network Operations",
+    "title": "Network Diagram Export",
+    "description": "Exports network topology diagrams and architecture documentation showing network segmentation, security zones, and connectivity for audit and review.",
+    "system_types": [
+      "document_management",
+      "cmdb"
+    ],
+    "collection_method": "export",
+    "data_formats": [
+      "pdf",
+      "xml"
+    ],
+    "typical_fields": [
+      "diagram_name",
+      "version",
+      "zones",
+      "connections",
+      "security_controls",
+      "last_updated"
+    ],
+    "example_systems": [
+      "Visio Export",
+      "Lucidchart",
+      "draw.io",
+      "SolarWinds NTM"
+    ],
+    "automation_potential": "medium",
+    "frequency_recommendation": "quarterly",
+    "maturity_range": {
+      "min": "L0",
+      "max": "L3"
+    }
+  },
+  "CI-NO-MAN-001": {
+    "domain": "Network Operations",
+    "title": "Network Security Assessment",
+    "description": "Documents manual network security assessments including segmentation reviews, firewall audits, and network architecture evaluations performed by security teams.",
+    "system_types": [
+      "manual",
+      "security_testing"
+    ],
+    "collection_method": "manual",
+    "data_formats": [
+      "pdf",
+      "xlsx"
+    ],
+    "typical_fields": [
+      "assessment_date",
+      "assessor",
+      "scope",
+      "findings",
+      "risk_rating",
+      "recommendations"
+    ],
+    "example_systems": [
+      "Network Security Audit Report",
+      "Segmentation Review Document"
+    ],
+    "automation_potential": "low",
+    "frequency_recommendation": "annually",
+    "maturity_range": {
+      "min": "L0",
+      "max": "L2"
+    }
+  },
+  "CI-BM-API-001": {
+    "domain": "Backup Management",
+    "title": "Backup Status API",
+    "description": "Retrieves backup job status, completion rates, and success/failure metrics from enterprise backup systems for compliance monitoring and reporting.",
+    "system_types": [
+      "backup_system"
+    ],
+    "collection_method": "api",
+    "data_formats": [
+      "json"
+    ],
+    "typical_fields": [
+      "job_id",
+      "client",
+      "backup_type",
+      "start_time",
+      "end_time",
+      "status",
+      "data_size",
+      "duration"
+    ],
+    "example_systems": [
+      "Veeam REST API",
+      "Commvault API",
+      "Rubrik API",
+      "Cohesity API"
+    ],
+    "automation_potential": "high",
+    "frequency_recommendation": "daily",
+    "maturity_range": {
+      "min": "L2",
+      "max": "L5"
+    }
+  },
+  "CI-BM-API-002": {
+    "domain": "Backup Management",
+    "title": "Recovery Point Compliance API",
+    "description": "Queries backup systems to verify recovery point objectives (RPO) are being met across protected systems and identify any backup gaps or policy violations.",
+    "system_types": [
+      "backup_system"
+    ],
+    "collection_method": "api",
+    "data_formats": [
+      "json"
+    ],
+    "typical_fields": [
+      "system",
+      "last_backup",
+      "rpo_target",
+      "rpo_actual",
+      "compliance_status",
+      "gap_hours"
+    ],
+    "example_systems": [
+      "Veeam ONE API",
+      "Rubrik Polaris",
+      "Commvault Command Center"
+    ],
+    "automation_potential": "high",
+    "frequency_recommendation": "daily",
+    "maturity_range": {
+      "min": "L2",
+      "max": "L5"
+    }
+  },
+  "CI-BM-LOG-001": {
+    "domain": "Backup Management",
+    "title": "Backup Job Logs",
+    "description": "Collects detailed backup job execution logs including success, failures, warnings, and data transfer statistics for audit trail and troubleshooting.",
+    "system_types": [
+      "backup_system",
+      "logging"
+    ],
+    "collection_method": "log_query",
+    "data_formats": [
+      "logs",
+      "json"
+    ],
+    "typical_fields": [
+      "timestamp",
+      "job_name",
+      "status",
+      "message",
+      "bytes_transferred",
+      "files_processed",
+      "error_code"
+    ],
+    "example_systems": [
+      "Veeam Backup Logs",
+      "Commvault Job History",
+      "AWS Backup Logs"
+    ],
+    "automation_potential": "high",
+    "frequency_recommendation": "daily",
+    "maturity_range": {
+      "min": "L1",
+      "max": "L4"
+    }
+  },
+  "CI-BM-EXP-001": {
+    "domain": "Backup Management",
+    "title": "Backup Policy Documentation Export",
+    "description": "Exports backup policy configurations, retention schedules, and protection group definitions for audit evidence and compliance verification.",
+    "system_types": [
+      "backup_system",
+      "document_management"
+    ],
+    "collection_method": "export",
+    "data_formats": [
+      "pdf",
+      "csv",
+      "xlsx"
+    ],
+    "typical_fields": [
+      "policy_name",
+      "schedule",
+      "retention_days",
+      "protected_systems",
+      "target_storage",
+      "encryption"
+    ],
+    "example_systems": [
+      "Veeam Policy Export",
+      "Backup Policy Document",
+      "DR Runbook"
+    ],
+    "automation_potential": "medium",
+    "frequency_recommendation": "monthly",
+    "maturity_range": {
+      "min": "L0",
+      "max": "L3"
+    }
+  },
+  "CI-BM-MAN-001": {
+    "domain": "Backup Management",
+    "title": "Backup Recovery Test Documentation",
+    "description": "Documents results of backup recovery tests including successful restorations, RTO measurements, and any issues encountered during test exercises.",
+    "system_types": [
+      "manual"
+    ],
+    "collection_method": "manual",
+    "data_formats": [
+      "pdf",
+      "xlsx"
+    ],
+    "typical_fields": [
+      "test_date",
+      "system_tested",
+      "backup_date",
+      "restore_time",
+      "rto_target",
+      "rto_actual",
+      "success",
+      "notes"
+    ],
+    "example_systems": [
+      "Recovery Test Report",
+      "DR Test Results",
+      "Backup Validation Checklist"
+    ],
+    "automation_potential": "low",
+    "frequency_recommendation": "quarterly",
+    "maturity_range": {
+      "min": "L0",
+      "max": "L2"
+    }
+  },
+  "CI-CHM-API-001": {
+    "domain": "Change Management",
+    "title": "Change Request API",
+    "description": "Retrieves change requests, approvals, and implementation details from IT service management platforms for change audit trail and compliance evidence.",
+    "system_types": [
+      "ticketing"
+    ],
+    "collection_method": "api",
+    "data_formats": [
+      "json"
+    ],
+    "typical_fields": [
+      "change_id",
+      "title",
+      "requester",
+      "type",
+      "priority",
+      "status",
+      "approvers",
+      "implementation_date"
+    ],
+    "example_systems": [
+      "ServiceNow Change API",
+      "Jira Service Management",
+      "BMC Remedy",
+      "Freshservice"
+    ],
+    "automation_potential": "high",
+    "frequency_recommendation": "daily",
+    "maturity_range": {
+      "min": "L2",
+      "max": "L5"
+    }
+  },
+  "CI-CHM-API-002": {
+    "domain": "Change Management",
+    "title": "Deployment Pipeline API",
+    "description": "Queries CI/CD platforms to retrieve deployment history, pipeline executions, and release information linking code changes to production deployments.",
+    "system_types": [
+      "code_repository"
+    ],
+    "collection_method": "api",
+    "data_formats": [
+      "json"
+    ],
+    "typical_fields": [
+      "deployment_id",
+      "pipeline",
+      "environment",
+      "version",
+      "deployer",
+      "timestamp",
+      "status",
+      "commit_sha"
+    ],
+    "example_systems": [
+      "GitHub Actions API",
+      "GitLab CI API",
+      "Jenkins API",
+      "Azure DevOps API"
+    ],
+    "automation_potential": "high",
+    "frequency_recommendation": "daily",
+    "maturity_range": {
+      "min": "L2",
+      "max": "L5"
+    }
+  },
+  "CI-CHM-LOG-001": {
+    "domain": "Change Management",
+    "title": "Change Audit Trail Logs",
+    "description": "Collects audit logs of changes made to systems, applications, and infrastructure from various sources for compliance and forensic analysis.",
+    "system_types": [
+      "siem",
+      "logging"
+    ],
+    "collection_method": "log_query",
+    "data_formats": [
+      "json",
+      "logs"
+    ],
+    "typical_fields": [
+      "timestamp",
+      "change_type",
+      "target",
+      "user",
+      "old_value",
+      "new_value",
+      "ticket_reference"
+    ],
+    "example_systems": [
+      "CloudTrail",
+      "Azure Activity Log",
+      "Database Audit Logs",
+      "Application Audit Logs"
+    ],
+    "automation_potential": "high",
+    "frequency_recommendation": "daily",
+    "maturity_range": {
+      "min": "L1",
+      "max": "L4"
+    }
+  },
+  "CI-CHM-EXP-001": {
+    "domain": "Change Management",
+    "title": "Change Advisory Board Minutes Export",
+    "description": "Exports CAB meeting records, decisions, and change approvals for audit evidence demonstrating proper change governance and oversight.",
+    "system_types": [
+      "document_management",
+      "ticketing"
+    ],
+    "collection_method": "export",
+    "data_formats": [
+      "pdf",
+      "xlsx"
+    ],
+    "typical_fields": [
+      "meeting_date",
+      "attendees",
+      "changes_reviewed",
+      "decisions",
+      "approved_changes",
+      "rejected_changes"
+    ],
+    "example_systems": [
+      "CAB Meeting Minutes",
+      "Change Board Records",
+      "ServiceNow CAB Workbench Export"
+    ],
+    "automation_potential": "medium",
+    "frequency_recommendation": "weekly",
+    "maturity_range": {
+      "min": "L0",
+      "max": "L3"
+    }
+  },
+  "CI-CHM-MAN-001": {
+    "domain": "Change Management",
+    "title": "Emergency Change Documentation",
+    "description": "Documents emergency and expedited changes including justification, post-implementation review, and retrospective approvals for audit compliance.",
+    "system_types": [
+      "manual",
+      "ticketing"
+    ],
+    "collection_method": "manual",
+    "data_formats": [
+      "pdf",
+      "xlsx"
+    ],
+    "typical_fields": [
+      "change_id",
+      "emergency_reason",
+      "authorizer",
+      "implementation_details",
+      "post_review_date",
+      "lessons_learned"
+    ],
+    "example_systems": [
+      "Emergency Change Form",
+      "Post-Implementation Review Document"
+    ],
+    "automation_potential": "low",
+    "frequency_recommendation": "on_demand",
+    "maturity_range": {
+      "min": "L0",
+      "max": "L2"
+    }
+  },
+  "CI-IR-API-001": {
+    "domain": "Incident Response",
+    "title": "Security Incident Ticket API",
+    "description": "Retrieves security incident tickets, response activities, and resolution details from incident management platforms for compliance reporting and metrics.",
+    "system_types": [
+      "ticketing",
+      "security_tool"
+    ],
+    "collection_method": "api",
+    "data_formats": [
+      "json"
+    ],
+    "typical_fields": [
+      "incident_id",
+      "title",
+      "severity",
+      "status",
+      "reporter",
+      "assignee",
+      "detection_time",
+      "resolution_time"
+    ],
+    "example_systems": [
+      "ServiceNow Security Incident",
+      "Jira Security Plugin",
+      "TheHive",
+      "Splunk SOAR"
+    ],
+    "automation_potential": "high",
+    "frequency_recommendation": "daily",
+    "maturity_range": {
+      "min": "L2",
+      "max": "L5"
+    }
+  },
+  "CI-IR-API-002": {
+    "domain": "Incident Response",
+    "title": "SOAR Playbook Execution API",
+    "description": "Queries SOAR platforms to retrieve automated response playbook executions, actions taken, and containment measures for incident response evidence.",
+    "system_types": [
+      "security_tool"
+    ],
+    "collection_method": "api",
+    "data_formats": [
+      "json"
+    ],
+    "typical_fields": [
+      "playbook_id",
+      "incident_id",
+      "execution_time",
+      "actions_taken",
+      "status",
+      "artifacts_collected"
+    ],
+    "example_systems": [
+      "Splunk SOAR API",
+      "Palo Alto XSOAR",
+      "IBM Resilient",
+      "Swimlane"
+    ],
+    "automation_potential": "high",
+    "frequency_recommendation": "daily",
+    "maturity_range": {
+      "min": "L2",
+      "max": "L5"
+    }
+  },
+  "CI-IR-LOG-001": {
+    "domain": "Incident Response",
+    "title": "Incident Investigation Logs",
+    "description": "Collects detailed investigation logs and forensic data from security tools used during incident response for post-incident analysis and legal hold.",
+    "system_types": [
+      "siem",
+      "security_tool"
+    ],
+    "collection_method": "log_query",
+    "data_formats": [
+      "json",
+      "logs"
+    ],
+    "typical_fields": [
+      "timestamp",
+      "investigator",
+      "action",
+      "evidence_collected",
+      "findings",
+      "iocs_identified"
+    ],
+    "example_systems": [
+      "SIEM Investigation Logs",
+      "EDR Timeline",
+      "Forensic Tool Exports"
+    ],
+    "automation_potential": "high",
+    "frequency_recommendation": "on_demand",
+    "maturity_range": {
+      "min": "L1",
+      "max": "L4"
+    }
+  },
+  "CI-IR-EXP-001": {
+    "domain": "Incident Response",
+    "title": "Incident Report Export",
+    "description": "Exports formal incident reports including timeline, root cause analysis, impact assessment, and remediation actions for stakeholders and regulators.",
+    "system_types": [
+      "ticketing",
+      "document_management"
+    ],
+    "collection_method": "export",
+    "data_formats": [
+      "pdf",
+      "xlsx"
+    ],
+    "typical_fields": [
+      "incident_id",
+      "summary",
+      "timeline",
+      "impact",
+      "root_cause",
+      "remediation",
+      "lessons_learned"
+    ],
+    "example_systems": [
+      "Incident Report Template",
+      "Post-Incident Review",
+      "Breach Notification Document"
+    ],
+    "automation_potential": "medium",
+    "frequency_recommendation": "on_demand",
+    "maturity_range": {
+      "min": "L0",
+      "max": "L3"
+    }
+  },
+  "CI-IR-MAN-001": {
+    "domain": "Incident Response",
+    "title": "Tabletop Exercise Documentation",
+    "description": "Documents incident response tabletop exercises including scenarios tested, participant responses, and improvement recommendations.",
+    "system_types": [
+      "manual"
+    ],
+    "collection_method": "manual",
+    "data_formats": [
+      "pdf",
+      "xlsx"
+    ],
+    "typical_fields": [
+      "exercise_date",
+      "scenario",
+      "participants",
+      "observations",
+      "gaps_identified",
+      "action_items"
+    ],
+    "example_systems": [
+      "Tabletop Exercise Report",
+      "IR Drill Results",
+      "BCP Test Documentation"
+    ],
+    "automation_potential": "low",
+    "frequency_recommendation": "quarterly",
+    "maturity_range": {
+      "min": "L0",
+      "max": "L2"
+    }
+  },
+  "CI-IR-WBH-001": {
+    "domain": "Incident Response",
+    "title": "Real-time Incident Alert Webhook",
+    "description": "Receives real-time push notifications of security incidents from detection systems and ticketing platforms, enabling immediate incident response workflow initiation.",
+    "system_types": [
+      "security_tool",
+      "ticketing"
+    ],
+    "collection_method": "webhook",
+    "data_formats": [
+      "json"
+    ],
+    "typical_fields": [
+      "alert_id",
+      "severity",
+      "source",
+      "timestamp",
+      "description",
+      "affected_systems",
+      "iocs"
+    ],
+    "example_systems": [
+      "PagerDuty Webhooks",
+      "ServiceNow Webhooks",
+      "SIEM Alert Webhooks",
+      "Splunk Webhooks"
+    ],
+    "automation_potential": "high",
+    "frequency_recommendation": "real_time",
+    "maturity_range": {
+      "min": "L3",
+      "max": "L5"
+    }
+  },
+  "CI-CHM-WBH-001": {
+    "domain": "Change Management",
+    "title": "Real-time Change Event Webhook",
+    "description": "Receives real-time push notifications of change events from CI/CD pipelines and deployment systems, enabling immediate tracking of infrastructure and application changes.",
+    "system_types": [
+      "code_repository",
+      "ticketing"
+    ],
+    "collection_method": "webhook",
+    "data_formats": [
+      "json"
+    ],
+    "typical_fields": [
+      "event_type",
+      "repository",
+      "commit_sha",
+      "deployer",
+      "environment",
+      "timestamp",
+      "status"
+    ],
+    "example_systems": [
+      "GitHub Webhooks",
+      "GitLab Webhooks",
+      "Jenkins Webhooks",
+      "Azure DevOps Webhooks"
+    ],
+    "automation_potential": "high",
+    "frequency_recommendation": "real_time",
+    "maturity_range": {
+      "min": "L3",
+      "max": "L5"
+    }
+  },
+  "CI-BM-RPT-001": {
+    "domain": "Backup Management",
+    "title": "Scheduled Backup Status Report",
+    "description": "Automated scheduled reports from backup systems providing summary statistics on backup job success rates, data protected, and compliance with backup policies.",
+    "system_types": [
+      "backup_system"
+    ],
+    "collection_method": "scheduled_report",
+    "data_formats": [
+      "pdf",
+      "csv",
+      "xlsx"
+    ],
+    "typical_fields": [
+      "report_date",
+      "total_jobs",
+      "successful",
+      "failed",
+      "data_protected_gb",
+      "compliance_rate"
+    ],
+    "example_systems": [
+      "Veeam Reporter",
+      "Commvault Reports",
+      "Rubrik Reports",
+      "AWS Backup Reports"
+    ],
+    "automation_potential": "high",
+    "frequency_recommendation": "daily",
+    "maturity_range": {
+      "min": "L2",
+      "max": "L4"
+    }
+  },
+  "CI-CFM-AGT-001": {
+    "domain": "Configuration Management",
+    "title": "Configuration Agent Collection",
+    "description": "Collects system configuration data through agents deployed on endpoints, providing detailed configuration state for compliance monitoring and drift detection.",
+    "system_types": [
+      "security_tool",
+      "monitoring"
+    ],
+    "collection_method": "agent",
+    "data_formats": [
+      "json"
+    ],
+    "typical_fields": [
+      "hostname",
+      "os_version",
+      "installed_software",
+      "services",
+      "registry_settings",
+      "security_config"
+    ],
+    "example_systems": [
+      "Tanium",
+      "BigFix",
+      "SCCM Agent",
+      "osquery",
+      "Chef Client"
+    ],
+    "automation_potential": "high",
+    "frequency_recommendation": "daily",
+    "maturity_range": {
+      "min": "L3",
+      "max": "L5"
+    }
+  },
+  "CI-SM-RPT-001": {
+    "domain": "Systems Monitoring",
+    "title": "Scheduled Monitoring Report",
+    "description": "Automated scheduled reports from monitoring platforms providing system health summaries, availability metrics, and alert statistics for management and compliance.",
+    "system_types": [
+      "monitoring"
+    ],
+    "collection_method": "scheduled_report",
+    "data_formats": [
+      "pdf",
+      "csv",
+      "xlsx"
+    ],
+    "typical_fields": [
+      "report_period",
+      "systems_monitored",
+      "availability_pct",
+      "alerts_triggered",
+      "mttr",
+      "top_issues"
+    ],
+    "example_systems": [
+      "Datadog Scheduled Reports",
+      "New Relic Reports",
+      "Zabbix Reports",
+      "SolarWinds Reports"
+    ],
+    "automation_potential": "high",
+    "frequency_recommendation": "weekly",
+    "maturity_range": {
+      "min": "L2",
+      "max": "L4"
+    }
+  },
+  "CI-SM-AGT-001": {
+    "domain": "Systems Monitoring",
+    "title": "Monitoring Agent Collection",
+    "description": "Collects system metrics and health data through agents deployed on endpoints, providing detailed performance and availability data for monitoring dashboards.",
+    "system_types": [
+      "monitoring"
+    ],
+    "collection_method": "agent",
+    "data_formats": [
+      "json"
+    ],
+    "typical_fields": [
+      "hostname",
+      "cpu_usage",
+      "memory_usage",
+      "disk_io",
+      "network_io",
+      "process_list",
+      "uptime"
+    ],
+    "example_systems": [
+      "Datadog Agent",
+      "New Relic Agent",
+      "Zabbix Agent",
+      "Prometheus Node Exporter"
+    ],
+    "automation_potential": "high",
+    "frequency_recommendation": "real_time",
+    "maturity_range": {
+      "min": "L3",
+      "max": "L5"
+    }
+  }
+}

@@ -1,0 +1,25 @@
+# Catalogue importer — one-shot container for the "bring your own SCF Excel" install flow.
+#
+# Extracts a user-supplied SCF controls catalogue (.xlsx) into the JSON schema the backend
+# catalog_seeder.py consumes on startup. This image ships the importer CODE ONLY — it never
+# contains SCF's licensed catalogue content (CC BY-ND 4.0). Operators supply their own SCF
+# Excel workbook at run time. See README → "Bring your own SCF Excel catalogue".
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Importer-only deps (pandas + openpyxl), pinned. Separate layer for build-cache reuse.
+COPY scripts/requirements-importer.txt /app/requirements-importer.txt
+RUN pip install --no-cache-dir -r /app/requirements-importer.txt
+
+# Extraction scripts.
+COPY scripts/ /app/scripts/
+
+# Input:  user's SCF .xlsx, mounted read-only at /input/scf.xlsx
+# Output: generated seeder JSON written to /app/data/json (bind-mounted to webclient/public/data)
+ENV SCF_XLSX=/input/scf.xlsx \
+    CATALOG_OUTPUT_DIR=/app/data/json
+
+# Version auto-detection + dynamic sheet resolution live in extract_scf_data.py; this image is
+# version-agnostic (works for SCF 2025.4, 2026.x, and future releases with no rebuild).
+ENTRYPOINT ["sh", "-c", "python /app/scripts/extract_scf_data.py \"$SCF_XLSX\" --output-dir \"$CATALOG_OUTPUT_DIR\""]

@@ -1,0 +1,53 @@
+# Python virtual environments
+.venv/
+backend/.venv/
+
+# Vite cache
+.vite/
+
+webclient/node_modules/*
+webclient/.vite/deps_temp_305ae4c8/package.json
+webclient/dist/*
+webclient/.DS_Store
+webclient/public/data/scoped_controls.json
+
+_archive/*
+
+*/__pycache__/*
+*/*/__pycache__/*
+.env
+*.DS_Store
+backend/api/__init__.py
+backend/api/__pycache__/*
+# Claude Code configuration (local)
+.claude/
+
+# CLI tool build artifacts
+cli/node_modules/
+
+# Documentation site build artifacts
+docs-site/node_modules/
+docs-site/dist/
+docs-site/.astro/
+
+# ─── SCF licensed catalogue content — NEVER commit ───────────────────────────
+# SCF control content is licensed (CC BY-ND 4.0 + a separate commercial licence) and
+# MUST NOT be redistributed in this open-source repo. These files are GENERATED at install
+# time from the operator's own SCF Excel workbook by the catalogue importer
+# (scripts/extract_scf_data.py → docker compose --profile init run --rm catalog-importer).
+# Bring your own SCF catalogue; do not check these in.
+webclient/public/data/control_guidance.json
+webclient/public/data/controls_mapping.json
+webclient/public/data/controls_v3.json
+webclient/public/data/erl.json
+webclient/public/data/frameworks.json
+webclient/public/data/assessment_objectives.json
+webclient/public/data/domains.json
+webclient/public/data/catalog_meta.json
+# Operator-supplied SCF source workbook (input to the importer)
+catalog-source/*.xlsx
+# NOTE: curated, NON-SCF catalogue files are intentionally tracked and DO ship:
+#   capability_themes.json, collection_interfaces.json, evidence_templates.json,
+#   system_collection_recipes.json, README.md
+backend/alembic/versions/__pycache__/*
+.gitnexus

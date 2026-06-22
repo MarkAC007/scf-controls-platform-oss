@@ -1,0 +1,1750 @@
+{
+  "$schema": "system_collection_recipes",
+  "version": "1.0",
+  "systems": {
+    "okta": {
+      "vendor": "Okta",
+      "system_type": "identity_provider",
+      "products": {
+        "okta_sso": {
+          "name": "Okta SSO",
+          "recipes": {
+            "L1": {
+              "title": "Okta Manual Evidence Collection",
+              "estimated_time": "10 minutes",
+              "frequency": "weekly",
+              "steps": [
+                {
+                  "step": 1,
+                  "action": "Navigate to Okta Admin Console > Reports > System Log",
+                  "permissions_required": "Read-Only Admin",
+                  "security_note": "Use a Read-Only Admin role for evidence collection, not Super Admin",
+                  "audit_note": "System Log entries are immutable and timestamped by Okta",
+                  "vendor_docs_url": "https://help.okta.com/en-us/content/topics/reports/reports-syslog.htm"
+                },
+                {
+                  "step": 2,
+                  "action": "Set the date range filter to cover the collection period (e.g., last 7 days)",
+                  "audit_note": "Ensure no gaps between collection periods"
+                },
+                {
+                  "step": 3,
+                  "action": "Filter by event type: user.authentication.auth_via_mfa for MFA evidence, or user.session.start for login evidence",
+                  "permissions_required": "Read-Only Admin"
+                },
+                {
+                  "step": 4,
+                  "action": "Click Download CSV to export the filtered log data",
+                  "audit_note": "CSV export includes all visible columns; save with date-stamped filename"
+                },
+                {
+                  "step": 5,
+                  "action": "Upload the exported CSV to the evidence repository with evidence ID reference",
+                  "security_note": "Verify the export does not contain API tokens or secrets before uploading"
+                }
+              ]
+            },
+            "L2": {
+              "title": "Okta Scheduled Reports Collection",
+              "estimated_time": "5 minutes (setup), then automated",
+              "frequency": "automated weekly",
+              "steps": [
+                {
+                  "step": 1,
+                  "action": "Navigate to Okta Admin Console > Reports > Reports",
+                  "permissions_required": "Super Admin or Application Admin",
+                  "vendor_docs_url": "https://help.okta.com/en-us/content/topics/reports/reports-scheduled.htm"
+                },
+                {
+                  "step": 2,
+                  "action": "Select the report type (e.g., 'Suspicious Activity', 'Password Health') and configure the schedule",
+                  "audit_note": "Scheduled reports run automatically and are emailed to configured recipients"
+                },
+                {
+                  "step": 3,
+                  "action": "Set the delivery schedule to match your evidence collection frequency (e.g., weekly on Monday)",
+                  "security_note": "Ensure report recipients are limited to authorised personnel only"
+                },
+                {
+                  "step": 4,
+                  "action": "Configure email delivery or Okta Workflows integration for automated storage",
+                  "audit_note": "Reports include generation timestamp and are versioned by Okta"
+                }
+              ]
+            },
+            "L3": {
+              "title": "Okta API-Driven Automated Collection",
+              "estimated_time": "2 hours initial setup",
+              "frequency": "automated daily",
+              "steps": [
+                {
+                  "step": 1,
+                  "action": "Create a dedicated API token in Okta Admin Console > Security > API > Tokens with read-only scopes",
+                  "permissions_required": "Super Admin or API Admin",
+                  "security_note": "Use a service account, not personal admin credentials. Rotate token every 90 days.",
+                  "audit_note": "Token creation logged in System Log"
+                },
+                {
+                  "step": 2,
+                  "action": "Configure automated script or integration to call GET /api/v1/logs with date filters for authentication events",
+                  "permissions_required": "API Token with okta.logs.read scope",
+                  "vendor_docs_url": "https://developer.okta.com/docs/reference/api/system-log/"
+                },
+                {
+                  "step": 3,
+                  "action": "Schedule collection via cron job or CI/CD pipeline to run daily, exporting results to evidence repository",
+                  "security_note": "Store API token in secrets manager, never in plaintext config files"
+                },
+                {
+                  "step": 4,
+                  "action": "Implement error handling and alerting for failed collection runs",
+                  "audit_note": "Failed collections should be logged and trigger re-collection within SLA"
+                },
+                {
+                  "step": 5,
+                  "action": "Validate collected data against expected event volume \u2014 flag anomalies if daily count drops below baseline",
+                  "audit_note": "Volume validation provides assurance of collection completeness"
+                }
+              ]
+            },
+            "L4": {
+              "title": "Okta Managed Evidence Pipeline with Metrics",
+              "estimated_time": "4 hours initial setup",
+              "frequency": "continuous with daily reporting",
+              "steps": [
+                {
+                  "step": 1,
+                  "action": "Deploy Okta Event Hook or Log Streaming to push events in real-time to your SIEM or evidence platform",
+                  "permissions_required": "Super Admin",
+                  "vendor_docs_url": "https://developer.okta.com/docs/concepts/event-hooks/",
+                  "security_note": "Use TLS 1.2+ for webhook endpoints. Verify webhook signatures."
+                },
+                {
+                  "step": 2,
+                  "action": "Configure collection completeness metrics: track event volume, latency, and coverage across all Okta org units",
+                  "audit_note": "Completeness metrics are key evidence of a managed collection process"
+                },
+                {
+                  "step": 3,
+                  "action": "Set up automated quality checks \u2014 validate schema consistency, check for gaps in time series, flag duplicate events"
+                },
+                {
+                  "step": 4,
+                  "action": "Create dashboard showing collection health: events/day, p95 latency, coverage %, failed collections",
+                  "audit_note": "Dashboard serves as continuous evidence of process health"
+                },
+                {
+                  "step": 5,
+                  "action": "Implement automated quarterly review that generates a collection health report and flags any SLA breaches"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "aws": {
+      "vendor": "Amazon Web Services",
+      "system_type": "cloud_provider",
+      "products": {
+        "aws_cloudtrail": {
+          "name": "AWS CloudTrail",
+          "recipes": {
+            "L1": {
+              "title": "AWS CloudTrail Manual Evidence Collection",
+              "estimated_time": "15 minutes",
+              "frequency": "weekly",
+              "steps": [
+                {
+                  "step": 1,
+                  "action": "Sign in to the AWS Management Console and navigate to CloudTrail > Event history",
+                  "permissions_required": "AWSCloudTrailReadOnlyAccess",
+                  "security_note": "Use an IAM role with read-only permissions, never root credentials",
+                  "vendor_docs_url": "https://docs.aws.amazon.com/awscloudtrail/latest/userguide/view-cloudtrail-events.html"
+                },
+                {
+                  "step": 2,
+                  "action": "Set the date range to the evidence collection period and filter by event source (e.g., iam.amazonaws.com for IAM events)",
+                  "audit_note": "CloudTrail retains 90 days of management events by default"
+                },
+                {
+                  "step": 3,
+                  "action": "Click Download events > Download as CSV to export the filtered events",
+                  "permissions_required": "AWSCloudTrailReadOnlyAccess"
+                },
+                {
+                  "step": 4,
+                  "action": "For S3 data events or extended history, navigate to CloudTrail > Trails and download from the configured S3 bucket",
+                  "security_note": "Ensure the S3 bucket has versioning and MFA Delete enabled for integrity",
+                  "audit_note": "CloudTrail logs in S3 are signed with digest files for tamper detection"
+                },
+                {
+                  "step": 5,
+                  "action": "Save the export with a descriptive filename including the date range and upload to the evidence repository",
+                  "audit_note": "Reference the Trail ARN in your evidence notes for traceability"
+                }
+              ]
+            },
+            "L2": {
+              "title": "AWS CloudTrail Automated Evidence Pipeline",
+              "estimated_time": "20 minutes (setup), then automated",
+              "frequency": "automated continuous",
+              "steps": [
+                {
+                  "step": 1,
+                  "action": "Create an organisation-level CloudTrail trail that logs all management events across all regions",
+                  "permissions_required": "AWSCloudTrailFullAccess and S3 permissions",
+                  "vendor_docs_url": "https://docs.aws.amazon.com/awscloudtrail/latest/userguide/creating-trail-organization.html"
+                },
+                {
+                  "step": 2,
+                  "action": "Enable CloudTrail log file integrity validation to detect tampering",
+                  "audit_note": "Digest files are generated hourly and stored in the same S3 bucket",
+                  "security_note": "Enable MFA Delete on the S3 bucket for additional protection"
+                },
+                {
+                  "step": 3,
+                  "action": "Configure CloudTrail to send events to CloudWatch Logs for real-time monitoring",
+                  "audit_note": "CloudWatch Logs provide searchable, indexed access to trail events"
+                },
+                {
+                  "step": 4,
+                  "action": "Set up CloudWatch metric filters and alarms for key events (e.g., root login, IAM policy changes)",
+                  "vendor_docs_url": "https://docs.aws.amazon.com/awscloudtrail/latest/userguide/cloudwatch-alarms-for-cloudtrail.html"
+                }
+              ]
+            },
+            "L3": {
+              "title": "AWS CloudTrail Automated Evidence Pipeline",
+              "estimated_time": "3 hours initial setup",
+              "frequency": "automated daily",
+              "steps": [
+                {
+                  "step": 1,
+                  "action": "Enable CloudTrail Organization Trail across all AWS accounts with S3 delivery and CloudWatch Logs integration",
+                  "permissions_required": "AWS Organizations management account admin",
+                  "security_note": "Enable log file validation and encrypt trail with KMS CMK",
+                  "vendor_docs_url": "https://docs.aws.amazon.com/awscloudtrail/latest/userguide/creating-trail-organization.html"
+                },
+                {
+                  "step": 2,
+                  "action": "Create AWS Lambda function triggered by S3 PutObject events to extract and transform trail logs into evidence format"
+                },
+                {
+                  "step": 3,
+                  "action": "Configure AWS Config Rules to continuously evaluate compliance state \u2014 rules serve as automated evidence",
+                  "vendor_docs_url": "https://docs.aws.amazon.com/config/latest/developerguide/evaluate-config_develop-rules.html"
+                },
+                {
+                  "step": 4,
+                  "action": "Schedule daily AWS Config compliance snapshots delivered to S3 evidence bucket",
+                  "audit_note": "Config snapshots provide point-in-time compliance evidence"
+                },
+                {
+                  "step": 5,
+                  "action": "Set up CloudWatch Alarms for trail delivery failures and Config rule non-compliance events"
+                }
+              ]
+            },
+            "L4": {
+              "title": "AWS Managed Evidence with Compliance Analytics",
+              "estimated_time": "6 hours initial setup",
+              "frequency": "continuous with weekly reporting",
+              "steps": [
+                {
+                  "step": 1,
+                  "action": "Deploy AWS Security Hub to aggregate findings from Config, CloudTrail, GuardDuty, and Inspector into unified compliance view",
+                  "permissions_required": "Security Hub Administrator",
+                  "vendor_docs_url": "https://docs.aws.amazon.com/securityhub/latest/userguide/securityhub-settingup.html"
+                },
+                {
+                  "step": 2,
+                  "action": "Configure Security Hub compliance standards (CIS, PCI DSS, AWS Foundational) as continuous evidence of control effectiveness",
+                  "audit_note": "Security Hub scores provide quantitative compliance evidence"
+                },
+                {
+                  "step": 3,
+                  "action": "Create Amazon Athena queries against CloudTrail S3 logs for trend analysis and anomaly detection"
+                },
+                {
+                  "step": 4,
+                  "action": "Build QuickSight dashboard tracking compliance score trends, evidence collection coverage, and remediation velocity"
+                },
+                {
+                  "step": 5,
+                  "action": "Implement automated monthly evidence package generation \u2014 zip of Config snapshots, Security Hub reports, and trail summaries"
+                }
+              ]
+            }
+          }
+        },
+        "aws_config": {
+          "name": "AWS Config",
+          "recipes": {
+            "L1": {
+              "title": "AWS Config Manual Evidence Collection",
+              "estimated_time": "10 minutes",
+              "frequency": "weekly",
+              "steps": [
+                {
+                  "step": 1,
+                  "action": "Navigate to AWS Config > Rules in the AWS Console",
+                  "permissions_required": "AWSConfigReadOnlyAccess",
+                  "vendor_docs_url": "https://docs.aws.amazon.com/config/latest/developerguide/evaluate-config_view-compliance.html"
+                },
+                {
+                  "step": 2,
+                  "action": "Review the Compliance dashboard for current compliance status across all rules",
+                  "audit_note": "Config evaluations are timestamped and retained per retention settings"
+                },
+                {
+                  "step": 3,
+                  "action": "Select individual rules to view non-compliant resources and export the results",
+                  "permissions_required": "AWSConfigReadOnlyAccess"
+                },
+                {
+                  "step": 4,
+                  "action": "Take screenshots or export the compliance summary and upload as evidence",
+                  "audit_note": "Include the Config rule names and evaluation timestamps"
+                }
+              ]
+            },
+            "L2": {
+              "title": "AWS Config Rules Automated Compliance",
+              "estimated_time": "30 minutes (setup), then automated",
+              "frequency": "automated continuous",
+              "steps": [
+                {
+                  "step": 1,
+                  "action": "Navigate to AWS Config > Rules and enable managed rules for your compliance requirements (e.g., s3-bucket-public-read-prohibited, iam-password-policy)",
+                  "permissions_required": "AWSConfigFullAccess",
+                  "vendor_docs_url": "https://docs.aws.amazon.com/config/latest/developerguide/managed-rules-by-aws-config.html"
+                },
+                {
+                  "step": 2,
+                  "action": "Configure an AWS Config Aggregator if you have multiple accounts/regions to consolidate compliance data",
+                  "audit_note": "Aggregators provide a single pane of compliance across all accounts"
+                },
+                {
+                  "step": 3,
+                  "action": "Set up an SNS topic for Config rule compliance change notifications",
+                  "security_note": "Restrict SNS topic access to authorised subscribers only"
+                },
+                {
+                  "step": 4,
+                  "action": "Create a Config Conformance Pack for your compliance framework to automate multi-rule evaluation",
+                  "audit_note": "Conformance Packs provide framework-level compliance scoring"
+                },
+                {
+                  "step": 5,
+                  "action": "Enable Config delivery channel to S3 for automated evidence archival with lifecycle policies",
+                  "vendor_docs_url": "https://docs.aws.amazon.com/config/latest/developerguide/manage-delivery-channel.html"
+                }
+              ]
+            },
+            "L3": {
+              "title": "AWS Config Automated Rule-Based Evidence",
+              "estimated_time": "2 hours initial setup",
+              "frequency": "continuous evaluation",
+              "steps": [
+                {
+                  "step": 1,
+                  "action": "Deploy AWS Config Conformance Packs aligned to your compliance framework (CIS, NIST, SOC 2)",
+                  "permissions_required": "Config Administrator",
+                  "vendor_docs_url": "https://docs.aws.amazon.com/config/latest/developerguide/conformance-packs.html"
+                },
+                {
+                  "step": 2,
+                  "action": "Enable Config Aggregator for multi-account, multi-region visibility",
+                  "security_note": "Ensure aggregator has cross-account IAM roles with least privilege"
+                },
+                {
+                  "step": 3,
+                  "action": "Configure automated remediation via SSM Automation documents for critical non-compliant resources"
+                },
+                {
+                  "step": 4,
+                  "action": "Schedule weekly Config compliance snapshots as evidence artifacts",
+                  "audit_note": "Snapshots provide immutable point-in-time compliance records"
+                }
+              ]
+            },
+            "L4": {
+              "title": "AWS Config Managed Compliance with Drift Detection",
+              "estimated_time": "4 hours initial setup",
+              "frequency": "continuous with drift alerts",
+              "steps": [
+                {
+                  "step": 1,
+                  "action": "Implement Config rule coverage metrics \u2014 track percentage of resources under evaluation vs total resources"
+                },
+                {
+                  "step": 2,
+                  "action": "Create drift detection pipeline: compare current Config state against approved baseline configurations"
+                },
+                {
+                  "step": 3,
+                  "action": "Build compliance trend dashboard showing compliant/non-compliant resource counts over time",
+                  "audit_note": "Trend data demonstrates sustained compliance, not just point-in-time"
+                },
+                {
+                  "step": 4,
+                  "action": "Automate evidence report generation with compliance percentages, remediation times, and drift incidents"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "azure_ad": {
+      "vendor": "Microsoft",
+      "system_type": "identity_provider",
+      "products": {
+        "entra_id": {
+          "name": "Microsoft Entra ID (Azure AD)",
+          "recipes": {
+            "L1": {
+              "title": "Entra ID Manual Evidence Collection",
+              "estimated_time": "10 minutes",
+              "frequency": "weekly",
+              "steps": [
+                {
+                  "step": 1,
+                  "action": "Sign in to the Microsoft Entra admin center (entra.microsoft.com) > Identity > Monitoring > Sign-in logs",
+                  "permissions_required": "Reports Reader or Security Reader",
+                  "security_note": "Use a least-privilege role; Global Reader works but is broader than needed",
+                  "vendor_docs_url": "https://learn.microsoft.com/en-us/entra/identity/monitoring-health/concept-sign-ins"
+                },
+                {
+                  "step": 2,
+                  "action": "Set the date range filter to the evidence collection period",
+                  "audit_note": "Entra ID retains sign-in logs for 30 days (free) or 30 days+ (P1/P2 license)"
+                },
+                {
+                  "step": 3,
+                  "action": "Apply filters: Status = Success/Failure, Conditional Access = desired policy, or MFA requirement as needed",
+                  "permissions_required": "Reports Reader"
+                },
+                {
+                  "step": 4,
+                  "action": "Click Download > CSV to export the filtered sign-in data",
+                  "audit_note": "CSV includes correlation ID for cross-referencing with other logs"
+                },
+                {
+                  "step": 5,
+                  "action": "For audit logs, navigate to Identity > Monitoring > Audit logs and repeat the export process",
+                  "vendor_docs_url": "https://learn.microsoft.com/en-us/entra/identity/monitoring-health/concept-audit-logs"
+                },
+                {
+                  "step": 6,
+                  "action": "Upload both exports to the evidence repository with the evidence ID reference",
+                  "security_note": "Review exports for any PII that should be redacted before sharing"
+                }
+              ]
+            },
+            "L2": {
+              "title": "Entra ID Diagnostic Settings Automated Collection",
+              "estimated_time": "20 minutes (setup), then automated",
+              "frequency": "automated continuous",
+              "steps": [
+                {
+                  "step": 1,
+                  "action": "Navigate to Entra admin center > Identity > Monitoring > Diagnostic settings > Add diagnostic setting",
+                  "permissions_required": "Security Administrator or Global Administrator",
+                  "vendor_docs_url": "https://learn.microsoft.com/en-us/entra/identity/monitoring-health/howto-configure-diagnostic-settings"
+                },
+                {
+                  "step": 2,
+                  "action": "Select the log categories to stream: SignInLogs, AuditLogs, NonInteractiveUserSignInLogs, ManagedIdentitySignInLogs",
+                  "audit_note": "Streaming to Log Analytics extends retention beyond the default 30 days"
+                },
+                {
+                  "step": 3,
+                  "action": "Configure destination: Send to Log Analytics workspace for querying, or Archive to storage account for long-term retention",
+                  "security_note": "Ensure the storage account has encryption at rest and restricted access"
+                },
+                {
+                  "step": 4,
+                  "action": "Create saved KQL queries in Log Analytics for your evidence types (e.g., MFA usage, conditional access outcomes)",
+                  "vendor_docs_url": "https://learn.microsoft.com/en-us/entra/identity/monitoring-health/howto-analyze-sign-ins-log-analytics"
+                },
+                {
+                  "step": 5,
+                  "action": "Set up scheduled query alerts in Azure Monitor for compliance-critical events",
+                  "audit_note": "Scheduled queries can export results to storage for automated evidence archival"
+                }
+              ]
+            },
+            "L3": {
+              "title": "Entra ID Automated Log Streaming",
+              "estimated_time": "2 hours initial setup",
+              "frequency": "automated continuous",
+              "steps": [
+                {
+                  "step": 1,
+                  "action": "Configure Entra ID Diagnostic Settings to stream Sign-in Logs and Audit Logs to Log Analytics Workspace",
+                  "permissions_required": "Global Administrator or Security Administrator",
+                  "vendor_docs_url": "https://learn.microsoft.com/en-us/entra/identity/monitoring-health/howto-integrate-activity-logs-with-azure-monitor-logs"
+                },
+                {
+                  "step": 2,
+                  "action": "Create KQL queries in Log Analytics to extract evidence-specific data \u2014 MFA usage, conditional access hits, risky sign-ins"
+                },
+                {
+                  "step": 3,
+                  "action": "Schedule Logic App or Azure Function to run daily KQL queries and export results to evidence repository"
+                },
+                {
+                  "step": 4,
+                  "action": "Configure Azure Monitor alerts for collection failures and anomalous event volumes",
+                  "audit_note": "Alerting on collection failures demonstrates process maturity"
+                },
+                {
+                  "step": 5,
+                  "action": "Set up automated weekly identity governance reports \u2014 access reviews, privilege changes, guest account activity"
+                }
+              ]
+            },
+            "L4": {
+              "title": "Entra ID Managed Identity Governance Pipeline",
+              "estimated_time": "4 hours initial setup",
+              "frequency": "continuous with monthly reporting",
+              "steps": [
+                {
+                  "step": 1,
+                  "action": "Deploy Microsoft Entra ID Governance with automated access reviews on a recurring schedule",
+                  "permissions_required": "Identity Governance Administrator",
+                  "vendor_docs_url": "https://learn.microsoft.com/en-us/entra/id-governance/access-reviews-overview"
+                },
+                {
+                  "step": 2,
+                  "action": "Configure Privileged Identity Management (PIM) with just-in-time activation metrics tracking",
+                  "audit_note": "PIM activation logs serve as evidence of least-privilege enforcement"
+                },
+                {
+                  "step": 3,
+                  "action": "Build identity evidence dashboard: access review completion rates, PIM activation frequency, conditional access coverage"
+                },
+                {
+                  "step": 4,
+                  "action": "Implement automated quarterly identity attestation report generation with trend analysis"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "github": {
+      "vendor": "GitHub",
+      "system_type": "code_repository",
+      "products": {
+        "github_enterprise": {
+          "name": "GitHub Enterprise / Organization",
+          "recipes": {
+            "L1": {
+              "title": "GitHub Manual Evidence Collection",
+              "estimated_time": "10 minutes",
+              "frequency": "weekly",
+              "steps": [
+                {
+                  "step": 1,
+                  "action": "Navigate to your GitHub Organization > Settings > Audit log",
+                  "permissions_required": "Organization Owner",
+                  "security_note": "Audit log access requires Owner role; consider creating a dedicated audit account",
+                  "vendor_docs_url": "https://docs.github.com/en/organizations/keeping-your-organization-secure/managing-security-settings-for-your-organization/reviewing-the-audit-log-for-your-organization"
+                },
+                {
+                  "step": 2,
+                  "action": "Use the search bar to filter events (e.g., action:repo.create for new repos, action:org.update_member for membership changes)",
+                  "audit_note": "GitHub audit log retains events for 180 days (Enterprise Cloud) or 90 days (free)"
+                },
+                {
+                  "step": 3,
+                  "action": "Click Export > JSON or CSV to download the filtered audit log entries",
+                  "permissions_required": "Organization Owner"
+                },
+                {
+                  "step": 4,
+                  "action": "For branch protection evidence, navigate to repo > Settings > Branches and screenshot the protection rules",
+                  "audit_note": "Branch protection changes appear in the audit log with before/after values"
+                },
+                {
+                  "step": 5,
+                  "action": "Upload the exports and screenshots to the evidence repository with the evidence ID reference",
+                  "security_note": "Ensure no personal access tokens or webhook secrets are visible in screenshots"
+                }
+              ]
+            },
+            "L2": {
+              "title": "GitHub Audit Log Streaming & API Automation",
+              "estimated_time": "15 minutes (setup), then automated",
+              "frequency": "automated continuous",
+              "steps": [
+                {
+                  "step": 1,
+                  "action": "Navigate to Organization Settings > Audit log > Audit log streaming and configure a stream destination (S3, Azure Blob, Datadog, or Splunk)",
+                  "permissions_required": "Organization Owner",
+                  "vendor_docs_url": "https://docs.github.com/en/enterprise-cloud@latest/admin/monitoring-activity-in-your-enterprise/reviewing-audit-logs-for-your-enterprise/streaming-the-audit-log-for-your-enterprise",
+                  "security_note": "Audit log streaming requires Enterprise Cloud plan"
+                },
+                {
+                  "step": 2,
+                  "action": "Use the GitHub REST API to programmatically query branch protection rules: GET /repos/{owner}/{repo}/branches/{branch}/protection",
+                  "permissions_required": "admin:repo_hook or repo scope PAT",
+                  "vendor_docs_url": "https://docs.github.com/en/rest/branches/branch-protection"
+                },
+                {
+                  "step": 3,
+                  "action": "Create a scheduled GitHub Action workflow that exports audit log data using the Audit Log API and stores it as a workflow artifact",
+                  "audit_note": "GitHub Actions workflows are themselves audited in the audit log"
+                },
+                {
+                  "step": 4,
+                  "action": "Configure Dependabot alerts and security advisories to auto-create issues for vulnerability tracking",
+                  "vendor_docs_url": "https://docs.github.com/en/code-security/dependabot/dependabot-alerts/about-dependabot-alerts"
+                }
+              ]
+            },
+            "L3": {
+              "title": "GitHub Automated Audit Log Collection",
+              "estimated_time": "2 hours initial setup",
+              "frequency": "automated daily",
+              "steps": [
+                {
+                  "step": 1,
+                  "action": "Enable GitHub Audit Log Streaming to your SIEM or S3 bucket via enterprise settings",
+                  "permissions_required": "Enterprise Owner",
+                  "vendor_docs_url": "https://docs.github.com/en/enterprise-cloud@latest/admin/monitoring-activity-in-your-enterprise/reviewing-audit-logs-for-your-enterprise/streaming-the-audit-log-for-your-enterprise",
+                  "security_note": "Use dedicated service credentials for the streaming endpoint"
+                },
+                {
+                  "step": 2,
+                  "action": "Create GitHub Actions workflow that calls the Audit Log API daily to export organisation-level events",
+                  "permissions_required": "Organization admin PAT with admin:org scope"
+                },
+                {
+                  "step": 3,
+                  "action": "Automate branch protection compliance checks \u2014 script that verifies all repos meet required protection rules via API"
+                },
+                {
+                  "step": 4,
+                  "action": "Configure Dependabot and code scanning alerts as automated security evidence",
+                  "audit_note": "Automated scanning results serve as evidence of secure development practices"
+                },
+                {
+                  "step": 5,
+                  "action": "Set up alerting for audit log streaming failures and policy violations"
+                }
+              ]
+            },
+            "L4": {
+              "title": "GitHub Managed DevSecOps Evidence Pipeline",
+              "estimated_time": "6 hours initial setup",
+              "frequency": "continuous with weekly reporting",
+              "steps": [
+                {
+                  "step": 1,
+                  "action": "Deploy GitHub Advanced Security metrics tracking \u2014 code scanning alerts, secret scanning, dependency review across all repos"
+                },
+                {
+                  "step": 2,
+                  "action": "Create evidence dashboard: MTTR for security alerts, code review coverage %, branch protection compliance rate"
+                },
+                {
+                  "step": 3,
+                  "action": "Implement automated compliance gating in CI/CD \u2014 PRs cannot merge without passing security checks, serving as continuous evidence"
+                },
+                {
+                  "step": 4,
+                  "action": "Build monthly DevSecOps evidence package: scanning trends, remediation velocity, policy compliance rates",
+                  "audit_note": "Trend data demonstrates sustained security practice maturity"
+                },
+                {
+                  "step": 5,
+                  "action": "Configure automated quarterly review of GitHub organisation settings, SSO enforcement, and IP allow lists"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "jira": {
+      "vendor": "Atlassian",
+      "system_type": "ticketing",
+      "products": {
+        "jira_cloud": {
+          "name": "Jira Cloud / Data Center",
+          "recipes": {
+            "L1": {
+              "title": "Jira Change Management Evidence Collection",
+              "estimated_time": "10 minutes",
+              "frequency": "weekly",
+              "steps": [
+                {
+                  "step": 1,
+                  "action": "Navigate to Jira and open the relevant project board (e.g., Change Management, IT Operations)",
+                  "permissions_required": "Project member with browse permissions"
+                },
+                {
+                  "step": 2,
+                  "action": "Create a JQL filter for change management evidence: project = 'CM' AND created >= -7d ORDER BY created DESC",
+                  "audit_note": "Save this filter for consistent weekly collections; JQL filters are auditable",
+                  "vendor_docs_url": "https://support.atlassian.com/jira-software-cloud/docs/use-advanced-search-with-jql/"
+                },
+                {
+                  "step": 3,
+                  "action": "Click the Export icon (top-right) and select 'Export Excel CSV (all fields)' to download the filtered results",
+                  "permissions_required": "Project member with export permissions"
+                },
+                {
+                  "step": 4,
+                  "action": "For approval evidence, open individual tickets and screenshot the workflow transitions showing approver names and timestamps",
+                  "audit_note": "Jira workflow transitions include user and timestamp metadata"
+                },
+                {
+                  "step": 5,
+                  "action": "Upload the CSV export and any approval screenshots to the evidence repository with the evidence ID reference"
+                }
+              ]
+            },
+            "L2": {
+              "title": "Jira Scheduled Change Management Export",
+              "estimated_time": "1 hour initial setup",
+              "frequency": "weekly automated",
+              "steps": [
+                {
+                  "step": 1,
+                  "action": "Save a JQL filter for change management evidence: project = CHANGE AND status changed DURING (startOfWeek(), endOfWeek())",
+                  "permissions_required": "Jira user with project access"
+                },
+                {
+                  "step": 2,
+                  "action": "Configure Jira Automation rule to export the saved filter results as CSV weekly and email to evidence mailbox"
+                },
+                {
+                  "step": 3,
+                  "action": "Set up a Confluence page that auto-embeds the JQL results as a living change log",
+                  "audit_note": "Confluence page provides persistent, auditable evidence trail"
+                }
+              ]
+            },
+            "L3": {
+              "title": "Jira API-Driven Change Evidence Collection",
+              "estimated_time": "2 hours initial setup",
+              "frequency": "automated daily",
+              "steps": [
+                {
+                  "step": 1,
+                  "action": "Create Jira API token and configure automated script to query /rest/api/3/search with JQL for change/incident tickets",
+                  "permissions_required": "API token with Browse Projects permission",
+                  "vendor_docs_url": "https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issue-search/"
+                },
+                {
+                  "step": 2,
+                  "action": "Automate daily extraction of change records with approval chains, implementation dates, and rollback status"
+                },
+                {
+                  "step": 3,
+                  "action": "Implement data validation \u2014 verify all changes have required fields: approver, change type, risk rating"
+                },
+                {
+                  "step": 4,
+                  "action": "Configure webhook for real-time change tracking to evidence platform",
+                  "audit_note": "Real-time tracking eliminates gaps between change execution and evidence capture"
+                }
+              ]
+            },
+            "L4": {
+              "title": "Jira Managed Change Analytics Pipeline",
+              "estimated_time": "3 hours initial setup",
+              "frequency": "continuous with weekly reporting",
+              "steps": [
+                {
+                  "step": 1,
+                  "action": "Build change management metrics dashboard: change frequency, approval cycle time, emergency change ratio, rollback rate"
+                },
+                {
+                  "step": 2,
+                  "action": "Implement automated CAB (Change Advisory Board) compliance checking \u2014 flag changes missing required approvals"
+                },
+                {
+                  "step": 3,
+                  "action": "Create trend analysis: compare change success rates month-over-month, identify problematic change categories"
+                },
+                {
+                  "step": 4,
+                  "action": "Generate automated monthly change management evidence report with KPIs and trend charts"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "servicenow": {
+      "vendor": "ServiceNow",
+      "system_type": "ticketing",
+      "products": {
+        "servicenow_itsm": {
+          "name": "ServiceNow ITSM",
+          "recipes": {
+            "L1": {
+              "title": "ServiceNow ITSM Evidence Collection",
+              "estimated_time": "10 minutes",
+              "frequency": "weekly",
+              "steps": [
+                {
+                  "step": 1,
+                  "action": "Navigate to ServiceNow and open the Change Management module (Change > All)",
+                  "permissions_required": "ITIL or Change Manager role",
+                  "vendor_docs_url": "https://docs.servicenow.com/bundle/latest/page/product/change-management/concept/change-management-process.html"
+                },
+                {
+                  "step": 2,
+                  "action": "Set the list filter to show changes within the evidence period: Created on >= [start date] AND Created on <= [end date]",
+                  "audit_note": "ServiceNow change records include full audit trail of field changes"
+                },
+                {
+                  "step": 3,
+                  "action": "Right-click the column header and select 'Export > CSV' to download the filtered change list",
+                  "permissions_required": "ITIL role with list export permissions"
+                },
+                {
+                  "step": 4,
+                  "action": "For incident evidence, navigate to Incident > All and repeat with appropriate filters (e.g., Priority = 1 or 2)",
+                  "audit_note": "Include incident SLA data for response time evidence"
+                },
+                {
+                  "step": 5,
+                  "action": "Upload the exports to the evidence repository with descriptive filenames and evidence ID references"
+                }
+              ]
+            },
+            "L2": {
+              "title": "ServiceNow Scheduled ITSM Evidence Export",
+              "estimated_time": "1 hour initial setup",
+              "frequency": "weekly automated",
+              "steps": [
+                {
+                  "step": 1,
+                  "action": "Create a ServiceNow Scheduled Report for change_request and incident tables with date filters for the collection period",
+                  "permissions_required": "Report Viewer + ITSM roles",
+                  "vendor_docs_url": "https://docs.servicenow.com/bundle/latest/page/use/reporting/concept/scheduled-reports.html"
+                },
+                {
+                  "step": 2,
+                  "action": "Configure report delivery to evidence repository email or shared drive on a weekly schedule"
+                },
+                {
+                  "step": 3,
+                  "action": "Set up a separate scheduled report for SLA achievement metrics as evidence of process maturity",
+                  "audit_note": "SLA reports provide quantitative evidence of service management effectiveness"
+                }
+              ]
+            },
+            "L3": {
+              "title": "ServiceNow API-Driven Automated Collection",
+              "estimated_time": "3 hours initial setup",
+              "frequency": "automated daily",
+              "steps": [
+                {
+                  "step": 1,
+                  "action": "Create a ServiceNow integration user and OAuth application for API access",
+                  "permissions_required": "System Administrator",
+                  "security_note": "Use OAuth 2.0 with client credentials grant, not basic auth"
+                },
+                {
+                  "step": 2,
+                  "action": "Configure automated script to query Table API for change_request, incident, and problem records",
+                  "vendor_docs_url": "https://docs.servicenow.com/bundle/latest/page/integrate/inbound-rest/concept/c_TableAPI.html"
+                },
+                {
+                  "step": 3,
+                  "action": "Implement automated CMDB accuracy validation \u2014 compare CMDB records against actual infrastructure state"
+                },
+                {
+                  "step": 4,
+                  "action": "Set up IntegrationHub flow to push evidence artifacts to external evidence platform on record closure"
+                }
+              ]
+            },
+            "L4": {
+              "title": "ServiceNow Managed ITSM Evidence with Analytics",
+              "estimated_time": "4 hours initial setup",
+              "frequency": "continuous with monthly reporting",
+              "steps": [
+                {
+                  "step": 1,
+                  "action": "Deploy Performance Analytics dashboards tracking ITSM KPIs: MTTR, change success rate, SLA compliance, first-contact resolution"
+                },
+                {
+                  "step": 2,
+                  "action": "Configure automated compliance scoring using ServiceNow GRC module or custom scorecards"
+                },
+                {
+                  "step": 3,
+                  "action": "Implement continuous monitoring rules that flag ITSM process deviations in real-time"
+                },
+                {
+                  "step": 4,
+                  "action": "Generate automated monthly ITSM evidence package: KPI trends, SLA reports, process compliance scores"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "splunk": {
+      "vendor": "Splunk",
+      "system_type": "logging",
+      "products": {
+        "splunk_enterprise": {
+          "name": "Splunk Enterprise / Cloud",
+          "recipes": {
+            "L1": {
+              "title": "Splunk Manual Evidence Collection",
+              "estimated_time": "15 minutes",
+              "frequency": "weekly",
+              "steps": [
+                {
+                  "step": 1,
+                  "action": "Sign in to Splunk Web and navigate to Search & Reporting",
+                  "permissions_required": "power or user role with access to relevant indices",
+                  "vendor_docs_url": "https://docs.splunk.com/Documentation/Splunk/latest/SearchTutorial/Aboutthesearchtutorial"
+                },
+                {
+                  "step": 2,
+                  "action": "Enter an SPL query for your evidence type (e.g., index=main sourcetype=syslog | stats count by host for system inventory, or index=security action=success | stats count by user for authentication evidence)",
+                  "audit_note": "Document the exact SPL query used for reproducibility and audit trail",
+                  "security_note": "Ensure your search does not return sensitive fields like passwords or API keys"
+                },
+                {
+                  "step": 3,
+                  "action": "Set the time range picker to the evidence collection period",
+                  "audit_note": "Splunk timestamps are derived from event data and indexed at ingestion time"
+                },
+                {
+                  "step": 4,
+                  "action": "Click Export and select CSV format to download the search results",
+                  "permissions_required": "Export results capability"
+                },
+                {
+                  "step": 5,
+                  "action": "Optionally, save the search as a Report for future scheduled execution: Save As > Report",
+                  "vendor_docs_url": "https://docs.splunk.com/Documentation/Splunk/latest/Report/Createandeditreports"
+                },
+                {
+                  "step": 6,
+                  "action": "Upload the CSV export to the evidence repository with evidence ID reference"
+                }
+              ]
+            },
+            "L2": {
+              "title": "Splunk Saved Search Evidence Automation",
+              "estimated_time": "1 hour initial setup",
+              "frequency": "weekly automated",
+              "steps": [
+                {
+                  "step": 1,
+                  "action": "Convert your SPL evidence queries into Saved Searches with weekly schedule",
+                  "permissions_required": "Power User role or higher"
+                },
+                {
+                  "step": 2,
+                  "action": "Configure Saved Search actions to export results as CSV to a monitored evidence directory or send via email"
+                },
+                {
+                  "step": 3,
+                  "action": "Create a Splunk Dashboard with all evidence-related searches for visual verification",
+                  "audit_note": "Dashboard provides at-a-glance evidence of log monitoring activity"
+                }
+              ]
+            },
+            "L3": {
+              "title": "Splunk Automated Evidence Pipeline",
+              "estimated_time": "3 hours initial setup",
+              "frequency": "automated daily",
+              "steps": [
+                {
+                  "step": 1,
+                  "action": "Create Splunk REST API integration to programmatically run evidence collection searches",
+                  "permissions_required": "API access with search capabilities",
+                  "vendor_docs_url": "https://docs.splunk.com/Documentation/Splunk/latest/RESTREF/RESTsearch"
+                },
+                {
+                  "step": 2,
+                  "action": "Deploy Splunk Summary Indexing to pre-compute evidence metrics for fast retrieval"
+                },
+                {
+                  "step": 3,
+                  "action": "Implement collection completeness monitoring \u2014 track data sources, index volumes, and ingestion latency"
+                },
+                {
+                  "step": 4,
+                  "action": "Configure Splunk alerts for evidence collection failures: missing sourcetypes, volume drops, parsing errors",
+                  "audit_note": "Alerting on collection health demonstrates mature monitoring practice"
+                }
+              ]
+            },
+            "L4": {
+              "title": "Splunk Managed Evidence with Compliance Analytics",
+              "estimated_time": "4 hours initial setup",
+              "frequency": "continuous with weekly reporting",
+              "steps": [
+                {
+                  "step": 1,
+                  "action": "Deploy Splunk Enterprise Security (ES) or InfoSec app as structured compliance evidence framework"
+                },
+                {
+                  "step": 2,
+                  "action": "Configure ES compliance dashboards tracking detection coverage, alert fidelity, and investigation times"
+                },
+                {
+                  "step": 3,
+                  "action": "Implement automated evidence quality scoring: completeness, timeliness, accuracy metrics per evidence type"
+                },
+                {
+                  "step": 4,
+                  "action": "Build automated monthly security monitoring evidence package: notable events, investigation outcomes, compliance posture trends"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "crowdstrike": {
+      "vendor": "CrowdStrike",
+      "system_type": "security_tool",
+      "products": {
+        "falcon_platform": {
+          "name": "CrowdStrike Falcon",
+          "recipes": {
+            "L1": {
+              "title": "CrowdStrike Falcon Manual Evidence Collection",
+              "estimated_time": "10 minutes",
+              "frequency": "weekly",
+              "steps": [
+                {
+                  "step": 1,
+                  "action": "Sign in to the CrowdStrike Falcon console (falcon.crowdstrike.com)",
+                  "permissions_required": "Falcon Analyst or Read-Only Analyst",
+                  "security_note": "Use the minimum privilege role; avoid using Falcon Administrator for read-only tasks",
+                  "vendor_docs_url": "https://falcon.crowdstrike.com/documentation/page/d3c4541e/falcon-console-overview"
+                },
+                {
+                  "step": 2,
+                  "action": "Navigate to Activity > Detections and set the time filter to the evidence collection period",
+                  "audit_note": "Falcon detection events include kill chain stage, MITRE ATT&CK mapping, and severity"
+                },
+                {
+                  "step": 3,
+                  "action": "Apply filters for severity level and detection status as needed, then click Export to download as CSV",
+                  "permissions_required": "Falcon Analyst with export capability"
+                },
+                {
+                  "step": 4,
+                  "action": "Navigate to Host Management > Sensor Coverage to verify endpoint protection coverage",
+                  "audit_note": "Sensor coverage percentage is key evidence for endpoint protection controls"
+                },
+                {
+                  "step": 5,
+                  "action": "Export the sensor coverage report and dashboard screenshot for coverage evidence"
+                },
+                {
+                  "step": 6,
+                  "action": "Upload all exports to the evidence repository with evidence ID references"
+                }
+              ]
+            },
+            "L2": {
+              "title": "CrowdStrike Falcon Scheduled Report Collection",
+              "estimated_time": "45 minutes initial setup",
+              "frequency": "weekly automated",
+              "steps": [
+                {
+                  "step": 1,
+                  "action": "Configure Falcon Scheduled Reports for detections, sensor coverage, and prevention policy compliance",
+                  "permissions_required": "Falcon Administrator",
+                  "vendor_docs_url": "https://falcon.crowdstrike.com/documentation/46/falcon-reports"
+                },
+                {
+                  "step": 2,
+                  "action": "Set up email delivery of scheduled reports to evidence collection mailbox on weekly cadence"
+                },
+                {
+                  "step": 3,
+                  "action": "Create a Falcon custom dashboard summarising endpoint protection posture as visual evidence",
+                  "audit_note": "Dashboard screenshots serve as evidence of continuous endpoint monitoring"
+                }
+              ]
+            },
+            "L3": {
+              "title": "CrowdStrike Falcon API-Driven Collection",
+              "estimated_time": "3 hours initial setup",
+              "frequency": "automated daily",
+              "steps": [
+                {
+                  "step": 1,
+                  "action": "Create CrowdStrike API client with Detections Read, Hosts Read, and Prevention Policies Read scopes",
+                  "permissions_required": "Falcon Administrator",
+                  "vendor_docs_url": "https://falcon.crowdstrike.com/documentation/46/crowdstrike-oauth2-based-apis",
+                  "security_note": "Store client ID and secret in a secrets manager. Rotate annually."
+                },
+                {
+                  "step": 2,
+                  "action": "Implement automated daily collection: GET /detects/queries/detects/v1 for detections, /devices/queries/devices/v1 for coverage"
+                },
+                {
+                  "step": 3,
+                  "action": "Configure SIEM integration via Falcon Data Replicator (FDR) or Falcon LogScale for real-time event streaming"
+                },
+                {
+                  "step": 4,
+                  "action": "Set up automated sensor coverage gap detection \u2014 flag endpoints missing Falcon agent",
+                  "audit_note": "Coverage gap reporting demonstrates proactive security management"
+                }
+              ]
+            },
+            "L4": {
+              "title": "CrowdStrike Managed Endpoint Evidence Pipeline",
+              "estimated_time": "4 hours initial setup",
+              "frequency": "continuous with weekly reporting",
+              "steps": [
+                {
+                  "step": 1,
+                  "action": "Deploy Falcon Spotlight vulnerability metrics alongside detection data for holistic endpoint evidence"
+                },
+                {
+                  "step": 2,
+                  "action": "Build endpoint evidence dashboard: detection-to-resolution MTTR, sensor coverage %, prevention policy compliance, vulnerability remediation rate"
+                },
+                {
+                  "step": 3,
+                  "action": "Implement automated weekly evidence quality validation \u2014 verify all expected data sources are reporting within SLA"
+                },
+                {
+                  "step": 4,
+                  "action": "Generate automated monthly endpoint protection evidence package: detection trends, coverage metrics, policy compliance, vulnerability posture"
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+  "generic_fallbacks": {
+    "cloud_provider": {
+      "L1": {
+        "title": "Generic Cloud Provider Evidence Collection",
+        "estimated_time": "15 minutes",
+        "frequency": "weekly",
+        "steps": [
+          {
+            "step": 1,
+            "action": "Sign in to your cloud provider's management console with a read-only role",
+            "permissions_required": "Read-only access to audit/activity logs",
+            "security_note": "Never use root/admin credentials for routine evidence collection"
+          },
+          {
+            "step": 2,
+            "action": "Navigate to the audit log or activity log section of the console",
+            "audit_note": "Most cloud providers retain activity logs for 90 days by default"
+          },
+          {
+            "step": 3,
+            "action": "Filter the log by date range, event type, and any relevant resource filters",
+            "audit_note": "Document your filter criteria for reproducibility"
+          },
+          {
+            "step": 4,
+            "action": "Export the filtered results as CSV or JSON",
+            "security_note": "Review exports for sensitive data before storing"
+          },
+          {
+            "step": 5,
+            "action": "Upload to the evidence repository with a descriptive filename and evidence ID reference"
+          }
+        ]
+      },
+      "L2": {
+        "title": "Cloud Provider Scheduled Evidence Export",
+        "estimated_time": "1 hour",
+        "frequency": "weekly",
+        "steps": [
+          {
+            "step": 1,
+            "action": "Configure scheduled exports from cloud provider's native reporting tools (activity logs, compliance reports)"
+          },
+          {
+            "step": 2,
+            "action": "Set up automated delivery to evidence repository via email or storage integration"
+          },
+          {
+            "step": 3,
+            "action": "Create compliance dashboard in cloud provider's native console for visual evidence"
+          }
+        ]
+      },
+      "L3": {
+        "title": "Cloud Provider API-Driven Evidence Collection",
+        "estimated_time": "3 hours",
+        "frequency": "daily automated",
+        "steps": [
+          {
+            "step": 1,
+            "action": "Create service account or API credentials with read-only access to audit and compliance APIs"
+          },
+          {
+            "step": 2,
+            "action": "Implement automated daily collection scripts calling provider APIs for logs, configuration state, and compliance data"
+          },
+          {
+            "step": 3,
+            "action": "Configure alerting for collection failures and data volume anomalies"
+          },
+          {
+            "step": 4,
+            "action": "Validate collected evidence against expected coverage \u2014 all accounts, all regions, all resource types"
+          }
+        ]
+      },
+      "L4": {
+        "title": "Cloud Provider Managed Evidence Analytics",
+        "estimated_time": "4 hours",
+        "frequency": "continuous",
+        "steps": [
+          {
+            "step": 1,
+            "action": "Deploy cloud-native compliance framework (e.g., Security Hub, Defender for Cloud, Security Command Center)"
+          },
+          {
+            "step": 2,
+            "action": "Build evidence dashboard tracking compliance scores, remediation velocity, and coverage metrics over time"
+          },
+          {
+            "step": 3,
+            "action": "Implement automated evidence package generation with trend analysis and KPI reporting"
+          }
+        ]
+      }
+    },
+    "identity_provider": {
+      "L1": {
+        "title": "Generic Identity Provider Evidence Collection",
+        "estimated_time": "10 minutes",
+        "frequency": "weekly",
+        "steps": [
+          {
+            "step": 1,
+            "action": "Sign in to your identity provider's admin console with a read-only admin role",
+            "permissions_required": "Read-only admin or reports viewer",
+            "security_note": "Use the minimum privilege role that can access reports"
+          },
+          {
+            "step": 2,
+            "action": "Navigate to Reports or Logs section and select authentication/sign-in logs"
+          },
+          {
+            "step": 3,
+            "action": "Set the date range to cover the evidence collection period with no gaps from the last collection",
+            "audit_note": "Check your provider's log retention period to avoid data loss"
+          },
+          {
+            "step": 4,
+            "action": "Export the filtered log data as CSV and upload to the evidence repository"
+          }
+        ]
+      },
+      "L2": {
+        "title": "Identity Provider Scheduled Report Collection",
+        "estimated_time": "1 hour",
+        "frequency": "weekly",
+        "steps": [
+          {
+            "step": 1,
+            "action": "Configure scheduled reports for authentication events, access changes, and policy violations"
+          },
+          {
+            "step": 2,
+            "action": "Set up automated report delivery to evidence collection mailbox or shared storage"
+          },
+          {
+            "step": 3,
+            "action": "Create identity dashboard showing authentication patterns and policy compliance"
+          }
+        ]
+      },
+      "L3": {
+        "title": "Identity Provider API-Driven Collection",
+        "estimated_time": "2 hours",
+        "frequency": "daily automated",
+        "steps": [
+          {
+            "step": 1,
+            "action": "Create API credentials with read-only access to identity provider's log and audit APIs"
+          },
+          {
+            "step": 2,
+            "action": "Automate daily extraction of authentication events, access reviews, and privilege changes"
+          },
+          {
+            "step": 3,
+            "action": "Implement volume and completeness validation for collected identity evidence"
+          },
+          {
+            "step": 4,
+            "action": "Configure alerting for collection failures and suspicious identity events"
+          }
+        ]
+      },
+      "L4": {
+        "title": "Identity Provider Managed Evidence Pipeline",
+        "estimated_time": "4 hours",
+        "frequency": "continuous",
+        "steps": [
+          {
+            "step": 1,
+            "action": "Deploy identity governance automation \u2014 scheduled access reviews, privilege attestation, dormant account detection"
+          },
+          {
+            "step": 2,
+            "action": "Build identity evidence dashboard: MFA adoption, access review completion rates, privilege escalation trends"
+          },
+          {
+            "step": 3,
+            "action": "Generate automated monthly identity governance evidence package with KPIs and trend analysis"
+          }
+        ]
+      }
+    },
+    "ticketing": {
+      "L1": {
+        "title": "Generic Ticketing System Evidence Collection",
+        "estimated_time": "10 minutes",
+        "frequency": "weekly",
+        "steps": [
+          {
+            "step": 1,
+            "action": "Sign in to your ticketing system and navigate to the relevant project or queue"
+          },
+          {
+            "step": 2,
+            "action": "Create a filter or search query for the evidence period (e.g., change requests created in the last 7 days)",
+            "audit_note": "Save your filter for repeatable future collections"
+          },
+          {
+            "step": 3,
+            "action": "Export the filtered results as CSV including ticket ID, status, approvals, and dates"
+          },
+          {
+            "step": 4,
+            "action": "Upload the export to the evidence repository with evidence ID reference"
+          }
+        ]
+      },
+      "L2": {
+        "title": "Ticketing System Scheduled Export",
+        "estimated_time": "1 hour",
+        "frequency": "weekly",
+        "steps": [
+          {
+            "step": 1,
+            "action": "Create saved filters for compliance-relevant ticket types (changes, incidents, requests)"
+          },
+          {
+            "step": 2,
+            "action": "Configure scheduled export of filtered results as CSV or PDF reports"
+          },
+          {
+            "step": 3,
+            "action": "Set up automated delivery to evidence repository"
+          }
+        ]
+      },
+      "L3": {
+        "title": "Ticketing System API-Driven Collection",
+        "estimated_time": "2 hours",
+        "frequency": "daily automated",
+        "steps": [
+          {
+            "step": 1,
+            "action": "Create API integration to query ticketing system for change, incident, and problem records"
+          },
+          {
+            "step": 2,
+            "action": "Automate daily extraction with data validation \u2014 verify required fields are populated"
+          },
+          {
+            "step": 3,
+            "action": "Implement webhook integration for real-time evidence capture on ticket closure"
+          }
+        ]
+      },
+      "L4": {
+        "title": "Ticketing Managed Evidence with Analytics",
+        "estimated_time": "3 hours",
+        "frequency": "continuous",
+        "steps": [
+          {
+            "step": 1,
+            "action": "Build ITSM metrics dashboard: change success rate, MTTR, SLA compliance, approval cycle time"
+          },
+          {
+            "step": 2,
+            "action": "Implement automated compliance scoring for ITSM processes"
+          },
+          {
+            "step": 3,
+            "action": "Generate automated monthly ITSM evidence package with KPI trends"
+          }
+        ]
+      }
+    },
+    "logging": {
+      "L1": {
+        "title": "Generic Logging Platform Evidence Collection",
+        "estimated_time": "15 minutes",
+        "frequency": "weekly",
+        "steps": [
+          {
+            "step": 1,
+            "action": "Sign in to your SIEM or log management platform",
+            "permissions_required": "Search/read access to relevant indices"
+          },
+          {
+            "step": 2,
+            "action": "Create a search query for the evidence type you need (e.g., authentication events, configuration changes)",
+            "audit_note": "Document your search query for reproducibility and audit trail"
+          },
+          {
+            "step": 3,
+            "action": "Set the time range to the evidence collection period and execute the search"
+          },
+          {
+            "step": 4,
+            "action": "Export results as CSV or JSON and upload to the evidence repository",
+            "security_note": "Check that exported logs do not contain passwords or tokens in cleartext"
+          }
+        ]
+      },
+      "L2": {
+        "title": "Logging Platform Saved Search Automation",
+        "estimated_time": "1 hour",
+        "frequency": "weekly",
+        "steps": [
+          {
+            "step": 1,
+            "action": "Create saved searches for evidence-relevant log queries and schedule weekly execution"
+          },
+          {
+            "step": 2,
+            "action": "Configure automated export of search results to evidence repository"
+          },
+          {
+            "step": 3,
+            "action": "Set up logging dashboard for visual evidence of monitoring activity"
+          }
+        ]
+      },
+      "L3": {
+        "title": "Logging Platform API-Driven Collection",
+        "estimated_time": "3 hours",
+        "frequency": "daily automated",
+        "steps": [
+          {
+            "step": 1,
+            "action": "Create API integration for programmatic log search and export"
+          },
+          {
+            "step": 2,
+            "action": "Implement automated collection completeness monitoring \u2014 track data sources and ingestion health"
+          },
+          {
+            "step": 3,
+            "action": "Configure alerting for log collection failures and volume anomalies"
+          }
+        ]
+      },
+      "L4": {
+        "title": "Logging Platform Managed Evidence Analytics",
+        "estimated_time": "4 hours",
+        "frequency": "continuous",
+        "steps": [
+          {
+            "step": 1,
+            "action": "Deploy security analytics framework for structured compliance evidence"
+          },
+          {
+            "step": 2,
+            "action": "Build evidence quality dashboard: completeness, timeliness, accuracy metrics"
+          },
+          {
+            "step": 3,
+            "action": "Generate automated monthly log monitoring evidence package with trend analysis"
+          }
+        ]
+      }
+    },
+    "security_tool": {
+      "L1": {
+        "title": "Generic Security Tool Evidence Collection",
+        "estimated_time": "10 minutes",
+        "frequency": "weekly",
+        "steps": [
+          {
+            "step": 1,
+            "action": "Sign in to your security tool's management console",
+            "permissions_required": "Read-only or analyst role"
+          },
+          {
+            "step": 2,
+            "action": "Navigate to the Reports or Detections section relevant to your evidence need"
+          },
+          {
+            "step": 3,
+            "action": "Set date range filters and any relevant severity or category filters",
+            "audit_note": "Include the tool version and scan coverage in your evidence notes"
+          },
+          {
+            "step": 4,
+            "action": "Export the report as PDF or CSV and upload to the evidence repository"
+          }
+        ]
+      },
+      "L2": {
+        "title": "Security Tool Scheduled Report Collection",
+        "estimated_time": "1 hour",
+        "frequency": "weekly",
+        "steps": [
+          {
+            "step": 1,
+            "action": "Configure scheduled reports for security findings, coverage metrics, and policy compliance"
+          },
+          {
+            "step": 2,
+            "action": "Set up automated report delivery to evidence repository"
+          },
+          {
+            "step": 3,
+            "action": "Create security posture dashboard as visual evidence"
+          }
+        ]
+      },
+      "L3": {
+        "title": "Security Tool API-Driven Collection",
+        "estimated_time": "3 hours",
+        "frequency": "daily automated",
+        "steps": [
+          {
+            "step": 1,
+            "action": "Create API credentials for automated access to security tool's detection and coverage APIs"
+          },
+          {
+            "step": 2,
+            "action": "Implement daily automated collection of findings, coverage data, and policy compliance state"
+          },
+          {
+            "step": 3,
+            "action": "Configure SIEM integration for real-time security event streaming"
+          },
+          {
+            "step": 4,
+            "action": "Set up alerting for collection failures and coverage gaps"
+          }
+        ]
+      },
+      "L4": {
+        "title": "Security Tool Managed Evidence Pipeline",
+        "estimated_time": "4 hours",
+        "frequency": "continuous",
+        "steps": [
+          {
+            "step": 1,
+            "action": "Build security evidence dashboard: MTTR, coverage %, detection fidelity, policy compliance trends"
+          },
+          {
+            "step": 2,
+            "action": "Implement automated evidence quality validation and completeness scoring"
+          },
+          {
+            "step": 3,
+            "action": "Generate automated monthly security evidence package with KPIs and trend analysis"
+          }
+        ]
+      }
+    },
+    "code_repository": {
+      "L1": {
+        "title": "Generic Code Repository Evidence Collection",
+        "estimated_time": "10 minutes",
+        "frequency": "weekly",
+        "steps": [
+          {
+            "step": 1,
+            "action": "Sign in to your code repository platform and navigate to organization/project settings"
+          },
+          {
+            "step": 2,
+            "action": "Access the audit log or activity stream for the organization",
+            "permissions_required": "Organization admin or audit log viewer"
+          },
+          {
+            "step": 3,
+            "action": "Filter events by date range and event type (e.g., repository changes, access changes, branch protection)",
+            "audit_note": "Note the log retention period for your plan tier"
+          },
+          {
+            "step": 4,
+            "action": "Export filtered events and upload to the evidence repository with evidence ID reference"
+          }
+        ]
+      },
+      "L2": {
+        "title": "Code Repository Scheduled Audit Export",
+        "estimated_time": "1 hour",
+        "frequency": "weekly",
+        "steps": [
+          {
+            "step": 1,
+            "action": "Configure scheduled exports of audit logs, access reviews, and security scanning results"
+          },
+          {
+            "step": 2,
+            "action": "Set up automated delivery of branch protection compliance reports"
+          },
+          {
+            "step": 3,
+            "action": "Create development security dashboard as visual evidence"
+          }
+        ]
+      },
+      "L3": {
+        "title": "Code Repository API-Driven Collection",
+        "estimated_time": "2 hours",
+        "frequency": "daily automated",
+        "steps": [
+          {
+            "step": 1,
+            "action": "Create API integration for automated audit log and security scanning result collection"
+          },
+          {
+            "step": 2,
+            "action": "Automate branch protection compliance verification across all repositories"
+          },
+          {
+            "step": 3,
+            "action": "Configure CI/CD pipeline evidence capture \u2014 build logs, security scan results, deployment records"
+          }
+        ]
+      },
+      "L4": {
+        "title": "Code Repository Managed DevSecOps Evidence",
+        "estimated_time": "4 hours",
+        "frequency": "continuous",
+        "steps": [
+          {
+            "step": 1,
+            "action": "Build DevSecOps evidence dashboard: code review coverage, security alert MTTR, policy compliance rate"
+          },
+          {
+            "step": 2,
+            "action": "Implement automated compliance gating in CI/CD as continuous evidence"
+          },
+          {
+            "step": 3,
+            "action": "Generate automated monthly DevSecOps evidence package with security metrics and trends"
+          }
+        ]
+      }
+    },
+    "document_management": {
+      "L1": {
+        "title": "Generic Document Management Evidence Collection",
+        "estimated_time": "10 minutes",
+        "frequency": "monthly",
+        "steps": [
+          {
+            "step": 1,
+            "action": "Access your document management system and locate the relevant policy or procedure documents"
+          },
+          {
+            "step": 2,
+            "action": "Verify the document version, approval date, and next review date",
+            "audit_note": "Document version history provides evidence of regular review cycles"
+          },
+          {
+            "step": 3,
+            "action": "Export the document as PDF (including metadata) and upload to the evidence repository"
+          },
+          {
+            "step": 4,
+            "action": "If available, export the version history or approval workflow as additional evidence"
+          }
+        ]
+      },
+      "L2": {
+        "title": "Document Management Scheduled Audit Export",
+        "estimated_time": "1 hour",
+        "frequency": "weekly",
+        "steps": [
+          {
+            "step": 1,
+            "action": "Configure scheduled reports for document access logs, sharing changes, and DLP policy events"
+          },
+          {
+            "step": 2,
+            "action": "Set up automated delivery of audit reports to evidence repository"
+          },
+          {
+            "step": 3,
+            "action": "Create document governance dashboard as visual evidence"
+          }
+        ]
+      },
+      "L3": {
+        "title": "Document Management API-Driven Collection",
+        "estimated_time": "2 hours",
+        "frequency": "daily automated",
+        "steps": [
+          {
+            "step": 1,
+            "action": "Create API integration for automated access log and sharing audit collection"
+          },
+          {
+            "step": 2,
+            "action": "Automate DLP policy compliance evidence extraction"
+          },
+          {
+            "step": 3,
+            "action": "Configure alerting for sensitive document access anomalies"
+          }
+        ]
+      },
+      "L4": {
+        "title": "Document Management Managed Evidence Pipeline",
+        "estimated_time": "3 hours",
+        "frequency": "continuous",
+        "steps": [
+          {
+            "step": 1,
+            "action": "Build document governance dashboard: classification coverage, DLP policy compliance, access review completion"
+          },
+          {
+            "step": 2,
+            "action": "Implement automated evidence quality scoring for document management controls"
+          },
+          {
+            "step": 3,
+            "action": "Generate automated monthly document governance evidence package with trend analysis"
+          }
+        ]
+      }
+    }
+  }
+}

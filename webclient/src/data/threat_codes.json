@@ -1,0 +1,30 @@
+{
+  "categories": {
+    "NT": { "name": "Natural Threats", "color": "#10b981", "description": "Environmental and natural disaster threats" },
+    "MT": { "name": "Malicious Threats", "color": "#ef4444", "description": "Human-initiated malicious threats" }
+  },
+  "codes": {
+    "NT-1": { "category": "NT", "title": "Earthquake", "description": "Seismic activity causing structural damage to facilities and infrastructure" },
+    "NT-2": { "category": "NT", "title": "Flood", "description": "Water damage from flooding events affecting facilities or equipment" },
+    "NT-3": { "category": "NT", "title": "Fire", "description": "Fire damage to facilities, equipment, or data storage" },
+    "NT-4": { "category": "NT", "title": "Severe Weather", "description": "Hurricanes, tornadoes, severe storms affecting operations" },
+    "NT-5": { "category": "NT", "title": "Power Outage", "description": "Loss of electrical power affecting systems availability" },
+    "NT-6": { "category": "NT", "title": "Pandemic", "description": "Widespread illness affecting workforce availability" },
+    "NT-7": { "category": "NT", "title": "Environmental Hazard", "description": "Chemical spills, pollution, or other environmental contamination" },
+    "MT-1": { "category": "MT", "title": "Malware", "description": "Malicious software including viruses, trojans, and worms" },
+    "MT-2": { "category": "MT", "title": "Ransomware", "description": "Malware that encrypts data and demands payment for decryption" },
+    "MT-3": { "category": "MT", "title": "Phishing", "description": "Social engineering attacks to obtain credentials or sensitive information" },
+    "MT-4": { "category": "MT", "title": "DDoS Attack", "description": "Distributed denial of service attacks against systems or networks" },
+    "MT-5": { "category": "MT", "title": "Insider Threat", "description": "Malicious actions by trusted insiders with legitimate access" },
+    "MT-6": { "category": "MT", "title": "Advanced Persistent Threat", "description": "Sophisticated, prolonged attacks by well-resourced adversaries" },
+    "MT-7": { "category": "MT", "title": "Data Exfiltration", "description": "Unauthorized extraction of sensitive data from systems" },
+    "MT-8": { "category": "MT", "title": "Credential Theft", "description": "Stealing authentication credentials through various means" },
+    "MT-9": { "category": "MT", "title": "Man-in-the-Middle", "description": "Intercepting communications between two parties" },
+    "MT-10": { "category": "MT", "title": "SQL Injection", "description": "Exploiting database vulnerabilities through malicious queries" },
+    "MT-11": { "category": "MT", "title": "Zero-Day Exploit", "description": "Attacks exploiting previously unknown vulnerabilities" },
+    "MT-12": { "category": "MT", "title": "Social Engineering", "description": "Manipulating people into revealing information or taking actions" },
+    "MT-13": { "category": "MT", "title": "Supply Chain Attack", "description": "Compromising systems through vulnerabilities in third-party software or hardware" },
+    "MT-14": { "category": "MT", "title": "Physical Intrusion", "description": "Unauthorized physical access to facilities or equipment" },
+    "MT-15": { "category": "MT", "title": "Sabotage", "description": "Deliberate destruction or damage to systems or data" }
+  }
+}

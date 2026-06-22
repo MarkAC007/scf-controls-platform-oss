@@ -1,0 +1,86 @@
+# Docker Compose for testing production nginx frontend locally
+# Usage: docker compose -f docker-compose.prod-test.yml up --build
+#
+# This tests the nginx-based frontend (same as GCP deployment) against the local backend.
+# The nginx proxy connects to backend:8000 on the Docker network.
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: cg-scf-postgres-test
+    environment:
+      POSTGRES_DB: cg_scf
+      POSTGRES_USER: cg
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-localdevpassword}
+    volumes:
+      - postgres_data_test:/var/lib/postgresql/data
+      - ./backend/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    ports:
+      - "5433:5432"  # Different port to avoid conflict with dev
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cg -d cg_scf"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cg-network-test
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: cg-scf-backend-test
+    environment:
+      DATABASE_URL: postgresql+asyncpg://cg:${DB_PASSWORD:-localdevpassword}@postgres:5432/cg_scf
+      CORS_ORIGINS: http://localhost:8080,http://frontend:80
+      LOG_LEVEL: ${LOG_LEVEL:-DEBUG}
+      API_KEY: ${API_KEY:?API_KEY must be set (no default — never ship a known key)}
+      GOOGLE_AUTH_ENABLED: ${GOOGLE_AUTH_ENABLED:-false}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+    ports:
+      - "8001:8000"  # Different port to avoid conflict with dev
+    volumes:
+      - ./backend:/app
+      - ./webclient/public/data:/app/data/json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - cg-network-test
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Production nginx frontend (same as GCP deployment)
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      args:
+        VITE_GOOGLE_AUTH_ENABLED: ${VITE_GOOGLE_AUTH_ENABLED:-false}
+        VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID:-}
+        VITE_API_KEY: ${VITE_API_KEY:?VITE_API_KEY must be set (no default — never ship a known key)}
+    container_name: cg-scf-frontend-test
+    environment:
+      # This is the key config - nginx proxy connects to backend on Docker network
+      BACKEND_URL: http://backend:8000
+    ports:
+      - "8080:80"  # Different port to avoid conflict with dev
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - cg-network-test
+    restart: unless-stopped
+
+volumes:
+  postgres_data_test:
+    name: cg-scf-postgres-data-test
+
+networks:
+  cg-network-test:
+    name: cg-scf-network-test
+    driver: bridge

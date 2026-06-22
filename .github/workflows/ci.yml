@@ -1,0 +1,263 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  PYTHON_VERSION: '3.11'
+  NODE_VERSION: '20'
+
+jobs:
+  detect:
+    name: Detect Stack
+    runs-on: ubuntu-latest
+    outputs:
+      has_python: ${{ steps.check.outputs.has_python }}
+      has_typescript: ${{ steps.check.outputs.has_typescript }}
+      has_docker: ${{ steps.check.outputs.has_docker }}
+      has_terraform: ${{ steps.check.outputs.has_terraform }}
+      repo_lower: ${{ steps.check.outputs.repo_lower }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Check stack components
+        id: check
+        run: |
+          # Detect Python backend
+          if [ -f "backend/requirements.txt" ] || [ -f "requirements.txt" ] || [ -f "pyproject.toml" ]; then
+            echo "has_python=true" >> $GITHUB_OUTPUT
+            echo "✓ Python backend detected"
+          else
+            echo "has_python=false" >> $GITHUB_OUTPUT
+          fi
+
+          # Detect TypeScript frontend
+          if [ -f "webclient/package.json" ] || [ -f "package.json" ]; then
+            echo "has_typescript=true" >> $GITHUB_OUTPUT
+            echo "✓ TypeScript frontend detected"
+          else
+            echo "has_typescript=false" >> $GITHUB_OUTPUT
+          fi
+
+          # Detect Docker
+          if [ -f "docker-compose.yml" ] || [ -f "Dockerfile" ]; then
+            echo "has_docker=true" >> $GITHUB_OUTPUT
+            echo "✓ Docker configuration detected"
+          else
+            echo "has_docker=false" >> $GITHUB_OUTPUT
+          fi
+
+          # Detect Terraform
+          if [ -d "terraform" ] && [ -n "$(find terraform -name '*.tf' -print -quit)" ]; then
+            echo "has_terraform=true" >> $GITHUB_OUTPUT
+            echo "✓ Terraform configuration detected"
+          else
+            echo "has_terraform=false" >> $GITHUB_OUTPUT
+          fi
+
+          # Lowercase repo name for Docker tags
+          echo "repo_lower=${GITHUB_REPOSITORY,,}" >> $GITHUB_OUTPUT
+          echo "Repository: ${GITHUB_REPOSITORY,,}"
+
+  python:
+    name: Python Backend
+    needs: detect
+    if: needs.detect.outputs.has_python == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f backend/requirements.txt ]; then
+            pip install -r backend/requirements.txt
+          elif [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          fi
+          pip install pytest pytest-cov flake8 black
+
+      - name: Lint with flake8
+        run: |
+          # Stop build if there are Python syntax errors or undefined names
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+          # Exit-zero treats all errors as warnings
+          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
+      - name: Format check with black
+        run: black --check .
+        continue-on-error: true
+
+      - name: Run tests with pytest
+        run: |
+          if [ -d "tests" ] || [ -d "backend/tests" ]; then
+            pytest --cov --cov-report=xml --cov-report=term
+          else
+            echo "No tests directory found, skipping tests"
+          fi
+
+      - name: Upload coverage
+        if: always()
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.xml
+          flags: python
+          fail_ci_if_error: false
+
+  typescript:
+    name: TypeScript Frontend
+    needs: detect
+    if: needs.detect.outputs.has_typescript == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./webclient
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: './webclient/package-lock.json'
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          # Workaround for npm optional dependencies bug (https://github.com/npm/cli/issues/4828)
+          # Explicitly install platform-specific rollup binary if missing
+          npm ls @rollup/rollup-linux-x64-gnu || npm install @rollup/rollup-linux-x64-gnu --save-optional --ignore-scripts
+
+      - name: Lint
+        run: npm run lint --if-present
+
+      - name: Type check
+        run: npm run type-check --if-present || npx tsc --noEmit --skipLibCheck || echo "No TypeScript config found"
+
+      - name: Build
+        run: npm run build
+
+      - name: Test
+        run: npm test --if-present
+
+  docker:
+    name: Docker Build
+    needs: [detect, python, typescript]
+    if: |
+      always() &&
+      needs.detect.outputs.has_docker == 'true' &&
+      (needs.python.result == 'success' || needs.python.result == 'skipped') &&
+      (needs.typescript.result == 'success' || needs.typescript.result == 'skipped')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          submodules: 'recursive'
+          # PAT required for private submodule access
+          # Create a PAT with 'repo' scope and add as GH_PAT secret
+          token: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+
+      - name: Free disk space
+        # Slice 13 (Docling): backend image grew ~3GB with Docling's
+        # PyTorch/easyocr deps. The runner's default ~14GB writable disk
+        # overflows when `docker compose build` builds backend, celery-worker,
+        # celery-beat in parallel (all share Dockerfile.backend → 3× ~5GB).
+        # Aggressive cleanup of preinstalled toolchains reclaims ~30GB.
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache/CodeQL /opt/hostedtoolcache/PyPy \
+            /opt/hostedtoolcache/go /opt/hostedtoolcache/Ruby \
+            /usr/share/swift /usr/local/share/boost || true
+          sudo apt-get -y remove --purge azure-cli google-cloud-cli \
+            microsoft-edge-stable google-chrome-stable firefox \
+            'mongodb-*' 'mysql-*' 'postgresql-*' 'temurin-*-jdk' || true
+          sudo apt-get -y autoremove --purge || true
+          sudo apt-get -y clean || true
+          sudo docker image prune --all --force || true
+          df -h /
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build with Docker Compose
+        if: hashFiles('docker-compose.yml') != ''
+        # Slice 13: build only one service per unique Dockerfile, not all
+        # services. backend/celery-worker/celery-beat all use Dockerfile.backend
+        # — building them in parallel triples the disk footprint of the
+        # Docling-laden image with no extra coverage. We build backend
+        # (covers all three) + frontend (Dockerfile.frontend.dev).
+        run: |
+          docker compose build --no-cache backend frontend
+          echo "✓ Built backend (also covers celery-worker, celery-beat via shared Dockerfile.backend)"
+          echo "✓ Built frontend"
+          df -h /
+
+      - name: Build Docker image
+        if: hashFiles('docker-compose.yml') == '' && hashFiles('Dockerfile') != ''
+        run: |
+          docker build -t ghcr.io/${{ needs.detect.outputs.repo_lower }}:${{ github.sha }} .
+          echo "✓ Built image: ghcr.io/${{ needs.detect.outputs.repo_lower }}:${{ github.sha }}"
+
+      - name: Test containers
+        if: hashFiles('docker-compose.yml') != ''
+        run: |
+          docker compose up -d
+          sleep 10
+          docker compose ps
+          docker compose logs
+          docker compose down
+        continue-on-error: true
+
+  terraform:
+    name: Terraform Validate
+    needs: detect
+    if: needs.detect.outputs.has_terraform == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./terraform
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: latest
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive
+        continue-on-error: true
+
+      - name: Terraform Init
+        run: terraform init -backend=false
+
+      - name: Terraform Validate
+        run: terraform validate
+        continue-on-error: true
+
+      - name: Run tflint
+        uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: latest
+
+      - name: Lint Terraform
+        run: |
+          tflint --init
+          tflint --format compact
+        continue-on-error: true

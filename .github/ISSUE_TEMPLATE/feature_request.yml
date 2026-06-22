@@ -1,0 +1,36 @@
+name: Feature request
+description: Suggest a new capability or improvement for the SCF Controls Platform
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting an improvement. Please describe the problem you are trying to solve, not just the solution — it helps us find the best approach.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / motivation
+      description: What problem are you trying to solve? What is the use case or pain point?
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: Describe what you would like to happen.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Have you considered any alternative solutions or workarounds?
+    validations:
+      required: false
+  - type: checkboxes
+    id: confirmation
+    attributes:
+      label: Confirmation
+      options:
+        - label: I have searched the existing issues and discussions and this has not already been proposed.
+          required: true

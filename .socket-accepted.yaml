@@ -1,0 +1,54 @@
+# Socket Security - Accepted Findings
+# =====================================
+# This file documents security findings that have been reviewed and accepted.
+# Each entry requires justification and must be approved via PR review.
+
+accepted_findings:
+  - rule: js-code-injection-eval
+    file: "webclient/src/App.tsx"
+    line: 125-135
+    justification: |
+      This is a FALSE POSITIVE. The code uses setTimeout() with a callback function,
+      NOT eval() or dynamic code execution. Socket's SAST incorrectly flags setTimeout
+      as code injection when it's a standard async timing mechanism.
+
+      The actual code is:
+        setTimeout(() => {
+          // Check if user is still editing a form
+          const activeElement = document.activeElement;
+          ...
+        }, 100);
+
+      No user input is executed as code. This is standard React debouncing.
+    mitigations:
+      - setTimeout uses a static callback function, not a string
+      - No user input is passed to setTimeout
+      - This is a standard React pattern for debouncing
+    accepted_by: MarkAC007
+    accepted_date: 2026-01-01
+    review_date: 2026-06-01
+
+  - rule: js-react-dangerous-html
+    file: "webclient/src/components/ModernCommentThread.tsx"
+    line: 437
+    justification: |
+      This dangerouslySetInnerHTML is SAFE. The content is sanitized with DOMPurify
+      before rendering. The component uses a strict DOMPurify configuration that
+      only allows: span, strong, em, code tags and style attributes.
+
+      Defense-in-depth measures:
+      1. Input is first HTML-escaped using escapeHtml()
+      2. Only specific mention patterns are converted to HTML
+      3. Final output is sanitized with DOMPurify.sanitize(rendered, DOMPURIFY_CONFIG)
+    mitigations:
+      - DOMPurify.sanitize() called before rendering
+      - ALLOWED_TAGS restricted to: span, strong, em, code
+      - ALLOWED_ATTR restricted to: style
+      - ALLOW_DATA_ATTR set to false
+      - All user input HTML-escaped before processing
+    accepted_by: MarkAC007
+    accepted_date: 2026-01-01
+    review_date: 2026-06-01
+
+# Note: The following vulnerabilities were FIXED (not accepted):
+# - python-start-process-with-shell in scripts/md_2.py -> Fixed with subprocess.run()

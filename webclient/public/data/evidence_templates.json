@@ -1,0 +1,728 @@
+{
+  "E-IAM-01": {
+    "evidence_id": "E-IAM-01",
+    "title": "Access Permission Review",
+    "guidance": {
+      "summary": "Auditors need proof that access rights are periodically reviewed and validated by data/system owners. This demonstrates that stale, excessive, or inappropriate access is detected and remediated on a regular cadence.",
+      "acceptable_formats": ["PDF", "CSV", "XLSX", "Screenshot"],
+      "good_examples": [
+        "Quarterly access review export from an IAM tool (e.g., SailPoint, Okta) showing reviewer name, review date, approve/revoke decision, and justification for each user entitlement",
+        "Signed attestation from each system owner confirming all access grants were reviewed, with a list of accounts revoked or modified and the date of remediation",
+        "Automated access certification campaign report showing percentage completion, overdue items, and escalation actions taken for non-responders"
+      ],
+      "bad_examples": [
+        "A list of current users without any indication that a review was performed, by whom, or what decisions were made",
+        "An email from IT saying 'we reviewed access' with no supporting data, no user list, and no evidence of revocations",
+        "A single screenshot of an admin console that only shows current permissions without timestamps or reviewer actions"
+      ],
+      "redaction_warnings": [
+        "Redact Social Security Numbers, employee IDs, or personal email addresses if present in the user list",
+        "Mask or remove any passwords, API keys, or secrets that may appear in exported permission reports"
+      ],
+      "freshness": "Within last 12 months. Quarterly reviews are expected for SOC 2 and ISO 27001; at minimum semi-annual for most frameworks.",
+      "auditor_tip": "Auditors verify that the reviewer is the data/system owner (not IT performing a self-review), that revocations were actually executed (not just flagged), and that the review covered ALL users including service accounts, contractors, and terminated employees."
+    }
+  },
+  "E-IAM-02": {
+    "evidence_id": "E-IAM-02",
+    "title": "Defined Roles & Authorizations (RBAC)",
+    "guidance": {
+      "summary": "Auditors require documentation showing that the organization uses role-based access control (RBAC) with clearly defined roles, associated permissions, and assignment criteria. This proves least-privilege is enforced systematically rather than ad hoc.",
+      "acceptable_formats": ["PDF", "XLSX", "CSV", "DOCX"],
+      "good_examples": [
+        "A role matrix document mapping each role name to specific system permissions, data access levels, and the business justification for each entitlement",
+        "Export from an IAM platform showing role definitions, the users assigned to each role, and evidence of approval workflows for role assignments",
+        "An RBAC policy document with a corresponding technical implementation showing role hierarchy, inheritance rules, and separation of duties constraints"
+      ],
+      "bad_examples": [
+        "A list of AD groups with no description of what permissions each group grants or who approved the group structure",
+        "Roles named generically (e.g., 'User Level 1', 'User Level 2') with no documentation of what access each level provides",
+        "A policy stating RBAC will be used with no evidence of actual role definitions or technical implementation"
+      ],
+      "redaction_warnings": [
+        "Remove individual user names if the focus is on role definitions rather than assignments",
+        "Redact any internal system hostnames or IP addresses embedded in permission descriptions"
+      ],
+      "freshness": "Within last 12 months. Role definitions should be reviewed at least annually and updated when organizational changes occur.",
+      "auditor_tip": "Auditors look for role creep (users with multiple conflicting roles), orphaned roles with no assigned users, and whether privileged roles have appropriate constraints. They also verify that role definitions align with actual system configurations, not just documentation."
+    }
+  },
+  "E-IAM-03": {
+    "evidence_id": "E-IAM-03",
+    "title": "Privileged User Inventory",
+    "guidance": {
+      "summary": "Auditors need a current inventory of all accounts with elevated or administrative privileges, along with evidence that privileged access is tightly controlled, monitored, and justified. This is one of the highest-scrutiny evidence items in any audit.",
+      "acceptable_formats": ["CSV", "XLSX", "PDF"],
+      "good_examples": [
+        "A comprehensive list of all privileged accounts (root, admin, DBA, domain admin, cloud IAM admin) showing account owner, justification for privilege, approval date, last usage date, and review status",
+        "PAM (Privileged Access Management) tool export showing session recordings, check-out/check-in logs, and automatic credential rotation schedules",
+        "Quarterly privileged access review with sign-off from CISO or security manager, showing accounts added, removed, and retained with documented justification"
+      ],
+      "bad_examples": [
+        "A list of 'admin' accounts with no owner attribution, no approval records, and no indication of when the list was last validated",
+        "Only listing named user admin accounts while omitting shared accounts, service accounts with admin rights, and break-glass/emergency accounts",
+        "An export showing 50+ privileged accounts with no business justification or review evidence for any of them"
+      ],
+      "redaction_warnings": [
+        "Never include passwords, SSH keys, or PAM vault credentials in the inventory export",
+        "Redact specific server hostnames or IP addresses if the inventory will be shared outside the security team",
+        "Remove or mask any API tokens or service account secrets"
+      ],
+      "freshness": "Within last 6 months. Privileged access reviews should occur quarterly per SOC 2 CC6.1 and NIST AC-6. Many auditors expect monthly reviews for highly privileged accounts.",
+      "auditor_tip": "Auditors will cross-reference the privileged user inventory against actual system configurations (e.g., AWS IAM policies, AD Domain Admins group) to verify completeness. Missing accounts are a major finding. They also check for shared admin accounts, which should be eliminated or managed via PAM with individual accountability."
+    }
+  },
+  "E-IAM-04": {
+    "evidence_id": "E-IAM-04",
+    "title": "User & Service Inventory",
+    "guidance": {
+      "summary": "Auditors require a complete inventory of all human users and service/system accounts across the environment, demonstrating the organization knows who and what has access to its systems. This is foundational to identity governance.",
+      "acceptable_formats": ["CSV", "XLSX", "PDF"],
+      "good_examples": [
+        "Consolidated identity inventory from the IDP (e.g., Azure AD, Okta) showing all user accounts, account type (human/service/system), status (active/disabled/suspended), creation date, last login, and owning department",
+        "Service account registry listing each service account, its purpose, owning team, associated application, authentication method, and last credential rotation date",
+        "Automated report from an identity governance tool correlating HR system records with directory accounts to identify orphaned accounts and accounts without corresponding HR records"
+      ],
+      "bad_examples": [
+        "An Active Directory user dump with hundreds of accounts but no classification of account types, no ownership attribution, and no status indicators",
+        "A list that only covers one system (e.g., AWS IAM) while ignoring on-premises AD, SaaS application accounts, and database service accounts",
+        "An inventory that has not been reconciled against HR termination records, showing accounts for employees who left months ago as still active"
+      ],
+      "redaction_warnings": [
+        "Redact personal email addresses and phone numbers if present in the directory export",
+        "Remove or mask employee ID numbers and any PII beyond name and department"
+      ],
+      "freshness": "Within last 12 months. The inventory should be continuously maintained; point-in-time exports must be recent to demonstrate active governance.",
+      "auditor_tip": "Auditors compare the user inventory against the HR roster and recent termination list. They look for accounts that exist without corresponding HR records, accounts that remain active after termination, and service accounts with no documented owner. The gap between HR offboarding and account deprovisioning is a common finding."
+    }
+  },
+  "E-IAM-05": {
+    "evidence_id": "E-IAM-05",
+    "title": "Identity & Access Management (IAM) Function",
+    "guidance": {
+      "summary": "Auditors need evidence that the organization has a formally established IAM function with defined ownership, policies, and operational processes. This demonstrates that identity management is not ad hoc but governed by a structured program.",
+      "acceptable_formats": ["PDF", "DOCX"],
+      "good_examples": [
+        "IAM program charter or policy document defining scope, governance structure, roles and responsibilities (IAM team, system owners, HR), and operational objectives with measurable KPIs",
+        "Organizational chart showing the IAM function's position within the security organization, staffing, and reporting lines, accompanied by a RACI matrix for IAM processes (provisioning, deprovisioning, access reviews, PAM)",
+        "IAM standard operating procedures covering the full identity lifecycle: onboarding, role changes (mover), offboarding (leaver), access request and approval workflows, and exception handling"
+      ],
+      "bad_examples": [
+        "A generic 'IT Security Policy' that mentions access control in one paragraph but has no dedicated IAM-specific procedures or governance structure",
+        "A job description for a single IAM analyst presented as evidence of an IAM 'function' with no program documentation",
+        "An IAM policy document that is dated 3+ years ago with no evidence of review or updates"
+      ],
+      "redaction_warnings": [
+        "Remove names of specific individuals if sharing externally; role titles are sufficient",
+        "Redact internal organizational chart details beyond the IAM function if sensitive"
+      ],
+      "freshness": "Within last 12 months. IAM policies should have a documented annual review cycle with version history showing the last review date and approver.",
+      "auditor_tip": "Auditors verify that the IAM function has executive sponsorship, adequate staffing, and clear authority to enforce access decisions. They check whether the IAM policy has been reviewed and approved within the audit period. A policy with no review history or one that has not been updated to reflect current technology (e.g., still references on-prem AD but the org moved to cloud) is a finding."
+    }
+  },
+  "E-IAM-06": {
+    "evidence_id": "E-IAM-06",
+    "title": "Authenticate, Authorize and Audit (AAA) Solution",
+    "guidance": {
+      "summary": "Auditors require evidence that the organization has implemented technical controls for authentication (verifying identity), authorization (enforcing permissions), and auditing (logging access events). This typically involves MFA, centralized authentication, and comprehensive access logging.",
+      "acceptable_formats": ["PDF", "Screenshot", "XLSX", "CSV"],
+      "good_examples": [
+        "Configuration export or screenshots from the identity provider (Okta, Azure AD, Ping) showing MFA enforcement policies, conditional access rules, session timeout settings, and password complexity requirements",
+        "SIEM or log aggregation dashboard showing authentication events being collected, correlated, and alerted on, with examples of failed login alerts, impossible travel detection, and anomalous access pattern notifications",
+        "Architecture diagram of the AAA solution showing authentication flow (IDP, MFA, SSO), authorization enforcement points (API gateway, application RBAC), and audit log collection pipeline (SIEM, log retention)"
+      ],
+      "bad_examples": [
+        "A statement that 'we use Okta' with no configuration evidence showing what policies are actually enforced",
+        "Screenshots showing MFA is available but not evidence that it is enforced (enabled vs. enforced is a critical distinction)",
+        "Authentication logs with no retention policy, no alerting configured, and no evidence anyone reviews them"
+      ],
+      "redaction_warnings": [
+        "Redact any client secrets, SAML certificates, or OIDC configuration secrets visible in IDP screenshots",
+        "Mask specific IP addresses and internal hostnames in architecture diagrams",
+        "Remove any user passwords or credential hashes from log exports"
+      ],
+      "freshness": "Within last 6 months. MFA and authentication configurations should be current; log retention evidence should demonstrate continuous collection.",
+      "auditor_tip": "Auditors specifically check whether MFA is enforced (not just enabled) for all users, especially privileged and remote access accounts. They verify that authentication logs are retained for a defined period (typically 12 months minimum) and that there is an active monitoring/alerting process. MFA bypass exceptions are a red flag and require documented risk acceptance."
+    }
+  },
+  "E-CHG-02": {
+    "evidence_id": "E-CHG-02",
+    "title": "Charter - Change Control Board (CCB)",
+    "guidance": {
+      "summary": "Auditors need evidence that a Change Control Board (or Change Advisory Board) has been formally established with a charter defining its authority, membership, meeting cadence, and decision-making criteria for evaluating changes to production systems.",
+      "acceptable_formats": ["PDF", "DOCX"],
+      "good_examples": [
+        "A formal CCB charter document defining the board's purpose, scope of authority (what types of changes require CCB approval), membership roles (chair, voting members, advisory members), quorum requirements, meeting frequency, and escalation procedures",
+        "An approved governance document specifying change classification tiers (standard, normal, emergency), the CCB's role in each tier, approval thresholds, and how decisions are recorded and communicated",
+        "CCB charter with an appendix listing current members by role, their qualifications, and a revision history showing annual review and re-approval"
+      ],
+      "bad_examples": [
+        "A vague reference to 'change management meetings' in a general IT policy with no dedicated CCB charter or defined membership",
+        "A charter document with no version control, no approval signatures, and no evidence it has been reviewed since it was created",
+        "An org chart showing an 'IT Governance' team without a specific charter defining change control authority and procedures"
+      ],
+      "redaction_warnings": [
+        "Remove personal contact information (phone numbers, personal emails) of CCB members if present"
+      ],
+      "freshness": "Within last 12 months. The charter should show evidence of annual review even if no substantive changes were made.",
+      "auditor_tip": "Auditors check that the CCB charter is a living document with version control and recent approval. They verify that membership includes representation from security, operations, and business stakeholders, not just IT. A charter that lists departed employees or references obsolete systems indicates the governance structure is not actively maintained."
+    }
+  },
+  "E-CHG-03": {
+    "evidence_id": "E-CHG-03",
+    "title": "Change Control Board (CCB) Minutes",
+    "guidance": {
+      "summary": "Auditors need meeting minutes or records from CCB sessions to verify that changes are being reviewed, discussed, and formally approved or rejected in accordance with the change management policy.",
+      "acceptable_formats": ["PDF", "DOCX", "XLSX"],
+      "good_examples": [
+        "CCB meeting minutes documenting date, attendees, each change request discussed (with ticket ID), risk assessment summary, testing results reviewed, approval/rejection decision, and any conditions or follow-up actions",
+        "Change management tool export (e.g., ServiceNow, Jira) showing CCB workflow approvals with timestamps, approver names, comments, and linked test evidence for each change reviewed during the audit period",
+        "A quarterly summary of CCB activity showing total changes reviewed, approval rate, emergency changes processed, rollback incidents, and trending metrics"
+      ],
+      "bad_examples": [
+        "Calendar invites showing CCB meetings were scheduled but no minutes or records of what was discussed or decided",
+        "Meeting notes that say 'all changes approved' with no detail about which changes were reviewed or what criteria were evaluated",
+        "Minutes from a single meeting when the audit period spans 12 months, suggesting the CCB meets infrequently or minutes are not consistently captured"
+      ],
+      "redaction_warnings": [
+        "Redact any security vulnerability details discussed during change review if the vulnerabilities have not been remediated",
+        "Remove customer-specific data or PII if change requests reference specific customer environments"
+      ],
+      "freshness": "Within the full audit period (typically last 12 months). Auditors expect to see consistent CCB activity throughout the period, not just the most recent meeting.",
+      "auditor_tip": "Auditors look for consistency: are meetings held at the stated cadence? Do minutes cover enough changes to account for the organization's deployment volume? They also check for emergency changes that bypassed CCB and whether those were retroactively reviewed. A high ratio of emergency changes to normal changes suggests the process is being circumvented."
+    }
+  },
+  "E-CHG-04": {
+    "evidence_id": "E-CHG-04",
+    "title": "Evidence of Cybersecurity / Data Privacy Reviews",
+    "guidance": {
+      "summary": "Auditors need proof that changes to systems, applications, or infrastructure are evaluated for cybersecurity and data privacy impacts before deployment. This demonstrates security is integrated into the change process, not an afterthought.",
+      "acceptable_formats": ["PDF", "XLSX", "Screenshot", "CSV"],
+      "good_examples": [
+        "Change request records showing a mandatory security review checklist completed for each change, including fields for data classification impact, authentication changes, encryption requirements, and privacy impact assessment",
+        "Security review sign-off records from the security team or designated security champion for changes to production systems, with documented risk assessment and any required mitigations",
+        "CI/CD pipeline configuration showing automated security gates (SAST, DAST, dependency scanning, secrets detection) that must pass before deployment, along with sample pipeline run outputs"
+      ],
+      "bad_examples": [
+        "A policy stating security reviews are required but no evidence that any were actually performed on specific changes during the audit period",
+        "A single security review for a major project while dozens of other production changes had no security evaluation documented",
+        "An email from a developer saying 'I checked for security issues' with no structured assessment, no checklist, and no security team involvement"
+      ],
+      "redaction_warnings": [
+        "Redact specific vulnerability findings or security weaknesses identified during reviews if they are unresolved",
+        "Remove any credentials, secrets, or sensitive configuration values visible in CI/CD pipeline screenshots"
+      ],
+      "freshness": "Within the audit period. Evidence should cover a representative sample of changes throughout the period, not just a single point in time.",
+      "auditor_tip": "Auditors sample change records and check whether each has a corresponding security/privacy review. They look for whether the security review is a genuine assessment or just a checkbox exercise. Changes that modify authentication, encryption, data flows, or third-party integrations should have more thorough reviews. Automated security scanning is expected but does not replace human security review for significant changes."
+    }
+  },
+  "E-CHG-05": {
+    "evidence_id": "E-CHG-05",
+    "title": "Change Control Records",
+    "guidance": {
+      "summary": "Auditors require complete change control records demonstrating that production changes follow a documented process including request, review, approval, testing, implementation, and post-implementation validation.",
+      "acceptable_formats": ["PDF", "CSV", "XLSX", "Screenshot"],
+      "good_examples": [
+        "Export from change management system (ServiceNow, Jira, Azure DevOps) showing a sample of change records with all lifecycle fields: requester, description, risk level, test plan, test results, approver(s), implementation date, rollback plan, and post-implementation review",
+        "A set of 10-15 change records spanning the audit period that demonstrate the complete change workflow from request through closure, including evidence of testing in a non-production environment before deployment",
+        "Change management dashboard or report showing change volume, approval compliance rate, emergency change percentage, failed change rate, and mean time to implement across the audit period"
+      ],
+      "bad_examples": [
+        "Git commit logs presented as change control records with no formal request, approval, or testing documentation",
+        "Change records that show approval but no evidence of testing, or testing but no evidence of approval, indicating incomplete process adherence",
+        "A spreadsheet tracking changes with missing fields, inconsistent formatting, and no linkage to actual deployment artifacts or test results"
+      ],
+      "redaction_warnings": [
+        "Redact any database connection strings, API keys, or infrastructure credentials visible in change descriptions",
+        "Remove customer-identifying information from change descriptions if changes were customer-specific"
+      ],
+      "freshness": "Full audit period (typically last 12 months). Auditors will sample changes from throughout the period to verify consistent process adherence.",
+      "auditor_tip": "Auditors select a random sample of changes (typically 25-30 or a statistically valid sample) and trace each through the complete lifecycle. They check for segregation of duties (the person who developed the change should not be the same person who approved or deployed it). Changes deployed without documented approval are a common finding. Rollback plans that are clearly copy-pasted templates without change-specific details also raise concerns."
+    }
+  },
+  "E-IRO-01": {
+    "evidence_id": "E-IRO-01",
+    "title": "Incident Response Program (IRP)",
+    "guidance": {
+      "summary": "Auditors need a documented incident response program that defines how the organization detects, responds to, contains, eradicates, and recovers from security incidents. This is a foundational document for virtually every compliance framework.",
+      "acceptable_formats": ["PDF", "DOCX"],
+      "good_examples": [
+        "A comprehensive IRP document covering incident classification and severity levels, roles and responsibilities (incident commander, communications lead, technical lead), escalation procedures, communication templates (internal, external, regulatory), evidence preservation requirements, and post-incident review process",
+        "An IRP with clearly defined playbooks for common incident types (ransomware, data breach, account compromise, DDoS, insider threat) including step-by-step response procedures, decision trees, and contact lists",
+        "An IRP document with version history, annual review dates, approval by CISO/executive leadership, and cross-references to regulatory notification requirements (GDPR 72-hour rule, state breach notification laws, contractual SLAs)"
+      ],
+      "bad_examples": [
+        "A one-page document that says 'call the IT manager if there is an incident' with no classification scheme, no defined roles, and no response procedures",
+        "An IRP that was written 4 years ago, references employees who have left, and lists phone numbers that are no longer valid",
+        "A policy that covers detection and response but omits post-incident review, evidence preservation, and regulatory notification requirements"
+      ],
+      "redaction_warnings": [
+        "Remove personal phone numbers and home addresses from on-call contact lists",
+        "Redact specific tool names or IP addresses of security infrastructure if the document will be shared with external parties"
+      ],
+      "freshness": "Within last 12 months. The IRP must show evidence of annual review and approval. Contact lists should be current.",
+      "auditor_tip": "Auditors check that the IRP is not just a theoretical document but is operationally viable. They verify that contact lists are current, escalation paths are realistic, and the plan addresses regulatory notification timelines applicable to the organization. They also look for evidence that the IRP has been tested (see E-IRO-04) and that lessons learned from actual incidents have been incorporated back into the plan."
+    }
+  },
+  "E-IRO-03": {
+    "evidence_id": "E-IRO-03",
+    "title": "Incident Tracking",
+    "guidance": {
+      "summary": "Auditors require evidence that security incidents are tracked in a structured system with complete lifecycle documentation from detection through resolution and post-incident review.",
+      "acceptable_formats": ["PDF", "CSV", "XLSX", "Screenshot"],
+      "good_examples": [
+        "Export from incident tracking system (e.g., PagerDuty, ServiceNow, Jira) showing incident records with severity classification, timeline (detection, triage, containment, eradication, recovery, closure), assigned responders, root cause, and remediation actions",
+        "Incident log covering the full audit period showing all tracked incidents with unique IDs, categorization, status, resolution time, and whether post-incident review was completed",
+        "Monthly or quarterly incident summary reports showing incident volume by category, mean time to detect (MTTD), mean time to respond (MTTR), trends, and status of remediation actions from prior incidents"
+      ],
+      "bad_examples": [
+        "An email thread about an incident with no formal tracking record, no severity classification, and no documented resolution",
+        "An incident tracker that only contains 1-2 entries for the entire year, suggesting incidents are not being reported or tracked consistently",
+        "Incident records with no root cause analysis, no lessons learned, and no evidence that corrective actions were identified or implemented"
+      ],
+      "redaction_warnings": [
+        "Redact names of affected individuals (employees, customers) in incident descriptions",
+        "Remove specific vulnerability details or attack vectors from incident records if vulnerabilities have not been fully remediated",
+        "Mask any IP addresses, hostnames, or internal network details in incident logs"
+      ],
+      "freshness": "Full audit period (typically last 12 months). Auditors expect to see continuous tracking throughout the period.",
+      "auditor_tip": "Auditors look at whether the incident volume is plausible for the organization's size and industry. Zero incidents in a year is not credible and suggests underreporting. They check whether incidents are properly classified (not everything labeled 'low'), whether SLA targets for response times are being met, and whether corrective actions from past incidents were actually completed and verified."
+    }
+  },
+  "E-IRO-04": {
+    "evidence_id": "E-IRO-04",
+    "title": "IRP Testing",
+    "guidance": {
+      "summary": "Auditors need proof that the incident response plan is tested regularly to validate that the organization can actually execute the plan under realistic conditions. Testing validates the plan's effectiveness and identifies gaps before a real incident occurs.",
+      "acceptable_formats": ["PDF", "DOCX"],
+      "good_examples": [
+        "After-action report from an IRP test exercise documenting the scenario, participants, timeline of actions taken, decisions made, communications sent, gaps identified, and corrective action plan with owners and due dates",
+        "IRP test plan and results showing a structured exercise (tabletop, functional, or full-scale) with predefined objectives, injects (simulated events), expected vs. actual responses, and a scoring rubric",
+        "Annual testing schedule showing multiple exercises conducted throughout the year (e.g., quarterly tabletops, annual functional exercise), with summary results and evidence that findings were incorporated into IRP updates"
+      ],
+      "bad_examples": [
+        "A calendar invite for an 'IR tabletop' with no after-action report, no documented findings, and no evidence the exercise actually occurred or what was tested",
+        "A test report that says 'the exercise was successful' with no detail about what scenario was tested, who participated, or what gaps were identified",
+        "An IRP test conducted 18 months ago with no subsequent testing during the current audit period"
+      ],
+      "redaction_warnings": [
+        "Remove names of specific external parties (law enforcement contacts, legal counsel) if sharing the test report externally"
+      ],
+      "freshness": "Within last 12 months. Most frameworks require annual IRP testing at minimum. SOC 2 and ISO 27001 expect at least one test per year; FedRAMP requires annual testing.",
+      "auditor_tip": "Auditors distinguish between a genuine test and a perfunctory exercise. They look for realistic scenarios relevant to the organization's threat landscape, participation from appropriate stakeholders (not just IT), documented gaps and lessons learned, and evidence that findings led to plan improvements. A test that identifies zero issues is not credible and suggests the exercise lacked rigor."
+    }
+  },
+  "E-IRO-05": {
+    "evidence_id": "E-IRO-05",
+    "title": "Table Top Exercises",
+    "guidance": {
+      "summary": "Auditors require evidence of scenario-based tabletop exercises where key stakeholders walk through simulated incident scenarios to test decision-making, communication, and coordination without impacting production systems.",
+      "acceptable_formats": ["PDF", "DOCX", "PPTX"],
+      "good_examples": [
+        "Tabletop exercise package including: scenario narrative (e.g., ransomware attack on production database), participant roster with roles, facilitator guide with timed injects, discussion questions for each phase, participant responses documented in real-time, and post-exercise hot wash findings",
+        "After-action report from a tabletop exercise covering: executive summary, exercise objectives, scenario description, key decisions made by participants, communication gaps identified, areas where the IRP was unclear or insufficient, and a remediation plan with assigned owners",
+        "Series of tabletop exercise reports from the audit period covering different incident types (ransomware, insider threat, third-party breach, business email compromise) with evidence that findings from earlier exercises were addressed in later ones"
+      ],
+      "bad_examples": [
+        "A PowerPoint presentation about incident response that was shown in a meeting but generated no discussion, no scenario walk-through, and no documented outcomes",
+        "A tabletop exercise where only IT staff participated, excluding legal, HR, communications, and executive leadership who would be critical in a real incident",
+        "Documentation showing a tabletop was conducted but with no findings, no gaps identified, and no follow-up actions, indicating a check-the-box exercise"
+      ],
+      "redaction_warnings": [
+        "Remove personal contact details from participant rosters",
+        "Redact specific third-party vendor names used in scenarios if they are actual vendors and the scenario implies security weaknesses"
+      ],
+      "freshness": "Within last 12 months. Best practice is to conduct tabletop exercises at least annually, with some frameworks recommending semi-annual exercises.",
+      "auditor_tip": "Auditors evaluate whether tabletop scenarios are realistic and relevant to the organization's actual threat profile. They check for cross-functional participation (executive, legal, HR, communications, IT, security), whether the exercise tested the actual IRP or was a generic discussion, and whether findings resulted in measurable plan improvements. The quality of the after-action report is a strong indicator of the organization's incident response maturity."
+    }
+  },
+  "E-RSK-01": {
+    "evidence_id": "E-RSK-01",
+    "title": "Risk Management Program (RMP)",
+    "guidance": {
+      "summary": "Auditors need a formally documented risk management program that defines how the organization identifies, assesses, treats, monitors, and reports on cybersecurity and information security risks. This is a cornerstone document for ISO 27001, SOC 2, and NIST CSF compliance.",
+      "acceptable_formats": ["PDF", "DOCX"],
+      "good_examples": [
+        "An enterprise risk management program document defining risk governance structure, risk appetite and tolerance statements, risk assessment methodology (quantitative or qualitative, with scoring criteria), risk treatment options (accept, mitigate, transfer, avoid), risk monitoring and reporting cadence, and roles and responsibilities",
+        "RMP document including a defined risk taxonomy, risk scoring methodology (e.g., 5x5 likelihood-impact matrix with clear definitions for each level), risk acceptance authority matrix, and integration with the organization's strategic planning process",
+        "A risk management framework document cross-referencing NIST CSF, ISO 31000, or COSO ERM, with documented procedures for risk identification workshops, risk assessment templates, and risk reporting dashboards"
+      ],
+      "bad_examples": [
+        "A one-paragraph statement in the information security policy saying 'the organization manages risk' with no supporting methodology, scoring criteria, or governance structure",
+        "An RMP document that defines a risk methodology but provides no evidence of it being applied (no risk register, no risk assessments, no risk reports)",
+        "A risk management procedure that has not been reviewed or updated in over 2 years and references an organizational structure that no longer exists"
+      ],
+      "redaction_warnings": [
+        "Remove specific risk appetite thresholds or financial impact values if sharing externally, as these reveal organizational risk tolerance"
+      ],
+      "freshness": "Within last 12 months. The RMP should demonstrate annual review with version history and executive approval.",
+      "auditor_tip": "Auditors verify that the RMP is not just a document but a functioning program. They check for consistency between the stated methodology and the actual risk register, verify that risk appetite statements are specific enough to drive decisions (not just 'low risk appetite'), and look for evidence of executive-level risk reporting. An RMP that defines a 5x5 matrix but whose risk register shows all risks scored as 'medium' suggests the methodology is not being rigorously applied."
+    }
+  },
+  "E-RSK-03": {
+    "evidence_id": "E-RSK-03",
+    "title": "Plan of Actions & Milestones (POA&M) / Risk Register",
+    "guidance": {
+      "summary": "Auditors require a current risk register or POA&M that documents identified risks, their assessment scores, treatment decisions, remediation plans with milestones, and tracking of residual risk. This proves the organization actively manages its risk posture rather than performing a one-time assessment.",
+      "acceptable_formats": ["XLSX", "CSV", "PDF"],
+      "good_examples": [
+        "A risk register with entries showing: unique risk ID, risk description, risk owner, inherent risk score (likelihood x impact), existing controls, residual risk score, treatment decision (mitigate/accept/transfer/avoid), remediation plan, target completion date, and current status",
+        "POA&M document showing identified weaknesses from audits or assessments, assigned remediation owners, planned milestones with dates, current status, and evidence of progress since the last review",
+        "Risk register with quarterly review history showing risk scores being updated, new risks added, closed risks archived, and overdue remediation items escalated with documented justification for delays"
+      ],
+      "bad_examples": [
+        "A risk register created 2 years ago that has never been updated, showing the same risks with the same scores and no evidence of treatment or progress",
+        "A spreadsheet of risks with no scoring methodology, no treatment plans, no ownership, and no target dates for remediation",
+        "A POA&M with all items showing status 'in progress' and no milestones, no evidence of actual progress, and original target dates that have long passed"
+      ],
+      "redaction_warnings": [
+        "Redact specific vulnerability details for unresolved high/critical risks",
+        "Remove references to specific customer names or contracts in risk descriptions",
+        "Mask financial impact estimates if sharing outside risk governance stakeholders"
+      ],
+      "freshness": "Within last 6 months. Risk registers should be reviewed at least quarterly. POA&M items should show active tracking with regular status updates.",
+      "auditor_tip": "Auditors look for risks that have been 'in progress' for extended periods without milestones or updates, risk acceptance decisions without documented approval from appropriate authority, and whether the risk register captures risks from all sources (vulnerability scans, audit findings, incident post-mortems, vendor assessments). A risk register with fewer than 10-15 entries for a mid-size organization is likely incomplete."
+    }
+  },
+  "E-RSK-04": {
+    "evidence_id": "E-RSK-04",
+    "title": "Cybersecurity Risk Assessment (RA)",
+    "guidance": {
+      "summary": "Auditors require evidence of formal cybersecurity risk assessments performed periodically to identify threats, vulnerabilities, and their potential impact on the organization's information assets and operations.",
+      "acceptable_formats": ["PDF", "DOCX", "XLSX"],
+      "good_examples": [
+        "A comprehensive risk assessment report covering: scope and methodology, asset inventory assessed, threat sources and threat events considered, vulnerability analysis, likelihood and impact ratings with justification, risk determination for each threat-vulnerability pair, and recommended risk responses",
+        "Risk assessment conducted using a recognized methodology (NIST SP 800-30, ISO 27005, FAIR, OCTAVE) with clear documentation of assumptions, data sources, and analytical approach",
+        "Annual risk assessment with executive summary, detailed findings organized by risk level, comparison to prior year's assessment showing risk posture trends, and a risk treatment plan prioritized by residual risk level"
+      ],
+      "bad_examples": [
+        "A vulnerability scan report presented as a 'risk assessment' with no threat analysis, no business impact consideration, and no risk scoring beyond technical severity",
+        "A risk assessment that covers only IT infrastructure risks while ignoring application security, data privacy, third-party/supply chain, and personnel risks",
+        "A questionnaire-based self-assessment with no validation of responses, no evidence of threat analysis, and conclusions that do not follow from the data presented"
+      ],
+      "redaction_warnings": [
+        "Redact specific critical vulnerability details and exploitation paths for unresolved findings",
+        "Remove specific system names, IP addresses, and architecture details if sharing externally",
+        "Mask financial impact estimates and business continuity details"
+      ],
+      "freshness": "Within last 12 months. Annual risk assessments are standard for SOC 2, ISO 27001, and NIST CSF. Some high-risk environments require more frequent assessments.",
+      "auditor_tip": "Auditors evaluate whether the risk assessment covers the full scope of the organization's information environment (not just a narrow slice), uses a consistent and defensible methodology, and results in actionable findings that feed into the risk register and treatment plans. They compare the risk assessment findings against the risk register to verify continuity. A risk assessment that identifies 30 risks but a risk register that contains only 10 suggests findings are not being properly tracked."
+    }
+  },
+  "E-AST-01": {
+    "evidence_id": "E-AST-01",
+    "title": "IT Asset Management (ITAM)",
+    "guidance": {
+      "summary": "Auditors need evidence of a formal IT asset management program that governs the lifecycle of hardware, software, and information assets from acquisition through disposal. This demonstrates the organization knows what it owns and can protect it appropriately.",
+      "acceptable_formats": ["PDF", "DOCX"],
+      "good_examples": [
+        "ITAM policy and procedures document defining asset classification scheme, acquisition and registration process, asset tracking requirements, change of custody procedures, maintenance and patching responsibilities, and secure disposal/decommissioning procedures",
+        "ITAM program documentation including a defined asset lifecycle (procure, deploy, maintain, retire, dispose), roles and responsibilities (asset owners, custodians, ITAM team), and integration points with configuration management, patch management, and procurement",
+        "Asset management standard operating procedures with defined processes for onboarding new assets into the inventory, periodic reconciliation procedures, handling of lost or stolen assets, and data sanitization requirements for disposal"
+      ],
+      "bad_examples": [
+        "A procurement process document that covers how to buy equipment but says nothing about tracking, maintaining, or disposing of assets",
+        "An ITAM policy that was never operationalized, with no corresponding asset inventory, no tracking system, and no evidence of lifecycle management",
+        "A generic IT policy mentioning 'assets will be tracked' with no specific procedures, classification scheme, or roles defined"
+      ],
+      "redaction_warnings": [
+        "Remove specific vendor contract details or pricing information from procurement-related sections"
+      ],
+      "freshness": "Within last 12 months. The ITAM program documentation should show evidence of annual review and be consistent with the current asset inventory.",
+      "auditor_tip": "Auditors check whether the ITAM program covers all asset types (endpoints, servers, network devices, mobile devices, cloud instances, SaaS subscriptions, and data assets). They verify that the program integrates with vulnerability management (you can only patch what you know about) and that disposal procedures include documented data sanitization. An ITAM program that does not address cloud and SaaS assets is considered incomplete by modern audit standards."
+    }
+  },
+  "E-AST-04": {
+    "evidence_id": "E-AST-04",
+    "title": "Asset Inventories - Hardware",
+    "guidance": {
+      "summary": "Auditors require a current, comprehensive inventory of all hardware assets including endpoints, servers, network devices, and mobile devices, with sufficient detail to support security operations, vulnerability management, and incident response.",
+      "acceptable_formats": ["CSV", "XLSX", "PDF"],
+      "good_examples": [
+        "Hardware asset inventory export from an asset management or endpoint management tool (e.g., SCCM, Intune, Jamf, Qualys) showing: asset tag/ID, device type, make/model, serial number, operating system and version, assigned user/department, physical location or cloud region, network segment, status (active/retired/lost), and last seen/check-in date",
+        "Network discovery scan results reconciled with the asset register showing all discovered devices mapped to inventory records, with any unregistered devices flagged for investigation",
+        "Server and infrastructure inventory including on-premises and cloud instances (EC2, Azure VMs, GCE) with instance IDs, configurations, assigned applications, patching group, and lifecycle status"
+      ],
+      "bad_examples": [
+        "A spreadsheet that only lists laptops issued to employees while omitting servers, network equipment, IoT devices, and cloud infrastructure",
+        "An inventory that was created during initial deployment and never updated, showing assets that have been decommissioned and missing assets acquired in the last 12 months",
+        "A list of hostnames with no additional detail such as owner, location, OS version, or status"
+      ],
+      "redaction_warnings": [
+        "Redact specific IP addresses and MAC addresses if sharing the inventory outside the security team",
+        "Remove serial numbers if the inventory will be shared with external auditors who do not need them for validation",
+        "Mask employee names if individual assignment is not relevant to the audit scope"
+      ],
+      "freshness": "Within last 6 months. Hardware inventories should be continuously maintained; point-in-time exports must be recent. Reconciliation against network discovery should occur at least quarterly.",
+      "auditor_tip": "Auditors cross-reference the hardware inventory against network discovery scans, endpoint protection deployment reports, and vulnerability scan target lists. Devices present on the network but absent from the inventory (shadow IT) are a significant finding. They also check for assets marked as 'retired' that are still active on the network, and assets with unsupported operating systems still in production."
+    }
+  },
+  "E-AST-05": {
+    "evidence_id": "E-AST-05",
+    "title": "Asset Inventories - Software",
+    "guidance": {
+      "summary": "Auditors require a current inventory of all software assets including commercial applications, open-source components, SaaS subscriptions, and internally developed applications, with sufficient detail to support license compliance, vulnerability management, and change control.",
+      "acceptable_formats": ["CSV", "XLSX", "PDF"],
+      "good_examples": [
+        "Software asset inventory showing: application name, version, vendor, license type and count, deployment method, business owner, data classification of data processed, hosting environment (on-prem/cloud/SaaS), and end-of-life/end-of-support dates",
+        "SaaS application inventory from a CASB or SaaS management tool (e.g., Zylo, Productiv, Torii) showing all sanctioned and discovered applications, user counts, authentication method (SSO/local), data sensitivity, and contract renewal dates",
+        "Software bill of materials (SBOM) for critical applications showing all dependencies including open-source libraries, versions, and known vulnerability status"
+      ],
+      "bad_examples": [
+        "A list of installed programs from a single workstation presented as the organization's software inventory",
+        "A software inventory that only covers licensed/purchased software while ignoring open-source, freeware, SaaS applications, and shadow IT",
+        "An inventory with no version information, making it impossible to determine whether software is current, patched, or end-of-life"
+      ],
+      "redaction_warnings": [
+        "Redact license keys, activation codes, and subscription credentials",
+        "Remove pricing and contract terms from license management data if sharing externally"
+      ],
+      "freshness": "Within last 6 months. Software inventories change frequently; the inventory should reflect current deployments and be reconciled against discovery tools regularly.",
+      "auditor_tip": "Auditors focus on end-of-life (EOL) and end-of-support (EOS) software still in production, which is a high-risk finding across all frameworks. They cross-reference the software inventory against vulnerability scan results to verify coverage. They also check for unauthorized software (not in the approved software list) and SaaS applications processing sensitive data without security review. An organization that cannot produce a software inventory will receive a significant finding."
+    }
+  },
+  "E-SAT-02": {
+    "evidence_id": "E-SAT-02",
+    "title": "Initial User Training",
+    "guidance": {
+      "summary": "Auditors need evidence that all new users (employees, contractors, temporary staff) complete security awareness training before being granted access to organizational systems, or within a defined onboarding period.",
+      "acceptable_formats": ["PDF", "CSV", "XLSX", "Screenshot"],
+      "good_examples": [
+        "Learning management system (LMS) export showing all new hires during the audit period with their training completion dates, confirming training was completed within the required onboarding window (e.g., within first 30 days)",
+        "Training completion certificates or acknowledgment records for each new employee showing the specific training modules completed, date of completion, and a passing score on the assessment component",
+        "Onboarding checklist or workflow showing security awareness training as a mandatory step before system access provisioning, with evidence that access was not granted until training was confirmed complete"
+      ],
+      "bad_examples": [
+        "A policy stating new employees must complete training with no evidence of actual completion records for any individuals",
+        "Training records showing completion dates months after the employee's start date, indicating training is not enforced during onboarding",
+        "A sign-in sheet for a group presentation with no assessment component, no individual completion tracking, and no evidence of what content was covered"
+      ],
+      "redaction_warnings": [
+        "Redact employee personal information beyond name and department (e.g., SSN, date of birth, home address)",
+        "Remove specific assessment scores if sharing aggregate compliance data is sufficient"
+      ],
+      "freshness": "Within the audit period. Auditors will check training records for all new hires during the audit period, not just a sample.",
+      "auditor_tip": "Auditors cross-reference the list of new hires (from HR records) against training completion records to verify 100% compliance. Gaps where new employees started but have no training record are findings. They also check whether the training content is relevant and current (not a generic video from 5 years ago), includes assessment/testing, and covers topics required by the applicable framework (phishing, social engineering, data handling, acceptable use, incident reporting)."
+    }
+  },
+  "E-SAT-04": {
+    "evidence_id": "E-SAT-04",
+    "title": "Recurring User Training",
+    "guidance": {
+      "summary": "Auditors need proof that all active users complete security awareness training on a recurring basis (typically annually) to reinforce security behaviors and address emerging threats.",
+      "acceptable_formats": ["PDF", "CSV", "XLSX", "Screenshot"],
+      "good_examples": [
+        "Annual security awareness training completion report from LMS showing all active employees, completion status, completion date, assessment score, and overall completion percentage for the organization",
+        "Training campaign report showing phishing simulation results alongside training completion, demonstrating a measurable reduction in click rates after training",
+        "Training compliance dashboard showing completion rates by department, overdue users with escalation actions taken, and evidence of management follow-up for non-compliant individuals"
+      ],
+      "bad_examples": [
+        "Training records showing only 60% completion with no evidence of follow-up or consequences for non-completion",
+        "A single email sent to all staff with a link to a training video and no tracking of who actually watched it or completed an assessment",
+        "Training content that has not been updated in 3+ years and does not address current threats (e.g., no mention of AI-generated phishing, business email compromise, or SaaS-specific risks)"
+      ],
+      "redaction_warnings": [
+        "Redact individual assessment scores when providing department-level or organization-level compliance reports",
+        "Remove personal email addresses from training completion exports"
+      ],
+      "freshness": "Within last 12 months. Annual training must be completed within the audit period, and auditors expect high completion rates (95%+ is the benchmark).",
+      "auditor_tip": "Auditors look for completion rates above 95%. Anything below 90% is typically a finding. They verify that training is not the same content year after year, that it includes an assessment component (not just watching a video), and that non-compliant users face documented consequences (escalation to management, access restrictions). Phishing simulation results combined with training data provide strong evidence of program effectiveness."
+    }
+  },
+  "E-SAT-05": {
+    "evidence_id": "E-SAT-05",
+    "title": "Role-Based Training",
+    "guidance": {
+      "summary": "Auditors need evidence that users in specialized roles (developers, system administrators, security team, executives, data handlers) receive additional training specific to their job responsibilities and the risks associated with their elevated access or duties.",
+      "acceptable_formats": ["PDF", "CSV", "XLSX"],
+      "good_examples": [
+        "Training matrix mapping specific roles (developers, DBAs, system admins, security analysts, executives, HR staff handling PII) to required training modules beyond general awareness, with completion records for each role category",
+        "Developer secure coding training records (e.g., OWASP Top 10, secure SDLC) showing completion by all development team members, including training provider, content covered, assessment results, and recertification dates",
+        "Privileged user training records showing system administrators completed training on secure configuration, logging requirements, incident escalation procedures, and their specific responsibilities under the organization's security policies"
+      ],
+      "bad_examples": [
+        "The same generic security awareness training given to all employees presented as 'role-based training' for developers and administrators",
+        "A conference attendance certificate for one developer presented as evidence of role-based training for the entire development team",
+        "Training records for general awareness but no evidence of any specialized training for privileged users, developers, or data handling personnel"
+      ],
+      "redaction_warnings": [
+        "Remove individual employee names if role-level aggregate reporting is sufficient for the audit"
+      ],
+      "freshness": "Within last 12 months. Role-based training should be annual at minimum, with additional training when roles change or new technologies are adopted.",
+      "auditor_tip": "Auditors check whether the role-based training is genuinely differentiated from general awareness training. Developers should receive secure coding training; administrators should receive secure configuration and operations training; incident responders should receive IR-specific training. They verify that the training content is relevant to the technologies and risks the role encounters. Generic awareness training relabeled as 'role-based' is a finding."
+    }
+  },
+  "E-NET-04": {
+    "evidence_id": "E-NET-04",
+    "title": "Network Security Controls (NSC)",
+    "guidance": {
+      "summary": "Auditors require evidence that the organization has implemented and maintains network security controls including firewalls, network segmentation, intrusion detection/prevention, and traffic filtering to protect network boundaries and internal segments.",
+      "acceptable_formats": ["PDF", "XLSX", "Screenshot", "CSV"],
+      "good_examples": [
+        "Firewall rule set export with documented business justification for each rule, rule owner, last review date, and evidence of a periodic rule review process that identifies and removes stale or overly permissive rules",
+        "Network architecture diagram showing security zones (DMZ, internal, restricted, management), segmentation controls between zones, and the security controls applied at each boundary (firewall, WAF, IDS/IPS, proxy)",
+        "Network security control configuration evidence showing IDS/IPS deployment, signature update schedule, alert monitoring process, and sample alerts that were investigated and resolved"
+      ],
+      "bad_examples": [
+        "A default firewall configuration that has never been customized, with wide-open rules and no documented review process",
+        "A network diagram that shows a single flat network with no segmentation between production, development, and management environments",
+        "Firewall rules with descriptions like 'temp rule' or 'do not delete' that have been in place for years with no documented justification"
+      ],
+      "redaction_warnings": [
+        "Redact specific IP addresses, subnet ranges, and VLAN IDs from firewall rules and network diagrams",
+        "Remove vendor-specific configuration syntax that could reveal security device models and firmware versions",
+        "Mask any pre-shared keys, community strings, or authentication credentials visible in configurations"
+      ],
+      "freshness": "Within last 6 months. Firewall rules should be reviewed at least semi-annually (PCI DSS requires every 6 months). Network diagrams should be current.",
+      "auditor_tip": "Auditors look for 'any-any' rules, rules permitting all outbound traffic, rules with no expiration on temporary exceptions, and rules that have not been reviewed within the required period. They verify that network segmentation exists between environments with different trust levels. They also check that IDS/IPS signatures are updated regularly and that alerts are actively monitored, not just logged and ignored."
+    }
+  },
+  "E-NET-05": {
+    "evidence_id": "E-NET-05",
+    "title": "Zero Trust Architecture (ZTA)",
+    "guidance": {
+      "summary": "Auditors need evidence that the organization is implementing zero trust principles: never trust, always verify. This includes identity-centric access controls, micro-segmentation, continuous verification, and least-privilege enforcement regardless of network location.",
+      "acceptable_formats": ["PDF", "DOCX", "Screenshot"],
+      "good_examples": [
+        "Zero trust architecture strategy document or roadmap defining the organization's ZTA maturity model, current state assessment, target state, and phased implementation plan aligned with NIST SP 800-207 or CISA Zero Trust Maturity Model",
+        "Configuration evidence showing identity-aware access controls: conditional access policies requiring device compliance, MFA, and risk-based authentication before granting access to resources, regardless of network location (no implicit trust for internal network)",
+        "Evidence of micro-segmentation implementation showing workload-to-workload access controls (e.g., service mesh policies, cloud security groups, software-defined perimeter) with default-deny posture and explicit allow rules based on identity and context"
+      ],
+      "bad_examples": [
+        "A marketing document or vendor pitch deck about zero trust with no evidence of actual implementation in the organization's environment",
+        "VPN configuration presented as 'zero trust' when VPN grants broad network access after authentication without continuous verification or micro-segmentation",
+        "A statement that 'we are working toward zero trust' with no documented strategy, no current implementations, and no measurable progress"
+      ],
+      "redaction_warnings": [
+        "Redact specific technology vendor names and product versions if the ZTA documentation will be shared externally",
+        "Remove internal IP ranges, cloud account IDs, and infrastructure details from architecture documents"
+      ],
+      "freshness": "Within last 12 months. ZTA is typically an ongoing journey; evidence should show current state and recent progress, not just a future roadmap.",
+      "auditor_tip": "Auditors understand that full ZTA implementation is a multi-year journey. They look for evidence of genuine progress: are conditional access policies enforced (not just configured)? Is MFA required for all access, including internal? Are there micro-segmentation controls beyond traditional network firewalls? A ZTA strategy document with no implementation evidence is insufficient. Conversely, even partial implementation with demonstrated progress and a clear roadmap demonstrates commitment to the architecture."
+    }
+  },
+  "E-NET-06": {
+    "evidence_id": "E-NET-06",
+    "title": "Authorized Network Connections",
+    "guidance": {
+      "summary": "Auditors require documentation of all authorized external and internal network connections, including third-party connections, VPN tunnels, dedicated links, cloud interconnects, and API integrations, with evidence that each connection is approved, documented, and periodically reviewed.",
+      "acceptable_formats": ["XLSX", "CSV", "PDF"],
+      "good_examples": [
+        "Network connection inventory listing all external connections with: connection ID, connected party, purpose/business justification, connection type (VPN, MPLS, API, direct connect), data classification of traffic, security controls applied (encryption, authentication, monitoring), approval date, and last review date",
+        "Third-party network connection agreements showing security requirements, allowed protocols and ports, monitoring responsibilities, and incident notification procedures for each external connection",
+        "Periodic review report showing all authorized connections were validated, unused connections were decommissioned, and connection security controls were verified as current"
+      ],
+      "bad_examples": [
+        "A list of VPN tunnels from a firewall with no documentation of who the connections are for, what they are used for, or whether they are still needed",
+        "Network connections to third parties that were established years ago with no evidence of periodic review or renewal of authorization",
+        "API integrations with external services that are not documented in any connection inventory and were discovered during the audit"
+      ],
+      "redaction_warnings": [
+        "Redact specific IP addresses, connection endpoints, and encryption key details",
+        "Remove vendor contract values and pricing from connection agreements",
+        "Mask authentication credentials or pre-shared keys referenced in connection documentation"
+      ],
+      "freshness": "Within last 12 months. Connection inventories should be reviewed at least annually, with immediate updates when connections are added or removed.",
+      "auditor_tip": "Auditors compare the documented connection inventory against actual network configurations (firewall rules, VPN tunnels, cloud peering connections) to identify undocumented connections. Connections to former vendors or discontinued services that remain active are a common finding. They also verify that each connection has a documented business justification and that appropriate security controls (encryption, authentication, monitoring) are in place for the data classification level traversing the connection."
+    }
+  },
+  "E-VPM-01": {
+    "evidence_id": "E-VPM-01",
+    "title": "Vulnerability & Patch Management Program (VPMP)",
+    "guidance": {
+      "summary": "Auditors need a documented vulnerability and patch management program that defines how the organization identifies, prioritizes, remediates, and tracks vulnerabilities across its technology environment. This is a critical control for every major compliance framework.",
+      "acceptable_formats": ["PDF", "DOCX"],
+      "good_examples": [
+        "VPMP document defining: vulnerability scanning scope and frequency, patch classification and prioritization criteria (critical/high/medium/low with SLA targets for each), remediation workflows, exception and risk acceptance process, reporting and metrics, and roles and responsibilities",
+        "Vulnerability management standard operating procedures covering: scanning tool configuration, scan scheduling, vulnerability triage process, patch testing and deployment workflow, emergency/zero-day patching procedures, and compensating controls for systems that cannot be patched",
+        "VPMP with defined SLAs (e.g., critical: 72 hours, high: 30 days, medium: 90 days, low: next maintenance window), escalation procedures for overdue patches, and integration with change management and configuration management processes"
+      ],
+      "bad_examples": [
+        "A statement that 'we patch regularly' with no defined program, no SLAs, no scanning procedures, and no metrics",
+        "A patch management procedure that only covers Windows endpoints while ignoring Linux servers, network devices, cloud infrastructure, containers, and third-party applications",
+        "A VPMP document that defines aggressive SLAs (e.g., critical in 24 hours) that the organization demonstrably cannot meet, indicating the document is aspirational rather than operational"
+      ],
+      "redaction_warnings": [
+        "Remove specific tool names and versions used for vulnerability scanning if sharing externally",
+        "Redact internal system names and IP ranges from scope definitions"
+      ],
+      "freshness": "Within last 12 months. The VPMP should show evidence of annual review and alignment with current threat landscape and organizational technology changes.",
+      "auditor_tip": "Auditors compare the stated patch SLAs against actual patching performance data. An organization that claims a 72-hour SLA for critical vulnerabilities but has critical patches outstanding for 6+ months will receive a finding for both the unpatched vulnerabilities and the ineffective program. They also check whether the program scope covers the full technology stack, including cloud services, containers, and third-party/open-source components."
+    }
+  },
+  "E-VPM-02": {
+    "evidence_id": "E-VPM-02",
+    "title": "Penetration Testing - Application",
+    "guidance": {
+      "summary": "Auditors require evidence of application-level penetration testing performed by qualified testers to identify exploitable vulnerabilities in web applications, APIs, and mobile applications. This goes beyond automated scanning to include manual testing techniques.",
+      "acceptable_formats": ["PDF"],
+      "good_examples": [
+        "Penetration test report from a qualified firm or certified tester (OSCP, CREST, GPEN) covering: scope and methodology (OWASP Testing Guide, PTES), executive summary, detailed findings with severity ratings (CVSS), proof-of-concept for each finding, business impact assessment, and prioritized remediation recommendations",
+        "Application penetration test report showing testing of OWASP Top 10 categories (injection, broken authentication, sensitive data exposure, XXE, broken access control, misconfig, XSS, insecure deserialization, known vulnerable components, insufficient logging) with results for each category",
+        "Penetration test report with a remediation tracking addendum showing which findings have been resolved, retested, and verified, and which remain open with risk acceptance documentation"
+      ],
+      "bad_examples": [
+        "An automated DAST scan report (e.g., OWASP ZAP, Burp Suite automated scan) presented as a penetration test with no manual testing, no business logic testing, and no authentication testing",
+        "A penetration test report that is over 12 months old and tested a version of the application that has since had significant changes",
+        "A one-page letter from a security firm stating 'no critical vulnerabilities were found' with no methodology description, no detailed findings, and no evidence of what was tested"
+      ],
+      "redaction_warnings": [
+        "Redact specific exploitation details, payloads, and proof-of-concept code for unresolved vulnerabilities",
+        "Remove tester credentials, test account details, and access tokens used during testing",
+        "Mask specific URLs, API endpoints, and server responses that reveal internal architecture"
+      ],
+      "freshness": "Within last 12 months. Annual application penetration testing is standard for SOC 2 and ISO 27001. PCI DSS requires testing after significant changes. High-risk applications may require more frequent testing.",
+      "auditor_tip": "Auditors verify that the penetration test was performed by an independent, qualified tester (not the development team testing their own code). They check that the scope covered all in-scope applications and APIs, that the methodology included both automated and manual testing, and that findings were tracked through remediation. A penetration test that reports zero findings is unusual and may indicate an overly narrow scope or insufficient testing depth."
+    }
+  },
+  "E-VPM-05": {
+    "evidence_id": "E-VPM-05",
+    "title": "Vulnerability Assessments",
+    "guidance": {
+      "summary": "Auditors need evidence of regular vulnerability assessments (automated scanning) across the organization's infrastructure, applications, and cloud environments, along with evidence that identified vulnerabilities are tracked, prioritized, and remediated.",
+      "acceptable_formats": ["PDF", "CSV", "XLSX"],
+      "good_examples": [
+        "Vulnerability scan reports from a credentialed scanning tool (e.g., Nessus, Qualys, Rapid7) covering the full in-scope environment, showing scan date, assets scanned, total vulnerabilities by severity, and trending data compared to prior scans",
+        "Vulnerability management dashboard export showing current vulnerability counts by severity, mean time to remediate by severity tier, aging analysis of open vulnerabilities, and SLA compliance percentage",
+        "Monthly or quarterly vulnerability assessment summary reports showing scan coverage percentage (assets scanned vs. total assets), new vulnerabilities discovered, vulnerabilities remediated, and overdue items with escalation status"
+      ],
+      "bad_examples": [
+        "A single vulnerability scan from 8 months ago with no evidence of regular scanning cadence or follow-up remediation",
+        "Scan results showing thousands of vulnerabilities with no triage, no prioritization, and no remediation tracking, indicating scan-and-forget behavior",
+        "Unauthenticated vulnerability scans that only identify network-level issues while missing application and OS-level vulnerabilities that require credentialed access to detect"
+      ],
+      "redaction_warnings": [
+        "Redact specific CVE exploitation details for unresolved critical and high vulnerabilities",
+        "Remove specific IP addresses and hostnames from scan reports if sharing externally",
+        "Mask any credentials or sensitive configuration details revealed by credentialed scanning"
+      ],
+      "freshness": "Within last 3 months. Vulnerability scanning should occur at least monthly for production environments. Quarterly is the minimum acceptable cadence for most frameworks.",
+      "auditor_tip": "Auditors check scan coverage (are all assets being scanned, including cloud, containers, and network devices?), scan authenticity (credentialed vs. unauthenticated), scanning frequency, and remediation follow-through. They look for critical and high vulnerabilities that have been open beyond SLA targets. Organizations that scan regularly but never remediate findings demonstrate a control that is designed but not operating effectively, which is still a finding."
+    }
+  },
+  "E-VPM-06": {
+    "evidence_id": "E-VPM-06",
+    "title": "Attack Surface Scope",
+    "guidance": {
+      "summary": "Auditors need evidence that the organization has identified and documented its external attack surface, including all internet-facing assets, services, domains, and cloud resources, and that this inventory is actively maintained and monitored for unauthorized exposure.",
+      "acceptable_formats": ["PDF", "XLSX", "CSV", "Screenshot"],
+      "good_examples": [
+        "Attack surface inventory documenting all internet-facing assets: public IP addresses, domains and subdomains, exposed services and ports, cloud storage buckets, API endpoints, web applications, and content delivery resources, with ownership attribution for each",
+        "External attack surface management (EASM) tool output (e.g., Mandiant ASM, CrowdStrike Falcon Surface, Censys) showing discovered assets, risk-scored exposures, and evidence of investigation and remediation for high-risk findings",
+        "Periodic attack surface review report showing changes since last review (new assets exposed, assets decommissioned, unauthorized exposures discovered and remediated) with comparison to the organization's authorized asset inventory"
+      ],
+      "bad_examples": [
+        "A list of the organization's primary domain names with no enumeration of subdomains, cloud assets, API endpoints, or third-party hosted resources",
+        "A network scan limited to the organization's primary IP range while ignoring cloud infrastructure, CDN endpoints, SaaS-hosted portals, and shadow IT",
+        "An attack surface assessment performed once during initial setup with no evidence of ongoing monitoring or periodic reassessment"
+      ],
+      "redaction_warnings": [
+        "Redact specific public IP addresses and exposed service details if sharing the document broadly",
+        "Remove specific vulnerability findings associated with exposed assets",
+        "Mask cloud account IDs, storage bucket names, and API endpoint URLs"
+      ],
+      "freshness": "Within last 6 months. Attack surface monitoring should be continuous or at least monthly. Point-in-time assessments should be recent given the rapid pace of cloud and infrastructure changes.",
+      "auditor_tip": "Auditors compare the documented attack surface against their own external reconnaissance to identify assets the organization may have missed. Shadow IT, forgotten development environments, acquired company assets, and misconfigured cloud storage are common gaps. They check whether the attack surface inventory is integrated with vulnerability management (exposed assets should be scanned more frequently and prioritized for patching). An organization that cannot describe its own attack surface will receive a significant finding."
+    }
+  }
+}
