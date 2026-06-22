@@ -1,0 +1,56 @@
+name: OSS Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Tag and publish release if version is new
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! -f webclient/package.json ]]; then
+            echo "::notice::webclient/package.json not found; skipping OSS release"
+            exit 0
+          fi
+
+          VERSION="$(jq -r '.version' webclient/package.json)"
+          if [[ -z "$VERSION" || "$VERSION" == "null" ]]; then
+            echo "::error::webclient/package.json must contain a non-empty version"
+            exit 1
+          fi
+
+          TAG="v${VERSION}"
+
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "release ${TAG} already exists — skipping"
+            exit 0
+          fi
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release ${TAG} already exists — skipping"
+            exit 0
+          fi
+
+          git config user.name "scf-oss-publisher"
+          git config user.email "noreply@compliancegenie.io"
+          git tag -a "$TAG" -m "Release $TAG"
+          git push origin "$TAG"
+          gh release create "$TAG" --title "$TAG" --generate-notes --verify-tag
+
+          echo "published release ${TAG}"
