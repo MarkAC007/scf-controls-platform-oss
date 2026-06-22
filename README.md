@@ -9,6 +9,8 @@ risk — all on your own infrastructure.
 It ships as a **Docker Compose** stack with bundled PostgreSQL, Redis, and MinIO object
 storage. No cloud account required.
 
+**Learn more →** features, screenshots, and documentation at **[scfcontrolsplatform.com](https://scfcontrolsplatform.com/)**.
+
 > **Bring your own SCF catalogue.** The SCF control content is licensed
 > [CC BY-ND 4.0](https://creativecommons.org/licenses/by-nd/4.0/) and is **not** distributed
 > with this project. You supply your own SCF Excel workbook (a free download from the SCF) and
