@@ -1,5 +1,8 @@
 # SCF Controls Platform
 
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/MarkAC007/scf-controls-platform-oss/badge)](https://scorecard.dev/viewer/?uri=github.com/MarkAC007/scf-controls-platform-oss)
+[![CodeQL](https://github.com/MarkAC007/scf-controls-platform-oss/actions/workflows/codeql.yml/badge.svg)](https://github.com/MarkAC007/scf-controls-platform-oss/actions/workflows/codeql.yml)
+
 A self-hosted **Governance, Risk & Compliance (GRC)** platform for managing cybersecurity
 controls with the [Secure Controls Framework (SCF)](https://securecontrolsframework.com/).
 Scope controls against 350+ frameworks (ISO 27001, SOC 2, NIST, PCI DSS, NIS2, and more),
