@@ -1,7 +1,11 @@
 # SCF Controls Platform
 
-[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/MarkAC007/scf-controls-platform-oss/badge)](https://scorecard.dev/viewer/?uri=github.com/MarkAC007/scf-controls-platform-oss)
+[![CI](https://github.com/MarkAC007/scf-controls-platform-oss/actions/workflows/ci.yml/badge.svg)](https://github.com/MarkAC007/scf-controls-platform-oss/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/MarkAC007/scf-controls-platform-oss/actions/workflows/codeql.yml/badge.svg)](https://github.com/MarkAC007/scf-controls-platform-oss/actions/workflows/codeql.yml)
+[![Gitleaks](https://github.com/MarkAC007/scf-controls-platform-oss/actions/workflows/gitleaks.yml/badge.svg)](https://github.com/MarkAC007/scf-controls-platform-oss/actions/workflows/gitleaks.yml)
+[![Semgrep](https://github.com/MarkAC007/scf-controls-platform-oss/actions/workflows/semgrep.yml/badge.svg)](https://github.com/MarkAC007/scf-controls-platform-oss/actions/workflows/semgrep.yml)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/MarkAC007/scf-controls-platform-oss/badge)](https://scorecard.dev/viewer/?uri=github.com/MarkAC007/scf-controls-platform-oss)
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](LICENSE)
 
 A self-hosted **Governance, Risk & Compliance (GRC)** platform for managing cybersecurity
 controls with the [Secure Controls Framework (SCF)](https://securecontrolsframework.com/).
