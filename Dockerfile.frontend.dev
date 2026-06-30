@@ -1,7 +1,8 @@
 # Dockerfile for CG CCF Frontend (Development)
 # Uses Vite dev server for local development with hot reload
 
-FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293  # node:20-alpine
+# node:20-alpine (tag pinned to immutable digest below; Renovate updates it)
+FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293
 
 WORKDIR /app
 
