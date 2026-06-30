@@ -1,0 +1,18 @@
+# Code owners for scf-controls-platform-oss
+#
+# These owners are requested for review automatically on any pull request that
+# touches matching paths, and (when the branch ruleset requires code-owner review)
+# their approval gates the merge. See OpenSSF Scorecard: Branch-Protection / Code-Review.
+#
+# Syntax: https://docs.github.com/articles/about-code-owners
+
+# Default owner for everything in the repository.
+*       @MarkAC007
+
+# Security-sensitive surfaces — explicit so they always route to the maintainer.
+/.github/        @MarkAC007
+/.github/workflows/   @MarkAC007
+/SECURITY.md     @MarkAC007
+/Dockerfile.*    @MarkAC007
+/requirements.txt    @MarkAC007
+/backend/requirements.txt   @MarkAC007

@@ -1,7 +1,7 @@
 # Dockerfile for CG CCF Backend API
 # Python FastAPI application
 
-FROM python:3.11-slim
+FROM python:3.11-slim@sha256:b27df5841f3355e9473f9a516d38a6783b6c8dfeacaf2d14a240f443b368ddb6  # python:3.11-slim
 
 # Set working directory
 WORKDIR /app
