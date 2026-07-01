@@ -78,6 +78,13 @@ services:
       - cg-network
 
   backend:
+    # Default: pull the pre-built image published from the private canonical repo
+    # (see .github/workflows/publish-oss-images.yml). Contributors can still build from
+    # source with `docker compose build` / `docker compose up --build`.
+    # Tag is intentionally tunable (SCF_IMAGE_TAG, default `latest`) rather than a pinned
+    # digest — friendlier default for a quickstart; set SCF_IMAGE_TAG=sha-<commit> (or a
+    # digest) for reproducible/locked pulls.
+    image: ghcr.io/markac007/scf-backend:${SCF_IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: Dockerfile.backend
@@ -142,6 +149,8 @@ services:
     restart: unless-stopped
 
   celery-worker:
+    # Shares the backend image (same Dockerfile.backend); only the command differs.
+    image: ghcr.io/markac007/scf-backend:${SCF_IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: Dockerfile.backend
@@ -194,6 +203,8 @@ services:
     restart: unless-stopped
 
   celery-beat:
+    # Shares the backend image (same Dockerfile.backend); only the command differs.
+    image: ghcr.io/markac007/scf-backend:${SCF_IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: Dockerfile.backend
@@ -238,6 +249,12 @@ services:
       - cg-network
 
   frontend:
+    # NOT switched to a published image yet — OPEN DECISION (see PR).
+    # This service is the Vite DEV server (Dockerfile.frontend.dev, port 5173, build-time
+    # VITE args). The published `ghcr.io/markac007/scf-frontend` image is PROD nginx
+    # (Dockerfile.frontend, port 80, runtime BACKEND_URL, Google-auth disabled). Swapping
+    # requires a deliberate prod-frontend service (different port + runtime env), not a
+    # one-line image: swap. Left on build until the OSS-frontend shape is decided.
     build:
       context: .
       dockerfile: Dockerfile.frontend.dev
