@@ -72,6 +72,43 @@ logging.basicConfig(
     level=getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper()),
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
+
+
+class _LogForgingSanitizer(logging.Filter):
+    """Escape CR/LF in log records to prevent log forging / log injection.
+
+    User-influenced values interpolated into log messages can contain newlines
+    that inject forged log lines (CodeQL ``py/log-injection``). This filter is
+    attached to the root handlers, so every propagating module logger inherits
+    it — one defence-in-depth control instead of sanitising 60+ call sites.
+    Note: a framework-level filter mitigates the real risk but may not clear the
+    per-value CodeQL alerts, which need per-site sanitisers or a triage pass.
+    """
+
+    @staticmethod
+    def _clean(value):
+        if isinstance(value, str):
+            return value.replace("\r", "\\r").replace("\n", "\\n")
+        return value
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.msg, str):
+            record.msg = self._clean(record.msg)
+        if record.args:
+            if isinstance(record.args, dict):
+                record.args = {k: self._clean(v) for k, v in record.args.items()}
+            else:
+                record.args = tuple(self._clean(a) for a in record.args)
+        return True
+
+
+# Attach to the root logger's handlers (not the logger itself — logger-level
+# filters are not applied to records propagated from child loggers, but
+# handler-level filters are).
+_log_forging_sanitizer = _LogForgingSanitizer()
+for _root_handler in logging.getLogger().handlers:
+    _root_handler.addFilter(_log_forging_sanitizer)
+
 logger = logging.getLogger(__name__)
 
 # Azure Application Insights is initialized in celery_app.py (module-level).

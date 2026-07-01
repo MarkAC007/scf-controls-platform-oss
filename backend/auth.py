@@ -34,6 +34,21 @@ from models import (
 security = HTTPBearer()
 logger = logging.getLogger(__name__)
 
+
+def _mask_email(email: Optional[str]) -> str:
+    """Mask an email address for logging.
+
+    Keeps the first local-part character and the full domain (``j***@example.com``)
+    so logs stay useful for ops triage while removing clear-text PII
+    (CodeQL ``py/clear-text-logging-sensitive-data``).
+    """
+    if not email or "@" not in email:
+        return "<unknown>"
+    local, _, domain = email.partition("@")
+    if not local:
+        return f"***@{domain}"
+    return f"{local[0]}***@{domain}"
+
 # Configuration
 GOOGLE_AUTH_ENABLED = os.getenv("GOOGLE_AUTH_ENABLED", "false").lower() == "true"
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
@@ -166,7 +181,7 @@ async def validate_google_token(token: str, db: AsyncSession) -> User:
                 raise Exception(f"Failed to get user info: {error_detail}")
 
             user_info = user_response.json()
-            logger.debug(f"User info received: {user_info.get('email', 'no-email')}")
+            logger.debug(f"User info received: {_mask_email(user_info.get('email'))}")
 
         # Extract user information
         # The 'sub' claim is required for user identification
@@ -178,7 +193,7 @@ async def validate_google_token(token: str, db: AsyncSession) -> User:
         email = user_info.get('email')
         display_name = user_info.get('name')
 
-        logger.info(f"✅ Successfully validated Google token for user: {email}")
+        logger.info(f"✅ Successfully validated Google token for user: {_mask_email(email)}")
 
         # Persist user to database (create or update)
         # WEBSITE-FIRST PROVISIONING: Users must sign up via the marketing website first.
@@ -212,7 +227,7 @@ async def validate_google_token(token: str, db: AsyncSession) -> User:
                     provisioned_user.display_name = display_name
                     provisioned_user.last_login_at = datetime.utcnow()
                     db_user = provisioned_user
-                    logger.info(f"Linked provisioned user {email} to Google account")
+                    logger.info(f"Linked provisioned user {_mask_email(email)} to Google account")
                 else:
                     # NOT PROVISIONED via website — check if they have a pending
                     # invitation (consultant OR org-member).  If so, auto-provision
@@ -247,7 +262,7 @@ async def validate_google_token(token: str, db: AsyncSession) -> User:
                         # default; the consultant-invite acceptance flow will attach
                         # them to the correct organisation.
                         invite_type = "consultant" if pending_consultant_invite else "org-member"
-                        logger.info(f"Auto-provisioning user {email} — has pending {invite_type} invite")
+                        logger.info(f"Auto-provisioning user {_mask_email(email)} — has pending {invite_type} invite")
                         db_user = DBUser(
                             google_sub=google_sub,
                             email=email,
@@ -267,7 +282,7 @@ async def validate_google_token(token: str, db: AsyncSession) -> User:
                     elif os.getenv("OPEN_REGISTRATION", "false").lower() == "true":
                         # OPEN_REGISTRATION mode (Azure / test environments only):
                         # auto-provision user on first Google login without website signup.
-                        logger.info(f"Open registration: auto-provisioning user {email}")
+                        logger.info(f"Open registration: auto-provisioning user {_mask_email(email)}")
                         db_user = DBUser(
                             google_sub=google_sub,
                             email=email,
@@ -284,7 +299,7 @@ async def validate_google_token(token: str, db: AsyncSession) -> User:
                         db.add(subscription)
                     else:
                         # No pending invite — block signup (website-first provisioning enforced)
-                        logger.warning(f"Direct signup blocked for {email} - not provisioned via website")
+                        logger.warning(f"Direct signup blocked for {_mask_email(email)} - not provisioned via website")
                         raise HTTPException(
                             status_code=status.HTTP_403_FORBIDDEN,
                             detail={
@@ -314,7 +329,7 @@ async def validate_google_token(token: str, db: AsyncSession) -> User:
                 )
                 pending_invite = pending_invite_result.scalar_one_or_none()
                 if pending_invite and not pending_invite.is_expired():
-                    logger.info(f"User {email} has pending consultant invite - they can accept it after login")
+                    logger.info(f"User {_mask_email(email)} has pending consultant invite - they can accept it after login")
             except Exception as invite_check_error:
                 logger.warning(f"Failed to check for pending invites: {invite_check_error}")
                 # Non-fatal - user can still login
@@ -343,7 +358,7 @@ async def validate_google_token(token: str, db: AsyncSession) -> User:
         logger.error(f"❌ Google token validation failed: {type(e).__name__}: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Invalid Google authentication token: {str(e)}",
+            detail="Invalid Google authentication token",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
@@ -452,7 +467,7 @@ async def validate_user_api_key(token: str, db: AsyncSession) -> User:
     user._api_key_org_id = matched_key.organization_id
     user._api_key_role = matched_key.role
 
-    logger.info(f"✅ User authenticated via user API key: {db_user.email} (org={matched_key.organization_id}, role={matched_key.role})")
+    logger.info(f"✅ User authenticated via user API key: {_mask_email(db_user.email)} (org={matched_key.organization_id}, role={matched_key.role})")
     return user
 
 
@@ -497,7 +512,7 @@ async def require_auth(
         logger.debug("Attempting Google token validation...")
         try:
             user = await validate_google_token(token, db)
-            logger.info(f"✅ User authenticated via Google: {user.email}")
+            logger.info(f"✅ User authenticated via Google: {_mask_email(user.email)}")
             return user
         except HTTPException as e:
             # 403 = account not provisioned - DO NOT fall back to API key
@@ -573,9 +588,9 @@ async def load_user_subscription(user: User, db: AsyncSession) -> User:
     try:
         subscription = await get_user_subscription(UUID(user.db_id), db)
         user.subscription = subscription
-        logger.debug(f"Loaded subscription for user {user.email}: tier={subscription.tier}")
+        logger.debug(f"Loaded subscription for user {_mask_email(user.email)}: tier={subscription.tier}")
     except Exception as e:
-        logger.warning(f"Failed to load subscription for user {user.email}: {e}")
+        logger.warning(f"Failed to load subscription for user {_mask_email(user.email)}: {e}")
         # Don't fail auth if subscription loading fails
 
     return user
@@ -638,9 +653,9 @@ async def require_admin(
     # User API key — check the frozen role on the key
     if user.auth_method == "user_api_key":
         if getattr(user, '_api_key_role', None) == "admin":
-            logger.info(f"Admin access granted via user API key for {user.email}")
+            logger.info(f"Admin access granted via user API key for {_mask_email(user.email)}")
             return user
-        logger.warning(f"Admin access denied for user API key {user.email} (role={getattr(user, '_api_key_role', '?')})")
+        logger.warning(f"Admin access denied for user API key {_mask_email(user.email)} (role={getattr(user, '_api_key_role', '?')})")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access denied: Your API key does not have admin role",
@@ -648,7 +663,7 @@ async def require_admin(
 
     # For Google-authenticated users, check if they're an admin of any organization
     if not user.db_id:
-        logger.warning(f"User {user.email} has no database ID - denying admin access")
+        logger.warning(f"User {_mask_email(user.email)} has no database ID - denying admin access")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access denied: User account not fully provisioned",
@@ -665,13 +680,13 @@ async def require_admin(
     is_admin = admin_check.scalar_one_or_none() is not None
 
     if not is_admin:
-        logger.warning(f"Admin access denied for user {user.email} - not an admin of any organization")
+        logger.warning(f"Admin access denied for user {_mask_email(user.email)} - not an admin of any organization")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access denied: This operation requires administrator privileges",
         )
 
-    logger.info(f"Admin access granted for user {user.email}")
+    logger.info(f"Admin access granted for user {_mask_email(user.email)}")
     return user
 
 
@@ -727,12 +742,12 @@ async def require_platform_admin(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Platform admin access denied: Your user account is not a platform administrator",
             )
-        logger.info(f"Platform admin access granted via user API key for {user.email}")
+        logger.info(f"Platform admin access granted via user API key for {_mask_email(user.email)}")
         return user
 
     # For Google-authenticated users, check the is_platform_admin flag
     if not user.db_id:
-        logger.warning(f"User {user.email} has no database ID - denying platform admin access")
+        logger.warning(f"User {_mask_email(user.email)} has no database ID - denying platform admin access")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Platform admin access denied: User account not fully provisioned",
@@ -749,13 +764,13 @@ async def require_platform_admin(
     is_platform_admin = platform_admin_check.scalar_one_or_none() is not None
 
     if not is_platform_admin:
-        logger.warning(f"Platform admin access denied for user {user.email}")
+        logger.warning(f"Platform admin access denied for user {_mask_email(user.email)}")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Platform admin access denied: This operation requires platform administrator privileges",
         )
 
-    logger.info(f"Platform admin access granted for user {user.email}")
+    logger.info(f"Platform admin access granted for user {_mask_email(user.email)}")
     return user
 
 
@@ -904,14 +919,14 @@ async def verify_org_membership(
             )
 
         logger.debug(
-            f"Access granted (user API key): {user.email} ({api_key_role}) "
+            f"Access granted (user API key): {_mask_email(user.email)} ({api_key_role}) "
             f"accessing org {org_id} (required: {min_role})"
         )
         return OrgMembership(user=user, organization_id=org_id, role=api_key_role, is_consultant=False)
 
     # User must have a database ID for membership checks
     if not user.db_id:
-        logger.warning(f"User {user.email} has no database ID - cannot verify org membership")
+        logger.warning(f"User {_mask_email(user.email)} has no database ID - cannot verify org membership")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access denied: User account not fully provisioned",
@@ -946,7 +961,7 @@ async def verify_org_membership(
 
         if user_role_level < required_role_level:
             logger.warning(
-                f"Access denied: User {user.email} has role '{membership.role}' "
+                f"Access denied: User {_mask_email(user.email)} has role '{membership.role}' "
                 f"but '{min_role}' is required for organization {org_id}"
             )
             raise HTTPException(
@@ -955,7 +970,7 @@ async def verify_org_membership(
             )
 
         logger.debug(
-            f"Access granted (direct member): User {user.email} ({membership.role}) "
+            f"Access granted (direct member): User {_mask_email(user.email)} ({membership.role}) "
             f"accessing organization {org_id} (required: {min_role})"
         )
 
@@ -986,7 +1001,7 @@ async def verify_org_membership(
 
         if user_role_level < required_role_level:
             logger.warning(
-                f"Access denied: Consultant {user.email} has role '{consultant_rel.role}' "
+                f"Access denied: Consultant {_mask_email(user.email)} has role '{consultant_rel.role}' "
                 f"but '{min_role}' is required for organization {org_id}"
             )
             raise HTTPException(
@@ -995,7 +1010,7 @@ async def verify_org_membership(
             )
 
         logger.debug(
-            f"Access granted (consultant): User {user.email} ({consultant_rel.role}) "
+            f"Access granted (consultant): User {_mask_email(user.email)} ({consultant_rel.role}) "
             f"accessing organization {org_id} (required: {min_role})"
         )
 
@@ -1008,7 +1023,7 @@ async def verify_org_membership(
 
     # No access via either path
     logger.warning(
-        f"Access denied: User {user.email} has no membership or active consultant "
+        f"Access denied: User {_mask_email(user.email)} has no membership or active consultant "
         f"relationship with organization {org_id}"
     )
     raise HTTPException(

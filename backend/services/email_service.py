@@ -15,6 +15,23 @@ from datetime import date
 
 logger = logging.getLogger(__name__)
 
+
+def _mask_email(email: Optional[str]) -> str:
+    """Mask a recipient email for logging (``j***@example.com``).
+
+    Removes clear-text PII from logs (CodeQL ``py/clear-text-logging-sensitive-data``)
+    while keeping enough signal for delivery debugging. Mirrors ``auth._mask_email`` —
+    intentionally duplicated to avoid importing the auth module (and its import-time
+    side effects) here; consolidate into a shared util when one exists.
+    """
+    if not email or "@" not in email:
+        return "<unknown>"
+    local, _, domain = email.partition("@")
+    if not local:
+        return f"***@{domain}"
+    return f"{local[0]}***@{domain}"
+
+
 # Resend configuration
 RESEND_API_KEY = os.getenv("RESEND_API_KEY")
 RESEND_FROM_EMAIL = os.getenv("RESEND_FROM_EMAIL", "notifications@odin-scf.app")
@@ -29,7 +46,7 @@ RESEND_ENABLED = bool(RESEND_API_KEY)
 print("=" * 60)
 print("📧 EMAIL SERVICE CONFIGURATION")
 print("=" * 60)
-print(f"   RESEND_API_KEY: {'SET (' + RESEND_API_KEY[:8] + '...)' if RESEND_API_KEY else 'NOT SET'}")
+print(f"   RESEND_API_KEY: {'SET' if RESEND_API_KEY else 'NOT SET'}")
 print(f"   RESEND_FROM_EMAIL: {RESEND_FROM_EMAIL}")
 print(f"   APP_URL: {APP_URL}")
 print(f"   RESEND_ENABLED: {RESEND_ENABLED}")
@@ -98,7 +115,7 @@ async def send_assignment_notification_email(
         }
 
         email = resend.Emails.send(params)
-        logger.info(f"✅ Assignment email sent to {to_email}: {email['id']}")
+        logger.info(f"✅ Assignment email sent to {_mask_email(to_email)}: {email['id']}")
         return email['id']
 
     except Exception as e:
@@ -167,7 +184,7 @@ async def send_task_due_notification_email(
         }
 
         email = resend.Emails.send(params)
-        logger.info(f"✅ Task due email sent to {to_email}: {email['id']}")
+        logger.info(f"✅ Task due email sent to {_mask_email(to_email)}: {email['id']}")
         return email['id']
 
     except Exception as e:
@@ -233,7 +250,7 @@ async def send_task_overdue_notification_email(
         }
 
         email = resend.Emails.send(params)
-        logger.info(f"✅ Overdue email sent to {to_email}: {email['id']}")
+        logger.info(f"✅ Overdue email sent to {_mask_email(to_email)}: {email['id']}")
         return email['id']
 
     except Exception as e:
@@ -295,7 +312,7 @@ async def send_mention_notification_email(
         }
 
         email = resend.Emails.send(params)
-        logger.info(f"✅ Mention email sent to {to_email}: {email['id']}")
+        logger.info(f"✅ Mention email sent to {_mask_email(to_email)}: {email['id']}")
         return email['id']
 
     except Exception as e:
@@ -365,7 +382,7 @@ async def send_daily_digest_email(
         }
 
         email = resend.Emails.send(params)
-        logger.info(f"✅ Daily digest sent to {to_email}: {email['id']}")
+        logger.info(f"✅ Daily digest sent to {_mask_email(to_email)}: {email['id']}")
         return email['id']
 
     except Exception as e:
@@ -418,7 +435,7 @@ async def send_invitation_email(
         Email ID if successful, None if email service is disabled or failed
     """
     logger.info(f"📧 INVITATION EMAIL REQUEST")
-    logger.info(f"   To: {to_email}")
+    logger.info(f"   To: {_mask_email(to_email)}")
     logger.info(f"   Organization: {organization_name}")
     logger.info(f"   Invited by: {inviter_name}")
     logger.info(f"   Invite token: {invite_token[:8]}...")
@@ -429,7 +446,7 @@ async def send_invitation_email(
     logger.info(f"   APP_URL: {APP_URL}")
 
     if not RESEND_ENABLED:
-        logger.warning(f"⚠️  EMAIL SERVICE DISABLED - Invitation to {to_email} will NOT be sent")
+        logger.warning(f"⚠️  EMAIL SERVICE DISABLED - Invitation to {_mask_email(to_email)} will NOT be sent")
         logger.warning(f"   To enable: Set RESEND_API_KEY environment variable")
         return None
 
@@ -514,19 +531,19 @@ async def send_invitation_email(
 
         logger.info(f"📤 Sending invitation email via Resend API...")
         logger.info(f"   From: {RESEND_FROM_EMAIL}")
-        logger.info(f"   To: {to_email}")
+        logger.info(f"   To: {_mask_email(to_email)}")
         logger.info(f"   Subject: {subject}")
 
         email = resend.Emails.send(params)
 
         logger.info(f"✅ INVITATION EMAIL SENT SUCCESSFULLY!")
         logger.info(f"   Email ID: {email.get('id', 'unknown')}")
-        logger.info(f"   Recipient: {to_email}")
+        logger.info(f"   Recipient: {_mask_email(to_email)}")
         return email['id']
 
     except Exception as e:
         logger.error(f"❌ FAILED TO SEND INVITATION EMAIL")
-        logger.error(f"   Recipient: {to_email}")
+        logger.error(f"   Recipient: {_mask_email(to_email)}")
         logger.error(f"   Error type: {type(e).__name__}")
         logger.error(f"   Error message: {str(e)}")
         import traceback

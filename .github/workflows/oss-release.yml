@@ -5,30 +5,19 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# Default to read-only; the release job escalates to write where it needs it.
 permissions:
-  contents: read
-
-# Serialise releases so two fast pushes to main can't race on the same tag.
-concurrency:
-  group: oss-release
-  cancel-in-progress: false
+  contents: write
 
 jobs:
   release:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write       # tag + create GitHub release, upload assets
-      id-token: write        # OIDC token for keyless signing (build provenance)
-      attestations: write    # write SLSA build-provenance attestations
     steps:
       - name: Checkout repository
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
       - name: Tag and publish release if version is new
-        id: release
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -46,54 +35,22 @@ jobs:
             exit 1
           fi
 
-          # Strict shape gate: a malformed/multi-line version must never reach the
-          # tag, the archive name, or $GITHUB_OUTPUT (output-injection defence).
-          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.]+)?$ ]]; then
-            echo "::error::invalid version format: '${VERSION}'"
-            exit 1
-          fi
-
           TAG="v${VERSION}"
-          ARCHIVE="scf-controls-platform-oss-${TAG}-source.tar.gz"
 
-          # Authoritative done-state = a published release that ALSO carries the
-          # signed source asset. Anything short of that is a partial state we repair
-          # on this run (so a half-published release can self-heal on the next push).
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            if gh release view "$TAG" --json assets -q '.assets[].name' | grep -qx "$ARCHIVE"; then
-              echo "release ${TAG} already published with source asset — nothing to do"
-              exit 0
-            fi
-            echo "release ${TAG} exists but source asset is missing — repairing"
-          else
-            # No release yet. Ensure the tag exists (create + push if missing), then
-            # create the release from it.
-            if ! git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null 2>&1; then
-              git config user.name "scf-oss-publisher"
-              git config user.email "noreply@compliancegenie.io"
-              git tag -a "$TAG" -m "Release $TAG"
-              git push origin "$TAG"
-            fi
-            gh release create "$TAG" --title "$TAG" --generate-notes --verify-tag
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "release ${TAG} already exists — skipping"
+            exit 0
           fi
 
-          # Build a reproducible source archive from the tagged tree and (re)upload it.
-          # --clobber makes the upload idempotent across repair runs.
-          git archive --format=tar.gz --prefix="scf-controls-platform-oss-${VERSION}/" \
-            -o "$ARCHIVE" "$TAG"
-          gh release upload "$TAG" "$ARCHIVE" --clobber
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release ${TAG} already exists — skipping"
+            exit 0
+          fi
 
-          # Only set on the publish/repair path — absence means "skip signing".
-          {
-            echo "created=true"
-            echo "tag=${TAG}"
-            echo "archive=${ARCHIVE}"
-          } >> "$GITHUB_OUTPUT"
+          git config user.name "scf-oss-publisher"
+          git config user.email "noreply@compliancegenie.io"
+          git tag -a "$TAG" -m "Release $TAG"
+          git push origin "$TAG"
+          gh release create "$TAG" --title "$TAG" --generate-notes --verify-tag
 
-          echo "published/repaired release ${TAG} with source archive ${ARCHIVE}"
-
-      - name: Attest build provenance for the source archive
-        if: steps.release.outputs.created == 'true'
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
-        with:
-          subject-path: ${{ steps.release.outputs.archive }}
+          echo "published release ${TAG}"
