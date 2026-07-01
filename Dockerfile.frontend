@@ -2,8 +2,7 @@
 # Multi-stage build: Node.js for building, nginx for serving
 
 # Stage 1: Build
-# node:20-alpine (tag pinned to immutable digest below; Renovate updates it)
-FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293 AS builder
+FROM node:20-alpine AS builder
 
 WORKDIR /app
 
@@ -32,8 +31,7 @@ ENV VITE_DEBUG_API=$VITE_DEBUG_API
 RUN npm run build
 
 # Stage 2: Production with nginx
-# nginx:alpine (tag pinned to immutable digest below; Renovate updates it)
-FROM nginx:alpine@sha256:54f2a904c251d5a34adf545a72d32515a15e08418dae0266e23be2e18c66fefa
+FROM nginx:alpine
 
 # Install envsubst for environment variable substitution
 RUN apk add --no-cache gettext

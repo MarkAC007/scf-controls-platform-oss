@@ -9,23 +9,16 @@ on:
     - cron: '0 8 * * 1'
   workflow_dispatch:
 
-# Minimum default scope; the job escalates only to upload SARIF.
-permissions:
-  contents: read
-
 jobs:
   semgrep:
     name: Static Analysis
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      security-events: write  # upload SARIF to code scanning
     container:
-      image: semgrep/semgrep@sha256:06938c1f365d3f67b8cedd8bc117607ae64253f88a0e768e9da9408548927dd6  # semgrep/semgrep:latest (returntocorp/semgrep is deprecated)
+      image: returntocorp/semgrep
 
     steps:
       - name: Checkout
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        uses: actions/checkout@v5
 
       - name: Run Semgrep
         run: semgrep scan --config auto --sarif --output semgrep-results.sarif
@@ -33,7 +26,7 @@ jobs:
 
       - name: Upload SARIF
         if: always()
-        uses: github/codeql-action/upload-sarif@dd903d2e4f5405488e5ef1422510ee31c8b32357 # v3.36.2
+        uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: semgrep-results.sarif
         continue-on-error: true

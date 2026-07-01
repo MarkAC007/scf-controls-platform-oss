@@ -2,11 +2,8 @@
 # Requirements for convert_pdfs_to_markdown_with_lightrag.py
 
 # Core dependencies
-# Pinned to exact versions (OpenSSF Scorecard: Pinned-Dependencies). These match the
-# versions pip currently resolves from the previous >= ranges; Renovate proposes bumps as
-# reviewable PRs. See issue #7.
-docling==2.107.0
-requests==2.34.2
+docling>=2.0.0
+requests>=2.31.0
 
 # Docling automatically includes:
 # - docling-core
@@ -17,10 +14,10 @@ requests==2.34.2
 
 # Agentic Genetic Control Extractor
 # Requirements for genetic_control_extractor.py
-openai==2.44.0  # For LLM-powered agents (GPT-4/GPT-5) - Requires 1.40+ for GPT-5 support
-PyYAML==6.0.3  # For YAML-based configuration (pf-extractor)
+openai>=1.40.0  # For LLM-powered agents (GPT-4/GPT-5) - Requires 1.40+ for GPT-5 support
+PyYAML>=6.0  # For YAML-based configuration (pf-extractor)
 pocketflow==0.0.3  # PocketFlow core framework for agent orchestration
 
 # Markdown to Word Converter
 # Requirements for md_2.py
-pypandoc==1.17  # Python wrapper for Pandoc document converter
+pypandoc>=1.11  # Python wrapper for Pandoc document converter

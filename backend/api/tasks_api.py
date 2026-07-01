@@ -2,6 +2,8 @@
 API endpoints for background task management and cache operations.
 Provides task status checking and cache administration endpoints.
 """
+import logging
+
 from fastapi import APIRouter, HTTPException, Depends, Query
 from typing import Optional
 from pydantic import BaseModel
@@ -16,6 +18,8 @@ from tasks import (
     trigger_bulk_operation,
 )
 from celery_app import celery_app
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/tasks",
@@ -78,8 +82,9 @@ async def trigger_example(request: TriggerTaskRequest):
             status="queued",
             result={"message": "Task queued successfully"},
         )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to queue task: {str(e)}")
+    except Exception:
+        logger.exception("Failed to queue example task")
+        raise HTTPException(status_code=500, detail="Failed to queue task")
 
 
 @router.post("/trigger/notification", response_model=TaskStatusResponse)
@@ -100,8 +105,9 @@ async def trigger_notification_task(request: TriggerNotificationRequest):
             status="queued",
             result={"message": "Notification queued for delivery"},
         )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to queue notification: {str(e)}")
+    except Exception:
+        logger.exception("Failed to queue notification task")
+        raise HTTPException(status_code=500, detail="Failed to queue notification")
 
 
 @router.post("/trigger/bulk", response_model=TaskStatusResponse)
@@ -120,8 +126,9 @@ async def trigger_bulk_task(request: TriggerBulkOperationRequest):
             status="queued",
             result={"message": f"Bulk {request.operation} queued with {len(request.items)} items"},
         )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to queue bulk operation: {str(e)}")
+    except Exception:
+        logger.exception("Failed to queue bulk operation task")
+        raise HTTPException(status_code=500, detail="Failed to queue bulk operation")
 
 
 @router.get("/status/{task_id}", response_model=TaskStatusResponse)
@@ -149,8 +156,9 @@ async def get_task_status(task_id: str):
             result=task_result,
             error=error,
         )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get task status: {str(e)}")
+    except Exception:
+        logger.exception("Failed to get task status for task_id=%s", task_id)
+        raise HTTPException(status_code=500, detail="Failed to get task status")
 
 
 @router.delete("/revoke/{task_id}")
@@ -169,8 +177,9 @@ async def revoke_task(task_id: str, terminate: bool = False):
             "task_id": task_id,
             "message": f"Task revoked (terminate={terminate})",
         }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to revoke task: {str(e)}")
+    except Exception:
+        logger.exception("Failed to revoke task_id=%s", task_id)
+        raise HTTPException(status_code=500, detail="Failed to revoke task")
 
 
 # Cache management endpoints
@@ -185,8 +194,9 @@ async def cache_stats():
             "success": True,
             "stats": stats,
         }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get cache stats: {str(e)}")
+    except Exception:
+        logger.exception("Failed to get cache stats")
+        raise HTTPException(status_code=500, detail="Failed to get cache stats")
 
 
 @router.delete("/cache/invalidate")
@@ -222,8 +232,9 @@ async def invalidate_cache_endpoint(
             )
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to invalidate cache: {str(e)}")
+    except Exception:
+        logger.exception("Failed to invalidate cache")
+        raise HTTPException(status_code=500, detail="Failed to invalidate cache")
 
 
 # Infrastructure health endpoints
@@ -238,8 +249,9 @@ async def redis_health():
             "success": True,
             "redis": health,
         }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to check Redis health: {str(e)}")
+    except Exception:
+        logger.exception("Failed to check Redis health")
+        raise HTTPException(status_code=500, detail="Failed to check Redis health")
 
 
 @router.get("/health/celery")
@@ -272,11 +284,12 @@ async def celery_health():
                 "scheduled_tasks": scheduled_tasks,
             },
         }
-    except Exception as e:
+    except Exception:
+        logger.exception("Failed to check Celery health")
         return {
             "success": False,
             "celery": {
                 "status": "unhealthy",
-                "error": str(e),
+                "error": "Celery health check failed",
             },
         }

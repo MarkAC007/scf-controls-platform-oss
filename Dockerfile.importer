@@ -4,8 +4,7 @@
 # catalog_seeder.py consumes on startup. This image ships the importer CODE ONLY — it never
 # contains SCF's licensed catalogue content (CC BY-ND 4.0). Operators supply their own SCF
 # Excel workbook at run time. See README → "Bring your own SCF Excel catalogue".
-# python:3.11-slim (tag pinned to immutable digest below; Renovate updates it)
-FROM python:3.11-slim@sha256:b27df5841f3355e9473f9a516d38a6783b6c8dfeacaf2d14a240f443b368ddb6
+FROM python:3.11-slim
 
 WORKDIR /app
 
