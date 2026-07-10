@@ -29,6 +29,7 @@ import {
   type ScopedControlForRisk
 } from '../data/apiClient'
 import { useOrganization } from '../contexts/OrganizationContext'
+import { WorkspaceRecord } from './provenance/WorkspaceRecord'
 
 interface RiskAssessmentDetailProps {
   assessment: RiskAssessment | null
@@ -280,8 +281,12 @@ export default function RiskAssessmentDetail({
 
   return (
     <div className="risk-detail-panel">
-      {/* Header */}
-      <div className="risk-detail-header">
+      {/* Header — SCF risk catalog content renders as bedrock; custom risks are user-authored */}
+      <div
+        className={`risk-detail-header${isCustomRisk ? '' : ' surface-bedrock'}`}
+        {...(isCustomRisk ? {} : { 'data-source': 'SCF Risk Catalog' })}
+      >
+        {!isCustomRisk && <span className="scf-source-tag">SCF Catalog</span>}
         <div className="risk-detail-title-row">
           <span
             className="risk-category-badge"
@@ -300,6 +305,8 @@ export default function RiskAssessmentDetail({
 
       {/* Form sections */}
       <div className="risk-detail-content">
+        {/* Your assessment inputs — the organization's editable record (workbench) */}
+        <WorkspaceRecord title="Your Risk Assessment" className="risk-section">
         {/* Inherent Risk */}
         <section className="risk-section">
           <h4>Inherent Risk (Before Controls)</h4>
@@ -476,6 +483,7 @@ export default function RiskAssessmentDetail({
             />
           </div>
         </section>
+        </WorkspaceRecord>
 
         {/* Controls Addressing This Risk */}
         <section className="risk-section">

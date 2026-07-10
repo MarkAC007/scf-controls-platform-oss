@@ -706,7 +706,8 @@ export default function ControlScoping({
       <div className="detail">
         {selectedControl ? (
           <>
-            <div className="detail-header-redesign">
+            <div className="detail-header-redesign surface-bedrock" data-source="SCF Reference">
+              <span className="scf-source-tag">SCF Catalog</span>
               <div className="detail-header-badges">
                 <span className="scf-id-pill">{selectedControl.scf_id}</span>
                 {selectedControl.implementation_status && (
@@ -779,13 +780,16 @@ export default function ControlScoping({
             </div>
 
             <div className="detail-content-compact">
-              {/* Risk & Threat Context — full width */}
-              <RiskThreatContext mapping={selectedControl.risk_threat_mapping} />
+              {/* SCF-derived guidance — reference material, rendered flat */}
+              <div className="surface-bedrock">
+                {/* Risk & Threat Context — full width */}
+                <RiskThreatContext mapping={selectedControl.risk_threat_mapping} />
 
-              {/* Maturity + Right-Sizing — side by side */}
-              <div className="scoping-card-grid">
-                <MaturityRoadmap maturity={selectedControl.cmm_maturity} targetLevel={localFormState?.maturity_level || null} />
-                <BusinessSizeGuidance guidance={selectedControl.business_size_guidance} />
+                {/* Maturity + Right-Sizing — side by side */}
+                <div className="scoping-card-grid">
+                  <MaturityRoadmap maturity={selectedControl.cmm_maturity} targetLevel={localFormState?.maturity_level || null} />
+                  <BusinessSizeGuidance guidance={selectedControl.business_size_guidance} />
+                </div>
               </div>
 
               {/* ── Tab Navigation (#254) — above Framework Mappings ── */}
@@ -824,10 +828,9 @@ export default function ControlScoping({
 
               {/* ── Tab: Details ── */}
               {activeTab === 'details' && (
-                <div className="detail-section-container">
-                  <div className="container-header">
-                    <span className="container-icon">⚙️</span>
-                    <span className="container-title">Implementation Tracking</span>
+                <div className="detail-section-container surface-bench">
+                  <div className="container-header bench-header">
+                    <span className="container-title">Your Implementation Record</span>
                   </div>
                   <div className="container-content">
 
@@ -960,10 +963,9 @@ export default function ControlScoping({
               {/* ── Tab: Notes & History ── */}
               {activeTab === 'notes' && (
                 <>
-                  <div className="detail-section-container">
-                    <div className="container-header">
-                      <span className="container-icon">📝</span>
-                      <span className="container-title">Implementation Notes</span>
+                  <div className="detail-section-container surface-bench">
+                    <div className="container-header bench-header">
+                      <span className="container-title">Your Implementation Notes</span>
                     </div>
                     <div className="container-content">
                       <div className="form-group">
@@ -1020,10 +1022,9 @@ export default function ControlScoping({
 
               {/* ── Tab: Assignments ── */}
               {activeTab === 'assignments' && (
-                <div className="detail-section-container">
-                  <div className="container-header">
-                    <span className="container-icon">👤</span>
-                    <span className="container-title">Assignments</span>
+                <div className="detail-section-container surface-bench">
+                  <div className="container-header bench-header">
+                    <span className="container-title">Your Assignments</span>
                   </div>
                   <div className="container-content">
                     {(() => {

@@ -192,8 +192,8 @@ export default function RiskProfileSettings({ organizationId }: RiskProfileSetti
 
   return (
     <div className="risk-profile-settings">
-      {/* Risk & Governance Settings Group */}
-      <div className="settings-group">
+      {/* Risk & Governance Settings Group — entirely the organization's record (workbench) */}
+      <div className="settings-group surface-bench">
         <div className="settings-group-header">
           <h1>Risk & Governance</h1>
           <p className="settings-description">
@@ -203,7 +203,7 @@ export default function RiskProfileSettings({ organizationId }: RiskProfileSetti
 
         {/* Risk Level Thresholds */}
         <section className="settings-section">
-          <h2>Risk Level Thresholds</h2>
+          <h2 className="bench-header"><span className="container-title">Your Risk Level Thresholds</span></h2>
           <p className="section-description">
             Define the score boundaries for each risk level. Risk scores range from 1
             (lowest) to 25 (highest), calculated as Likelihood x Impact.
@@ -331,7 +331,7 @@ export default function RiskProfileSettings({ organizationId }: RiskProfileSetti
 
         {/* Risk Appetite */}
         <section className="settings-section">
-          <h2>Risk Appetite</h2>
+          <h2 className="bench-header"><span className="container-title">Your Risk Appetite</span></h2>
 
           {/* Range slider appetite selector */}
           <div className="appetite-scale-label">
@@ -403,7 +403,7 @@ export default function RiskProfileSettings({ organizationId }: RiskProfileSetti
 
         {/* Vendor Certification Requirements */}
         <section className="settings-section">
-          <h2>Vendor Certification Requirements</h2>
+          <h2 className="bench-header"><span className="container-title">Your Vendor Certification Requirements</span></h2>
           <p className="section-description">
             Define certification requirements for third-party vendor assessments.
             Type a certification name and press Enter to add it.
@@ -488,7 +488,7 @@ export default function RiskProfileSettings({ organizationId }: RiskProfileSetti
 
         {/* Vendor Risk Thresholds */}
         <section className="settings-section">
-          <h2>Vendor Risk Thresholds</h2>
+          <h2 className="bench-header"><span className="container-title">Your Vendor Risk Thresholds</span></h2>
           <p className="section-description">
             Automate vendor risk decisions based on their risk score.
           </p>
@@ -557,10 +557,10 @@ export default function RiskProfileSettings({ organizationId }: RiskProfileSetti
         </div>
       </div>
 
-      {/* Trust Portal Group */}
-      <div className="settings-group">
+      {/* Trust Portal Group — user configuration (workbench) */}
+      <div className="settings-group surface-bench">
         <section className="settings-section">
-          <h2>Trust Portal</h2>
+          <h2 className="bench-header"><span className="container-title">Your Trust Portal</span></h2>
           <p className="section-description">
             Enable a public trust portal for your organisation. When enabled, prospects can view
             your aggregated compliance posture without authentication.

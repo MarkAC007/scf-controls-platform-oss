@@ -9,6 +9,7 @@ import SCRMFocusBadges from './SCRMFocusBadges'
 import RiskThreatContext from './RiskThreatContext'
 import AssessmentObjectivesList from './AssessmentObjectivesList'
 import CDMControlPanel from './CDMControlPanel'
+import { WorkspaceRecord } from './provenance/WorkspaceRecord'
 
 interface Props {
   control?: EnrichedControl
@@ -78,7 +79,8 @@ export default function ControlDetail({ control, scopingData, organizationId, on
   return (
     <div className="detail">
       {/* Redesigned header — matches scoping page pattern */}
-      <div className="detail-header-redesign">
+      <div className="detail-header-redesign surface-bedrock" data-source="SCF Reference">
+        <span className="scf-source-tag">SCF Catalog</span>
         <div className="detail-header-badges">
           <span className="scf-id-pill">{control.scf_id}</span>
           <button
@@ -158,13 +160,16 @@ export default function ControlDetail({ control, scopingData, organizationId, on
         </div>
       ) : (
         <div className="detail-content-compact">
-          {/* Risk & Threat Context — full width */}
-          <RiskThreatContext mapping={control.risk_threat_mapping} />
+          {/* SCF-derived guidance — reference material, rendered flat */}
+          <div className="surface-bedrock">
+            {/* Risk & Threat Context — full width */}
+            <RiskThreatContext mapping={control.risk_threat_mapping} />
 
-          {/* Maturity + Right-Sizing — side by side */}
-          <div className="scoping-card-grid">
-            <MaturityRoadmap maturity={control.cmm_maturity} />
-            <BusinessSizeGuidance guidance={control.business_size_guidance} />
+            {/* Maturity + Right-Sizing — side by side */}
+            <div className="scoping-card-grid">
+              <MaturityRoadmap maturity={control.cmm_maturity} />
+              <BusinessSizeGuidance guidance={control.business_size_guidance} />
+            </div>
           </div>
 
           {/* Tab Navigation */}
@@ -201,7 +206,7 @@ export default function ControlDetail({ control, scopingData, organizationId, on
             <>
               {/* Legacy CCF fields — only shown if present */}
               {(control.policy_standard || control.implementation_guidance || control.testing_procedure) && (
-                <div className="detail-section-container">
+                <div className="detail-section-container surface-bedrock">
                   <div className="container-header">
                     <span className="container-icon">📄</span>
                     <span className="container-title">Additional Guidance</span>
@@ -239,7 +244,7 @@ export default function ControlDetail({ control, scopingData, organizationId, on
               )}
 
               {/* Audit Artifacts */}
-              <div className="detail-section-container">
+              <div className="detail-section-container surface-bedrock">
                 <div className="container-header">
                   <span className="container-icon">📋</span>
                   <span className="container-title">Audit Artifacts</span>
@@ -309,7 +314,7 @@ export default function ControlDetail({ control, scopingData, organizationId, on
 
           {/* Mappings Tab */}
           {activeTab === 'mappings' && (
-            <div className="detail-section-container">
+            <div className="detail-section-container surface-bedrock">
               <div className="container-header">
                 <span className="container-icon">🔗</span>
                 <span className="container-title">Framework Mappings</span>
@@ -338,16 +343,18 @@ export default function ControlDetail({ control, scopingData, organizationId, on
 
           {/* Knowledge Base Tab (CDM v1 slice 10) */}
           {activeTab === 'knowledge-base' && organizationId && (
-            <CDMControlPanel
-              organizationId={organizationId}
-              scopedControlId={
-                scopingData?.scoped_controls.find(
-                  (sc) => sc.scf_id === control.scf_id,
-                )?.id
-              }
-              controlName={control.control_name}
-              controlDescription={control.control_description}
-            />
+            <WorkspaceRecord title="Your Knowledge Base">
+              <CDMControlPanel
+                organizationId={organizationId}
+                scopedControlId={
+                  scopingData?.scoped_controls.find(
+                    (sc) => sc.scf_id === control.scf_id,
+                  )?.id
+                }
+                controlName={control.control_name}
+                controlDescription={control.control_description}
+              />
+            </WorkspaceRecord>
           )}
         </div>
       )}
