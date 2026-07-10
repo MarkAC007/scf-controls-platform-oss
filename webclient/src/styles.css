@@ -24200,3 +24200,255 @@ textarea.form-control{
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   BEDROCK & LEDGER — provenance visual language
+   SCF reference (immutable framework content) vs. the organization's
+   editable record. See docs/design/bedrock-and-ledger.md
+   Three redundant cues: material (flat vs raised), typography (serif vs
+   sans), label (kicker vs bench header). Never rely on color alone.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+:root {
+  --ref-font: Charter, 'Bitstream Charter', 'Sitka Text', Cambria, Georgia, serif;
+  /* light theme */
+  --bedrock-ink: hsl(217, 33%, 21%);
+  --bedrock-kicker: hsl(215, 18%, 42%);
+  --bedrock-rule: hsla(215, 25%, 30%, 0.22);
+  --ref-tag: hsl(33, 45%, 37%);                 /* brass — the app's only warm hue */
+  --bench-bg: #ffffff;
+  --bench-edge: rgba(15, 23, 42, 0.07);
+  --bench-shadow: 0 0 0 1px var(--bench-edge), 0 8px 24px -10px rgba(30, 41, 72, 0.16);
+  --bench-header-ink: hsl(222, 40%, 12%);
+  --field-bg: hsl(216, 45%, 98.5%);
+  --field-border: hsla(222, 30%, 30%, 0.24);
+  --field-border-hover: hsla(210, 80%, 45%, 0.60);
+  --field-ring: 0 0 0 3px rgba(25, 118, 210, 0.22);
+  --field-readonly-ink: hsl(220, 15%, 42%);
+}
+
+[data-theme="dark"] {
+  --bedrock-ink: #cdd6ef;
+  --bedrock-kicker: #7e8bb0;
+  --bedrock-rule: rgba(126, 139, 176, 0.22);
+  --ref-tag: #c9a86a;
+  --bench-bg: #1c2540;
+  --bench-edge: rgba(158, 182, 235, 0.16);
+  --bench-shadow: 0 1px 0 var(--bench-edge) inset, 0 10px 28px -12px rgba(3, 7, 18, 0.65);
+  --bench-header-ink: #eaf0ff;
+  --field-bg: #101a35;
+  --field-border: rgba(120, 150, 210, 0.28);
+  --field-border-hover: rgba(66, 165, 245, 0.55);
+  --field-ring: 0 0 0 3px rgba(66, 165, 245, 0.30);
+  --field-readonly-ink: #a9b4d4;
+}
+
+/* ── Bedrock: the framework speaking. Flat, flush, serif, labeled. ── */
+.surface-bedrock {
+  position: relative;
+  background: transparent !important;
+  border: 0;
+  box-shadow: none;
+  color: var(--bedrock-ink);
+}
+.surface-bedrock[data-source]::before {
+  content: attr(data-source);
+  display: block;
+  font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--bedrock-kicker);
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--bedrock-rule);
+  margin-bottom: 14px;
+}
+.scf-source-tag {
+  position: absolute;
+  top: 22px;
+  right: var(--card-padding);
+  font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ref-tag);
+  border: 1px solid var(--ref-tag);
+  border-radius: 3px;
+  padding: 3px 7px;
+  opacity: 0.9;
+  user-select: none;
+}
+/* Reference prose: the register of quoted standards */
+.surface-bedrock .control-description,
+.surface-bedrock .assessment-question-text,
+.surface-bedrock p,
+.surface-bedrock blockquote {
+  font-family: var(--ref-font);
+  font-size: 15px;
+  line-height: 1.65;
+  max-width: 68ch;
+  color: var(--bedrock-ink);
+}
+.surface-bedrock .assessment-question-text {
+  border-left: 2px solid var(--bedrock-rule);
+  padding-left: 14px;
+  font-style: italic;
+  margin: 0;
+}
+/* Flatten any card that ends up inside bedrock (guidance widgets etc.) */
+.surface-bedrock .detail-section-container {
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none;
+  border-radius: 0;
+}
+/* Nothing inside bedrock may read as editable */
+.surface-bedrock .form-control {
+  pointer-events: none;
+  background: transparent;
+  border: 0;
+}
+
+/* ── Workbench: the organization's record. Raised, lit, tactile. ── */
+.surface-bench {
+  /* !important required: the dark-mode override block forces --card onto
+     .detail-section-container with !important; the bench must win. */
+  background: var(--bench-bg) !important;
+  border: 0 !important;
+  border-radius: 12px;
+  box-shadow: var(--bench-shadow);
+}
+.bench-header,
+.surface-bench .container-header.bench-header {
+  color: var(--bench-header-ink);
+}
+.bench-header .container-title {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--bench-header-ink);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.bench-header .container-title::before {
+  content: "";
+  width: 14px;
+  height: 2px;
+  background: var(--primary);
+  border-radius: 1px;
+  transform: rotate(-45deg);
+}
+
+/* ── Editable fields inside the bench: visible at rest, alive on hover ── */
+.surface-bench .form-control,
+.surface-bench select,
+.surface-bench textarea,
+.surface-bench input[type="text"],
+.surface-bench input[type="date"] {
+  background: var(--field-bg);
+  border: 1px solid var(--field-border);
+  border-radius: 8px;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+.surface-bench .form-control:hover,
+.surface-bench select:hover,
+.surface-bench textarea:hover,
+.surface-bench input[type="text"]:hover,
+.surface-bench input[type="date"]:hover {
+  border-color: var(--field-border-hover);
+}
+.surface-bench .form-control:focus,
+.surface-bench select:focus,
+.surface-bench textarea:focus,
+.surface-bench input[type="text"]:focus,
+.surface-bench input[type="date"]:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: var(--field-ring);
+}
+
+/* ── Computed read-only values: a recorded fact, not a dead input ── */
+.surface-bench .form-control-readonly,
+.field-readonly {
+  background: transparent !important;
+  border: 0 !important;
+  border-bottom: 1px dashed var(--bedrock-rule) !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  color: var(--field-readonly-ink);
+  cursor: default;
+  pointer-events: none;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+/* ── Bedrock & Ledger: rollout gap fixes (specificity + reach) ────────── */
+
+/* Serif register must reach Evidence "Control Details" prose */
+.surface-bedrock .field-content {
+  font-family: var(--ref-font);
+  font-size: 15px;
+  line-height: 1.65;
+  max-width: 68ch;
+  color: var(--bedrock-ink);
+}
+
+/* Sticky detail headers: bedrock on the inner main keeps stickiness on the
+   outer; strip the outer card background so the header reads flat. */
+.detail-header-compact:has(> .detail-header-main.surface-bedrock) {
+  background: transparent !important;
+}
+
+/* Dark-mode overrides elsewhere force panel/card backgrounds with higher
+   specificity; the bench must win wherever it is declared. */
+[data-theme="dark"] .surface-bench,
+[data-theme="dark"] .evidence-form-modern.surface-bench {
+  background: var(--bench-bg) !important;
+  border-color: transparent !important;
+}
+
+/* Bench field affordances: extend to risk-detail .field-group controls and
+   number inputs (their legacy selectors outrank the base bench rules). */
+.surface-bench .field-group select,
+.surface-bench .field-group input,
+.surface-bench .field-group textarea,
+.surface-bench input[type="number"],
+.risk-profile-settings .surface-bench .threshold-group input[type="number"],
+.risk-profile-settings .surface-bench .vendor-threshold-group input[type="number"],
+[data-theme="dark"] .risk-profile-settings .surface-bench .appetite-group select,
+[data-theme="dark"] .risk-profile-settings .surface-bench .threshold-group input[type="number"],
+[data-theme="dark"] .risk-profile-settings .surface-bench .vendor-threshold-group input[type="number"] {
+  background: var(--field-bg);
+  border: 1px solid var(--field-border);
+  border-radius: 8px;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+.surface-bench .field-group select:hover,
+.surface-bench .field-group input:hover,
+.surface-bench .field-group textarea:hover,
+.surface-bench input[type="number"]:hover {
+  border-color: var(--field-border-hover);
+}
+.surface-bench .field-group select:focus,
+.surface-bench .field-group input:focus,
+.surface-bench .field-group textarea:focus,
+.surface-bench input[type="number"]:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: var(--field-ring);
+}
+
+/* Intentionally chromeless inline tag input must stay chromeless */
+.surface-bench .cert-tag-input,
+.surface-bench .cert-tag-input:hover,
+.surface-bench .cert-tag-input:focus {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}

@@ -115,13 +115,13 @@ export function WindowReviewPanel({
   if (loading) {
     return (
       <div
-        className="detail-section-container window-review-panel window-review-panel--loading"
+        className="detail-section-container surface-bench window-review-panel window-review-panel--loading"
         data-testid="window-review-panel-loading"
         aria-busy="true"
       >
-        <div className="container-header">
+        <div className="container-header bench-header">
           <span className="container-icon">🔍</span>
-          <span className="container-title">Window Review</span>
+          <span className="container-title">Your Window Review</span>
         </div>
         <div className="container-content">
           <div className="window-review-skeleton" aria-hidden="true">
@@ -135,13 +135,13 @@ export function WindowReviewPanel({
   if (error) {
     return (
       <div
-        className="detail-section-container window-review-panel window-review-panel--error"
+        className="detail-section-container surface-bench window-review-panel window-review-panel--error"
         data-testid="window-review-panel-error"
         role="alert"
       >
-        <div className="container-header">
+        <div className="container-header bench-header">
           <span className="container-icon">🔍</span>
-          <span className="container-title">Window Review</span>
+          <span className="container-title">Your Window Review</span>
         </div>
         <div className="container-content">
           <p className="window-review-error">Could not load window assessment.</p>
@@ -161,12 +161,12 @@ export function WindowReviewPanel({
   if (!ewa) {
     return (
       <div
-        className="detail-section-container window-review-panel window-review-panel--empty"
+        className="detail-section-container surface-bench window-review-panel window-review-panel--empty"
         data-testid="window-review-panel-empty"
       >
-        <div className="container-header">
+        <div className="container-header bench-header">
           <span className="container-icon">🔍</span>
-          <span className="container-title">Window Review</span>
+          <span className="container-title">Your Window Review</span>
         </div>
         <div className="container-content">
           <p className="window-review-empty">
@@ -200,12 +200,12 @@ export function WindowReviewPanel({
 
   return (
     <div
-      className="detail-section-container window-review-panel"
+      className="detail-section-container surface-bench window-review-panel"
       data-testid="window-review-panel"
     >
-      <div className="container-header">
+      <div className="container-header bench-header">
         <span className="container-icon">🔍</span>
-        <span className="container-title">Window Review</span>
+        <span className="container-title">Your Window Review</span>
         <span
           className={`review-badge ${badge.className}`}
           data-testid="window-review-status-badge"

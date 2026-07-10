@@ -137,8 +137,8 @@ export default function BackupRestore({ organizationId }: BackupRestoreProps) {
   }
 
   return (
-    <div className="settings-group backup-restore-section">
-      <h2>Backup & Restore</h2>
+    <div className="settings-group backup-restore-section surface-bench">
+      <h2 className="bench-header"><span className="container-title">Your Backups</span></h2>
       <p style={{ color: 'var(--muted)', fontSize: '14px', marginBottom: '16px' }}>
         Download a complete backup of your organization's data or restore from a previous backup.
       </p>

@@ -277,9 +277,9 @@ export default function VendorResearchPanel({
 
       {/* Trigger Form */}
       {showForm && (
-        <div style={{ ...cardStyle, display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-          <div style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text)' }}>
-            Configure DPSIA Assessment
+        <div className="surface-bench" style={{ ...cardStyle, display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+          <div className="bench-header" style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text)' }}>
+            <span className="container-title">Your Vendor Assessment</span>
           </div>
           <div style={{ fontSize: '0.75rem', color: 'var(--muted)', padding: '0.5rem', backgroundColor: '#fffbeb', borderRadius: '6px', border: '1px solid #fef3c7' }}>
             Each assessment uses multiple AI API calls and typically takes 2-4 minutes to complete.

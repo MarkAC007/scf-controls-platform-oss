@@ -27,6 +27,7 @@ import { EvidenceTaskList } from './EvidenceTaskList'
 import { MaturityBadge, MaturityAdvisoryCard, EVIDENCE_MATURITY_LEVELS } from './maturity'
 import { RecipeCard, RecipeConfidenceBadge, EvidenceTemplateGuidance, EvidenceFileUpload, EvidenceFileList, CollectionWizard } from './evidence'
 import { WindowReviewPanel } from './evidence/WindowReviewPanel'
+import { ScfReference } from './provenance/ScfReference'
 
 // M4 (#574) — gate the per-window review panel mount on the build-time flag.
 // When unset (default), the panel is not rendered and the legacy per-file
@@ -602,7 +603,8 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
         {viewMode === 'control' && selectedControl ? (
           <>
             <div className="detail-header-compact">
-              <div className="detail-header-main">
+              <div className="detail-header-main surface-bedrock" data-source="SCF Reference">
+                <span className="scf-source-tag">SCF Catalog</span>
                 <div className="detail-id-compact">{selectedControl.scf_id}</div>
                 <h2 className="detail-name-compact">{selectedControl.control_name}</h2>
                 <div className="detail-meta-row">
@@ -622,7 +624,8 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
             </div>
 
             <div className="detail-content-compact">
-              {/* Control Details */}
+              {/* Control Details — SCF reference content, rendered flat */}
+              <ScfReference>
               <div className="detail-section-container">
                 <div className="container-header">
                   <span className="container-icon">📄</span>
@@ -670,6 +673,7 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
                   </div>
                 </div>
               </div>
+              </ScfReference>
 
               {/* Evidence & Audit Artifacts */}
               <div className="evidence-section-wrapper">
@@ -709,7 +713,7 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
                           </div>
                         </summary>
 
-                        <div className="evidence-form-modern">
+                        <div className="evidence-form-modern surface-bench">
                           {requiringControls.length > 0 && (
                             <div className="evidence-context-modern">
                               <div className="context-header">
@@ -924,7 +928,8 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
             return (
               <>
                 <div className="detail-header-compact">
-                  <div className="detail-header-main">
+                  <div className="detail-header-main surface-bedrock" data-source="SCF Evidence Requirements">
+                    <span className="scf-source-tag">SCF ERL</span>
                     <div className="detail-id-compact">{evidenceItem.id}</div>
                     <h2 className="detail-name-compact">{evidenceItem.title}</h2>
                     <div className="detail-meta-row">
@@ -944,7 +949,8 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
                 </div>
 
                 <div className="detail-content-compact">
-                  {/* Required by Controls */}
+                  {/* Required by Controls — SCF/ERL reference mapping, rendered flat */}
+                  <ScfReference>
                   <div className="detail-section-container">
                     <div className="container-header">
                       <span className="container-icon">🔗</span>
@@ -1036,6 +1042,7 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
                       )}
                     </div>
                   </div>
+                  </ScfReference>
 
                   {scopingData.organizationId && PER_WINDOW_REVIEW_ENABLED && (
                     <WindowReviewPanel
@@ -1046,10 +1053,10 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
                   )}
 
                   {scopingData.organizationId && (
-                    <div className="detail-section-container">
-                      <div className="container-header">
+                    <div className="detail-section-container surface-bench">
+                      <div className="container-header bench-header">
                         <span className="container-icon">{'\uD83D\uDCC1'}</span>
-                        <span className="container-title">Evidence Files</span>
+                        <span className="container-title">Your Evidence Files</span>
                       </div>
                       <div className="container-content">
                         <EvidenceFileUpload
@@ -1067,10 +1074,10 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
                   )}
 
                   {/* Evidence Tracking Form */}
-                  <div className="detail-section-container">
-                    <div className="container-header">
+                  <div className="detail-section-container surface-bench">
+                    <div className="container-header bench-header">
                       <span className="container-icon">📋</span>
-                      <span className="container-title">Evidence Collection Tracking</span>
+                      <span className="container-title">Your Collection Record</span>
                       {isTracked && <span className="container-tracking-badge">✓ Active</span>}
                     </div>
                     <div className="container-content">
@@ -1264,12 +1271,14 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
                     </div>
                   </div>
 
-                  {/* Evidence Template Guidance (Issue #326) — collapsed by default */}
-                  <EvidenceTemplateGuidance
-                    evidenceId={selectedEvidenceId}
-                    evidenceTemplates={evidenceTemplates}
-                    orgId={scopingData.organizationId}
-                  />
+                  {/* Evidence Template Guidance (Issue #326) — collapsed by default; SCF/ERL reference, rendered flat */}
+                  <ScfReference>
+                    <EvidenceTemplateGuidance
+                      evidenceId={selectedEvidenceId}
+                      evidenceTemplates={evidenceTemplates}
+                      orgId={scopingData.organizationId}
+                    />
+                  </ScfReference>
 
                   {/* Maturity Advisory — with next-level recipe preview when system is selected */}
                   {tracking.maturity_level && (

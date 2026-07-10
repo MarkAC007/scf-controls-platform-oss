@@ -163,10 +163,10 @@ export default function WebhookManagement({ organizationId }: WebhookManagementP
   const deliveryEndpoint = endpoints.find(e => e.id === deliveryEndpointId)
 
   return (
-    <div className="api-keys-section">
+    <div className="api-keys-section surface-bench">
       <div className="section-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
         <div>
-          <h3>Webhook Endpoints</h3>
+          <h3 className="bench-header"><span className="container-title">Your Webhooks</span></h3>
           <p>
             Manage webhook endpoints for automated evidence ingestion. Use the Collection Wizard to create new endpoints.
           </p>
