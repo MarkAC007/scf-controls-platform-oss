@@ -169,9 +169,6 @@ services:
       # Vendor research API keys (Issue #59)
       HIBP_API_KEY: ${HIBP_API_KEY:-}
       NVD_API_KEY: ${NVD_API_KEY:-}
-      # DPSIA Lambda Integration
-      DPSIA_LAMBDA_FUNCTION_NAME: ${DPSIA_LAMBDA_FUNCTION_NAME:-DPSIAStack-DPSIAFunctionEFA10949-SSk3OeKB2BwT}
-      DPSIA_LAMBDA_REGION: ${DPSIA_LAMBDA_REGION:-eu-west-1}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-minioadmin}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-minioadmin}
       AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-eu-west-1}

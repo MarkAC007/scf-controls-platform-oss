@@ -9,7 +9,7 @@ as of v4.0.0. The scf_id field replaces the former ccf_id field.
 from datetime import datetime
 from enum import Enum
 from typing import Optional, List, Tuple
-from sqlalchemy import Column, String, Boolean, Text, Date, ForeignKey, DateTime, JSON, Integer, Numeric, UniqueConstraint, Index, BigInteger, Float
+from sqlalchemy import Column, String, Boolean, Text, Date, ForeignKey, DateTime, JSON, Integer, Numeric, UniqueConstraint, Index, BigInteger, Float, LargeBinary
 from sqlalchemy.dialects.postgresql import UUID, JSONB, ARRAY
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
@@ -245,6 +245,10 @@ class Organization(Base):
     awaiting_admin = Column(Boolean, default=False, nullable=False)
     created_by_consultant_id = Column(UUID(as_uuid=True), ForeignKey("consultant_profiles.id", ondelete="SET NULL"), nullable=True)
     settings = Column(JSON, nullable=False, default=dict, server_default='{}')
+    logo_data = Column(LargeBinary, nullable=True)
+    logo_content_type = Column(String(100), nullable=True)
+    logo_filename = Column(String(255), nullable=True)
+    logo_updated_at = Column(DateTime(timezone=False), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now())
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now())
 
@@ -644,6 +648,13 @@ class System(Base):
     # Connection configuration (for future integrations)
     connection_config = Column(JSONB, default={})  # API endpoints, auth method hints, etc.
 
+    # Link to the systems knowledge catalog (template picker / recipe resolution)
+    catalog_template_id = Column(
+        Integer,
+        ForeignKey("system_catalog_templates.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
     # Timestamps
     created_at = Column(DateTime(timezone=False), server_default=func.now())
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now())
@@ -654,6 +665,7 @@ class System(Base):
 
     # Relationships
     organization = relationship("Organization", back_populates="systems")
+    catalog_template = relationship("SystemCatalogTemplate", foreign_keys=[catalog_template_id])
     created_by = relationship("User", foreign_keys=[created_by_user_id])
     updated_by = relationship("User", foreign_keys=[updated_by_user_id])
     evidence_tracking = relationship("EvidenceTracking", back_populates="system")
@@ -1127,7 +1139,14 @@ class VendorCriticality(str, Enum):
 
 
 class VendorAssessmentStatus(str, Enum):
-    """Status of a vendor assessment."""
+    """Status of a vendor assessment.
+
+    AI assessment lifecycle: pending -> running -> completed | failed.
+    Legacy manual lifecycle: scheduled -> in_progress -> completed | cancelled.
+    """
+    PENDING = "pending"
+    RUNNING = "running"
+    FAILED = "failed"
     SCHEDULED = "scheduled"
     IN_PROGRESS = "in_progress"
     COMPLETED = "completed"
@@ -1397,9 +1416,14 @@ class Vendor(Base):
     contract_end_date = Column(Date)
     contract_value = Column(Numeric(12, 2))
 
-    # Risk scoring
+    # Risk scoring — one authoritative score, written only from the latest
+    # *completed* AI assessment. risk_score_source records which assessment
+    # set it (provenance); next_review_date drives the annual-review loop.
     risk_score = Column(Integer)
     risk_level = Column(String(20))
+    risk_score_source = Column(UUID(as_uuid=True), ForeignKey("vendor_assessments.id", ondelete="SET NULL", use_alter=True, name="fk_vendors_risk_score_source"), nullable=True)
+    risk_scored_at = Column(DateTime(timezone=False))
+    next_review_date = Column(Date)
     data_classification = Column(String(50))
 
     # Audit timestamps and user FKs
@@ -1412,23 +1436,35 @@ class Vendor(Base):
     organization = relationship("Organization", back_populates="vendors")
     created_by = relationship("User", foreign_keys=[created_by_user_id])
     updated_by = relationship("User", foreign_keys=[updated_by_user_id])
-    assessments = relationship("VendorAssessment", back_populates="vendor", cascade="all, delete-orphan")
+    assessments = relationship(
+        "VendorAssessment",
+        back_populates="vendor",
+        foreign_keys="VendorAssessment.vendor_id",
+        cascade="all, delete-orphan",
+    )
+    risk_score_source_assessment = relationship("VendorAssessment", foreign_keys=[risk_score_source], viewonly=True)
     certifications = relationship("VendorCertification", back_populates="vendor", cascade="all, delete-orphan")
     reports = relationship("VendorReport", back_populates="vendor", cascade="all, delete-orphan")
     claim_verifications = relationship("VendorClaimVerification", back_populates="vendor", cascade="all, delete-orphan")
     action_items = relationship("VendorActionItem", back_populates="vendor", cascade="all, delete-orphan")
     compensating_controls = relationship("VendorCompensatingControl", back_populates="vendor", cascade="all, delete-orphan")
-    dpsia_assessments = relationship("VendorDPSIAAssessment", back_populates="vendor", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<Vendor(id={self.id}, name={self.name}, status={self.status})>"
 
 
 class VendorAssessment(Base):
-    """VendorAssessment model - tracks vendor risk assessments.
+    """VendorAssessment model - THE single vendor assessment record.
 
-    Records CIA triad scores, findings, and risk ratings for each
-    vendor assessment cycle.
+    One row per assessment run (AI-driven or manual). AI assessments carry a
+    job_id and progress through pending -> running -> completed | failed,
+    with the full report (markdown + JSON), RAG status, recommendation and
+    research sources stored directly on the row. Legacy manual assessments
+    (job_id IS NULL) keep the scheduled/in_progress/completed/cancelled
+    lifecycle.
+
+    Residual (authoritative) risk lives in final_risk_score / risk_level;
+    inherent risk in inherent_risk_score / inherent_risk_level.
     """
     __tablename__ = "vendor_assessments"
 
@@ -1439,6 +1475,28 @@ class VendorAssessment(Base):
     assessment_type = Column(String(50), nullable=False, default='initial')
     assessment_date = Column(Date, nullable=False)
     status = Column(String(30), nullable=False, default='scheduled')
+
+    # AI assessment job tracking (nullable for legacy/manual rows)
+    job_id = Column(String(50), unique=True, nullable=True)
+    started_at = Column(DateTime(timezone=False))
+    completed_at = Column(DateTime(timezone=False))
+    error_message = Column(Text)
+    triggered_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+
+    # Assessment inputs
+    data_role = Column(String(30))
+    services_used = Column(Text)
+    client_name = Column(String(255))
+    additional_context = Column(Text)
+
+    # AI assessment outcome + report (content lives here, not in vendor_reports)
+    rag_status = Column(String(10))            # GREEN / AMBER / RED
+    recommendation = Column(String(30))        # APPROVED / CONDITIONAL / REJECTED
+    executive_summary = Column(Text)
+    report_markdown = Column(Text)
+    report_json = Column(JSONB)
+    research_sources = Column(JSONB)
+    processing_time_ms = Column(Integer)
 
     # CIA scores (1-5 scale)
     confidentiality_score = Column(Integer)
@@ -1477,10 +1535,11 @@ class VendorAssessment(Base):
     updated_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
 
     # Relationships
-    vendor = relationship("Vendor", back_populates="assessments")
+    vendor = relationship("Vendor", back_populates="assessments", foreign_keys=[vendor_id])
     assessor = relationship("User", foreign_keys=[assessor_user_id])
     created_by = relationship("User", foreign_keys=[created_by_user_id])
     updated_by = relationship("User", foreign_keys=[updated_by_user_id])
+    triggered_by = relationship("User", foreign_keys=[triggered_by_user_id])
 
     def __repr__(self):
         return f"<VendorAssessment(vendor={self.vendor_id}, type={self.assessment_type}, status={self.status})>"
@@ -1732,56 +1791,6 @@ class VendorCompensatingControl(Base):
 
     def __repr__(self):
         return f"<VendorCompensatingControl(vendor={self.vendor_id}, effectiveness={self.effectiveness_rating})>"
-
-
-class VendorDPSIAAssessment(Base):
-    """Tracks DPSIA Lambda assessment jobs and results for a vendor."""
-    __tablename__ = "vendor_dpsia_assessments"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    vendor_id = Column(UUID(as_uuid=True), ForeignKey("vendors.id", ondelete="CASCADE"), nullable=False)
-    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
-    job_id = Column(String(50), unique=True, nullable=False)
-    status = Column(String(30), nullable=False, default='pending')
-    assessment_type = Column(String(30), nullable=False, default='new')
-    data_role = Column(String(30), nullable=False, default='Processor')
-    services_used = Column(Text)
-    client_name = Column(String(255))
-    additional_context = Column(Text)
-
-    # DPSIA results
-    rag_status = Column(String(10))
-    recommendation = Column(String(30))
-    risk_score = Column(Integer)
-    risk_level = Column(String(20))
-    executive_summary = Column(Text)
-    report_markdown = Column(Text)
-    report_json = Column(JSONB)
-    report_docx_s3_key = Column(String(500))
-    report_filename = Column(String(255))
-    research_sources = Column(JSONB)
-
-    # Links to auto-created platform records
-    linked_assessment_id = Column(UUID(as_uuid=True), ForeignKey("vendor_assessments.id", ondelete="SET NULL"))
-    linked_report_id = Column(UUID(as_uuid=True), ForeignKey("vendor_reports.id", ondelete="SET NULL"))
-
-    # Metadata
-    processing_time_ms = Column(Integer)
-    error_message = Column(Text)
-    triggered_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
-    started_at = Column(DateTime(timezone=False))
-    completed_at = Column(DateTime(timezone=False))
-    created_at = Column(DateTime(timezone=False), server_default=func.now())
-
-    # Relationships
-    vendor = relationship("Vendor", back_populates="dpsia_assessments")
-    organization = relationship("Organization")
-    linked_assessment = relationship("VendorAssessment", foreign_keys=[linked_assessment_id])
-    linked_report = relationship("VendorReport", foreign_keys=[linked_report_id])
-    triggered_by = relationship("User", foreign_keys=[triggered_by_user_id])
-
-    def __repr__(self):
-        return f"<VendorDPSIAAssessment(vendor={self.vendor_id}, status={self.status}, rag={self.rag_status})>"
 
 
 # =============================================================================

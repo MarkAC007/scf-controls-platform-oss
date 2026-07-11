@@ -51,3 +51,8 @@ catalog-source/*.xlsx
 #   system_collection_recipes.json, README.md
 backend/alembic/versions/__pycache__/*
 .gitnexus
+
+# Live dev demo (scripts/dev-demo.sh) — local state, logs, generated keys
+.dev-demo/
+webclient/.env.demo
+webclient/vite.config.local.mts

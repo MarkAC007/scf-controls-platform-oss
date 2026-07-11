@@ -1,0 +1,126 @@
+{
+  "slug": "splunk",
+  "name": "Splunk",
+  "vendor": "Splunk LLC (Cisco)",
+  "category": "SIEM & Log Management",
+  "description": "Log aggregation, search and SIEM platform (Splunk Enterprise / Cloud).",
+  "website": "https://www.splunk.com",
+  "aliases": [
+    "splunk",
+    "splunk enterprise",
+    "splunk cloud"
+  ],
+  "logo_hint": "splunk",
+  "system_type": "logging",
+  "version": "1.0",
+  "recipes": {
+    "L1": {
+      "title": "Splunk Manual Evidence Collection",
+      "estimated_time": "15 minutes",
+      "frequency": "weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Sign in to Splunk Web and navigate to Search & Reporting",
+          "permissions_required": "power or user role with access to relevant indices",
+          "vendor_docs_url": "https://docs.splunk.com/Documentation/Splunk/latest/SearchTutorial/Aboutthesearchtutorial"
+        },
+        {
+          "step": 2,
+          "action": "Enter an SPL query for your evidence type (e.g., index=main sourcetype=syslog | stats count by host for system inventory, or index=security action=success | stats count by user for authentication evidence)",
+          "audit_note": "Document the exact SPL query used for reproducibility and audit trail",
+          "security_note": "Ensure your search does not return sensitive fields like passwords or API keys"
+        },
+        {
+          "step": 3,
+          "action": "Set the time range picker to the evidence collection period",
+          "audit_note": "Splunk timestamps are derived from event data and indexed at ingestion time"
+        },
+        {
+          "step": 4,
+          "action": "Click Export and select CSV format to download the search results",
+          "permissions_required": "Export results capability"
+        },
+        {
+          "step": 5,
+          "action": "Optionally, save the search as a Report for future scheduled execution: Save As > Report",
+          "vendor_docs_url": "https://docs.splunk.com/Documentation/Splunk/latest/Report/Createandeditreports"
+        },
+        {
+          "step": 6,
+          "action": "Upload the CSV export to the evidence repository with evidence ID reference"
+        }
+      ]
+    },
+    "L2": {
+      "title": "Splunk Saved Search Evidence Automation",
+      "estimated_time": "1 hour initial setup",
+      "frequency": "weekly automated",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Convert your SPL evidence queries into Saved Searches with weekly schedule",
+          "permissions_required": "Power User role or higher"
+        },
+        {
+          "step": 2,
+          "action": "Configure Saved Search actions to export results as CSV to a monitored evidence directory or send via email"
+        },
+        {
+          "step": 3,
+          "action": "Create a Splunk Dashboard with all evidence-related searches for visual verification",
+          "audit_note": "Dashboard provides at-a-glance evidence of log monitoring activity"
+        }
+      ]
+    },
+    "L3": {
+      "title": "Splunk Automated Evidence Pipeline",
+      "estimated_time": "3 hours initial setup",
+      "frequency": "automated daily",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Create Splunk REST API integration to programmatically run evidence collection searches",
+          "permissions_required": "API access with search capabilities",
+          "vendor_docs_url": "https://docs.splunk.com/Documentation/Splunk/latest/RESTREF/RESTsearch"
+        },
+        {
+          "step": 2,
+          "action": "Deploy Splunk Summary Indexing to pre-compute evidence metrics for fast retrieval"
+        },
+        {
+          "step": 3,
+          "action": "Implement collection completeness monitoring — track data sources, index volumes, and ingestion latency"
+        },
+        {
+          "step": 4,
+          "action": "Configure Splunk alerts for evidence collection failures: missing sourcetypes, volume drops, parsing errors",
+          "audit_note": "Alerting on collection health demonstrates mature monitoring practice"
+        }
+      ]
+    },
+    "L4": {
+      "title": "Splunk Managed Evidence with Compliance Analytics",
+      "estimated_time": "4 hours initial setup",
+      "frequency": "continuous with weekly reporting",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Deploy Splunk Enterprise Security (ES) or InfoSec app as structured compliance evidence framework"
+        },
+        {
+          "step": 2,
+          "action": "Configure ES compliance dashboards tracking detection coverage, alert fidelity, and investigation times"
+        },
+        {
+          "step": 3,
+          "action": "Implement automated evidence quality scoring: completeness, timeliness, accuracy metrics per evidence type"
+        },
+        {
+          "step": 4,
+          "action": "Build automated monthly security monitoring evidence package: notable events, investigation outcomes, compliance posture trends"
+        }
+      ]
+    }
+  }
+}

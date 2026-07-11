@@ -1,0 +1,173 @@
+{
+  "slug": "wiz",
+  "name": "Wiz",
+  "vendor": "Wiz, Inc.",
+  "category": "Cloud Security (CNAPP)",
+  "description": "Agentless cloud-native application protection platform (CNAPP) that scans cloud environments via API connectors and correlates findings on a security graph. Yields cloud connector coverage evidence, Issues and vulnerability reports, compliance framework posture reports (CIS and others) and scheduled report artefacts via the GraphQL API.",
+  "website": "https://www.wiz.io",
+  "aliases": [
+    "wiz",
+    "wiz.io",
+    "wiz cloud"
+  ],
+  "logo_hint": "wiz",
+  "system_type": "security_tool",
+  "version": "1.0",
+  "recipes": {
+    "L1": {
+      "title": "Wiz Manual Evidence Collection",
+      "estimated_time": "15-20 minutes",
+      "frequency": "weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Log in to the Wiz portal and open Settings > Deployments to view cloud connectors; screenshot the connector list showing each cloud account/subscription, its connection status and last successful sync as scanning coverage evidence. Note: Wiz's detailed product documentation (docs.wiz.io) is gated behind a customer login — capture the in-product guidance where needed",
+          "permissions_required": "Global Admin or Global Reader",
+          "security_note": "Use a named individual or dedicated evidence-collection account with a read-only role, not a shared login",
+          "audit_note": "Coverage evidence should show every in-scope cloud account is connected and syncing, not just that some connectors exist"
+        },
+        {
+          "step": 2,
+          "action": "Open the Compliance page, select the framework matching your control set (e.g. CIS AWS Foundations Benchmark, CIS Azure Foundations Benchmark) and screenshot the compliance heatmap and posture score, drilling into failed controls for the in-scope projects",
+          "permissions_required": "Global Reader or above (scoped project roles see only their projects)",
+          "audit_note": "Framework posture is assessed continuously by Wiz against the connected accounts; record the assessment date visible on screen",
+          "vendor_docs_url": "https://www.wiz.io/solutions/compliance"
+        },
+        {
+          "step": 3,
+          "action": "Open the Issues page, filter to the in-scope projects and severities (e.g. Critical and High, status Open or In Progress) and export the filtered list as CSV for the collection period",
+          "permissions_required": "Global Reader or above",
+          "audit_note": "Save the export with a date-stamped filename; the filter settings used should be recorded so the extract is reproducible"
+        },
+        {
+          "step": 4,
+          "action": "Open the Reports page and run a one-off report (e.g. a compliance assessment report for the chosen framework, or an Issues report), then download the generated PDF/CSV artefact",
+          "permissions_required": "A role permitted to create reports (Global Contributor or above, or the create:reports API scope equivalent)",
+          "audit_note": "Wiz-generated reports carry the generation timestamp and scope, which strengthens them over raw screenshots"
+        },
+        {
+          "step": 5,
+          "action": "Upload the report artefacts, CSV exports and screenshots to the evidence repository with the evidence ID reference",
+          "security_note": "Exports name cloud accounts, resource identifiers and exploitable misconfigurations — restrict access to authorised personnel before sharing outside the security team"
+        }
+      ]
+    },
+    "L2": {
+      "title": "Wiz Scheduled Reports",
+      "estimated_time": "30 minutes (setup), then automated",
+      "frequency": "automated weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "On the Reports page, create a report per evidence need: a compliance assessment report scoped to your framework (e.g. CIS) and projects, an Issues report filtered to your severity threshold, and a vulnerability findings report where relevant",
+          "permissions_required": "Global Contributor or above (report creation)",
+          "audit_note": "One report per framework/control-set keeps each artefact mapped cleanly to the controls it evidences"
+        },
+        {
+          "step": 2,
+          "action": "Set a schedule on each report (daily, weekly or monthly) so Wiz regenerates it automatically, and add the compliance mailbox as an email recipient so each run is delivered on completion",
+          "permissions_required": "Global Contributor or above",
+          "audit_note": "Scheduled runs give a regular point-in-time evidence series; keep the cadence aligned to your control's stated frequency"
+        },
+        {
+          "step": 3,
+          "action": "Deliver report notifications to a restricted, monitored compliance mailbox and file each artefact into the evidence repository on receipt",
+          "security_note": "Report downloads are tenant-authenticated; limit mailbox membership to authorised personnel as the attached summaries still identify cloud accounts and failing controls"
+        },
+        {
+          "step": 4,
+          "action": "Review the report run history on the Reports page each month and record any missed or failed runs and their cause",
+          "audit_note": "Unexplained gaps in a scheduled evidence series weaken the evidence trail; documented gap handling preserves it"
+        }
+      ]
+    },
+    "L3": {
+      "title": "Wiz GraphQL API Automated Collection",
+      "estimated_time": "2-4 hours initial setup",
+      "frequency": "automated daily",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Create a service account in the Wiz portal: Settings > Access Management > Service Accounts > Add Service Account, choosing the Custom Integration (GraphQL API) type and granting least-privilege API scopes only (e.g. read:issues, read:reports, create:reports, read:cloud_configuration)",
+          "permissions_required": "Global Admin (service accounts can also be project-scoped for least privilege)",
+          "security_note": "The client secret is displayed only once at creation — store the client ID and secret immediately in a secrets manager and rotate on a defined schedule",
+          "vendor_docs_url": "https://win.wiz.io/reference/prerequisites"
+        },
+        {
+          "step": 2,
+          "action": "Obtain a bearer token: POST https://auth.app.wiz.io/oauth/token with grant_type=client_credentials, client_id, client_secret and audience=wiz-api (form-encoded), then send the token as an Authorization: Bearer header on every GraphQL request",
+          "permissions_required": "Service account credentials",
+          "security_note": "Request tokens at runtime rather than caching them long-term, and never log the request body or Authorization header",
+          "vendor_docs_url": "https://win.wiz.io/reference/quickstart"
+        },
+        {
+          "step": 3,
+          "action": "Query the GraphQL API at your tenant's regional endpoint, https://api.<region>.app.wiz.io/graphql (the exact endpoint URL is shown in the Wiz portal under your tenant/user settings): pull open Issues with filters matching your control threshold, paging with the standard pageInfo/endCursor pattern",
+          "permissions_required": "Service account with read:issues scope",
+          "audit_note": "Record the query and filter variables used with each extract so the dataset is reproducible for auditors",
+          "vendor_docs_url": "https://win.wiz.io/reference/quickstart"
+        },
+        {
+          "step": 4,
+          "action": "Automate report artefacts via the API: run the report-creation mutation (CreateReport) for compliance and Issues reports, poll the report's run status, then download the artefact from the returned URL. Detailed schema documentation is on the gated Wiz docs portal; the public developer reference at win.wiz.io covers the common operations",
+          "permissions_required": "Service account with create:reports and read:reports scopes",
+          "audit_note": "API-generated reports match the portal's report artefacts, keeping a single consistent evidence format across maturity levels",
+          "vendor_docs_url": "https://win.wiz.io/reference/quickstart"
+        },
+        {
+          "step": 5,
+          "action": "Pull the cloud connector inventory via the API each run and reconcile connected accounts and last-sync times against your authoritative cloud account inventory (e.g. AWS Organizations, Azure management groups)",
+          "permissions_required": "Service account with read access to connector/tenant configuration",
+          "audit_note": "Connector reconciliation evidences that Wiz coverage extends to all in-scope cloud accounts, not merely that scans run"
+        },
+        {
+          "step": 6,
+          "action": "Schedule the collection daily via cron or a CI/CD pipeline with retries and alerting on failed runs, and validate outputs: confirm extracts are non-empty and compare issue and account counts against the previous run's baseline",
+          "security_note": "Read credentials from the secrets manager at runtime; ensure pipeline logs never print tokens or secrets",
+          "audit_note": "Run-over-run validation provides assurance of collection completeness"
+        }
+      ]
+    },
+    "L4": {
+      "title": "Wiz Managed Evidence Pipeline with Metrics",
+      "estimated_time": "4-6 hours initial setup",
+      "frequency": "continuous with daily reporting",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Stream findings continuously using Wiz's native integrations: configure an integration (Settings > Integrations) plus automation rules so Issue events are forwarded to your SIEM (e.g. Splunk, Microsoft Sentinel) or a webhook endpoint as they are created, updated and resolved. Integration setup guides are on the gated docs portal; the public integrations catalogue lists supported targets",
+          "permissions_required": "Global Admin (integrations and automation rules)",
+          "security_note": "Scope integration credentials to the minimum required and store any webhook secrets in the secrets manager alongside the receiving service",
+          "vendor_docs_url": "https://www.wiz.io/integrations"
+        },
+        {
+          "step": 2,
+          "action": "Harden the receiving endpoint: require TLS 1.2+, authenticate deliveries (shared-secret header or signature configured on the automation action) and reject unauthenticated payloads before processing",
+          "security_note": "Treat the webhook receiver as an internet-facing credentialed service; log and alert on rejected deliveries"
+        },
+        {
+          "step": 3,
+          "action": "Keep scheduled compliance framework reports (CIS and any custom frameworks) running per L2/L3 and store posture scores per framework per project as a time series, so drift is visible between report snapshots",
+          "permissions_required": "Service account with create:reports and read:reports scopes",
+          "audit_note": "A posture time series evidences continuous monitoring rather than point-in-time compliance",
+          "vendor_docs_url": "https://www.wiz.io/solutions/compliance"
+        },
+        {
+          "step": 4,
+          "action": "Reconcile daily: compare Wiz cloud connectors (status and last successful sync) against the authoritative cloud account inventory to compute coverage %, and alert on disconnected connectors, sync gaps or accounts absent from Wiz",
+          "audit_note": "Connector-versus-inventory reconciliation is the core completeness metric for this pipeline",
+          "vendor_docs_url": "https://win.wiz.io/reference/prerequisites"
+        },
+        {
+          "step": 5,
+          "action": "Run automated quality checks and a collection-health dashboard: payload schema validation on streamed events, duplicate detection, gaps in the event time series, report run failures and posture-score anomalies, with alerts on any threshold breach",
+          "audit_note": "The dashboard serves as continuous evidence of a managed collection process"
+        },
+        {
+          "step": 6,
+          "action": "Generate an automated quarterly collection-health report summarising connector coverage, streaming reliability, report run success, gaps and remediation, and file it in the evidence repository"
+        }
+      ]
+    }
+  }
+}

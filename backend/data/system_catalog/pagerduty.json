@@ -1,0 +1,185 @@
+{
+  "slug": "pagerduty",
+  "name": "PagerDuty",
+  "vendor": "PagerDuty, Inc.",
+  "category": "Incident Management",
+  "description": "Incident management and on-call orchestration platform. Yields incident records with immutable timelines, post-incident reviews, on-call schedule coverage, escalation policies and an account audit trail as evidence for incident response and operational resilience requirements.",
+  "website": "https://www.pagerduty.com",
+  "aliases": [
+    "pagerduty",
+    "pager duty"
+  ],
+  "logo_hint": "pagerduty",
+  "system_type": "ticketing",
+  "version": "1.0",
+  "recipes": {
+    "L1": {
+      "title": "PagerDuty Manual Evidence Collection",
+      "estimated_time": "15 minutes",
+      "frequency": "weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Navigate to Incidents in the web app's top navigation, filter by status Resolved and set the date range to cover the collection period",
+          "permissions_required": "Observer base role or above",
+          "vendor_docs_url": "https://support.pagerduty.com/main/docs/incidents"
+        },
+        {
+          "step": 2,
+          "action": "Open a sample of resolved incidents and capture each incident's timeline (screenshot or print to PDF) showing trigger, notification, acknowledgement, any escalations and resolution",
+          "audit_note": "Incident log entries are timestamped by PagerDuty and cannot be edited, making the timeline strong evidence of response times",
+          "vendor_docs_url": "https://support.pagerduty.com/main/docs/incidents"
+        },
+        {
+          "step": 3,
+          "action": "For major incidents, export the Post-Incident Review report (formerly Postmortems — legacy Postmortem reports were converted to Post-Incident Review opportunities in January 2026) showing the curated timeline, analysis and follow-up actions",
+          "permissions_required": "Manager base role or above",
+          "vendor_docs_url": "https://support.pagerduty.com/main/docs/post-incident-reviews-and-postmortems"
+        },
+        {
+          "step": 4,
+          "action": "Capture on-call coverage: navigate to People > On-Call Schedules, open each in-scope schedule and screenshot the rota for the period, confirming there are no coverage gaps",
+          "permissions_required": "Observer base role or above",
+          "audit_note": "Capture the full period including handovers — gaps in the rota undermine incident response assurance",
+          "vendor_docs_url": "https://support.pagerduty.com/main/docs/schedules"
+        },
+        {
+          "step": 5,
+          "action": "Capture escalation configuration: navigate to People > Escalation Policies and screenshot each in-scope policy showing escalation levels, targets and timeouts",
+          "permissions_required": "Observer base role or above",
+          "vendor_docs_url": "https://support.pagerduty.com/main/docs/escalation-policies"
+        },
+        {
+          "step": 6,
+          "action": "Upload the incident exports, review reports and screenshots to the evidence repository with date-stamped filenames and the evidence ID reference",
+          "security_note": "Incident notes may contain sensitive system details or personal data — review before uploading"
+        }
+      ]
+    },
+    "L2": {
+      "title": "PagerDuty Recurring Exports via Insights and Calendar Feeds",
+      "estimated_time": "30 minutes initial setup",
+      "frequency": "monthly (diarised) plus continuously updating feeds",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Note: PagerDuty has no built-in scheduled email report delivery. The closest no-code mechanisms are Insights CSV exports on a diarised cadence and continuously updating calendar feeds for on-call schedules",
+          "audit_note": "Because exports are user-triggered, diarise the task and record completion to evidence the cadence"
+        },
+        {
+          "step": 2,
+          "action": "Navigate to Analytics > Insights > Incident Activity, set the date range to the collection period and use Export CSV to download incident metrics for the period",
+          "permissions_required": "Available on Professional, Business, Digital Operations (legacy) and Enterprise for Incident Management plans",
+          "audit_note": "Insights data is updated on a daily pipeline cycle (typically within 24 hours), so export after the period has fully closed",
+          "vendor_docs_url": "https://support.pagerduty.com/main/docs/insights"
+        },
+        {
+          "step": 3,
+          "action": "Subscribe an evidence calendar to each in-scope on-call schedule's WebCal/iCal export feed (People > On-Call Schedules > select schedule > Export) so rota coverage is captured continuously without manual screenshots",
+          "permissions_required": "Observer base role or above",
+          "security_note": "The calendar feed URL embeds an access token — share it only with the evidence mailbox/calendar, and regenerate it if exposed",
+          "vendor_docs_url": "https://support.pagerduty.com/main/docs/schedules"
+        },
+        {
+          "step": 4,
+          "action": "Each cycle, review the Audit Trail report for key users (People > Users > select user > View Audit Trail) to evidence configuration changes to schedules and escalation policies",
+          "permissions_required": "Admin base role or Account Owner",
+          "vendor_docs_url": "https://support.pagerduty.com/main/docs/audit-trail-reporting"
+        },
+        {
+          "step": 5,
+          "action": "File the CSV exports and audit trail extracts in the evidence repository under a consistent naming convention, and record the diarised task as complete",
+          "audit_note": "The completed-task record plus dated exports together evidence a repeatable, scheduled process"
+        }
+      ]
+    },
+    "L3": {
+      "title": "PagerDuty API-Driven Automated Collection",
+      "estimated_time": "2-3 hours initial setup",
+      "frequency": "automated daily",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Create a read-only REST API key: navigate to Integrations > API Access Keys, select Create New API Key, enter a description and tick 'Read-only API Key' to restrict it to GET calls",
+          "permissions_required": "Admin base role or Account Owner",
+          "security_note": "The key is displayed in full only once — store it in a secrets manager immediately and rotate it on a schedule. Never use a personal user token for automation",
+          "audit_note": "API key creation is captured in the account audit trail",
+          "vendor_docs_url": "https://support.pagerduty.com/main/docs/api-access-keys"
+        },
+        {
+          "step": 2,
+          "action": "Collect incident evidence via GET https://api.pagerduty.com/incidents?since={start}&until={end}&statuses[]=resolved (Authorization: Token token={key}), then GET https://api.pagerduty.com/incidents/{id}/log_entries for each incident's full timeline",
+          "permissions_required": "Read-only REST API key",
+          "audit_note": "Log entries are the immutable record of who was notified, when they acknowledged and how the incident was resolved",
+          "vendor_docs_url": "https://developer.pagerduty.com/api-reference/"
+        },
+        {
+          "step": 3,
+          "action": "Collect on-call coverage and configuration via GET https://api.pagerduty.com/oncalls (point-in-time coverage), GET https://api.pagerduty.com/schedules and GET https://api.pagerduty.com/escalation_policies",
+          "permissions_required": "Read-only REST API key",
+          "audit_note": "Daily /oncalls snapshots build a continuous coverage record that a single screenshot cannot provide",
+          "vendor_docs_url": "https://developer.pagerduty.com/api-reference/"
+        },
+        {
+          "step": 4,
+          "action": "Collect the account audit trail via GET https://api.pagerduty.com/audit/records with cursor-based pagination, capturing configuration changes to services, schedules and escalation policies",
+          "permissions_required": "REST API key (account-level); feature availability depends on pricing plan",
+          "audit_note": "Pull the audit trail at least monthly so records are preserved beyond PagerDuty's retention window",
+          "vendor_docs_url": "https://developer.pagerduty.com/docs/audit-records-api"
+        },
+        {
+          "step": 5,
+          "action": "Collect aggregated response metrics (MTTA/MTTR, incident counts) via POST https://api.pagerduty.com/analytics/metrics/incidents/all with a JSON filter body for the period and in-scope teams/services",
+          "permissions_required": "Read-only REST API key",
+          "audit_note": "Analytics data is refreshed once a day and is not real time — run the export after the period closes",
+          "vendor_docs_url": "https://developer.pagerduty.com/api-reference/3b465fd63d888-analytics-incident-metrics"
+        },
+        {
+          "step": 6,
+          "action": "Schedule the collection daily via cron or CI/CD, write date-stamped raw JSON to the evidence repository, implement error handling with alerting on failed runs, and validate daily incident counts against a rolling baseline",
+          "security_note": "Inject the API key from the secrets manager at runtime; never commit it to source control",
+          "audit_note": "Volume validation and failure alerts evidence collection completeness"
+        }
+      ]
+    },
+    "L4": {
+      "title": "PagerDuty Managed Evidence Pipeline with Webhooks and Metrics",
+      "estimated_time": "4 hours initial setup",
+      "frequency": "continuous with daily reporting",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Configure v3 webhooks: navigate to Integrations > Generic Webhooks (v3), create a subscription for incident lifecycle events (triggered, acknowledged, escalated, reassigned, resolved) delivering to your evidence platform or SIEM",
+          "permissions_required": "Admin base role or Account Owner (Team Managers can manage subscriptions scoped to their teams via the Service Details page)",
+          "security_note": "Use an HTTPS endpoint with TLS 1.2+ and verify the X-PagerDuty-Signature header on every delivery before ingesting",
+          "vendor_docs_url": "https://support.pagerduty.com/main/docs/webhooks"
+        },
+        {
+          "step": 2,
+          "action": "Implement daily reconciliation: compare webhook-received incident events against GET https://api.pagerduty.com/incidents for the same window and alert on any incident present in one source but not the other",
+          "audit_note": "Webhook delivery is at-least-once but not guaranteed; REST reconciliation is what makes the pipeline evidentially complete",
+          "vendor_docs_url": "https://developer.pagerduty.com/api-reference/"
+        },
+        {
+          "step": 3,
+          "action": "Add continuous coverage monitoring: poll GET https://api.pagerduty.com/oncalls on a short interval and raise an alert when any in-scope escalation policy level has no on-call responder",
+          "audit_note": "Automated gap detection turns the on-call rota from static evidence into a monitored control",
+          "vendor_docs_url": "https://developer.pagerduty.com/api-reference/"
+        },
+        {
+          "step": 4,
+          "action": "Run automated quality checks on ingested events — schema validation, duplicate suppression on event IDs, and time-series gap detection per service"
+        },
+        {
+          "step": 5,
+          "action": "Build a collection health dashboard (events/day, webhook delivery latency, reconciliation mismatches, on-call coverage %) and alert when metrics breach thresholds",
+          "audit_note": "The dashboard is itself continuous evidence that the collection process is managed and monitored"
+        },
+        {
+          "step": 6,
+          "action": "Generate an automated quarterly collection health report covering completeness, reconciliation results, coverage gaps and SLA breaches, and file it in the evidence repository"
+        }
+      ]
+    }
+  }
+}

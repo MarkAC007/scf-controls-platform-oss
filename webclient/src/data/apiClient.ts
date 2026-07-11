@@ -257,6 +257,63 @@ export async function updateOrganizationSettings(
   )
 }
 
+// Organization Logo
+export interface OrganizationLogoResponse {
+  filename: string | null
+  content_type: string | null
+  size_bytes: number
+  updated_at: string | null
+}
+
+function getAuthToken(): string {
+  const googleToken = GOOGLE_AUTH_ENABLED ? localStorage.getItem('google_token') : null
+  return googleToken || API_KEY
+}
+
+/**
+ * Fetch the organization logo as a Blob (null when no logo is set).
+ * Uses raw fetch because apiFetch is JSON-only.
+ */
+export async function fetchOrganizationLogoBlob(orgId: string): Promise<Blob | null> {
+  const response = await fetch(`${API_BASE_URL}/organizations/${orgId}/logo`, {
+    headers: { 'Authorization': `Bearer ${getAuthToken()}` },
+  })
+  if (response.status === 404) return null
+  if (!response.ok) {
+    throw new Error(`Failed to load organization logo: ${response.status}`)
+  }
+  return response.blob()
+}
+
+/**
+ * Upload/replace the organization logo (admin only).
+ * Uses raw fetch: multipart bodies must not get a manual Content-Type header.
+ */
+export async function uploadOrganizationLogo(orgId: string, file: File): Promise<OrganizationLogoResponse> {
+  const formData = new FormData()
+  formData.append('file', file)
+  const response = await fetch(`${API_BASE_URL}/organizations/${orgId}/logo`, {
+    method: 'PUT',
+    headers: { 'Authorization': `Bearer ${getAuthToken()}` },
+    body: formData,
+  })
+  if (!response.ok) {
+    let message = `Logo upload failed: ${response.status}`
+    try {
+      const body = await response.json()
+      if (typeof body.detail === 'string') message = body.detail
+    } catch {
+      // keep the status message
+    }
+    throw new Error(message)
+  }
+  return response.json()
+}
+
+export async function deleteOrganizationLogo(orgId: string): Promise<void> {
+  await apiFetch<void>(`/organizations/${orgId}/logo`, { method: 'DELETE' })
+}
+
 /**
  * Get the current organization.
  *
@@ -816,6 +873,46 @@ export async function deleteSystem(systemId: string, orgId?: string): Promise<vo
   await apiFetch<{ success: boolean; message: string }>(
     `/organizations/${orgId}/systems/${systemId}`,
     { method: 'DELETE' }
+  )
+}
+
+/**
+ * System Catalog API (systems knowledge catalog — template picker)
+ */
+export async function getSystemCatalogTemplates(
+  params?: { search?: string; systemType?: string }
+): Promise<import('../types').SystemCatalogTemplate[]> {
+  const qs = new URLSearchParams()
+  if (params?.search) qs.set('search', params.search)
+  if (params?.systemType) qs.set('system_type', params.systemType)
+  const suffix = qs.toString() ? `?${qs.toString()}` : ''
+  return apiFetch<import('../types').SystemCatalogTemplate[]>(`/system-catalog${suffix}`)
+}
+
+export async function generateSystemRecipes(
+  systemId: string,
+  orgId?: string
+): Promise<{ status: string }> {
+  if (!orgId) {
+    const org = await getCurrentOrganization()
+    orgId = org.id
+  }
+  return apiFetch<{ status: string }>(
+    `/organizations/${orgId}/systems/${systemId}/generate-recipes`,
+    { method: 'POST' }
+  )
+}
+
+export async function getRecipeGenerationStatus(
+  systemId: string,
+  orgId?: string
+): Promise<import('../types').RecipeGenerationStatus> {
+  if (!orgId) {
+    const org = await getCurrentOrganization()
+    orgId = org.id
+  }
+  return apiFetch<import('../types').RecipeGenerationStatus>(
+    `/organizations/${orgId}/systems/${systemId}/generate-recipes/status`
   )
 }
 
@@ -1679,7 +1776,6 @@ import type {
   VendorInput,
   VendorUpdate as VendorUpdateType,
   VendorAssessment,
-  VendorAssessmentInput,
   VendorCertification,
   VendorCertificationInput,
   VendorStatus,
@@ -1919,11 +2015,33 @@ export async function getVendorAssessments(
 }
 
 /**
- * Create a vendor assessment
+ * Trigger an AI assessment for a vendor (the single assessment pipeline).
+ * Returns 202 with the new assessment id and background job id.
  */
-export async function createVendorAssessment(
+export async function triggerVendorAIAssessment(
   vendorId: string,
-  assessment: VendorAssessmentInput,
+  body: VendorAIAssessmentTriggerRequest,
+  orgId?: string
+): Promise<VendorAIAssessmentTriggerResponse> {
+  if (!orgId) {
+    const org = await getCurrentOrganization()
+    orgId = org.id
+  }
+  return apiFetch<VendorAIAssessmentTriggerResponse>(
+    `/organizations/${orgId}/vendors/${vendorId}/assessments`,
+    {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }
+  )
+}
+
+/**
+ * Get a single vendor assessment (including full report fields)
+ */
+export async function getVendorAssessment(
+  vendorId: string,
+  assessmentId: string,
   orgId?: string
 ): Promise<VendorAssessment> {
   if (!orgId) {
@@ -1931,11 +2049,40 @@ export async function createVendorAssessment(
     orgId = org.id
   }
   return apiFetch<VendorAssessment>(
-    `/organizations/${orgId}/vendors/${vendorId}/assessments`,
-    {
-      method: 'POST',
-      body: JSON.stringify(assessment),
-    }
+    `/organizations/${orgId}/vendors/${vendorId}/assessments/${assessmentId}`
+  )
+}
+
+/**
+ * Poll the status of a vendor assessment
+ */
+export async function getVendorAssessmentStatus(
+  vendorId: string,
+  assessmentId: string,
+  orgId?: string
+): Promise<VendorAssessmentStatusResponse> {
+  if (!orgId) {
+    const org = await getCurrentOrganization()
+    orgId = org.id
+  }
+  return apiFetch<VendorAssessmentStatusResponse>(
+    `/organizations/${orgId}/vendors/${vendorId}/assessments/${assessmentId}/status`
+  )
+}
+
+/**
+ * Get the most recent completed AI assessment for a vendor (404 if none)
+ */
+export async function getLatestVendorAssessment(
+  vendorId: string,
+  orgId?: string
+): Promise<VendorAssessment> {
+  if (!orgId) {
+    const org = await getCurrentOrganization()
+    orgId = org.id
+  }
+  return apiFetch<VendorAssessment>(
+    `/organizations/${orgId}/vendors/${vendorId}/assessments/latest`
   )
 }
 
@@ -1977,380 +2124,18 @@ export async function createVendorCertification(
 }
 
 // ---------------------------------------------------------------------------
-// Vendor Research (Issue #59)
+// Vendor Action Items & Compensating Controls
 // ---------------------------------------------------------------------------
 
 import type {
-  DPSIATriggerRequest,
-  DPSIATriggerResponse,
-  DPSIAStatusResponse,
-  DPSIAResultResponse,
-  VendorResearchTriggerRequest,
-  VendorResearchTriggerResponse,
-  VendorResearchStatusResponse,
-  VendorResearchResultResponse,
-  VendorRiskCalculationResult,
-  VendorRiskMatrixResponse,
-  VendorReport,
-  VendorClaimVerification,
-  VendorClaimVerificationInput,
-  VendorCIAControl,
-  VendorCIAControlInput,
+  VendorAIAssessmentTriggerRequest,
+  VendorAIAssessmentTriggerResponse,
+  VendorAssessmentStatusResponse,
   VendorActionItem,
   VendorActionItemInput,
   VendorCompensatingControl,
   VendorCompensatingControlInput,
 } from '../types'
-
-/**
- * Trigger AI-powered research for a vendor
- */
-export async function triggerVendorResearch(
-  vendorId: string,
-  body: VendorResearchTriggerRequest = {},
-  orgId?: string
-): Promise<VendorResearchTriggerResponse> {
-  if (!orgId) {
-    const org = await getCurrentOrganization()
-    orgId = org.id
-  }
-  return apiFetch<VendorResearchTriggerResponse>(
-    `/organizations/${orgId}/vendors/${vendorId}/research`,
-    {
-      method: 'POST',
-      body: JSON.stringify(body),
-    }
-  )
-}
-
-/**
- * Poll the status of a vendor research job
- */
-export async function getVendorResearchStatus(
-  vendorId: string,
-  jobId: string,
-  orgId?: string
-): Promise<VendorResearchStatusResponse> {
-  if (!orgId) {
-    const org = await getCurrentOrganization()
-    orgId = org.id
-  }
-  return apiFetch<VendorResearchStatusResponse>(
-    `/organizations/${orgId}/vendors/${vendorId}/research/${jobId}/status`
-  )
-}
-
-/**
- * Get full results for a completed research job
- */
-export async function getVendorResearchResults(
-  vendorId: string,
-  jobId: string,
-  orgId?: string
-): Promise<VendorResearchResultResponse> {
-  if (!orgId) {
-    const org = await getCurrentOrganization()
-    orgId = org.id
-  }
-  return apiFetch<VendorResearchResultResponse>(
-    `/organizations/${orgId}/vendors/${vendorId}/research/${jobId}`
-  )
-}
-
-/**
- * Get the most recent completed research for a vendor
- */
-export async function getVendorResearchLatest(
-  vendorId: string,
-  orgId?: string
-): Promise<VendorResearchResultResponse> {
-  if (!orgId) {
-    const org = await getCurrentOrganization()
-    orgId = org.id
-  }
-  return apiFetch<VendorResearchResultResponse>(
-    `/organizations/${orgId}/vendors/${vendorId}/research/latest`
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Vendor Risk Scoring (Issue #60)
-// ---------------------------------------------------------------------------
-
-/**
- * Calculate risk scores for a vendor assessment
- */
-export async function calculateVendorRisk(
-  vendorId: string,
-  orgId?: string,
-  assessmentId?: string
-): Promise<VendorRiskCalculationResult> {
-  if (!orgId) {
-    const org = await getCurrentOrganization()
-    orgId = org.id
-  }
-  const params = assessmentId ? `?assessment_id=${assessmentId}` : ''
-  return apiFetch<VendorRiskCalculationResult>(
-    `/organizations/${orgId}/vendors/${vendorId}/calculate-risk${params}`,
-    { method: 'POST' }
-  )
-}
-
-/**
- * Get vendor risk matrix data
- */
-export async function getVendorRiskMatrix(
-  orgId?: string
-): Promise<VendorRiskMatrixResponse> {
-  if (!orgId) {
-    const org = await getCurrentOrganization()
-    orgId = org.id
-  }
-  return apiFetch<VendorRiskMatrixResponse>(
-    `/organizations/${orgId}/vendor-risk-matrix`
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Vendor Reports (Issue #61)
-// ---------------------------------------------------------------------------
-
-/**
- * Generate a new vendor assessment report
- */
-export async function generateVendorReport(
-  vendorId: string,
-  orgId?: string,
-  assessmentId?: string,
-  reportType: string = 'comprehensive'
-): Promise<VendorReport> {
-  if (!orgId) {
-    const org = await getCurrentOrganization()
-    orgId = org.id
-  }
-  return apiFetch<VendorReport>(
-    `/organizations/${orgId}/vendors/${vendorId}/reports`,
-    {
-      method: 'POST',
-      body: JSON.stringify({
-        assessment_id: assessmentId || null,
-        report_type: reportType
-      })
-    }
-  )
-}
-
-/**
- * List all reports for a vendor
- */
-export async function getVendorReports(
-  vendorId: string,
-  orgId?: string
-): Promise<VendorReport[]> {
-  if (!orgId) {
-    const org = await getCurrentOrganization()
-    orgId = org.id
-  }
-  return apiFetch<VendorReport[]>(
-    `/organizations/${orgId}/vendors/${vendorId}/reports`
-  )
-}
-
-/**
- * Get a single vendor report
- */
-export async function getVendorReport(
-  vendorId: string,
-  reportId: string,
-  orgId?: string
-): Promise<VendorReport> {
-  if (!orgId) {
-    const org = await getCurrentOrganization()
-    orgId = org.id
-  }
-  return apiFetch<VendorReport>(
-    `/organizations/${orgId}/vendors/${vendorId}/reports/${reportId}`
-  )
-}
-
-/**
- * Export a vendor report in the specified format
- */
-export async function exportVendorReport(
-  vendorId: string,
-  reportId: string,
-  format: 'pdf' | 'docx' | 'json' | 'markdown',
-  orgId?: string
-): Promise<Blob> {
-  if (!orgId) {
-    const org = await getCurrentOrganization()
-    orgId = org.id
-  }
-  const response = await apiFetchRaw(
-    `/organizations/${orgId}/vendors/${vendorId}/reports/${reportId}/export?format=${format}`
-  )
-  return response.blob()
-}
-
-/**
- * Email a vendor report
- */
-export async function emailVendorReport(
-  vendorId: string,
-  reportId: string,
-  toEmail: string,
-  toName?: string,
-  orgId?: string
-): Promise<{ message: string }> {
-  if (!orgId) {
-    const org = await getCurrentOrganization()
-    orgId = org.id
-  }
-  return apiFetch<{ message: string }>(
-    `/organizations/${orgId}/vendors/${vendorId}/reports/${reportId}/email`,
-    {
-      method: 'POST',
-      body: JSON.stringify({
-        report_id: reportId,
-        to_email: toEmail,
-        to_name: toName || null
-      })
-    }
-  )
-}
-
-/**
- * Delete a vendor report
- */
-export async function deleteVendorReport(
-  vendorId: string,
-  reportId: string,
-  orgId?: string
-): Promise<{ message: string }> {
-  if (!orgId) {
-    const org = await getCurrentOrganization()
-    orgId = org.id
-  }
-  return apiFetch<{ message: string }>(
-    `/organizations/${orgId}/vendors/${vendorId}/reports/${reportId}`,
-    { method: 'DELETE' }
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Vendor Claim Verifications (DPSIA Enhancement)
-// ---------------------------------------------------------------------------
-
-export async function getVendorClaimVerifications(
-  vendorId: string,
-  orgId?: string
-): Promise<VendorClaimVerification[]> {
-  if (!orgId) {
-    const org = await getCurrentOrganization()
-    orgId = org.id
-  }
-  return apiFetch<VendorClaimVerification[]>(
-    `/organizations/${orgId}/vendors/${vendorId}/claim-verifications`
-  )
-}
-
-export async function createVendorClaimVerification(
-  vendorId: string,
-  data: VendorClaimVerificationInput,
-  orgId?: string
-): Promise<VendorClaimVerification> {
-  if (!orgId) {
-    const org = await getCurrentOrganization()
-    orgId = org.id
-  }
-  return apiFetch<VendorClaimVerification>(
-    `/organizations/${orgId}/vendors/${vendorId}/claim-verifications`,
-    { method: 'POST', body: JSON.stringify(data) }
-  )
-}
-
-export async function updateVendorClaimVerification(
-  vendorId: string,
-  verificationId: string,
-  data: Partial<VendorClaimVerificationInput>,
-  orgId?: string
-): Promise<VendorClaimVerification> {
-  if (!orgId) {
-    const org = await getCurrentOrganization()
-    orgId = org.id
-  }
-  return apiFetch<VendorClaimVerification>(
-    `/organizations/${orgId}/vendors/${vendorId}/claim-verifications/${verificationId}`,
-    { method: 'PATCH', body: JSON.stringify(data) }
-  )
-}
-
-export async function triggerVendorVerification(
-  vendorId: string,
-  orgId?: string
-): Promise<VendorClaimVerification[]> {
-  if (!orgId) {
-    const org = await getCurrentOrganization()
-    orgId = org.id
-  }
-  return apiFetch<VendorClaimVerification[]>(
-    `/organizations/${orgId}/vendors/${vendorId}/verify-claims`,
-    { method: 'POST', body: JSON.stringify({}) }
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Vendor CIA Controls (DPSIA Enhancement)
-// ---------------------------------------------------------------------------
-
-export async function getVendorCIAControls(
-  vendorId: string,
-  assessmentId: string,
-  orgId?: string
-): Promise<VendorCIAControl[]> {
-  if (!orgId) {
-    const org = await getCurrentOrganization()
-    orgId = org.id
-  }
-  return apiFetch<VendorCIAControl[]>(
-    `/organizations/${orgId}/vendors/${vendorId}/assessments/${assessmentId}/cia-controls`
-  )
-}
-
-export async function createVendorCIAControl(
-  vendorId: string,
-  assessmentId: string,
-  data: VendorCIAControlInput,
-  orgId?: string
-): Promise<VendorCIAControl> {
-  if (!orgId) {
-    const org = await getCurrentOrganization()
-    orgId = org.id
-  }
-  return apiFetch<VendorCIAControl>(
-    `/organizations/${orgId}/vendors/${vendorId}/assessments/${assessmentId}/cia-controls`,
-    { method: 'POST', body: JSON.stringify(data) }
-  )
-}
-
-export async function updateVendorCIAControl(
-  controlId: string,
-  data: Partial<VendorCIAControlInput>,
-  orgId?: string
-): Promise<VendorCIAControl> {
-  if (!orgId) {
-    const org = await getCurrentOrganization()
-    orgId = org.id
-  }
-  return apiFetch<VendorCIAControl>(
-    `/organizations/${orgId}/cia-controls/${controlId}`,
-    { method: 'PATCH', body: JSON.stringify(data) }
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Vendor Action Items (DPSIA Enhancement)
-// ---------------------------------------------------------------------------
 
 export async function getVendorActionItems(
   vendorId: string,
@@ -2424,7 +2209,7 @@ export async function getOrgVendorActionItems(
 }
 
 // ---------------------------------------------------------------------------
-// Vendor Compensating Controls (DPSIA Enhancement)
+// Vendor Compensating Controls
 // ---------------------------------------------------------------------------
 
 export async function getVendorCompensatingControls(
@@ -2485,109 +2270,6 @@ export async function deleteVendorCompensatingControl(
     { method: 'DELETE' }
   )
 }
-
-// ---------------------------------------------------------------------------
-// DPSIA Assessment (Lambda Integration)
-// ---------------------------------------------------------------------------
-
-/**
- * Trigger a DPSIA Lambda assessment for a vendor
- */
-export async function triggerDPSIAAssessment(
-  vendorId: string,
-  body: DPSIATriggerRequest,
-  orgId?: string
-): Promise<DPSIATriggerResponse> {
-  if (!orgId) {
-    const org = await getCurrentOrganization()
-    orgId = org.id
-  }
-  return apiFetch<DPSIATriggerResponse>(
-    `/organizations/${orgId}/vendors/${vendorId}/dpsia`,
-    {
-      method: 'POST',
-      body: JSON.stringify(body),
-    }
-  )
-}
-
-/**
- * Poll the status of a DPSIA assessment job
- */
-export async function getDPSIAStatus(
-  vendorId: string,
-  jobId: string,
-  orgId?: string
-): Promise<DPSIAStatusResponse> {
-  if (!orgId) {
-    const org = await getCurrentOrganization()
-    orgId = org.id
-  }
-  return apiFetch<DPSIAStatusResponse>(
-    `/organizations/${orgId}/vendors/${vendorId}/dpsia/${jobId}/status`
-  )
-}
-
-/**
- * Get full results for a completed DPSIA assessment
- */
-export async function getDPSIAResults(
-  vendorId: string,
-  jobId: string,
-  orgId?: string
-): Promise<DPSIAResultResponse> {
-  if (!orgId) {
-    const org = await getCurrentOrganization()
-    orgId = org.id
-  }
-  return apiFetch<DPSIAResultResponse>(
-    `/organizations/${orgId}/vendors/${vendorId}/dpsia/${jobId}`
-  )
-}
-
-/**
- * Get the most recent completed DPSIA assessment for a vendor
- */
-export async function getDPSIALatest(
-  vendorId: string,
-  orgId?: string
-): Promise<DPSIAResultResponse> {
-  if (!orgId) {
-    const org = await getCurrentOrganization()
-    orgId = org.id
-  }
-  return apiFetch<DPSIAResultResponse>(
-    `/organizations/${orgId}/vendors/${vendorId}/dpsia/latest`
-  )
-}
-
-/**
- * Get any active (pending/running) DPSIA assessment for a vendor
- */
-export async function getDPSIAActive(
-  vendorId: string,
-  orgId?: string
-): Promise<DPSIAStatusResponse> {
-  if (!orgId) {
-    const org = await getCurrentOrganization()
-    orgId = org.id
-  }
-  return apiFetch<DPSIAStatusResponse>(
-    `/organizations/${orgId}/vendors/${vendorId}/dpsia/active`
-  )
-}
-
-/**
- * Get the DOCX download URL for a DPSIA assessment
- */
-export function getDPSIADocxUrl(
-  vendorId: string,
-  jobId: string,
-  orgId: string
-): string {
-  return `${API_BASE_URL}/organizations/${orgId}/vendors/${vendorId}/dpsia/${jobId}/docx`
-}
-
 
 // ============================================================================
 // API Key Management

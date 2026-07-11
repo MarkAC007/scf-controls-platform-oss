@@ -19,6 +19,13 @@ const systemTypeToCatalogTypes: Record<SystemType, string[]> = {
   security_tool: ['security_tool', 'vulnerability_scanner', 'siem'],
   code_repository: ['code_repository'],
   document_management: ['document_management'],
+  endpoint_management: ['mdm_tool', 'security_tool'],
+  vulnerability_management: ['vulnerability_scanner', 'security_tool'],
+  email_security: ['security_tool'],
+  security_awareness: ['hr_system'],
+  password_manager: ['pam_tool', 'security_tool'],
+  communication: ['document_management'],
+  hr_system: ['hr_system'],
   custom: [],
 }
 
@@ -46,6 +53,13 @@ const systemTypeConfig: Record<SystemType, { label: string; color: string; bg: s
   security_tool: { label: 'Security Tool', color: '#d32f2f', bg: '#ffebee' },
   code_repository: { label: 'Code Repository', color: '#5d4037', bg: '#efebe9' },
   document_management: { label: 'Document Mgmt', color: '#1976d2', bg: '#e3f2fd' },
+  endpoint_management: { label: 'Endpoint Mgmt', color: '#00838f', bg: '#e0f7fa' },
+  vulnerability_management: { label: 'Vulnerability Mgmt', color: '#c62828', bg: '#fce4ec' },
+  email_security: { label: 'Email Security', color: '#6a1b9a', bg: '#ede7f6' },
+  security_awareness: { label: 'Security Awareness', color: '#ef6c00', bg: '#fff8e1' },
+  password_manager: { label: 'Password Manager', color: '#283593', bg: '#e8eaf6' },
+  communication: { label: 'Communication', color: '#00695c', bg: '#e0f2f1' },
+  hr_system: { label: 'HR System', color: '#ad1457', bg: '#fce4ec' },
   custom: { label: 'Custom', color: '#666', bg: '#f5f5f5' },
 }
 

@@ -1,0 +1,121 @@
+{
+  "slug": "servicenow",
+  "name": "ServiceNow",
+  "vendor": "ServiceNow, Inc.",
+  "category": "IT Service Management",
+  "description": "Enterprise ITSM platform; change, incident and CMDB evidence.",
+  "website": "https://www.servicenow.com",
+  "aliases": [
+    "servicenow",
+    "service now",
+    "servicenow itsm"
+  ],
+  "logo_hint": "servicenow",
+  "system_type": "ticketing",
+  "version": "1.0",
+  "recipes": {
+    "L1": {
+      "title": "ServiceNow ITSM Evidence Collection",
+      "estimated_time": "10 minutes",
+      "frequency": "weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Navigate to ServiceNow and open the Change Management module (Change > All)",
+          "permissions_required": "ITIL or Change Manager role",
+          "vendor_docs_url": "https://docs.servicenow.com/bundle/latest/page/product/change-management/concept/change-management-process.html"
+        },
+        {
+          "step": 2,
+          "action": "Set the list filter to show changes within the evidence period: Created on >= [start date] AND Created on <= [end date]",
+          "audit_note": "ServiceNow change records include full audit trail of field changes"
+        },
+        {
+          "step": 3,
+          "action": "Right-click the column header and select 'Export > CSV' to download the filtered change list",
+          "permissions_required": "ITIL role with list export permissions"
+        },
+        {
+          "step": 4,
+          "action": "For incident evidence, navigate to Incident > All and repeat with appropriate filters (e.g., Priority = 1 or 2)",
+          "audit_note": "Include incident SLA data for response time evidence"
+        },
+        {
+          "step": 5,
+          "action": "Upload the exports to the evidence repository with descriptive filenames and evidence ID references"
+        }
+      ]
+    },
+    "L2": {
+      "title": "ServiceNow Scheduled ITSM Evidence Export",
+      "estimated_time": "1 hour initial setup",
+      "frequency": "weekly automated",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Create a ServiceNow Scheduled Report for change_request and incident tables with date filters for the collection period",
+          "permissions_required": "Report Viewer + ITSM roles",
+          "vendor_docs_url": "https://docs.servicenow.com/bundle/latest/page/use/reporting/concept/scheduled-reports.html"
+        },
+        {
+          "step": 2,
+          "action": "Configure report delivery to evidence repository email or shared drive on a weekly schedule"
+        },
+        {
+          "step": 3,
+          "action": "Set up a separate scheduled report for SLA achievement metrics as evidence of process maturity",
+          "audit_note": "SLA reports provide quantitative evidence of service management effectiveness"
+        }
+      ]
+    },
+    "L3": {
+      "title": "ServiceNow API-Driven Automated Collection",
+      "estimated_time": "3 hours initial setup",
+      "frequency": "automated daily",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Create a ServiceNow integration user and OAuth application for API access",
+          "permissions_required": "System Administrator",
+          "security_note": "Use OAuth 2.0 with client credentials grant, not basic auth"
+        },
+        {
+          "step": 2,
+          "action": "Configure automated script to query Table API for change_request, incident, and problem records",
+          "vendor_docs_url": "https://docs.servicenow.com/bundle/latest/page/integrate/inbound-rest/concept/c_TableAPI.html"
+        },
+        {
+          "step": 3,
+          "action": "Implement automated CMDB accuracy validation — compare CMDB records against actual infrastructure state"
+        },
+        {
+          "step": 4,
+          "action": "Set up IntegrationHub flow to push evidence artifacts to external evidence platform on record closure"
+        }
+      ]
+    },
+    "L4": {
+      "title": "ServiceNow Managed ITSM Evidence with Analytics",
+      "estimated_time": "4 hours initial setup",
+      "frequency": "continuous with monthly reporting",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Deploy Performance Analytics dashboards tracking ITSM KPIs: MTTR, change success rate, SLA compliance, first-contact resolution"
+        },
+        {
+          "step": 2,
+          "action": "Configure automated compliance scoring using ServiceNow GRC module or custom scorecards"
+        },
+        {
+          "step": 3,
+          "action": "Implement continuous monitoring rules that flag ITSM process deviations in real-time"
+        },
+        {
+          "step": 4,
+          "action": "Generate automated monthly ITSM evidence package: KPI trends, SLA reports, process compliance scores"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,171 @@
+{
+  "slug": "microsoft-intune",
+  "name": "Microsoft Intune",
+  "vendor": "Microsoft Corporation",
+  "category": "Mobile Device Management",
+  "description": "Cloud-based endpoint management platform for Windows, macOS, iOS and Android. Yields device compliance policy reports, configuration profile status, encryption (BitLocker/FileVault) reports and enrolled-device inventory, exportable via the admin centre or the Microsoft Graph API.",
+  "website": "https://www.microsoft.com/en-gb/security/business/microsoft-intune",
+  "aliases": [
+    "intune",
+    "microsoft intune",
+    "microsoft endpoint manager"
+  ],
+  "logo_hint": "microsoft-intune",
+  "system_type": "endpoint_management",
+  "version": "1.0",
+  "recipes": {
+    "L1": {
+      "title": "Intune Manual Evidence Collection",
+      "estimated_time": "15 minutes",
+      "frequency": "weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Sign in to the Microsoft Intune admin centre (intune.microsoft.com) and navigate to Reports > Device compliance > Reports tab > Device compliance, then select Generate report",
+          "permissions_required": "Read Only Operator (Intune built-in role) or Intune Administrator",
+          "security_note": "Use a least-privilege Read Only Operator account for evidence collection, not a Global Administrator",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/intune/device-management/reports/overview"
+        },
+        {
+          "step": 2,
+          "action": "Select Export to download the device compliance report as CSV; repeat for Reports > Device compliance > Reports tab > Noncompliant devices and settings",
+          "audit_note": "Exports preserve any filters applied on screen — record the filters used, and save files with date-stamped names",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/intune/device-management/reports/overview"
+        },
+        {
+          "step": 3,
+          "action": "Navigate to Devices > Monitor > Encryption report and select Export to capture BitLocker/FileVault encryption status for all managed devices",
+          "permissions_required": "Read Only Operator (Intune built-in role)",
+          "audit_note": "The encryption report covers both Windows BitLocker and macOS FileVault, including encryption readiness and OS drive encryption state",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/intune/intune-service/protect/encryption-monitor"
+        },
+        {
+          "step": 4,
+          "action": "Navigate to Devices > All devices and select Export to download the enrolled-device inventory, including compliance state and last check-in time",
+          "audit_note": "The inventory export is the completeness baseline — compliance evidence should reconcile against this device count"
+        },
+        {
+          "step": 5,
+          "action": "Upload the exported CSV files to the evidence repository with the evidence ID reference and collection date",
+          "security_note": "Exports contain device names, serial numbers and user principal names — handle per your data classification policy"
+        }
+      ]
+    },
+    "L2": {
+      "title": "Intune Data Warehouse Scheduled Reporting",
+      "estimated_time": "1 hour initial setup, then automated",
+      "frequency": "automated daily refresh, weekly delivery",
+      "steps": [
+        {
+          "step": 1,
+          "action": "In the Microsoft Intune admin centre, navigate to Reports > Intune Data warehouse > Data warehouse and select Get Power BI App to install the Intune Compliance (Data Warehouse) app",
+          "permissions_required": "Intune Administrator (Microsoft Entra role)",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/intune/developer/data-warehouse/connect-power-bi"
+        },
+        {
+          "step": 2,
+          "action": "In Power BI, open the app's semantic model settings and enable Scheduled refresh so compliance data is refreshed automatically",
+          "audit_note": "The Intune Data Warehouse itself refreshes daily; align the Power BI refresh schedule with it so reports never serve stale data",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/intune/developer/data-warehouse/connect-power-bi"
+        },
+        {
+          "step": 3,
+          "action": "Intune has no native scheduled email report — use Power BI report subscriptions (Subscribe to report) to deliver a weekly compliance snapshot to the compliance team mailbox",
+          "security_note": "Restrict subscription recipients and Power BI workspace access to authorised compliance personnel only"
+        },
+        {
+          "step": 4,
+          "action": "Each cycle, export the delivered compliance report pages to PDF or CSV and file them in the evidence repository",
+          "audit_note": "Retain the generation timestamp shown on the report so the evidence period is verifiable"
+        },
+        {
+          "step": 5,
+          "action": "Quarterly, verify the Data Warehouse connection and refresh history to confirm no missed refresh cycles",
+          "audit_note": "Power BI refresh history provides an audit trail that the reporting pipeline ran on schedule"
+        }
+      ]
+    },
+    "L3": {
+      "title": "Intune Graph API Automated Export",
+      "estimated_time": "2-4 hours initial setup",
+      "frequency": "automated daily",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Register an application in the Microsoft Entra admin centre (Identity > Applications > App registrations), grant it the application permissions DeviceManagementManagedDevices.Read.All and DeviceManagementConfiguration.Read.All, and grant admin consent",
+          "permissions_required": "Global Administrator or Privileged Role Administrator (to grant admin consent)",
+          "security_note": "Use certificate credentials or a managed identity rather than a client secret where possible; scope permissions read-only",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/graph/auth-v2-service"
+        },
+        {
+          "step": 2,
+          "action": "Call POST https://graph.microsoft.com/v1.0/deviceManagement/reports/exportJobs with reportName DeviceCompliance (and NonCompliantDevicesAndSettings) to create report export jobs",
+          "permissions_required": "App registration with DeviceManagementManagedDevices.Read.All",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/intune/device-management/reports/export-graph-apis"
+        },
+        {
+          "step": 3,
+          "action": "Poll GET https://graph.microsoft.com/v1.0/deviceManagement/reports/exportJobs('{id}') until status is completed, then download the zipped CSV from the returned URL",
+          "audit_note": "The exportJobs API is throttled at 100 requests per tenant per minute — poll with back-off to avoid dropped runs",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/intune/intune-service/fundamentals/reports-export-graph-available-reports"
+        },
+        {
+          "step": 4,
+          "action": "Call GET https://graph.microsoft.com/v1.0/deviceManagement/managedDevices to capture enrolled-device inventory, including complianceState and isEncrypted per device",
+          "permissions_required": "App registration with DeviceManagementManagedDevices.Read.All",
+          "audit_note": "isEncrypted per managed device corroborates the BitLocker/FileVault encryption report",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/graph/api/intune-devices-manageddevice-list?view=graph-rest-1.0"
+        },
+        {
+          "step": 5,
+          "action": "Schedule the collection daily via cron or a CI/CD pipeline, writing outputs to the evidence repository with run timestamp and job IDs",
+          "security_note": "Store the app credential in a secrets manager (e.g. Azure Key Vault), never in plaintext configuration, and rotate on a defined schedule"
+        },
+        {
+          "step": 6,
+          "action": "Implement error handling and alerting for failed runs, and validate each export's device count against the previous run to detect silent gaps",
+          "audit_note": "Row-count validation against the enrolled-device baseline provides assurance of collection completeness"
+        }
+      ]
+    },
+    "L4": {
+      "title": "Intune Managed Evidence Pipeline via Azure Monitor",
+      "estimated_time": "4-6 hours initial setup",
+      "frequency": "continuous with daily reporting",
+      "steps": [
+        {
+          "step": 1,
+          "action": "In the Microsoft Intune admin centre, navigate to Reports > Diagnostics settings and route AuditLogs, OperationalLogs, DeviceComplianceOrg and IntuneDevices to a Log Analytics workspace and/or Event Hub for SIEM consumption",
+          "permissions_required": "Intune Administrator (Microsoft Entra role); Log Analytics Contributor on the workspace",
+          "security_note": "Restrict access to the destination workspace/Event Hub — the streams contain device and user identifiers",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/intune/governance/integrate-azure-monitor"
+        },
+        {
+          "step": 2,
+          "action": "Note that Microsoft Graph change notifications do not support deviceManagement/managedDevices, so there is no push webhook for device compliance — continuous collection is achieved via the Azure Monitor export combined with the scheduled Graph exportJobs collection from L3",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/graph/change-notifications-overview"
+        },
+        {
+          "step": 3,
+          "action": "Design for the documented export behaviour: DeviceComplianceOrg and IntuneDevices data is exported once per 24-hour period with up to 48 hours latency and may contain up to 100% duplicated records — deduplicate on ingestion and never assume a fixed delivery time",
+          "audit_note": "Documenting and handling the vendor's stated latency and duplication behaviour is itself evidence of a managed collection process",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/intune/governance/integrate-azure-monitor"
+        },
+        {
+          "step": 4,
+          "action": "Configure completeness metrics: reconcile daily IntuneDevices record counts against the enrolled-device inventory, and alert when a 24-hour export window passes with no DeviceComplianceOrg data",
+          "audit_note": "Gap detection against the enrolment baseline demonstrates collection completeness to auditors"
+        },
+        {
+          "step": 5,
+          "action": "Build an Azure Monitor workbook or SIEM dashboard showing collection health: records per day, compliance rate trend, encryption coverage and failed export windows",
+          "audit_note": "The dashboard serves as continuous evidence of process health"
+        },
+        {
+          "step": 6,
+          "action": "Automate a quarterly collection-health report summarising export gaps, duplicate rates and SLA breaches, and file it in the evidence repository"
+        }
+      ]
+    }
+  }
+}

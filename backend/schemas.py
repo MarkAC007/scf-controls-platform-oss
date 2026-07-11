@@ -3,14 +3,16 @@ Pydantic schemas for request/response validation.
 These define the API contract and handle data validation.
 """
 from enum import Enum
-from pydantic import BaseModel, Field, ConfigDict, field_validator
+from pydantic import BaseModel, Field, ConfigDict, computed_field, field_validator
 from typing import Optional, Any, List, Dict, Union
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from uuid import UUID
 
 
 # System type and status constants for validation
-SYSTEM_TYPES = "cloud_provider|identity_provider|ticketing|logging|security_tool|code_repository|document_management|custom"
+from services.system_catalog_validation import SYSTEM_TYPE_LIST
+
+SYSTEM_TYPES = "|".join(SYSTEM_TYPE_LIST)
 SYSTEM_STATUSES = "active|inactive|deprecated"
 
 
@@ -209,6 +211,14 @@ class OrganizationSettingsUpdate(BaseModel):
     owner_teams: Optional[List[str]] = None
     is_trust_portal_enabled: Optional[bool] = None
     trust_portal_description: Optional[str] = None
+
+
+class OrganizationLogoResponse(BaseModel):
+    """Metadata for an organization's uploaded logo."""
+    filename: Optional[str] = None
+    content_type: Optional[str] = None
+    size_bytes: int = 0
+    updated_at: Optional[datetime] = None
 
 
 # Evidence Tracking Schemas
@@ -479,7 +489,7 @@ class SystemBase(BaseModel):
     system_type: str = Field(
         ...,
         pattern=f"^({SYSTEM_TYPES})$",
-        description="Type of system (cloud_provider, identity_provider, ticketing, logging, security_tool, code_repository, document_management, custom)"
+        description="Type of system (cloud_provider, identity_provider, ticketing, logging, security_tool, code_repository, document_management, endpoint_management, vulnerability_management, email_security, security_awareness, password_manager, communication, hr_system, custom)"
     )
     category: Optional[str] = Field(None, max_length=100, description="Optional grouping category")
     description: Optional[str] = Field(None, description="Detailed description of the system")
@@ -492,6 +502,10 @@ class SystemBase(BaseModel):
     connection_config: Optional[Dict[str, Any]] = Field(
         default={},
         description="Configuration for API connections (endpoints, auth hints)"
+    )
+    catalog_template_id: Optional[int] = Field(
+        None,
+        description="System catalog template this system was created from (drives recipe resolution)"
     )
 
 
@@ -509,6 +523,7 @@ class SystemUpdate(BaseModel):
     vendor: Optional[str] = Field(None, max_length=255)
     status: Optional[str] = Field(None, pattern=f"^({SYSTEM_STATUSES})$")
     connection_config: Optional[Dict[str, Any]] = None
+    catalog_template_id: Optional[int] = None
 
 
 class SystemResponse(SystemBase):
@@ -752,6 +767,7 @@ class CollectionRecipeSchema(BaseModel):
     estimated_time: Optional[str] = None
     frequency: Optional[str] = None
     steps: List[RecipeStepSchema] = []
+    source: str = "curated"  # curated | ai_generated
 
 
 class CollectionGuidanceSchema(BaseModel):
@@ -763,9 +779,57 @@ class CollectionGuidanceSchema(BaseModel):
     current_maturity: str
     recipe: Optional[CollectionRecipeSchema] = None
     recipe_confidence: str  # system_specific, vendor_generic, type_generic
+    matched_via: Optional[str] = None  # template | alias | fallback | none
     maturity_appropriate_methods: List[Dict[str, str]] = []
     next_level_preview: Optional[CollectionRecipeSchema] = None
     alternatives_count: int = 0
+
+
+# ============================================================================
+# System Catalog Schemas (systems knowledge catalog — template picker)
+# ============================================================================
+
+class SystemCatalogTemplateSummary(BaseModel):
+    """Catalog template summary for the add-system template picker."""
+    id: int
+    slug: str
+    name: str
+    vendor: str
+    system_type: str
+    category: Optional[str] = None
+    description: Optional[str] = None
+    website: Optional[str] = None
+    logo_hint: Optional[str] = None
+    is_fallback: bool = False
+    recipe_levels: List[str] = []  # e.g. ["L1", "L2", "L3", "L4"]
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SystemCatalogRecipeResponse(BaseModel):
+    """A catalog recipe at a specific maturity level."""
+    maturity_level: str
+    title: str
+    estimated_time: Optional[str] = None
+    frequency: Optional[str] = None
+    steps: List[RecipeStepSchema] = []
+    source: str = "curated"
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SystemCatalogTemplateDetail(SystemCatalogTemplateSummary):
+    """Catalog template with aliases and full recipes."""
+    aliases: List[str] = []
+    recipes: List[SystemCatalogRecipeResponse] = []
+
+
+class SystemRecipesResponse(BaseModel):
+    """Resolved collection recipes for an organization's system."""
+    system_id: UUID
+    matched_via: str  # template | alias | fallback | none
+    template: Optional[SystemCatalogTemplateSummary] = None
+    recipes: List[SystemCatalogRecipeResponse] = []
 
 
 class EvidenceSuggestionsResponse(BaseModel):
@@ -1873,8 +1937,10 @@ class StripeWebhookResponse(BaseModel):
 # Vendor status and criticality constants for validation
 VENDOR_STATUSES = "prospect|active|under_review|approved|suspended|offboarded"
 VENDOR_CRITICALITIES = "low|medium|high|critical"
-VENDOR_ASSESSMENT_TYPES = "initial|periodic|triggered|follow_up"
-VENDOR_ASSESSMENT_STATUSES = "scheduled|in_progress|completed|cancelled"
+VENDOR_ASSESSMENT_TYPES = "initial|annual|adhoc|periodic|triggered|follow_up"
+VENDOR_ASSESSMENT_STATUSES = "pending|running|failed|scheduled|in_progress|completed|cancelled"
+# Unified AI assessment trigger types (Phase 3 API)
+VENDOR_AI_ASSESSMENT_TYPES = "initial|annual|adhoc"
 VENDOR_CERTIFICATION_STATUSES = "valid|expired|revoked|pending"
 VENDOR_RISK_RATINGS = "low|medium|high|critical"
 VENDOR_DATA_CLASSIFICATIONS = "public|internal|confidential|restricted"
@@ -1945,8 +2011,36 @@ class VendorResponse(VendorBase):
     updated_by_user_id: Optional[UUID] = None
     created_by: Optional[UserSimple] = None
     updated_by: Optional[UserSimple] = None
+    # Risk provenance + annual review loop
+    risk_score_source: Optional[UUID] = Field(None, description="Assessment that set the current risk score")
+    risk_scored_at: Optional[datetime] = Field(None, description="When the current risk score was set")
+    next_review_date: Optional[date] = Field(None, description="Next annual review due date")
 
     model_config = ConfigDict(from_attributes=True)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def review_status(self) -> Optional[str]:
+        """ok | due_soon (<=30 days) | overdue; None if never assessed."""
+        if not self.next_review_date:
+            return None
+        today = date.today()
+        if self.next_review_date < today:
+            return "overdue"
+        if self.next_review_date <= today + timedelta(days=30):
+            return "due_soon"
+        return "ok"
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def risk_provenance(self) -> Optional[Dict[str, Any]]:
+        """{assessment_id, scored_at} for the assessment that set the risk score."""
+        if not self.risk_score_source:
+            return None
+        return {
+            "assessment_id": str(self.risk_score_source),
+            "scored_at": self.risk_scored_at.isoformat() if self.risk_scored_at else None,
+        }
 
 
 class VendorAssessmentBase(BaseModel):
@@ -2019,7 +2113,7 @@ class VendorAssessmentUpdate(BaseModel):
 
 
 class VendorAssessmentResponse(VendorAssessmentBase):
-    """Response schema for vendor assessment."""
+    """Response schema for vendor assessment (unified record)."""
     id: UUID
     vendor_id: UUID
     created_at: datetime
@@ -2034,8 +2128,72 @@ class VendorAssessmentResponse(VendorAssessmentBase):
     inherent_risk_score: Optional[int] = None
     inherent_risk_level: Optional[str] = None
     control_effectiveness_pct: Optional[int] = None
+    # AI assessment job tracking (null for legacy/manual rows)
+    job_id: Optional[str] = None
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    error_message: Optional[str] = None
+    triggered_by_user_id: Optional[UUID] = None
+    # Assessment inputs
+    data_role: Optional[str] = None
+    services_used: Optional[str] = None
+    client_name: Optional[str] = None
+    additional_context: Optional[str] = None
+    # AI assessment outcome + report
+    rag_status: Optional[str] = None
+    recommendation: Optional[str] = None
+    executive_summary: Optional[str] = None
+    report_markdown: Optional[str] = None
+    report_json: Optional[dict] = None
+    research_sources: Optional[list] = None
+    processing_time_ms: Optional[int] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class VendorAIAssessmentTriggerRequest(BaseModel):
+    """Request to trigger a unified vendor AI assessment."""
+    assessment_type: str = Field(
+        default="initial",
+        pattern=f"^({VENDOR_AI_ASSESSMENT_TYPES})$",
+        description="Type of assessment: initial, annual or adhoc.",
+    )
+    services_used: str = Field(
+        ...,
+        min_length=1,
+        max_length=2000,
+        description="Description of services the vendor provides.",
+    )
+    data_role: str = Field(
+        default="Processor",
+        pattern="^(Processor|Controller|Joint Controller)$",
+        description="Vendor's data role.",
+    )
+    additional_context: Optional[str] = Field(
+        None,
+        max_length=5000,
+        description="Additional context for the assessment.",
+    )
+
+
+class VendorAIAssessmentTriggerResponse(BaseModel):
+    """Response after triggering a unified vendor AI assessment."""
+    assessment_id: str
+    job_id: str
+    vendor_id: str
+    status: str
+
+
+class VendorAssessmentStatusResponse(BaseModel):
+    """Polling response for a unified vendor assessment's progress."""
+    assessment_id: str
+    job_id: Optional[str] = None
+    vendor_id: str
+    status: str
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    created_at: Optional[str] = None
+    error_message: Optional[str] = None
 
 
 class VendorCertificationBase(BaseModel):
@@ -2139,138 +2297,6 @@ class VendorResearchResultResponse(BaseModel):
 
 
 # ============================================================================
-# Vendor Report Schemas (Issue #61)
-# ============================================================================
-
-class VendorReportBase(BaseModel):
-    """Base schema for vendor report."""
-    report_type: str = Field(default="comprehensive", description="Report type")
-    title: str = Field(..., min_length=1, max_length=255, description="Report title")
-
-
-class VendorReportResponse(VendorReportBase):
-    """Response schema for vendor report."""
-    id: UUID
-    vendor_id: UUID
-    assessment_id: Optional[UUID] = None
-    organization_id: UUID
-    content_markdown: str
-    content_json: Optional[dict] = None
-    risk_score: Optional[int] = None
-    risk_level: Optional[str] = None
-    recommendation: Optional[str] = None
-    version: int = 1
-    generated_by_user_id: Optional[UUID] = None
-    generated_by: Optional[UserSimple] = None
-    created_at: datetime
-    updated_at: datetime
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class VendorReportGenerateRequest(BaseModel):
-    """Request to generate a vendor assessment report."""
-    assessment_id: Optional[UUID] = Field(None, description="Specific assessment to report on")
-    report_type: str = Field(default="comprehensive", description="Report type")
-
-
-class VendorReportEmailRequest(BaseModel):
-    """Request to email a vendor report."""
-    report_id: UUID = Field(..., description="Report ID to send")
-    to_email: str = Field(..., description="Recipient email address")
-    to_name: Optional[str] = Field(None, description="Recipient name")
-
-
-# ============================================================================
-# Vendor Claim Verification Schemas (DPSIA Enhancement)
-# ============================================================================
-
-CLAIM_TYPES = "certification|breach_disclosure|compliance|security_control"
-VERIFICATION_STATUSES = "confirmed|unverified|discrepancy|anomaly"
-
-
-class VendorClaimVerificationBase(BaseModel):
-    """Base schema for vendor claim verification."""
-    claim_type: str = Field(..., pattern=f"^({CLAIM_TYPES})$", description="Type of claim")
-    claim_description: str = Field(..., min_length=1, description="Description of the vendor claim")
-    verification_status: str = Field(
-        default="unverified",
-        pattern=f"^({VERIFICATION_STATUSES})$",
-        description="Verification outcome"
-    )
-    verification_source: Optional[str] = Field(None, max_length=255, description="Source of verification")
-    verification_detail: Optional[str] = Field(None, description="Detail of verification finding")
-    evidence_url: Optional[str] = Field(None, max_length=500, description="URL to evidence")
-
-
-class VendorClaimVerificationCreate(VendorClaimVerificationBase):
-    """Schema for creating a claim verification."""
-    pass
-
-
-class VendorClaimVerificationUpdate(BaseModel):
-    """Schema for updating a claim verification."""
-    claim_type: Optional[str] = Field(None, pattern=f"^({CLAIM_TYPES})$")
-    claim_description: Optional[str] = Field(None, min_length=1)
-    verification_status: Optional[str] = Field(None, pattern=f"^({VERIFICATION_STATUSES})$")
-    verification_source: Optional[str] = Field(None, max_length=255)
-    verification_detail: Optional[str] = None
-    evidence_url: Optional[str] = Field(None, max_length=500)
-
-
-class VendorClaimVerificationResponse(VendorClaimVerificationBase):
-    """Response schema for claim verification."""
-    id: UUID
-    vendor_id: UUID
-    assessment_id: Optional[UUID] = None
-    created_at: datetime
-    updated_at: datetime
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-# ============================================================================
-# Vendor CIA Control Schemas (DPSIA Enhancement)
-# ============================================================================
-
-CIA_PILLARS = "confidentiality|integrity|availability"
-
-
-class VendorCIAControlBase(BaseModel):
-    """Base schema for CIA control breakdown."""
-    pillar: str = Field(..., pattern=f"^({CIA_PILLARS})$", description="CIA pillar")
-    control_name: str = Field(..., min_length=1, max_length=255, description="Control name")
-    control_category: Optional[str] = Field(None, max_length=100, description="Control category")
-    score: Optional[int] = Field(None, ge=1, le=5, description="Control score (1-5)")
-    detail: Optional[str] = Field(None, description="Control detail")
-    evidence: Optional[str] = Field(None, description="Supporting evidence")
-
-
-class VendorCIAControlCreate(VendorCIAControlBase):
-    """Schema for creating a CIA control."""
-    pass
-
-
-class VendorCIAControlUpdate(BaseModel):
-    """Schema for updating a CIA control."""
-    pillar: Optional[str] = Field(None, pattern=f"^({CIA_PILLARS})$")
-    control_name: Optional[str] = Field(None, min_length=1, max_length=255)
-    control_category: Optional[str] = Field(None, max_length=100)
-    score: Optional[int] = Field(None, ge=1, le=5)
-    detail: Optional[str] = None
-    evidence: Optional[str] = None
-
-
-class VendorCIAControlResponse(VendorCIAControlBase):
-    """Response schema for CIA control."""
-    id: UUID
-    assessment_id: UUID
-    created_at: datetime
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-# ============================================================================
 # Vendor Action Item Schemas (DPSIA Enhancement)
 # ============================================================================
 
@@ -2366,11 +2392,11 @@ class VendorCompensatingControlResponse(VendorCompensatingControlBase):
 
 
 # ---------------------------------------------------------------------------
-# DPSIA Assessment schemas (Lambda Integration)
+# DPSIA Assessment schemas (deprecated /dpsia/* alias routes — kept one release)
 # ---------------------------------------------------------------------------
 
 class DPSIATriggerRequest(BaseModel):
-    """Request to trigger a DPSIA Lambda assessment for a vendor."""
+    """Request to trigger a vendor AI assessment via the deprecated /dpsia alias."""
     assessment_type: str = Field(
         default="new",
         pattern="^(new|annual-review|adhoc)$",

@@ -1,0 +1,182 @@
+{
+  "slug": "datadog",
+  "name": "Datadog",
+  "vendor": "Datadog, Inc.",
+  "category": "Monitoring & Log Management",
+  "description": "Cloud monitoring, log management and Cloud SIEM platform. Yields evidence of monitor and alert configuration, log retention and archiving, security detection rules and organisation audit trail.",
+  "website": "https://www.datadoghq.com",
+  "aliases": [
+    "datadog",
+    "datadog logs",
+    "datadog cloud siem",
+    "datadog monitoring",
+    "datadoghq"
+  ],
+  "logo_hint": "datadog",
+  "system_type": "logging",
+  "version": "1.0",
+  "recipes": {
+    "L1": {
+      "title": "Datadog Manual Evidence Collection",
+      "estimated_time": "15 minutes",
+      "frequency": "weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Sign in to Datadog and navigate to Organization Settings > Audit Trail; set the timeframe to cover the collection period and export the filtered events as CSV",
+          "permissions_required": "Audit Trail Read permission (Datadog Admin Role by default)",
+          "security_note": "Use a role granting only Audit Trail Read for evidence collection, not full Datadog Admin",
+          "audit_note": "Audit Trail events are recorded by Datadog with actor, action and timestamp; retention is up to 90 days in-app",
+          "vendor_docs_url": "https://docs.datadoghq.com/account_management/audit_trail/"
+        },
+        {
+          "step": 2,
+          "action": "Navigate to Monitors > Manage Monitors, filter to the in-scope monitors (e.g. by team or service tag) and capture dated screenshots of the list; open key monitors to capture alert conditions and notification recipients",
+          "permissions_required": "Datadog Read Only Role (monitors_read)",
+          "audit_note": "Capture both the monitor query and the notification targets — they evidence that alerting reaches the right people",
+          "vendor_docs_url": "https://docs.datadoghq.com/monitors/manage/"
+        },
+        {
+          "step": 3,
+          "action": "Navigate to Logs > Configuration and capture the Indexes page showing per-index retention periods, and the Archives tab showing any configured cloud storage archives",
+          "permissions_required": "Datadog Read Only Role",
+          "audit_note": "Index retention plus archive configuration together evidence the log retention control",
+          "vendor_docs_url": "https://docs.datadoghq.com/logs/log_configuration/indexes/"
+        },
+        {
+          "step": 4,
+          "action": "Navigate to the Cloud SIEM Detection Rules page and capture the list of enabled detection rules, including severity and rule type",
+          "permissions_required": "Security Monitoring Rules Read permission",
+          "vendor_docs_url": "https://docs.datadoghq.com/security/detection_rules/"
+        },
+        {
+          "step": 5,
+          "action": "Upload the CSV export and screenshots to the evidence repository with evidence ID reference and collection date",
+          "security_note": "Review captures for API keys, application keys or personal data before uploading"
+        }
+      ]
+    },
+    "L2": {
+      "title": "Datadog Scheduled Reports Collection",
+      "estimated_time": "30 minutes (setup), then automated",
+      "frequency": "automated weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Build (or reuse) a compliance evidence dashboard showing monitor status, log ingestion volume and security signal widgets, then select Share > Schedule report on the dashboard",
+          "permissions_required": "Dashboards Report Write permission",
+          "vendor_docs_url": "https://docs.datadoghq.com/dashboards/sharing/scheduled_reports/"
+        },
+        {
+          "step": 2,
+          "action": "Set the report schedule and timeframe to match the evidence collection cadence (e.g. weekly, covering the previous 7 days) and add the compliance mailbox as recipient",
+          "security_note": "Limit recipients to authorised personnel; the PDF may reveal infrastructure detail",
+          "audit_note": "Reports are generated as timestamped PDFs delivered by email, Slack or Microsoft Teams"
+        },
+        {
+          "step": 3,
+          "action": "In the Logs Explorer, create Scheduled CSV Reports for any saved views used as evidence (e.g. authentication or change events), delivered by email on the same cadence",
+          "audit_note": "CSV reports capture the underlying events, complementing the dashboard PDF summary",
+          "vendor_docs_url": "https://docs.datadoghq.com/logs/reports/"
+        },
+        {
+          "step": 4,
+          "action": "In Organization Settings > Audit Trail Settings, enable Archiving (Store Events) to Amazon S3, Google Cloud Storage or Azure Storage so audit events are retained beyond the 90-day in-app limit",
+          "permissions_required": "Audit Trail Write permission",
+          "audit_note": "Archived audit events upload roughly every 15 minutes, giving durable evidence without custom code",
+          "vendor_docs_url": "https://docs.datadoghq.com/account_management/audit_trail/"
+        },
+        {
+          "step": 5,
+          "action": "Verify the first scheduled deliveries arrive and file them in the evidence repository; diarise a periodic check that schedules remain active"
+        }
+      ]
+    },
+    "L3": {
+      "title": "Datadog API-Driven Automated Collection",
+      "estimated_time": "2-4 hours initial setup",
+      "frequency": "automated daily",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Create a dedicated API key under Organization Settings > API Keys and a scoped application key under Organization Settings > Application Keys for a service account, limiting the application key to read permissions (audit_trail_read, monitors_read, security_monitoring_rules_read, dashboards_read)",
+          "permissions_required": "Datadog Admin Role (or User Access Manage) to create service account keys",
+          "security_note": "Store both keys in a secrets manager; requests authenticate with the DD-API-KEY and DD-APPLICATION-KEY headers. Rotate keys on a defined schedule.",
+          "audit_note": "Key creation and use are recorded in the Datadog Audit Trail",
+          "vendor_docs_url": "https://docs.datadoghq.com/account_management/api-app-keys/"
+        },
+        {
+          "step": 2,
+          "action": "Schedule a script to call POST /api/v2/audit/events/search with a filter for the collection window, paginating with the returned cursor until complete",
+          "permissions_required": "Application key with audit_trail_read",
+          "audit_note": "Use non-overlapping time windows between runs to avoid gaps or duplicates",
+          "vendor_docs_url": "https://docs.datadoghq.com/api/latest/audit/"
+        },
+        {
+          "step": 3,
+          "action": "Snapshot alerting configuration daily with GET /api/v1/monitor (all monitor definitions, thresholds and notification targets)",
+          "permissions_required": "Application key with monitors_read",
+          "audit_note": "Store each JSON snapshot with retrieval timestamp — diffs between snapshots evidence change control over alerting",
+          "vendor_docs_url": "https://docs.datadoghq.com/api/latest/monitors/get-all-monitors/"
+        },
+        {
+          "step": 4,
+          "action": "Snapshot security and retention configuration with GET /api/v2/security_monitoring/rules (detection rules) and GET /api/v1/logs/config/indexes (per-index retention)",
+          "permissions_required": "Application key with security_monitoring_rules_read",
+          "vendor_docs_url": "https://docs.datadoghq.com/api/latest/security-monitoring/"
+        },
+        {
+          "step": 5,
+          "action": "Run the collection via cron or a CI/CD pipeline, writing timestamped JSON outputs to the evidence repository",
+          "security_note": "Inject keys from the secrets manager at runtime — never store them in code or plaintext configuration; use your region's API host (e.g. api.datadoghq.com or api.datadoghq.eu)",
+          "vendor_docs_url": "https://docs.datadoghq.com/api/latest/using-the-api/"
+        },
+        {
+          "step": 6,
+          "action": "Implement error handling and alerting for failed runs, and validate collected audit event counts against a baseline to flag collection gaps",
+          "audit_note": "Failed collections should trigger re-collection within SLA; volume validation provides assurance of completeness"
+        }
+      ]
+    },
+    "L4": {
+      "title": "Datadog Managed Evidence Pipeline with Metrics",
+      "estimated_time": "4-8 hours initial setup",
+      "frequency": "continuous with daily reporting",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Configure Audit Trail forwarding to a custom destination (HTTP endpoint, Splunk or Elasticsearch) so organisation audit events stream continuously into your evidence platform or SIEM",
+          "permissions_required": "Audit Trail Write permission",
+          "security_note": "Use an HTTPS destination with authentication headers stored as secrets in the destination configuration",
+          "vendor_docs_url": "https://docs.datadoghq.com/account_management/audit_trail/forwarding_audit_events/"
+        },
+        {
+          "step": 2,
+          "action": "On the Log Archiving & Forwarding page, configure log archives to cloud storage and Custom Destinations forwarding for in-scope log streams, giving durable long-term retention plus live delivery",
+          "permissions_required": "logs_write_archive and logs_write_forwarding_rules permissions",
+          "audit_note": "Archives provide the immutable long-term record; forwarding provides the continuous feed",
+          "vendor_docs_url": "https://docs.datadoghq.com/logs/log_configuration/forwarding_custom_destinations/"
+        },
+        {
+          "step": 3,
+          "action": "Create an Audit Trail monitor that alerts on collection-relevant changes (e.g. index retention edits, archive deletion, detection rules disabled) so configuration drift is flagged in near real time",
+          "audit_note": "Using Datadog to monitor its own audit stream turns evidence collection into a detective control",
+          "vendor_docs_url": "https://docs.datadoghq.com/monitors/types/audit_trail/"
+        },
+        {
+          "step": 4,
+          "action": "Build completeness metrics in the receiving platform: audit events per day, forwarded log volume per source, delivery latency; alert when any stream drops below its rolling baseline",
+          "audit_note": "Completeness metrics are key evidence of a managed collection process"
+        },
+        {
+          "step": 5,
+          "action": "Add automated quality checks on the collected data — schema validation, time-series gap detection and duplicate suppression — before it is filed as evidence"
+        },
+        {
+          "step": 6,
+          "action": "Generate an automated quarterly collection health report covering pipeline uptime, gap incidents and any SLA breaches"
+        }
+      ]
+    }
+  }
+}

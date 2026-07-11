@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { createSystem, updateSystem } from '../data/apiClient'
-import type { System, SystemInput, SystemType, SystemStatus } from '../types'
+import { SystemTemplatePicker } from './SystemTemplatePicker'
+import type { System, SystemInput, SystemType, SystemStatus, SystemCatalogTemplate } from '../types'
 
 interface AddSystemModalProps {
   organizationId?: string
@@ -14,9 +15,16 @@ const systemTypes: { value: SystemType; label: string; description: string }[] =
   { value: 'identity_provider', label: 'Identity Provider', description: 'Okta, Azure AD, Auth0, etc.' },
   { value: 'ticketing', label: 'Ticketing System', description: 'Jira, ServiceNow, etc.' },
   { value: 'logging', label: 'Logging Platform', description: 'Splunk, Datadog, ELK, etc.' },
-  { value: 'security_tool', label: 'Security Tool', description: 'SIEM, vulnerability scanners, etc.' },
+  { value: 'security_tool', label: 'Security Tool', description: 'SIEM, EDR, WAF, etc.' },
   { value: 'code_repository', label: 'Code Repository', description: 'GitHub, GitLab, Bitbucket, etc.' },
   { value: 'document_management', label: 'Document Management', description: 'Confluence, SharePoint, etc.' },
+  { value: 'endpoint_management', label: 'Endpoint Management (MDM)', description: 'Intune, Jamf, Kandji, etc.' },
+  { value: 'vulnerability_management', label: 'Vulnerability Management', description: 'Snyk, Qualys, Tenable, etc.' },
+  { value: 'email_security', label: 'Email Security', description: 'Proofpoint, Mimecast, etc.' },
+  { value: 'security_awareness', label: 'Security Awareness', description: 'KnowBe4, phishing training, etc.' },
+  { value: 'password_manager', label: 'Password Manager', description: '1Password, Vault, etc.' },
+  { value: 'communication', label: 'Communication', description: 'Slack, Zoom, Teams, etc.' },
+  { value: 'hr_system', label: 'HR System', description: 'BambooHR, Workday, etc.' },
   { value: 'custom', label: 'Custom', description: 'Other systems not listed above' },
 ]
 
@@ -34,6 +42,10 @@ export const AddSystemModal: React.FC<AddSystemModalProps> = ({
 }) => {
   const isEditMode = !!editSystem
 
+  // Add mode starts on the template picker; edit mode goes straight to the form
+  const [step, setStep] = useState<'pick' | 'form'>(isEditMode ? 'form' : 'pick')
+  const [selectedTemplate, setSelectedTemplate] = useState<SystemCatalogTemplate | null>(null)
+
   const [formData, setFormData] = useState<SystemInput>({
     name: '',
     system_type: 'custom',
@@ -42,6 +54,7 @@ export const AddSystemModal: React.FC<AddSystemModalProps> = ({
     vendor: '',
     status: 'active',
     connection_config: {},
+    catalog_template_id: null,
   })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -57,6 +70,7 @@ export const AddSystemModal: React.FC<AddSystemModalProps> = ({
         vendor: editSystem.vendor || '',
         status: editSystem.status,
         connection_config: editSystem.connection_config || {},
+        catalog_template_id: editSystem.catalog_template_id ?? null,
       })
     }
   }, [editSystem])
@@ -64,6 +78,31 @@ export const AddSystemModal: React.FC<AddSystemModalProps> = ({
   const handleChange = (field: keyof SystemInput, value: string) => {
     setFormData(prev => ({ ...prev, [field]: value }))
     setError(null)
+  }
+
+  const handleTemplateSelect = (template: SystemCatalogTemplate) => {
+    setSelectedTemplate(template)
+    setFormData(prev => ({
+      ...prev,
+      name: template.name,
+      system_type: template.system_type,
+      vendor: template.vendor,
+      category: template.category || '',
+      description: template.description || '',
+      catalog_template_id: template.id,
+    }))
+    setStep('form')
+  }
+
+  const handleCustom = () => {
+    setSelectedTemplate(null)
+    setFormData(prev => ({ ...prev, catalog_template_id: null }))
+    setStep('form')
+  }
+
+  const clearTemplate = () => {
+    setSelectedTemplate(null)
+    setFormData(prev => ({ ...prev, catalog_template_id: null }))
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -92,6 +131,37 @@ export const AddSystemModal: React.FC<AddSystemModalProps> = ({
     }
   }
 
+  if (step === 'pick') {
+    return (
+      <div className="modal-overlay" onClick={onClose}>
+        <div className="modal-content system-modal system-modal-wide" onClick={e => e.stopPropagation()}>
+          <div className="modal-header">
+            <h2>Add New System</h2>
+            <button className="modal-close" onClick={onClose} aria-label="Close">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          </div>
+          <div className="modal-body">
+            <p className="modal-description">
+              Pick the system you use — the details and collection guidance come
+              pre-configured. Can't find it? Add a custom system.
+            </p>
+            <SystemTemplatePicker onSelect={handleTemplateSelect} onCustom={handleCustom} />
+          </div>
+          <div className="modal-footer">
+            <button type="button" className="btn-secondary" onClick={onClose}>
+              Cancel
+            </button>
+          </div>
+          <style>{modalStyles}</style>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-content system-modal" onClick={e => e.stopPropagation()}>
@@ -112,6 +182,30 @@ export const AddSystemModal: React.FC<AddSystemModalProps> = ({
                 ? 'Update system information below.'
                 : 'Register a system that collects evidence for compliance controls.'}
             </p>
+
+            {!isEditMode && selectedTemplate && (
+              <div className="template-banner">
+                <span>
+                  Based on template: <strong>{selectedTemplate.name}</strong>
+                </span>
+                <span className="template-banner-actions">
+                  <button type="button" className="template-banner-link" onClick={() => setStep('pick')}>
+                    change
+                  </button>
+                  <button type="button" className="template-banner-link" onClick={clearTemplate}>
+                    &times; use custom instead
+                  </button>
+                </span>
+              </div>
+            )}
+            {!isEditMode && !selectedTemplate && (
+              <div className="template-banner template-banner-muted">
+                <span>Custom system — no catalogue template linked.</span>
+                <button type="button" className="template-banner-link" onClick={() => setStep('pick')}>
+                  browse catalogue
+                </button>
+              </div>
+            )}
 
             {/* Name */}
             <div className="form-group">
@@ -246,7 +340,12 @@ export const AddSystemModal: React.FC<AddSystemModalProps> = ({
         </form>
       </div>
 
-      <style>{`
+      <style>{modalStyles}</style>
+    </div>
+  )
+}
+
+const modalStyles = `
         .modal-overlay {
           position: fixed;
           top: 0;
@@ -461,9 +560,49 @@ export const AddSystemModal: React.FC<AddSystemModalProps> = ({
         @keyframes spin {
           to { transform: rotate(360deg); }
         }
-      `}</style>
-    </div>
-  )
-}
+
+        .modal-content.system-modal.system-modal-wide {
+          max-width: 760px;
+        }
+
+        .template-banner {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          padding: 10px 12px;
+          margin-bottom: 20px;
+          border: 1px solid rgba(59, 130, 246, 0.35);
+          background: rgba(59, 130, 246, 0.08);
+          border-radius: 8px;
+          font-size: 13px;
+          color: var(--text);
+        }
+
+        .template-banner-muted {
+          border-color: var(--border);
+          background: var(--secondary);
+          color: var(--muted);
+        }
+
+        .template-banner-actions {
+          display: flex;
+          gap: 12px;
+          white-space: nowrap;
+        }
+
+        .template-banner-link {
+          background: none;
+          border: none;
+          padding: 0;
+          color: #3b82f6;
+          font-size: 13px;
+          cursor: pointer;
+        }
+
+        .template-banner-link:hover {
+          text-decoration: underline;
+        }
+`
 
 export default AddSystemModal

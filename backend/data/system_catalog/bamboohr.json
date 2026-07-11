@@ -1,0 +1,170 @@
+{
+  "slug": "bamboohr",
+  "name": "BambooHR",
+  "vendor": "BambooHR LLC",
+  "category": "HR Information System",
+  "description": "HR information system for employee records, onboarding and offboarding. Yields joiner/mover/leaver evidence: hire and termination reports, onboarding/offboarding task checklists and admin access level assignments.",
+  "website": "https://www.bamboohr.com",
+  "aliases": [
+    "bamboohr",
+    "bamboo hr"
+  ],
+  "logo_hint": "bamboohr",
+  "system_type": "hr_system",
+  "version": "1.0",
+  "recipes": {
+    "L1": {
+      "title": "BambooHR Manual Evidence Collection",
+      "estimated_time": "15 minutes",
+      "frequency": "weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Sign in to BambooHR and navigate to Reports > Standard Reports, then run the hires vs terminations, headcount and turnover reports for the collection period",
+          "permissions_required": "Full Admin, or a custom access level with reporting access",
+          "security_note": "Use a dedicated least-privilege custom access level for evidence collection rather than a personal Full Admin account — reports contain personal HR data",
+          "vendor_docs_url": "https://help.bamboohr.com/s/article/587830"
+        },
+        {
+          "step": 2,
+          "action": "Export each report via the export option (Excel/CSV/PDF) and save with a date-stamped filename covering the joiner/leaver population for the period",
+          "audit_note": "Ensure consecutive collection periods are contiguous so no hires or terminations fall in a gap"
+        },
+        {
+          "step": 3,
+          "action": "For a sample of joiners and leavers, open the employee's record and capture the Onboarding or Offboarding tab showing completed task lists (e.g. account provisioning and access revocation tasks) with completion dates and assignees",
+          "permissions_required": "Full Admin, or access level with onboarding/offboarding visibility",
+          "audit_note": "Task completion dates and assignees are the primary evidence that JML procedures were followed",
+          "vendor_docs_url": "https://help.bamboohr.com/s/article/587611"
+        },
+        {
+          "step": 4,
+          "action": "Navigate to Settings (gear icon) > Access Levels and capture the list of users assigned to Full Admin and any custom admin access levels",
+          "permissions_required": "Full Admin",
+          "audit_note": "This is the periodic access review evidence for the HR system itself — date-stamp the capture",
+          "vendor_docs_url": "https://help.bamboohr.com/s/topic/0TO4z000000SnD8GAK/access-levels"
+        },
+        {
+          "step": 5,
+          "action": "Upload the exports and screenshots to the evidence repository with the evidence ID reference",
+          "security_note": "HR exports contain personal data (names, dates, roles) — store only in the approved evidence repository, redact fields not needed for the control (e.g. salary, home address) before uploading"
+        }
+      ]
+    },
+    "L2": {
+      "title": "BambooHR Shared Custom Reports on a Fixed Cadence",
+      "estimated_time": "45 minutes (setup), then 10 minutes per cycle",
+      "frequency": "monthly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Navigate to Reports and create a custom report with fields covering the JML population: employee number, name, job title, department, supervisor, employment status, hire date and termination date",
+          "permissions_required": "Full Admin, or custom access level with custom reporting rights (custom reports require the relevant BambooHR package)",
+          "vendor_docs_url": "https://help.bamboohr.com/s/article/587690"
+        },
+        {
+          "step": 2,
+          "action": "Save the report and share it with the compliance reviewers so every cycle uses an identical, centrally maintained report definition",
+          "security_note": "Share only with named reviewers — shared reports expose employee personal data to everyone with access",
+          "audit_note": "A shared saved report gives a consistent, repeatable evidence definition between cycles"
+        },
+        {
+          "step": 3,
+          "action": "BambooHR does not offer built-in recurring email delivery for core HR reports — the closest built-in mechanism is the shared saved report exported on a fixed calendar cadence; automate delivery via the API instead (see L3)",
+          "audit_note": "Record this limitation in the collection procedure so the manual export step on the agreed cadence is understood and evidenced"
+        },
+        {
+          "step": 4,
+          "action": "On each scheduled date, open the shared report, export to CSV/Excel and file it in the evidence repository with the run date in the filename",
+          "audit_note": "Keep a simple collection log (date run, by whom) so missed cycles are visible within one period"
+        },
+        {
+          "step": 5,
+          "action": "Quarterly, re-export the Access Levels view (Settings > Access Levels) alongside the report to keep the HR-system access review on the same cadence",
+          "permissions_required": "Full Admin",
+          "vendor_docs_url": "https://help.bamboohr.com/s/topic/0TO4z000000SnD8GAK/access-levels"
+        }
+      ]
+    },
+    "L3": {
+      "title": "BambooHR API-Driven Automated Collection",
+      "estimated_time": "2-3 hours initial setup",
+      "frequency": "automated daily",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Create a dedicated service user in a least-privilege custom access level, sign in as that user, click the account name in the lower-left corner and choose API Keys > Add New Key to generate an API key",
+          "permissions_required": "The API key inherits the permissions of the user that created it — restrict the service user's access level to the fields needed",
+          "security_note": "The key acts as that user over live HR personal data: store it in a secrets manager, never in plaintext, and revoke/regenerate it when the owner changes. Repeated use of an invalid key temporarily disables API access (HTTP 403).",
+          "vendor_docs_url": "https://documentation.bamboohr.com/docs/getting-started"
+        },
+        {
+          "step": 2,
+          "action": "Authenticate with HTTP Basic auth using the API key as the username and any string as the password, and call POST https://{companyDomain}.bamboohr.com/api/v1/reports/custom?format=csv with a body listing JML fields (hireDate, terminationDate, status, jobTitle, supervisor) and a lastChanged filter",
+          "permissions_required": "API key from a user whose access level can view the requested fields",
+          "audit_note": "The lastChanged filter yields a daily delta of joiners, movers and leavers",
+          "vendor_docs_url": "https://documentation.bamboohr.com/reference/request-custom-report"
+        },
+        {
+          "step": 3,
+          "action": "Call GET https://{companyDomain}.bamboohr.com/api/v1/employees/changed?since={ISO8601} (Get Changed Employee IDs) as an independent change feed — each entry marks the employee as Inserted, Updated or Deleted — to cross-check that the report captured all changes",
+          "permissions_required": "API key from a user with employee data visibility",
+          "vendor_docs_url": "https://documentation.bamboohr.com/reference/get-changed-employee-ids"
+        },
+        {
+          "step": 4,
+          "action": "Schedule the collection script via cron or a CI/CD pipeline to run daily, writing date-stamped CSV outputs to the evidence repository",
+          "security_note": "Transfer over HTTPS only; encrypt evidence at rest — these files contain employee personal data and fall under data protection obligations (UK GDPR), so apply retention limits and access controls to the repository"
+        },
+        {
+          "step": 5,
+          "action": "Implement error handling and alerting: treat HTTP 403 as a disabled or revoked key requiring immediate attention, and alert on any failed run for re-collection within SLA",
+          "audit_note": "A logged failure-and-recovery trail demonstrates the process is controlled"
+        },
+        {
+          "step": 6,
+          "action": "Validate each run against expected headcount and prior-day deltas, flagging anomalies (e.g. zero changes for a week, or headcount jumps) for human review",
+          "audit_note": "Volume validation provides assurance of collection completeness"
+        }
+      ]
+    },
+    "L4": {
+      "title": "BambooHR Managed Pipeline with Webhooks and Reconciliation",
+      "estimated_time": "1 day initial setup",
+      "frequency": "continuous with daily reporting",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Create a permissioned webhook via POST https://{companyDomain}.bamboohr.com/api/v1/webhooks with monitorFields covering the JML fields (employment status, hire date, termination date) and your evidence platform's HTTPS endpoint as the target URL",
+          "permissions_required": "API key with the webhooks.write OAuth scope, from a service user whose access level can view the monitored fields (webhook data access is limited to that user's permissions)",
+          "security_note": "BambooHR only delivers webhooks to HTTPS URLs; the receiving endpoint handles employee personal data and must be access-controlled and encrypted at rest",
+          "vendor_docs_url": "https://documentation.bamboohr.com/reference/create-webhook"
+        },
+        {
+          "step": 2,
+          "action": "Verify the HMAC-SHA256 signature on every webhook delivery using the webhook's private key before accepting the payload",
+          "security_note": "The privateKey is returned only once, at webhook creation, and cannot be retrieved again — store it in a secrets manager immediately. Reject unsigned or badly signed payloads.",
+          "audit_note": "Signature verification preserves the evidentiary integrity of received events",
+          "vendor_docs_url": "https://documentation.bamboohr.com/docs/webhooks"
+        },
+        {
+          "step": 3,
+          "action": "Run a daily reconciliation sweep — GET https://{companyDomain}.bamboohr.com/api/v1/employees/directory plus the L3 custom report — and diff against received webhook events to detect missed deliveries",
+          "permissions_required": "API key with employee_directory visibility",
+          "audit_note": "Webhooks are fire-and-forget; the reconciliation sweep is what makes completeness demonstrable",
+          "vendor_docs_url": "https://documentation.bamboohr.com/reference/get-employees-directory"
+        },
+        {
+          "step": 4,
+          "action": "Track completeness metrics — events per day, delivery latency, reconciliation mismatches — and alert when webhook volume drops to zero on a working day or mismatches exceed threshold"
+        },
+        {
+          "step": 5,
+          "action": "Publish a collection health dashboard (events/day, mismatch count, failed reconciliations) and generate an automated quarterly review report covering SLA breaches and webhook key rotation",
+          "security_note": "Rotate the service user's API key and webhook private key on a defined schedule and after personnel changes",
+          "audit_note": "The dashboard and quarterly report are continuous evidence of a managed collection process"
+        }
+      ]
+    }
+  }
+}

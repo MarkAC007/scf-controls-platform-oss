@@ -1,0 +1,185 @@
+{
+  "slug": "gitlab",
+  "name": "GitLab",
+  "vendor": "GitLab Inc.",
+  "category": "Source Control & CI/CD",
+  "description": "DevSecOps platform combining Git hosting, merge request review and CI/CD; yields audit events, protected branch and approval configuration, and pipeline security evidence.",
+  "website": "https://gitlab.com",
+  "aliases": [
+    "gitlab",
+    "gitlab.com"
+  ],
+  "logo_hint": "gitlab",
+  "system_type": "code_repository",
+  "version": "1.0",
+  "recipes": {
+    "L1": {
+      "title": "GitLab Manual Evidence Collection",
+      "estimated_time": "15 minutes",
+      "frequency": "weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "In the top bar, select Search or go to and find your group, then in the left sidebar select Secure > Audit events (Premium or Ultimate tier)",
+          "permissions_required": "Group Owner",
+          "security_note": "Group audit events require the Owner role; consider a dedicated audit account rather than sharing a personal Owner login",
+          "audit_note": "GitLab retains audit events indefinitely, but a regular export cadence keeps evidence packages current",
+          "vendor_docs_url": "https://docs.gitlab.com/user/compliance/audit_events/"
+        },
+        {
+          "step": 2,
+          "action": "Filter events by member, project and date range, then select Export as CSV to download the audit events",
+          "permissions_required": "Group Owner",
+          "audit_note": "CSV exports use UTC timestamps; record the export date and filter criteria alongside the file",
+          "vendor_docs_url": "https://docs.gitlab.com/user/compliance/audit_events/"
+        },
+        {
+          "step": 3,
+          "action": "For branch protection evidence, navigate to the project > Settings > Repository, expand Branch rules and screenshot the protected branch configuration",
+          "permissions_required": "Maintainer",
+          "audit_note": "Changes to protected branches also appear in the audit event log, so the screenshot and export corroborate each other",
+          "vendor_docs_url": "https://docs.gitlab.com/user/project/repository/branches/protected/"
+        },
+        {
+          "step": 4,
+          "action": "For merge request approval evidence, navigate to the project > Settings > Merge requests, expand Merge request approvals and screenshot the approval rules (required approvers, eligible groups)",
+          "permissions_required": "Maintainer or Owner",
+          "vendor_docs_url": "https://docs.gitlab.com/user/project/merge_requests/approvals/rules/"
+        },
+        {
+          "step": 5,
+          "action": "On GitLab Self-Managed, additionally capture instance-level audit events: select Admin, then in the left sidebar select Monitoring > Audit events, and export to CSV",
+          "permissions_required": "Instance Administrator",
+          "vendor_docs_url": "https://docs.gitlab.com/administration/compliance/audit_event_reports/"
+        },
+        {
+          "step": 6,
+          "action": "Upload the CSV exports and screenshots to the evidence repository with the evidence ID reference",
+          "security_note": "Check screenshots for visible personal access tokens, CI/CD variable values or clone URLs containing embedded credentials before uploading"
+        }
+      ]
+    },
+    "L2": {
+      "title": "GitLab Scheduled Evidence Exports via Pipeline Schedules",
+      "estimated_time": "45 minutes initial setup",
+      "frequency": "monthly (automated schedule)",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Note that GitLab has no natively scheduled audit event report; the closest built-in mechanism is a pipeline schedule. In an evidence project, navigate to Build > Pipeline schedules and create a monthly schedule (cron expression)",
+          "permissions_required": "Developer (create schedule); Maintainer to manage CI/CD settings",
+          "vendor_docs_url": "https://docs.gitlab.com/ci/pipelines/schedules/"
+        },
+        {
+          "step": 2,
+          "action": "Add a minimal CI job to the scheduled pipeline that downloads the group audit events via the API and saves the output as a job artifact with a defined expiry (expire_in)",
+          "permissions_required": "Maintainer",
+          "security_note": "Store the access token as a masked and protected CI/CD variable (project Settings > CI/CD > Variables), never in the .gitlab-ci.yml file",
+          "audit_note": "Job artifacts expire; copy each export into the evidence repository so retention is not dependent on artifact settings",
+          "vendor_docs_url": "https://docs.gitlab.com/ci/variables/"
+        },
+        {
+          "step": 3,
+          "action": "For compliance posture evidence, navigate to the group > Secure > Compliance center and export the compliance status and violations reports on the same monthly cadence (Ultimate tier)",
+          "permissions_required": "Group Owner",
+          "vendor_docs_url": "https://docs.gitlab.com/user/compliance/compliance_center/"
+        },
+        {
+          "step": 4,
+          "action": "Enable pipeline failure notifications (email or integration) for the evidence project so a missed scheduled export is noticed immediately",
+          "audit_note": "A gap in monthly exports weakens the evidence trail; treat schedule failures as an incident to investigate"
+        },
+        {
+          "step": 5,
+          "action": "File each month's export in the evidence repository and record the schedule run ID so the collection is traceable to the pipeline that produced it"
+        }
+      ]
+    },
+    "L3": {
+      "title": "GitLab API-Driven Audit Evidence Automation",
+      "estimated_time": "2-4 hours initial setup",
+      "frequency": "automated daily",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Create a group access token: navigate to the group > Settings > Access tokens, grant the Owner role with the read_api scope and set an expiry date (Premium or Ultimate tier)",
+          "permissions_required": "Group Owner",
+          "security_note": "Store the token in a secrets manager and rotate before expiry; group access tokens act as bot users and avoid tying automation to a personal account",
+          "vendor_docs_url": "https://docs.gitlab.com/user/group/settings/group_access_tokens/"
+        },
+        {
+          "step": 2,
+          "action": "Schedule a daily script that calls GET https://gitlab.com/api/v4/groups/:id/audit_events with created_after and created_before parameters, passing the token in the PRIVATE-TOKEN header and using keyset pagination",
+          "permissions_required": "Group access token with Owner role and read_api scope",
+          "audit_note": "Date filtering is limited to a 30-day rolling window per query, so a daily pull with overlapping windows avoids missed events",
+          "vendor_docs_url": "https://docs.gitlab.com/api/audit_events/"
+        },
+        {
+          "step": 3,
+          "action": "Collect configuration evidence alongside events: GET /projects/:id/protected_branches for branch protection state on each in-scope project",
+          "permissions_required": "read_api scope; Maintainer-level access to the projects",
+          "vendor_docs_url": "https://docs.gitlab.com/api/protected_branches/"
+        },
+        {
+          "step": 4,
+          "action": "Export merge request approval configuration via GET /projects/:id/approval_rules to evidence enforced peer review requirements",
+          "permissions_required": "read_api scope",
+          "vendor_docs_url": "https://docs.gitlab.com/api/merge_request_approvals/"
+        },
+        {
+          "step": 5,
+          "action": "Capture CI/CD pipeline security evidence via GET /projects/:id/pipelines (status, source, SHA) to demonstrate that security scan stages run on protected branches",
+          "permissions_required": "read_api scope",
+          "vendor_docs_url": "https://docs.gitlab.com/api/pipelines/"
+        },
+        {
+          "step": 6,
+          "action": "Add error handling and alerting: alert on non-200 responses, authentication failures and unexpectedly empty result windows, and validate date continuity between consecutive runs before storing the output with a checksum",
+          "audit_note": "Recording checksums and run metadata makes each collected file independently verifiable"
+        }
+      ]
+    },
+    "L4": {
+      "title": "GitLab Continuous Audit Event Streaming Pipeline",
+      "estimated_time": "4-6 hours initial setup",
+      "frequency": "continuous with weekly reporting",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Configure audit event streaming: navigate to the top-level group > Secure > Audit events, select the Streams tab and add a destination — HTTP endpoint (with custom headers), Google Cloud Logging or AWS S3 (Ultimate tier)",
+          "permissions_required": "Owner of the top-level group",
+          "security_note": "Use dedicated service credentials for the destination and restrict who can modify stream configuration",
+          "vendor_docs_url": "https://docs.gitlab.com/user/compliance/audit_event_streaming/"
+        },
+        {
+          "step": 2,
+          "action": "On the receiving endpoint, validate the X-Gitlab-Event-Streaming-Token header against the destination's verification token before accepting events",
+          "security_note": "Rejecting requests without the correct verification token prevents forged audit events entering the evidence store",
+          "vendor_docs_url": "https://docs.gitlab.com/user/compliance/audit_event_streaming/"
+        },
+        {
+          "step": 3,
+          "action": "On GitLab Self-Managed or Dedicated, additionally configure instance-level audit event streaming from the Admin area so administrator actions are captured continuously",
+          "permissions_required": "Instance Administrator",
+          "vendor_docs_url": "https://docs.gitlab.com/administration/compliance/audit_event_streaming/"
+        },
+        {
+          "step": 4,
+          "action": "Run a daily reconciliation job comparing streamed event counts against the audit events API for the same window, alerting on any gap",
+          "audit_note": "Streaming destinations do not guarantee delivery; reconciling against the API is what demonstrates completeness to an auditor",
+          "vendor_docs_url": "https://docs.gitlab.com/api/audit_events/"
+        },
+        {
+          "step": 5,
+          "action": "Build a compliance dashboard from the API collectors: protected branch coverage, merge request approval rule compliance and pipeline security scan coverage across all in-scope projects, with alerts on drift",
+          "audit_note": "Trend data over time demonstrates sustained control operation rather than point-in-time compliance"
+        },
+        {
+          "step": 6,
+          "action": "Quarterly, review stream destinations and custom headers, rotate group access tokens and destination credentials, and review the top-level group Owner list",
+          "security_note": "Streaming destinations receive the full audit trail; treat destination credentials with the same care as administrator accounts"
+        }
+      ]
+    }
+  }
+}

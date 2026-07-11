@@ -11,6 +11,7 @@ from uuid import UUID
 
 from database import get_db
 from models import System, Organization, User
+from catalog_models import SystemCatalogTemplate
 from schemas import (
     SystemResponse,
     SystemCreate,
@@ -164,6 +165,22 @@ async def create_system(
             detail=f"System with name '{system_data.name}' already exists in this organization"
         )
 
+    # If created from a catalog template, the template must exist and be global
+    if system_data.catalog_template_id is not None:
+        template_result = await db.execute(
+            select(SystemCatalogTemplate).where(
+                and_(
+                    SystemCatalogTemplate.id == system_data.catalog_template_id,
+                    SystemCatalogTemplate.organization_id.is_(None),
+                )
+            )
+        )
+        if not template_result.scalar_one_or_none():
+            raise HTTPException(
+                status_code=400,
+                detail="Unknown catalog template"
+            )
+
     # Create new system
     new_system = System(
         organization_id=org_id,
@@ -231,8 +248,25 @@ async def update_system(
     # Capture old values for audit trail
     old_values = {f: getattr(system, f) for f in SYSTEM_TRACKED_FIELDS if hasattr(system, f)}
 
-    # If name is being changed, check for conflicts
+    # If linking to a catalog template, it must exist and be global
+    # (same rule as create_system; None is allowed to unlink)
     update_data = system_update.model_dump(exclude_unset=True)
+    if update_data.get("catalog_template_id") is not None:
+        template_result = await db.execute(
+            select(SystemCatalogTemplate).where(
+                and_(
+                    SystemCatalogTemplate.id == update_data["catalog_template_id"],
+                    SystemCatalogTemplate.organization_id.is_(None),
+                )
+            )
+        )
+        if not template_result.scalar_one_or_none():
+            # Keep an existing link to the system's own org-private
+            # (AI-generated) template intact when the edit form echoes it back
+            if update_data["catalog_template_id"] != system.catalog_template_id:
+                raise HTTPException(status_code=400, detail="Unknown catalog template")
+
+    # If name is being changed, check for conflicts
     if "name" in update_data and update_data["name"] != system.name:
         existing = await db.execute(
             select(System).where(

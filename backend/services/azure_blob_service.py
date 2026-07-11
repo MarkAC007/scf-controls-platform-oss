@@ -187,45 +187,6 @@ def generate_download_url(
     return url
 
 
-def generate_download_url_by_key(
-    file_key: str,
-    filename: Optional[str] = None,
-) -> str:
-    """
-    Generate a SAS-based download URL for any blob key (no org prefix validation).
-
-    Unlike generate_download_url(), this does not enforce the evidence/{org_id}/ prefix,
-    making it suitable for DPSIA reports stored under dpsia-reports/.
-    """
-    from azure.storage.blob import BlobSasPermissions, generate_blob_sas
-
-    if not is_configured():
-        raise ValueError("Azure Blob Storage not configured")
-
-    content_disposition = None
-    if filename:
-        content_disposition = f'attachment; filename="{filename}"'
-
-    sas_token = generate_blob_sas(
-        account_name=AZURE_STORAGE_ACCOUNT_NAME,
-        container_name=EVIDENCE_CONTAINER,
-        blob_name=file_key,
-        account_key=AZURE_STORAGE_ACCOUNT_KEY,
-        permission=BlobSasPermissions(read=True),
-        expiry=datetime.now(timezone.utc) + timedelta(seconds=EVIDENCE_URL_EXPIRY),
-        content_disposition=content_disposition,
-    )
-
-    url = (
-        f"https://{AZURE_STORAGE_ACCOUNT_NAME}.blob.core.windows.net/"
-        f"{EVIDENCE_CONTAINER}/{file_key}?{sas_token}"
-    )
-
-    logger.info("Generated download URL for key=%s", file_key)
-
-    return url
-
-
 def tag_evidence_object(
     file_key: str,
     org_id: str,

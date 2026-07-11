@@ -1,0 +1,175 @@
+{
+  "slug": "freshservice",
+  "name": "Freshservice",
+  "vendor": "Freshworks Inc.",
+  "category": "IT Service Management",
+  "description": "Cloud ITSM platform; yields ticket, incident and change management evidence via Analytics reports, change approval records, the admin audit log and agent role assignments.",
+  "website": "https://www.freshworks.com/freshservice/",
+  "aliases": [
+    "freshservice",
+    "fresh service",
+    "freshworks"
+  ],
+  "logo_hint": "freshservice",
+  "system_type": "ticketing",
+  "version": "1.0",
+  "recipes": {
+    "L1": {
+      "title": "Freshservice Manual Evidence Collection",
+      "estimated_time": "20 minutes",
+      "frequency": "weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Sign in to Freshservice, open the Tickets module, filter the list to the evidence period (e.g. Created/Updated within the collection window, Priority as required) and use the Export option to download the ticket list with the fields you need",
+          "permissions_required": "Agent with a role granting ticket view and export privileges",
+          "vendor_docs_url": "https://support.freshservice.com/support/solutions/articles/50000006341-exporting-tickets"
+        },
+        {
+          "step": 2,
+          "action": "Open the Changes module, filter changes raised or closed in the evidence period and export the list, ensuring approval status, change type and planned/actual dates are included",
+          "permissions_required": "Agent with a role granting change view privileges",
+          "audit_note": "Include the approval status column so the export itself evidences that changes passed through approval"
+        },
+        {
+          "step": 3,
+          "action": "For sampled changes, open the change record and capture the Approvals section showing who approved, when, and the approval rule applied (Everyone/Anyone/Majority/First Responder)",
+          "audit_note": "Approval records are written by Freshservice with the approver identity and timestamp and cannot be edited by agents after the fact, making them strong change-authorisation evidence",
+          "vendor_docs_url": "https://support.freshservice.com/support/solutions/articles/50000011144-how-to-create-and-assign-approvals-in-freshservice-"
+        },
+        {
+          "step": 4,
+          "action": "Go to Admin > Account Settings > Audit Log (or Admin Settings > Workspace Settings > {Workspace} > Account Settings > Audit Log in multi-workspace accounts), filter by date and Performed by, and export the log of admin configuration changes",
+          "permissions_required": "Admin (audit log is available on Enterprise plans only)",
+          "audit_note": "The audit log is system-generated and timestamped by Freshservice, covering agent, SLA policy, change and security-setting modifications",
+          "vendor_docs_url": "https://support.freshservice.com/support/solutions/articles/232444-audit-log"
+        },
+        {
+          "step": 5,
+          "action": "Go to Admin > User Management > Roles and capture the list of roles, their privileges and the agents assigned to each as evidence of least-privilege access",
+          "permissions_required": "Admin with Play God (Super Admin) or Operational Admin controls",
+          "vendor_docs_url": "https://support.freshservice.com/support/solutions/articles/156465"
+        },
+        {
+          "step": 6,
+          "action": "Upload the exports and screenshots to the evidence repository with descriptive filenames, the collection date and evidence ID references"
+        }
+      ]
+    },
+    "L2": {
+      "title": "Freshservice Scheduled Analytics Report Exports",
+      "estimated_time": "1-2 hours initial setup",
+      "frequency": "weekly automated",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Open Analytics from the left sidebar and curate (or clone) reports covering ticket SLA compliance, incident resolution times, and change success/approval metrics for the collection period",
+          "permissions_required": "Agent with a role granting Analytics/Reports privileges",
+          "vendor_docs_url": "https://support.freshservice.com/support/solutions/articles/233557-generate-intuitive-reports-using-analytics-pro"
+        },
+        {
+          "step": 2,
+          "action": "In each report use Export, Schedule and Subscribe to schedule PDF delivery to the evidence mailbox at the required interval; for individual widgets, select the widget, click Options > Schedule and choose Hourly/Daily/Weekly/Monthly with the correct time zone",
+          "permissions_required": "Agent with report scheduling privileges",
+          "vendor_docs_url": "https://support.freshservice.com/support/solutions/articles/233557-generate-intuitive-reports-using-analytics-pro"
+        },
+        {
+          "step": 3,
+          "action": "For raw data on a cadence, go to Analytics and click Create Export to configure a Scheduled Data Export of ticket/change records, delivered by Email or via an API link that a BI tool can fetch automatically",
+          "audit_note": "Scheduled exports run on a fixed cadence, giving a consistent, repeatable evidence trail rather than ad hoc snapshots",
+          "vendor_docs_url": "https://support.freshservice.com/support/solutions/articles/238958-scheduled-data-export"
+        },
+        {
+          "step": 4,
+          "action": "Deliver schedules to a monitored, access-controlled evidence mailbox and file each delivery into the evidence repository on receipt",
+          "security_note": "Restrict access to the evidence mailbox and any export API links — exports contain service desk data that may include personal information"
+        },
+        {
+          "step": 5,
+          "action": "The admin audit log has no scheduled export, so retain a monthly manual export from Admin > Account Settings > Audit Log until API collection (L3) is in place",
+          "permissions_required": "Admin",
+          "vendor_docs_url": "https://support.freshservice.com/support/solutions/articles/232444-audit-log"
+        }
+      ]
+    },
+    "L3": {
+      "title": "Freshservice API v2 Automated Evidence Collection",
+      "estimated_time": "3-4 hours initial setup",
+      "frequency": "automated daily",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Create a dedicated read-only integration agent, sign in as that agent, click the profile picture > Profile Settings, and copy the API key shown below the Delegate Approvals section",
+          "permissions_required": "Admin to create the integration agent; the API key inherits that agent's role privileges",
+          "security_note": "The API key is used as the username in HTTP basic auth with any dummy password (api_key:X) and grants everything the agent can do — scope the agent's role to read-only, store the key in a secrets manager and rotate it on a defined schedule",
+          "vendor_docs_url": "https://support.freshservice.com/support/solutions/articles/50000000306-where-do-i-find-my-api-key-"
+        },
+        {
+          "step": 2,
+          "action": "Schedule a script that collects ticket evidence via GET https://<domain>.freshservice.com/api/v2/tickets?updated_since=<last-run-ISO8601>, paginating with page/per_page (max 100) and persisting the last run timestamp between executions",
+          "audit_note": "Using updated_since from the previous run's high-water mark ensures every created or updated ticket is captured with no gaps between runs",
+          "vendor_docs_url": "https://api.freshservice.com/#tickets"
+        },
+        {
+          "step": 3,
+          "action": "Collect change management evidence via GET /api/v2/changes, capturing each change's approval status, change type, planned dates and closure details for the collection window",
+          "audit_note": "API-collected change records include the approval state as recorded by Freshservice, independent of any agent-edited report",
+          "vendor_docs_url": "https://api.freshservice.com/#changes"
+        },
+        {
+          "step": 4,
+          "action": "Collect admin configuration change evidence using the Audit Log Export operation in the Freshservice API (Enterprise plans), requesting the export for the collection window and retrieving the generated file",
+          "permissions_required": "Admin-privileged integration agent (audit logs are admin-only)",
+          "vendor_docs_url": "https://api.freshservice.com/#audit-logs"
+        },
+        {
+          "step": 5,
+          "action": "Respect plan rate limits (100-500 requests/minute depending on plan): throttle requests, honour Retry-After on HTTP 429 responses, retry transient failures with backoff, and alert the compliance team when a run fails or returns no data",
+          "vendor_docs_url": "https://api.freshservice.com/#rate_limit"
+        },
+        {
+          "step": 6,
+          "action": "Validate each run before filing (record counts vs the previous run and Analytics totals, schema checks, high-water mark advanced) and write timestamped JSON/CSV artefacts to the evidence repository with run metadata"
+        }
+      ]
+    },
+    "L4": {
+      "title": "Freshservice Continuous Evidence Pipeline with Completeness Monitoring",
+      "estimated_time": "1-2 days initial setup",
+      "frequency": "continuous with monthly reporting",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Freshservice has no generic outbound webhook subscription; the real-time mechanism is the Workflow Automator Web Request node. Build workflows on ticket and change events (e.g. change approved, change closed, SLA breached) that POST the record to your evidence collection endpoint",
+          "permissions_required": "Admin with workflow management privileges",
+          "security_note": "Authenticate the Web Request node to your endpoint (HTTPS with an auth header) and treat any credentials stored in the workflow as secrets subject to rotation",
+          "vendor_docs_url": "https://support.freshservice.com/support/solutions/articles/50000003705-web-request-node"
+        },
+        {
+          "step": 2,
+          "action": "Configure a Scheduled Data Export with API delivery and point the organisation's BI/evidence pipeline at the export URL so full ticket and change datasets are ingested automatically on each cycle",
+          "vendor_docs_url": "https://support.freshservice.com/support/solutions/articles/50000001123-exporting-data-from-analytics-to-power-bi"
+        },
+        {
+          "step": 3,
+          "action": "Reconcile the workflow event stream against a daily GET /api/v2/tickets?updated_since sweep — workflow deliveries can be missed during endpoint outages, so the API sweep remains the completeness baseline",
+          "audit_note": "Publishing a reconciliation metric (events received vs records swept) provides direct evidence that collection is complete, with no gaps",
+          "vendor_docs_url": "https://api.freshservice.com/#tickets"
+        },
+        {
+          "step": 4,
+          "action": "Run automated quality checks on collected data: flag changes closed without an approval record, emergency changes lacking retrospective approval, and SLA breaches without linked follow-up actions",
+          "audit_note": "Approval-gap checks turn the immutable approval trail into a continuously monitored control rather than a sampled one"
+        },
+        {
+          "step": 5,
+          "action": "Alert on collection gaps: no workflow events within an expected interval, scheduled exports not produced on time, or the API sweep high-water mark failing to advance"
+        },
+        {
+          "step": 6,
+          "action": "Generate a monthly evidence package automatically: SLA and resolution trends, change success and approval-compliance metrics, audit log summary of admin changes, and the period's completeness/reconciliation metrics"
+        }
+      ]
+    }
+  }
+}

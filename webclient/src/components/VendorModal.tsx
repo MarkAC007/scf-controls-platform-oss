@@ -17,6 +17,12 @@ const DATA_CLASSIFICATION_LABELS: Record<DataClassification, string> = {
   restricted: 'Restricted',
 }
 
+/**
+ * Local form state — contract_value is held as a string while editing and
+ * converted to a number when the payload is built.
+ */
+type VendorFormState = Omit<VendorInput, 'contract_value'> & { contract_value: string }
+
 export const VendorModal: React.FC<VendorModalProps> = ({
   organizationId,
   editVendor,
@@ -25,7 +31,7 @@ export const VendorModal: React.FC<VendorModalProps> = ({
 }) => {
   const isEditMode = !!editVendor
 
-  const [formData, setFormData] = useState<VendorInput>({
+  const [formData, setFormData] = useState<VendorFormState>({
     name: '',
     description: '',
     website: '',
@@ -64,7 +70,7 @@ export const VendorModal: React.FC<VendorModalProps> = ({
     }
   }, [editVendor])
 
-  const handleChange = (field: keyof VendorInput, value: string | null) => {
+  const handleChange = (field: keyof VendorFormState, value: string | null) => {
     setFormData(prev => ({ ...prev, [field]: value }))
     setError(null)
   }

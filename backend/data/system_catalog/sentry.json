@@ -1,0 +1,184 @@
+{
+  "slug": "sentry",
+  "name": "Sentry",
+  "vendor": "Functional Software, Inc.",
+  "category": "Error & Performance Monitoring",
+  "description": "Application error and performance monitoring platform. Yields evidence of error-handling and alerting discipline: organisation audit logs, alert rule configuration, SSO/2FA enforcement settings and error trend exports.",
+  "website": "https://sentry.io",
+  "aliases": [
+    "sentry",
+    "sentry.io"
+  ],
+  "logo_hint": "sentry",
+  "system_type": "logging",
+  "version": "1.0",
+  "recipes": {
+    "L1": {
+      "title": "Sentry Manual Evidence Collection",
+      "estimated_time": "15 minutes",
+      "frequency": "weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Navigate to Sentry > Organization Settings > Audit Log to view administrative changes across the organisation",
+          "permissions_required": "Owner or Manager",
+          "security_note": "Use a dedicated evidence-collection account with the minimum role that can view the audit log, not a shared Owner login",
+          "audit_note": "Audit log entries are timestamped by Sentry and cannot be edited by users. There is no built-in CSV export of the audit log, so capture dated screenshots or print-to-PDF for the collection period",
+          "vendor_docs_url": "https://sentry.zendesk.com/hc/en-us/articles/27675393258779-How-can-I-export-Sentry-data"
+        },
+        {
+          "step": 2,
+          "action": "Use the Select Action filter on the Audit Log to evidence specific control activity, e.g. org.edit for changes to the require_2fa setting and member.pending for removed members",
+          "permissions_required": "Owner or Manager",
+          "audit_note": "Filtered views scoped to the collection period demonstrate continuous monitoring of privileged changes; ensure date ranges leave no gaps between collections",
+          "vendor_docs_url": "https://docs.sentry.io/organization/authentication/two-factor-authentication/"
+        },
+        {
+          "step": 3,
+          "action": "Capture screenshots of Organization Settings > General Settings > Security & Privacy (Require Two-Factor Authentication toggle) and Organization Settings > Auth (configured SSO provider)",
+          "permissions_required": "Owner",
+          "audit_note": "Include the organisation slug and current date in each screenshot to establish provenance",
+          "vendor_docs_url": "https://docs.sentry.io/organization/authentication/"
+        },
+        {
+          "step": 4,
+          "action": "Navigate to Alerts > Alert Rules and capture the list of configured issue and metric alert rules, including owners and notification targets",
+          "permissions_required": "Member (view); Admin or above to see all projects",
+          "audit_note": "Alert rule configuration is evidence that error conditions are monitored and routed to responders",
+          "vendor_docs_url": "https://docs.sentry.io/product/alerts/"
+        },
+        {
+          "step": 5,
+          "action": "Open Explore > Discover, run your saved error-trend query for the collection period and click Export to download the results as CSV",
+          "permissions_required": "Member",
+          "audit_note": "Large exports are delivered by email as a download link; save the CSV with a date-stamped filename covering the query period",
+          "vendor_docs_url": "https://docs.sentry.io/product/explore/discover-queries/"
+        },
+        {
+          "step": 6,
+          "action": "Upload the screenshots and CSV exports to the evidence repository with the evidence ID reference",
+          "security_note": "Review exports for personal data, DSN values or tokens captured in error events before uploading"
+        }
+      ]
+    },
+    "L2": {
+      "title": "Sentry Scheduled Reports Collection",
+      "estimated_time": "30 minutes (setup), then automated",
+      "frequency": "automated weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "In User Settings > Notifications, enable Weekly Reports for the evidence-collection account; Sentry emails an organisation activity summary every Saturday",
+          "permissions_required": "Any organisation member (personal setting)",
+          "security_note": "Deliver reports to a restricted, monitored compliance mailbox rather than personal inboxes",
+          "vendor_docs_url": "https://docs.sentry.io/product/notifications/"
+        },
+        {
+          "step": 2,
+          "action": "Create and save Discover queries for the error-trend views you report on, so weekly exports use identical fields and filters every time",
+          "permissions_required": "Member",
+          "audit_note": "Saved queries are shared organisation-wide, giving a consistent, repeatable definition of the evidence dataset",
+          "vendor_docs_url": "https://docs.sentry.io/product/explore/discover-queries/"
+        },
+        {
+          "step": 3,
+          "action": "Configure issue and metric alert rules to notify a retained channel (compliance mailbox or dedicated Slack channel) so alert deliveries form a continuous evidence trail",
+          "permissions_required": "Admin or above (alert rule creation)",
+          "audit_note": "Retained alert notifications evidence that alerting operated throughout the period, not just at collection time",
+          "vendor_docs_url": "https://docs.sentry.io/product/alerts/create-alerts/"
+        },
+        {
+          "step": 4,
+          "action": "File the weekly report emails into the evidence repository on receipt. Note that Sentry has no user-schedulable CSV export, so the weekly report email is the only built-in scheduled report — set a recurring calendar check to catch missed weeks",
+          "audit_note": "Record any missed weekly reports and the reason; unexplained gaps weaken the evidence trail"
+        }
+      ]
+    },
+    "L3": {
+      "title": "Sentry API-Driven Automated Collection",
+      "estimated_time": "2-3 hours initial setup",
+      "frequency": "automated daily",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Create an internal integration in Organization Settings > Developer Settings > Custom Integrations > New Internal Integration, granting only the read scopes org:read, event:read and member:read",
+          "permissions_required": "Owner or Manager",
+          "security_note": "Treat the integration token as a production secret: store it in a secrets manager, never in code or config files, and rotate it on a defined schedule",
+          "audit_note": "Integration creation and token events are recorded in the organisation Audit Log",
+          "vendor_docs_url": "https://docs.sentry.io/organization/integrations/integration-platform/internal-integration/"
+        },
+        {
+          "step": 2,
+          "action": "Call GET /api/0/organizations/{organization_id_or_slug}/events/ with dataset=errors, the field list you report on, and statsPeriod (e.g. 24h) to export error trend data for the period",
+          "permissions_required": "Auth token with org:read scope",
+          "audit_note": "Store the raw JSON response with the request parameters so the export is reproducible",
+          "vendor_docs_url": "https://docs.sentry.io/api/explore/query-explore-events-in-table-format/"
+        },
+        {
+          "step": 3,
+          "action": "Call GET /api/0/organizations/{organization_id_or_slug}/stats_v2/ to collect event volume counts per project as a completeness baseline",
+          "permissions_required": "Auth token with org:read scope",
+          "vendor_docs_url": "https://docs.sentry.io/api/organizations/retrieve-event-counts-for-an-organization-v2/"
+        },
+        {
+          "step": 4,
+          "action": "Call GET /api/0/organizations/{organization_id_or_slug}/members/ to export the member list with roles and pending invitations for access review evidence",
+          "permissions_required": "Auth token with member:read scope",
+          "audit_note": "Periodic member exports support user access review controls alongside the SSO/2FA settings evidence",
+          "vendor_docs_url": "https://docs.sentry.io/api/organizations/list-an-organizations-members/"
+        },
+        {
+          "step": 5,
+          "action": "Schedule the collection script daily via cron or a CI/CD pipeline, reading the token from the secrets manager at runtime, with retries and alerting on failed runs",
+          "security_note": "Restrict pipeline logs so the Authorization header is never printed; failed-run alerts should go to the team that owns evidence collection"
+        },
+        {
+          "step": 6,
+          "action": "Validate each run: compare collected event counts against the stats_v2 baseline and flag drops below the expected volume",
+          "audit_note": "Sentry's organisation audit log endpoint is not part of the published API, so continue collecting audit log evidence via the console (L1 step 1) until Sentry publishes it"
+        }
+      ]
+    },
+    "L4": {
+      "title": "Sentry Managed Evidence Pipeline with Metrics",
+      "estimated_time": "4-6 hours initial setup",
+      "frequency": "continuous with daily reporting",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Enable webhooks on your internal integration (Organization Settings > Developer Settings > select the integration, set the webhook URL) and subscribe to issue and error events, including alert rule actions",
+          "permissions_required": "Owner or Manager",
+          "security_note": "Serve the webhook endpoint over TLS 1.2+ and verify the Sentry-Hook-Signature header on every delivery before trusting the payload",
+          "vendor_docs_url": "https://docs.sentry.io/organization/integrations/integration-platform/webhooks/"
+        },
+        {
+          "step": 2,
+          "action": "Enable Data Forwarding per project (Project Settings > Data Forwarding) to stream raw error events to Segment, Splunk or Amazon SQS for SIEM retention",
+          "permissions_required": "Admin or above; Data Forwarding is available on Business and Enterprise plans",
+          "audit_note": "SIEM-side retention with immutable storage strengthens the evidentiary value of forwarded events",
+          "vendor_docs_url": "https://docs.sentry.io/concepts/data-management/data-forwarding/"
+        },
+        {
+          "step": 3,
+          "action": "Reconcile received webhook and forwarded event counts daily against GET /api/0/organizations/{organization_id_or_slug}/stats_v2/ to measure collection completeness",
+          "permissions_required": "Auth token with org:read scope",
+          "audit_note": "Completeness metrics (received vs reported counts) are the core evidence that the pipeline captures everything Sentry emits",
+          "vendor_docs_url": "https://docs.sentry.io/api/organizations/retrieve-event-counts-for-an-organization-v2/"
+        },
+        {
+          "step": 4,
+          "action": "Implement automated quality checks on the pipeline: validate payload schema versions, detect gaps in the event time series and flag duplicate deliveries"
+        },
+        {
+          "step": 5,
+          "action": "Build a collection-health dashboard (events/day per project, delivery latency, coverage %, failed webhook deliveries) and alert when any metric breaches its threshold",
+          "audit_note": "The dashboard itself is continuous evidence of a managed collection process"
+        },
+        {
+          "step": 6,
+          "action": "Generate an automated quarterly collection-health report summarising completeness, gaps and remediation, and file it in the evidence repository"
+        }
+      ]
+    }
+  }
+}

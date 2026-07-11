@@ -1,5 +1,5 @@
 /**
- * VendorCompensatingControlsPanel -- Compensating controls display (DPSIA Enhancement).
+ * VendorCompensatingControlsPanel -- Compensating controls display (assessment risk treatments).
  *
  * Shows card-based layout: Gap -> Compensating Control -> Effectiveness Rating.
  */

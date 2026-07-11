@@ -1,0 +1,181 @@
+{
+  "slug": "qualys",
+  "name": "Qualys VMDR",
+  "vendor": "Qualys, Inc.",
+  "category": "Vulnerability Management",
+  "description": "Cloud-based vulnerability management, detection and response platform. Yields scan schedule and coverage evidence, vulnerability detection reports, scheduled report outputs, remediation ticket tracking and full detection datasets via the VM/PC API.",
+  "website": "https://www.qualys.com/apps/vulnerability-management-detection-response/",
+  "aliases": [
+    "qualys",
+    "qualys vmdr"
+  ],
+  "logo_hint": "qualys",
+  "system_type": "vulnerability_management",
+  "version": "1.0",
+  "recipes": {
+    "L1": {
+      "title": "Qualys VMDR Manual Evidence Collection",
+      "estimated_time": "20 minutes",
+      "frequency": "weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Log in to the Qualys Cloud Platform, open the VM/VMDR module and navigate to Scans > Schedules; screenshot the scheduled scan list showing scan titles, targets, option profiles and recurrence as scan-coverage evidence",
+          "permissions_required": "Reader or Scanner (view schedules for assigned assets); Manager sees all schedules",
+          "security_note": "Use a named individual or dedicated evidence-collection account, not a shared login",
+          "vendor_docs_url": "https://docs.qualys.com/en/vm/latest/schedules/schedules_basics.htm"
+        },
+        {
+          "step": 2,
+          "action": "Navigate to Scans > Scans and capture the recent scan history for the collection period, showing scan dates, targets and Finished status; this evidences that scheduled scans actually ran",
+          "permissions_required": "Reader or Scanner",
+          "audit_note": "Pair the schedule screenshot with completed scan history — a schedule alone does not prove scans executed",
+          "vendor_docs_url": "https://docs.qualys.com/en/vm/latest/scans/vm_scans_lp.htm"
+        },
+        {
+          "step": 3,
+          "action": "Run a vulnerability detection report: go to Reports, select a scan report template (e.g. Technical Report) filtered to the in-scope asset groups or tags, choose CSV or PDF output, then download the completed report from the report list",
+          "permissions_required": "Reader or Scanner (run reports); Manager or Unit Manager for all assets",
+          "audit_note": "Save the report with a date-stamped filename; Qualys stamps the report with generation date and the data time range",
+          "vendor_docs_url": "https://docs.qualys.com/en/vmdr/latest/threat/save_download_reports.htm"
+        },
+        {
+          "step": 4,
+          "action": "Navigate to Remediation > Tickets and screenshot or export the ticket summary showing open, overdue, resolved and closed remediation tickets as remediation-tracking evidence",
+          "permissions_required": "Reader (view tickets for assigned assets); Manager for all tickets",
+          "audit_note": "Ticket state changes (new, active, fixed, re-opened) are updated automatically from scan results, giving a vendor-maintained audit trail of remediation progress",
+          "vendor_docs_url": "https://docs.qualys.com/en/vm/latest/remediation/remediation_basics.htm"
+        },
+        {
+          "step": 5,
+          "action": "Upload the report exports and screenshots to the evidence repository with the evidence ID reference",
+          "security_note": "Vulnerability reports list exploitable weaknesses per host — restrict access to authorised personnel and check before sharing outside the security team"
+        }
+      ]
+    },
+    "L2": {
+      "title": "Qualys VMDR Scheduled Reports",
+      "estimated_time": "45 minutes (setup), then automated",
+      "frequency": "automated weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Create or confirm the report templates you need (e.g. a Technical Report scoped to in-scope asset tags and severity levels) so the scheduled runs produce consistent, comparable output each period",
+          "permissions_required": "Manager or Unit Manager (create templates); Scanner where template permissions are granted",
+          "vendor_docs_url": "https://docs.qualys.com/en/vmdr/latest/threat/save_download_reports.htm"
+        },
+        {
+          "step": 2,
+          "action": "Navigate to Reports > Schedules > New and create a scheduled report from the template, setting the recurrence (e.g. weekly), output format (CSV or PDF) and report title convention",
+          "permissions_required": "Manager or Unit Manager",
+          "audit_note": "A consistent weekly scheduled report gives a regular point-in-time evidence artefact with vendor-applied timestamps",
+          "vendor_docs_url": "https://docs.qualys.com/en/vm/latest/reports/schedules/schedule_report.htm"
+        },
+        {
+          "step": 3,
+          "action": "Schedule a monthly Executive Remediation Report (or Tickets per Vulnerability report) to capture remediation-tracking trends alongside the weekly detection report",
+          "permissions_required": "Manager or Unit Manager",
+          "audit_note": "Remediation trend reports evidence that findings are being worked to closure, not merely detected",
+          "vendor_docs_url": "https://docs.qualys.com/en/vm/latest/reports/remediation_reports/win_executive_remediation_report.htm"
+        },
+        {
+          "step": 4,
+          "action": "Enable report notifications so completion emails go to a restricted, monitored compliance mailbox, and download each generated report from Reports into the evidence repository on receipt",
+          "security_note": "Completed reports sit in the Qualys report list subject to your account's report storage quota — download promptly rather than relying on in-platform retention",
+          "vendor_docs_url": "https://docs.qualys.com/en/vm/latest/reports/schedules/schedule_report.htm"
+        },
+        {
+          "step": 5,
+          "action": "Set a recurring calendar check to catch missed scheduled runs and record any gaps with the reason",
+          "audit_note": "Unexplained gaps in a scheduled evidence series weaken the audit trail"
+        }
+      ]
+    },
+    "L3": {
+      "title": "Qualys VM/PC API Automated Collection",
+      "estimated_time": "2-4 hours initial setup",
+      "frequency": "automated daily",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Create a dedicated least-privilege API user: as a Manager, go to Users > New > User, assign the Reader role scoped to the in-scope asset groups and enable the API access permission on the account",
+          "permissions_required": "Manager (create users)",
+          "security_note": "Store the credentials in a secrets manager, never in scripts or pipeline variables, and rotate them on a defined schedule",
+          "vendor_docs_url": "https://docs.qualys.com/en/vm/latest/user_accounts/setting_user_permissions.htm"
+        },
+        {
+          "step": 2,
+          "action": "Authenticate to your regional Qualys API server (e.g. https://qualysapi.qualys.com or your platform's qualysapi.<platform>.apps.qualys.com URL) using HTTPS basic or session-based authentication; every request must include the X-Requested-With header",
+          "permissions_required": "API-enabled user account",
+          "security_note": "The X-Requested-With header is mandatory CSRF protection; prefer session-based auth for batch runs and always log out to release the session",
+          "vendor_docs_url": "https://docs.qualys.com/en/vm/api/assets/get_started/authentication.htm"
+        },
+        {
+          "step": 3,
+          "action": "Pull host-based detection data with GET/POST https://<qualys_api_server>/api/2.0/fo/asset/host/vm/detection/?action=list, using vm_processed_after for incremental collection and truncation_limit to page through large result sets",
+          "permissions_required": "Reader with API access to the target asset groups",
+          "audit_note": "The detection list returns per-host QID findings with first/last found timestamps — the authoritative dataset behind every Qualys report; incremental pulls inside a daily schedule avoid gaps",
+          "vendor_docs_url": "https://docs.qualys.com/en/vm/api/assets/host_lists/host_detection.htm"
+        },
+        {
+          "step": 4,
+          "action": "Automate report generation: POST https://<qualys_api_server>/api/2.0/fo/report/?action=launch with template_id and output_format=csv, poll action=list until the report state is Finished, then download it with action=fetch&id=<report_id>",
+          "permissions_required": "Reader or Scanner (own reports); Manager fetches any report",
+          "audit_note": "Launched reports run in the background without timing out; fetch and archive the output before the account's report storage quota recycles it",
+          "vendor_docs_url": "https://docs.qualys.com/en/vm/api/reports/reports/launch_report.htm"
+        },
+        {
+          "step": 5,
+          "action": "Collect coverage and remediation evidence: list scan schedules with GET https://<qualys_api_server>/api/2.0/fo/schedule/scan/?action=list and export remediation tickets via the ticket list API (https://<qualys_api_server>/msp/ticket_list.php)",
+          "permissions_required": "Reader (view); Manager for account-wide schedules and tickets",
+          "audit_note": "The schedule list evidences that recurring scans remain configured and active; the ticket export evidences remediation workflow operation",
+          "vendor_docs_url": "https://docs.qualys.com/en/vm/api/scans/vm_schedules/list_scan_schedules.htm"
+        },
+        {
+          "step": 6,
+          "action": "Schedule the collection script daily via cron or a CI/CD pipeline with retries and alerting on failure, and validate each run: confirm outputs are non-empty and compare host and detection counts against the previous run's baseline",
+          "security_note": "Read credentials from the secrets manager at runtime and ensure pipeline logs never print the Authorization header or session cookie",
+          "audit_note": "Run-over-run count validation provides assurance of collection completeness"
+        }
+      ]
+    },
+    "L4": {
+      "title": "Qualys Managed Evidence Pipeline with Metrics",
+      "estimated_time": "4-6 hours initial setup",
+      "frequency": "continuous with daily reporting",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Qualys VMDR has no native outbound webhooks for detections — the closest real capability is continuous incremental polling: run the Host List Detection API on a frequent schedule (e.g. hourly) with vm_processed_after set to the last successful collection timestamp",
+          "permissions_required": "API-enabled Reader service account",
+          "audit_note": "Timestamp-based incremental polling gives near-continuous collection with no missed detections, provided the watermark is only advanced after a verified successful run",
+          "vendor_docs_url": "https://docs.qualys.com/en/vm/api/assets/host_lists/Host_List_Detection_-_Use_Cases.htm"
+        },
+        {
+          "step": 2,
+          "action": "Deploy the Qualys Technology Add-on (TA) for Splunk with the host_detection data input enabled, streaming detection and KnowledgeBase data continuously into your SIEM for indexed, long-term retention",
+          "permissions_required": "Manager (Qualys API account for the TA); Splunk administrator",
+          "security_note": "Configure the TA with the dedicated read-only API account and store its credentials in Splunk's encrypted credential store",
+          "audit_note": "SIEM retention gives tamper-evident storage independent of Qualys report storage quotas",
+          "vendor_docs_url": "https://docs.qualys.com/en/integration/splunk-ta/get_started/get_started.htm"
+        },
+        {
+          "step": 3,
+          "action": "Compute coverage metrics daily: reconcile hosts returned by the Host List API (GET /api/2.0/fo/asset/host/?action=list) against the detection dataset and your asset inventory, flagging in-scope hosts with no recent scan (stale last-scan datetime)",
+          "permissions_required": "API-enabled Reader service account",
+          "audit_note": "Inventory-versus-detection reconciliation is the core completeness metric — it evidences that scanning covers all in-scope assets, not merely that scans run",
+          "vendor_docs_url": "https://docs.qualys.com/en/vm/api/assets/host_lists/host_list.htm"
+        },
+        {
+          "step": 4,
+          "action": "Run automated quality checks and a collection-health dashboard: gaps in the incremental polling time series, hosts exceeding the scan-frequency SLA, remediation tickets exceeding age thresholds, and alerts on any collection failure or threshold breach",
+          "audit_note": "The dashboard serves as continuous evidence of a managed collection process"
+        },
+        {
+          "step": 5,
+          "action": "Generate an automated quarterly collection-health report summarising scan coverage, polling gaps, SLA breaches and remediation trends, and file it in the evidence repository"
+        }
+      ]
+    }
+  }
+}

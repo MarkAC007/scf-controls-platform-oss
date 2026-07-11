@@ -1,0 +1,168 @@
+{
+  "slug": "zendesk",
+  "name": "Zendesk",
+  "vendor": "Zendesk, Inc.",
+  "category": "Customer Support / ITSM",
+  "description": "Customer support and ticketing platform; yields ticket SLA and resolution evidence via Explore reporting, account change evidence via the audit log, and access-control evidence via agent roles and security settings.",
+  "website": "https://www.zendesk.com",
+  "aliases": [
+    "zendesk",
+    "zendesk support"
+  ],
+  "logo_hint": "zendesk",
+  "system_type": "ticketing",
+  "version": "1.0",
+  "recipes": {
+    "L1": {
+      "title": "Zendesk Manual Evidence Collection",
+      "estimated_time": "20 minutes",
+      "frequency": "weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Sign in to Zendesk, open Explore from the product tray, and open the dashboard covering ticket SLA attainment and resolution metrics. Set the time filter to the evidence period, then export the relevant reports (open a report, click the arrow next to Save and select Export, choosing CSV or PDF)",
+          "permissions_required": "Agent with Explore Viewer access (Explore Editor or Admin to modify reports)",
+          "vendor_docs_url": "https://support.zendesk.com/hc/en-us/articles/4483481898266-Exporting-dashboard-tabs-and-reports"
+        },
+        {
+          "step": 2,
+          "action": "In Admin Center, click Account in the sidebar and select Logs > Audit log. Filter by the evidence period (Start date/End date) and, if needed, by Actor or Activity type, then click Export to receive the filtered CSV by email",
+          "permissions_required": "Administrator (audit log requires an Enterprise plan or above)",
+          "audit_note": "Audit log entries are generated and timestamped by Zendesk and cannot be edited by users, giving strong evidence of account and configuration changes; the export is emailed to the requesting admin's primary address",
+          "vendor_docs_url": "https://support.zendesk.com/hc/en-us/articles/4408828001434-Viewing-the-audit-log-for-changes-to-your-account"
+        },
+        {
+          "step": 3,
+          "action": "In Admin Center, go to People > Team > Roles and capture the list of roles and the agents assigned to each (screenshot or export), as evidence of least-privilege access assignment",
+          "permissions_required": "Administrator (custom roles require an Enterprise plan)",
+          "vendor_docs_url": "https://support.zendesk.com/hc/en-us/articles/4408882153882-Creating-custom-roles-and-assigning-agents"
+        },
+        {
+          "step": 4,
+          "action": "In Admin Center, go to Account > Security and capture the team member authentication, end user authentication and Advanced (two-factor authentication, session settings) pages as screenshots",
+          "permissions_required": "Administrator",
+          "audit_note": "Include the browser URL bar and system clock in screenshots so the capture date and instance are evident",
+          "vendor_docs_url": "https://support.zendesk.com/hc/en-us/articles/4408846853274-Managing-security-settings-in-Admin-Center"
+        },
+        {
+          "step": 5,
+          "action": "Upload the Explore exports, audit log CSV and screenshots to the evidence repository with descriptive filenames, the collection date and evidence ID references"
+        }
+      ]
+    },
+    "L2": {
+      "title": "Zendesk Scheduled Explore Dashboard Deliveries",
+      "estimated_time": "1 hour initial setup",
+      "frequency": "weekly automated",
+      "steps": [
+        {
+          "step": 1,
+          "action": "In Explore, build or clone a dashboard containing the reports needed as recurring evidence: SLA attainment, resolution times, first reply time and ticket backlog for the collection period",
+          "permissions_required": "Explore Editor or Explore Admin role",
+          "vendor_docs_url": "https://support.zendesk.com/hc/en-us/articles/4408829048602-Working-with-reports"
+        },
+        {
+          "step": 2,
+          "action": "Share the dashboard, then click Share > Schedule delivery. Set a weekly frequency and select CSV as the delivery format (each report arrives as a .csv, zipped)",
+          "permissions_required": "Explore Editor or Explore Admin role",
+          "audit_note": "Scheduled deliveries have a 25 MB email attachment limit, and a schedule is automatically suspended after five consecutive failed exports — monitor for missing deliveries so evidence gaps are caught",
+          "vendor_docs_url": "https://support.zendesk.com/hc/en-us/articles/4408843602714-Scheduling-dashboard-deliveries"
+        },
+        {
+          "step": 3,
+          "action": "Deliver the schedule to a monitored, access-controlled evidence mailbox or distribution address, and file each delivery into the evidence repository on receipt",
+          "security_note": "Restrict access to the evidence mailbox — the exports contain ticket data that may include personal information"
+        },
+        {
+          "step": 4,
+          "action": "For dataset-level evidence, use Explore dataset exports (Dataset exports icon in the Explore sidebar) to produce recurring CSV extracts of the underlying ticket data for BI or archival use",
+          "permissions_required": "Explore Admin role",
+          "vendor_docs_url": "https://support.zendesk.com/hc/en-us/articles/6037992005914-Exporting-datasets-from-Explore"
+        },
+        {
+          "step": 5,
+          "action": "The audit log has no built-in scheduled export, so retain a monthly manual CSV export from Admin Center > Account > Logs > Audit log until API collection (L3) is in place",
+          "permissions_required": "Administrator",
+          "vendor_docs_url": "https://support.zendesk.com/hc/en-us/articles/4408828001434-Viewing-the-audit-log-for-changes-to-your-account"
+        }
+      ]
+    },
+    "L3": {
+      "title": "Zendesk API-Driven Evidence Collection",
+      "estimated_time": "3-4 hours initial setup",
+      "frequency": "automated daily",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Create an API credential: in Admin Center, go to Apps and integrations > APIs > API tokens and click Add API token (administrator only), or configure an OAuth client for scoped, short-lived access",
+          "permissions_required": "Administrator",
+          "security_note": "The token value is shown only once and grants API access with the privileges of the authenticating user — pair it with a dedicated integration user, store it in a secrets manager, never in source control, and rotate it on a defined schedule",
+          "vendor_docs_url": "https://support.zendesk.com/hc/en-us/articles/4408889192858-Managing-API-token-access-to-the-Zendesk-API"
+        },
+        {
+          "step": 2,
+          "action": "Schedule a script that pulls ticket evidence using the cursor-based Incremental Ticket Export API (GET /api/v2/incremental/tickets/cursor.json), persisting the after_cursor between runs so every created or updated ticket is captured exactly once",
+          "audit_note": "Cursor-based export is Zendesk's recommended method and avoids the skipped-record gaps possible with other approaches; results deliberately exclude the most recent minute to prevent race conditions",
+          "vendor_docs_url": "https://developer.zendesk.com/api-reference/ticketing/ticket-management/incremental_exports/"
+        },
+        {
+          "step": 3,
+          "action": "Collect account change evidence with the Audit Logs API (GET /api/v2/audit_logs.json), filtering by created_at for the collection window",
+          "audit_note": "The Audit Logs API is rate limited to one request per minute per account — schedule accordingly and page through results rather than issuing parallel requests",
+          "vendor_docs_url": "https://developer.zendesk.com/api-reference/ticketing/account-configuration/audit_logs/"
+        },
+        {
+          "step": 4,
+          "action": "Implement error handling: honour the Retry-After header on HTTP 429 responses, retry transient failures with backoff, and alert the compliance team when a collection run fails or returns no data",
+          "vendor_docs_url": "https://developer.zendesk.com/api-reference/introduction/rate-limits/"
+        },
+        {
+          "step": 5,
+          "action": "Validate each run before filing: check record counts against the previous run and against Explore dashboard totals, verify the cursor advanced, and confirm the JSON parses against the expected schema",
+          "audit_note": "Validation output stored alongside the artefacts demonstrates collection completeness to assessors"
+        },
+        {
+          "step": 6,
+          "action": "Write the timestamped JSON/CSV artefacts to the evidence repository with run metadata (collection window, cursor values, record counts)"
+        }
+      ]
+    },
+    "L4": {
+      "title": "Zendesk Continuous Evidence Pipeline with Completeness Monitoring",
+      "estimated_time": "1-2 days initial setup",
+      "frequency": "continuous with monthly reporting",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Create webhooks in Admin Center (Apps and integrations > Webhooks > Webhooks) subscribed to ticket, user and organisation events, or connected to triggers/automations, delivering events to your evidence collection endpoint in near real time",
+          "permissions_required": "Administrator, or an agent in a custom role with permission to manage webhooks",
+          "security_note": "Verify each delivery using the webhook signing secret (X-Zendesk-Webhook-Signature header) and use HTTPS endpoints with authentication so forged events cannot enter the evidence store",
+          "vendor_docs_url": "https://developer.zendesk.com/documentation/webhooks/creating-and-monitoring-webhooks/"
+        },
+        {
+          "step": 2,
+          "action": "Reconcile the webhook stream against a daily cursor-based Incremental Ticket Export sweep — webhooks can be missed during endpoint outages, so the incremental export remains the completeness baseline",
+          "audit_note": "Publishing a reconciliation metric (events received vs records exported) provides direct evidence that the collection is complete, with no gaps",
+          "vendor_docs_url": "https://developer.zendesk.com/api-reference/ticketing/ticket-management/incremental_exports/"
+        },
+        {
+          "step": 3,
+          "action": "Feed the Audit Logs API output into the organisation's SIEM or log platform on a scheduled pull, so account configuration changes are monitored continuously and retained per the evidence retention policy",
+          "vendor_docs_url": "https://developer.zendesk.com/api-reference/ticketing/account-configuration/audit_logs/"
+        },
+        {
+          "step": 4,
+          "action": "Run automated quality checks on collected data: flag tickets missing SLA policy data, breached SLAs without linked follow-up, and audit log actors outside the approved administrator list"
+        },
+        {
+          "step": 5,
+          "action": "Alert on collection gaps: no webhook events received within an expected interval, incremental export cursor not advancing, or scheduled Explore deliveries suspended after repeated failures"
+        },
+        {
+          "step": 6,
+          "action": "Generate a monthly evidence package automatically: SLA and resolution trends, audit log summary of account changes, role/permission change history and the completeness/reconciliation metrics for the period"
+        }
+      ]
+    }
+  }
+}

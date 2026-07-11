@@ -1,0 +1,177 @@
+{
+  "slug": "notion",
+  "name": "Notion",
+  "vendor": "Notion Labs, Inc.",
+  "category": "Knowledge Management",
+  "description": "Notion's cloud workspace for documents and knowledge management; yields workspace security-setting evidence, member and guest reports, the Enterprise-plan audit log and SCIM-based membership listings.",
+  "website": "https://www.notion.com",
+  "aliases": [
+    "notion",
+    "notion workspace"
+  ],
+  "logo_hint": "notion",
+  "system_type": "document_management",
+  "version": "1.0",
+  "recipes": {
+    "L1": {
+      "title": "Notion Manual Evidence Collection",
+      "estimated_time": "20 minutes",
+      "frequency": "weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "In the Notion sidebar select Settings, open the Security tab and take dated screenshots of the sharing controls — 'Disable guests', 'Disable publishing sites, forms and public links', 'Disable export' and 'Disable moving or duplicating pages to other workspaces'",
+          "permissions_required": "Workspace owner",
+          "audit_note": "Several of these toggles are plan-gated (the full set requires Business or Enterprise); note the workspace plan in the evidence record, and treat the dated screenshot as the primary record because these settings have no export",
+          "vendor_docs_url": "https://www.notion.com/help/sharing-and-permissions"
+        },
+        {
+          "step": 2,
+          "action": "Go to Settings > People and screenshot the Members tab (each person's role: Workspace owner, Membership admin or Member) and the Guests tab, which lists every guest together with the pages they can access",
+          "permissions_required": "Workspace owner or Membership admin",
+          "audit_note": "The Guests tab is the only complete inventory of external collaborators — the public API does not return guests, so capture it manually",
+          "vendor_docs_url": "https://www.notion.com/help/add-members-admins-guests-and-groups"
+        },
+        {
+          "step": 3,
+          "action": "On the Enterprise plan, go to Settings > Audit log, filter by date, person or event type, and select Export to download the filtered events as CSV (the log shows up to 365 days of history); on Free, Plus or Business plans there is no audit log, so record that limitation against the evidence ID",
+          "permissions_required": "Workspace owner (Enterprise plan only)",
+          "audit_note": "Exports include events up to 2 hours before the export time; the 365-day lookback means a weekly capture cadence comfortably avoids gaps",
+          "vendor_docs_url": "https://www.notion.com/help/audit-log"
+        },
+        {
+          "step": 4,
+          "action": "For policy review cadence evidence, open each in-scope policy page, select More actions (•••) > Version history and screenshot the edit history showing editors and dates",
+          "permissions_required": "Full access to the policy pages",
+          "audit_note": "Version history retention is plan-gated — 7 days on Free, 30 on Plus, 90 on Business and unlimited on Enterprise — so screenshots must be captured within the retention window on lower plans",
+          "vendor_docs_url": "https://www.notion.com/help/duplicate-delete-and-restore-content"
+        },
+        {
+          "step": 5,
+          "action": "Upload the screenshots and CSV exports to the evidence repository with the evidence ID reference",
+          "security_note": "Ensure no page content containing sensitive data is visible in screenshots, and restrict access to exports containing member email addresses"
+        }
+      ]
+    },
+    "L2": {
+      "title": "Notion Recurring Export Cadence",
+      "estimated_time": "45 minutes initial setup, then 15 minutes per run",
+      "frequency": "monthly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Notion has no natively scheduled report delivery, so anchor the cadence on a recurring monthly task (a recurring Notion database entry works well) and record each run against the evidence ID",
+          "audit_note": "Because delivery is not automated, the completed recurring task itself is the evidence that the cadence operated"
+        },
+        {
+          "step": 2,
+          "action": "On the Enterprise plan, go to Settings > Audit log each month, filter to the previous calendar month and select Export to download the CSV",
+          "permissions_required": "Workspace owner (Enterprise plan only)",
+          "audit_note": "The 365-day lookback means monthly exports build a continuous archive well before the window closes",
+          "vendor_docs_url": "https://www.notion.com/help/audit-log"
+        },
+        {
+          "step": 3,
+          "action": "On the Enterprise plan, go to Settings > Analytics, open the Members tab and export the member activity data to CSV for the same period",
+          "permissions_required": "Workspace owner (Enterprise plan only)",
+          "audit_note": "Regular exports preserve historical activity data that supports leaver checks and dormant-account reviews",
+          "vendor_docs_url": "https://www.notion.com/help/workspace-analytics"
+        },
+        {
+          "step": 4,
+          "action": "On Free, Plus or Business plans, substitute dated screenshots of Settings > Security and Settings > People (Members and Guests tabs) at the same monthly cadence, and note the plan limitation in the evidence record",
+          "permissions_required": "Workspace owner",
+          "vendor_docs_url": "https://www.notion.com/help/sharing-and-permissions"
+        },
+        {
+          "step": 5,
+          "action": "File each export in the evidence repository with restricted access",
+          "security_note": "Audit log and analytics exports contain member email addresses and activity detail; limit access to the compliance team"
+        }
+      ]
+    },
+    "L3": {
+      "title": "Notion API-Driven Evidence Automation",
+      "estimated_time": "2-4 hours initial setup",
+      "frequency": "automated daily",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Create an internal integration at www.notion.so/profile/integrations with read-only content capabilities plus the user information capability, and have a workspace owner approve and connect it to the workspace",
+          "permissions_required": "Workspace owner (to create and connect the integration)",
+          "security_note": "Store the integration secret in a secrets manager — grant only the read capabilities the collector needs, and do not reuse the secret across environments",
+          "vendor_docs_url": "https://developers.notion.com/docs/create-a-notion-integration"
+        },
+        {
+          "step": 2,
+          "action": "Run a daily member inventory: GET https://api.notion.com/v1/users with a Bearer token and Notion-Version header, following start_cursor/next_cursor pagination; note honestly that this returns members and bots only — guests are excluded, so it cannot replace the guest review",
+          "permissions_required": "Integration with user information capability",
+          "audit_note": "Because guests never appear in /v1/users, pair this pull with the manual Guests tab capture or SCIM to keep external-access evidence complete",
+          "vendor_docs_url": "https://developers.notion.com/reference/get-users"
+        },
+        {
+          "step": 3,
+          "action": "On the Enterprise plan, generate a SCIM token at Settings > Identity & provisioning > SCIM configuration, then pull authoritative membership daily: GET https://api.notion.com/scim/v2/Users and GET https://api.notion.com/scim/v2/Groups with Bearer authentication",
+          "permissions_required": "Workspace owner (Enterprise plan; token generation)",
+          "security_note": "SCIM tokens are tied to the workspace owner who generated them and are revoked if that owner leaves or is downgraded — generate the token from a service account owner and store it in a secrets manager",
+          "vendor_docs_url": "https://www.notion.com/help/provision-users-and-groups-with-scim"
+        },
+        {
+          "step": 4,
+          "action": "Record the audit gap honestly: the public Notion API exposes no audit log endpoint, so programmatic audit event collection is only possible via the Enterprise SIEM stream (see L4) or the manual CSV export — keep the monthly export task running alongside the API pulls",
+          "audit_note": "Documenting a known collection gap and its compensating control is stronger evidence than silently omitting it",
+          "vendor_docs_url": "https://developers.notion.com/reference/intro"
+        },
+        {
+          "step": 5,
+          "action": "Add error handling and validation: respect the API rate limit (an average of three requests per second), follow next_cursor pagination to completion, alert on 401/403 responses or empty result sets, and store outputs with run timestamps and checksums",
+          "audit_note": "Recording run metadata and checksums makes each collected file independently verifiable",
+          "vendor_docs_url": "https://developers.notion.com/reference/request-limits"
+        }
+      ]
+    },
+    "L4": {
+      "title": "Notion Continuous Evidence Pipeline",
+      "estimated_time": "4-6 hours initial setup",
+      "frequency": "continuous with weekly reporting",
+      "steps": [
+        {
+          "step": 1,
+          "action": "On the Enterprise plan, stream audit events continuously: go to Settings > Connections, select Custom SIEM integration, enter your collector's webhook URL and select Connect — all audit log events are then delivered in real time as JSON, with managed connectors also available for Splunk, Sumo Logic, Panther and Datadog",
+          "permissions_required": "Workspace owner (Enterprise plan only)",
+          "security_note": "Use an HTTPS endpoint, restrict who can read the stream at the collector, and treat the payloads as sensitive — they include member identities and page activity",
+          "audit_note": "The SIEM stream is Enterprise-only; on lower plans there is no continuous audit feed, so the closest real alternative is the L2/L3 export cadence",
+          "vendor_docs_url": "https://www.notion.com/help/add-security-and-compliance-integrations"
+        },
+        {
+          "step": 2,
+          "action": "Map the ingested stream against Notion's published audit log event catalogue (page, workspace, account, teamspace, form and data source events) and confirm the event types your controls rely on actually arrive",
+          "vendor_docs_url": "https://developers.notion.com/compliance/audit-log-events"
+        },
+        {
+          "step": 3,
+          "action": "Reconcile membership daily: compare SCIM Users/Groups pulls against member-added and member-removed events in the audit stream, and alert on discrepancies such as members present in SCIM but missing join events",
+          "permissions_required": "Workspace owner (SCIM token holder)",
+          "vendor_docs_url": "https://www.notion.com/help/provision-users-and-groups-with-scim"
+        },
+        {
+          "step": 4,
+          "action": "Measure completeness: reconcile SIEM-received event counts against a monthly audit log CSV export for the same window, and alert on gaps or webhook delivery failures",
+          "audit_note": "Completeness metrics from reconciliation are what turn continuous collection into audit-grade evidence",
+          "vendor_docs_url": "https://www.notion.com/help/audit-log"
+        },
+        {
+          "step": 5,
+          "action": "Keep the human checks that automation cannot cover: workspace security settings and the guest inventory have no API, so retain a scheduled review of Settings > Security and the Guests tab and track it as a recurring control task",
+          "permissions_required": "Workspace owner",
+          "vendor_docs_url": "https://www.notion.com/help/sharing-and-permissions"
+        },
+        {
+          "step": 6,
+          "action": "Quarterly, rotate the integration secret and SCIM token, review the workspace owner list, and publish a weekly dashboard covering guest count trend, publicly published pages and audit stream health",
+          "security_note": "SCIM tokens survive until revoked and are invalidated when their owner leaves — rotation tied to the quarterly access review prevents both stale and silently dead credentials"
+        }
+      ]
+    }
+  }
+}

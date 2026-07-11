@@ -34,6 +34,7 @@ import RiskDashboard from './components/RiskDashboard'
 import VendorManagement from './components/VendorManagement'
 import CapabilityPosture from './components/CapabilityPosture'
 import RiskProfileSettings from './components/RiskProfileSettings'
+import AppearanceSettings from './components/AppearanceSettings'
 import ApiKeyManagement from './components/ApiKeyManagement'
 import WebhookManagement from './components/WebhookManagement'
 import BackupRestore from './components/BackupRestore'
@@ -582,6 +583,9 @@ function AppContent() {
           )}
           {activeTab === 'settings' && scopingData && (
             <>
+              <AppearanceSettings
+                organizationId={scopingData.organizationId!}
+              />
               <RiskProfileSettings
                 organizationId={scopingData.organizationId!}
               />

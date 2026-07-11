@@ -1,0 +1,164 @@
+{
+  "slug": "sentinelone",
+  "name": "SentinelOne Singularity",
+  "vendor": "SentinelOne, Inc.",
+  "category": "Endpoint Detection & Response",
+  "description": "AI-powered EPP/EDR platform (Singularity). Yields agent deployment and coverage reports, threat detection exports, protection policy configuration, console activity logs, and streamed endpoint telemetry via Cloud Funnel and the Singularity Data Lake.",
+  "website": "https://www.sentinelone.com",
+  "aliases": [
+    "sentinelone",
+    "sentinel one",
+    "s1",
+    "singularity"
+  ],
+  "logo_hint": "sentinelone",
+  "system_type": "security_tool",
+  "version": "1.0",
+  "recipes": {
+    "L1": {
+      "title": "SentinelOne Manual Evidence Collection",
+      "estimated_time": "15 minutes",
+      "frequency": "weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Sign in to the SentinelOne Management Console (https://<your-tenant>.sentinelone.net) with a read-only account",
+          "permissions_required": "Viewer role (scoped to the relevant account or sites)",
+          "security_note": "Use the least-privilege Viewer role for evidence collection; do not use an Admin login for read-only tasks. Full administration guides are gated behind the customer Knowledge Base at community.sentinelone.com (login required).",
+          "vendor_docs_url": "https://www.sentinelone.com/support/"
+        },
+        {
+          "step": 2,
+          "action": "Navigate to Sentinels and review the endpoint list; filter by Agent Health Status and Last Active date, then use Actions > Export to download the agent inventory as CSV",
+          "audit_note": "The agent inventory shows agent version, last active timestamp, network status and disabled/decommissioned state — the primary evidence of endpoint protection coverage",
+          "vendor_docs_url": "https://www.sentinelone.com/platform/endpoint-security/"
+        },
+        {
+          "step": 3,
+          "action": "Navigate to Incidents (Threats) and set the time filter to the evidence collection period, then export the threat list as CSV",
+          "audit_note": "Threat records include the AI verdict, analyst verdict, mitigation status and MITRE ATT&CK technique mapping, evidencing detection and response controls"
+        },
+        {
+          "step": 4,
+          "action": "Navigate to Sentinels > Policy for each site or group in scope and capture the protection policy settings (Detect vs Protect mode, mitigation actions, agent tamper protection) as a screenshot or PDF print",
+          "permissions_required": "Viewer role",
+          "audit_note": "Policy mode evidence demonstrates that prevention (Protect mode) rather than detection-only is enforced on production endpoints"
+        },
+        {
+          "step": 5,
+          "action": "Navigate to Activity, filter by activity type (for example user management and policy changes), and export the activity log as CSV",
+          "audit_note": "The Activity log is the console's audit trail; it records administrative actions with actor and timestamp"
+        },
+        {
+          "step": 6,
+          "action": "Upload all exports and screenshots to the evidence repository with evidence ID references and the collection date"
+        }
+      ]
+    },
+    "L2": {
+      "title": "SentinelOne Scheduled Insight Report Collection",
+      "estimated_time": "45 minutes initial setup",
+      "frequency": "weekly automated",
+      "steps": [
+        {
+          "step": 1,
+          "action": "In the Management Console, navigate to Reports and create Insight Reports covering threats, mitigation status and endpoint (Sentinel) inventory for the sites in scope",
+          "permissions_required": "Admin role on the relevant scope",
+          "security_note": "Report creation requires elevated rights; the detailed report configuration guide is gated behind the customer Knowledge Base at community.sentinelone.com (login required)",
+          "vendor_docs_url": "https://www.sentinelone.com/support/"
+        },
+        {
+          "step": 2,
+          "action": "Set each report to a recurring schedule (weekly or monthly) and add the evidence collection mailbox as an email recipient",
+          "audit_note": "Vendor-generated scheduled reports carry the generation timestamp and reporting period, strengthening evidentiary value over ad hoc screenshots"
+        },
+        {
+          "step": 3,
+          "action": "Scope reports to the specific account, sites or groups that match the audit boundary so coverage figures reconcile with the asset inventory",
+          "audit_note": "Mis-scoped reports (for example a single site in a multi-site tenant) understate or overstate coverage and undermine the evidence"
+        },
+        {
+          "step": 4,
+          "action": "File the delivered report PDFs in the evidence repository per period, and record any weeks where a report failed to arrive",
+          "audit_note": "A continuous, gap-free series of periodic reports demonstrates sustained monitoring rather than point-in-time compliance"
+        }
+      ]
+    },
+    "L3": {
+      "title": "SentinelOne Management API-Driven Collection",
+      "estimated_time": "2-4 hours initial setup",
+      "frequency": "automated daily",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Create a dedicated Service User: navigate to Settings > Users > Service Users > Actions > Create New Service User, assign the Viewer role scoped to the sites in scope, and generate its API token",
+          "permissions_required": "Admin role (to create service users)",
+          "security_note": "Store the API token in a secrets manager, never in code or config files. Service user tokens have a fixed expiry set at creation — record the expiry date and rotate before it lapses. Prefer a Service User over a personal user token so collection does not break when staff leave.",
+          "vendor_docs_url": "https://www.sentinelone.com/support/"
+        },
+        {
+          "step": 2,
+          "action": "Implement a daily job calling GET https://<your-tenant>.sentinelone.net/web/api/v2.1/agents with the header 'Authorization: ApiToken <token>' to pull the full agent inventory, following cursor pagination until exhausted",
+          "audit_note": "Persist the raw JSON with a collection timestamp; agent records include agent version, last active time and infection status for coverage evidence",
+          "vendor_docs_url": "https://www.sentinelone.com/platform/endpoint-security/"
+        },
+        {
+          "step": 3,
+          "action": "Extend the job to call GET /web/api/v2.1/threats (filtered by createdAt range) for detections and GET /web/api/v2.1/activities for the console audit trail; the full interactive API reference is served from your console at https://<your-tenant>.sentinelone.net/api-doc (login required)",
+          "security_note": "The complete endpoint reference is gated behind the console API documentation and the customer Knowledge Base; publicly reachable SentinelOne pages describe the platform but not the full API schema",
+          "vendor_docs_url": "https://www.sentinelone.com/support/"
+        },
+        {
+          "step": 4,
+          "action": "Validate each collection run: reconcile the API agent count against the console dashboard figure and alert on discrepancies above a set threshold",
+          "audit_note": "Automated reconciliation evidences data completeness and detects silently broken collection"
+        },
+        {
+          "step": 5,
+          "action": "Add error handling: retry with backoff on HTTP 429 rate-limit responses, and alert the compliance team on authentication failures or token expiry so collection gaps are caught within a day",
+          "security_note": "Alert on repeated 401 responses — an expired or revoked service user token silently halts evidence collection"
+        }
+      ]
+    },
+    "L4": {
+      "title": "SentinelOne Managed Endpoint Evidence Pipeline",
+      "estimated_time": "4-8 hours initial setup (plus Cloud Funnel licensing)",
+      "frequency": "continuous with weekly reporting",
+      "steps": [
+        {
+          "step": 1,
+          "action": "License and enable Singularity Cloud Funnel to stream enriched EDR/XDR telemetry continuously to an organisation-owned Amazon S3 or Google Cloud Storage bucket",
+          "permissions_required": "Admin role at account level (and an active Cloud Funnel module licence)",
+          "security_note": "Restrict the destination bucket with least-privilege IAM policies and enable bucket-level encryption and access logging",
+          "audit_note": "Cloud Funnel delivers compressed JSON telemetry into storage you control, providing an immutable, retained replica of endpoint events independent of console retention limits",
+          "vendor_docs_url": "https://www.sentinelone.com/platform/singularity-cloud-funnel/"
+        },
+        {
+          "step": 2,
+          "action": "Use the Singularity Data Lake for long-term hot retention of endpoint telemetry (up to 7 years) and as the query layer for historical evidence requests",
+          "audit_note": "Long-horizon retention supports auditor requests for historical detection and response records without restoring cold archives",
+          "vendor_docs_url": "https://www.sentinelone.com/platform/data-lake/"
+        },
+        {
+          "step": 3,
+          "action": "Ingest the Cloud Funnel stream (or SIEM forwarding from the Data Lake) into the organisation's SIEM and map detections, mitigations and agent health events to the relevant control evidence requirements",
+          "vendor_docs_url": "https://www.sentinelone.com/platform/singularity-cloud-funnel/"
+        },
+        {
+          "step": 4,
+          "action": "Implement completeness monitoring: reconcile daily agent counts from the Management API against the authoritative asset inventory (CMDB) and alert when unprotected endpoints exceed the agreed threshold",
+          "audit_note": "Coverage-gap alerting is direct evidence of a managed, self-correcting endpoint protection process"
+        },
+        {
+          "step": 5,
+          "action": "Run automated stream health checks — alert if no Cloud Funnel objects land in the destination bucket within the expected interval — and log all gaps with remediation notes",
+          "audit_note": "Documented gap detection and remediation preserves the evidentiary chain across pipeline outages"
+        },
+        {
+          "step": 6,
+          "action": "Generate a monthly endpoint protection evidence pack: coverage percentage, detection and mitigation trends, policy compliance by site, and pipeline completeness metrics"
+        }
+      ]
+    }
+  }
+}

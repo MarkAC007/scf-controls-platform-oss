@@ -1,9 +1,10 @@
 import { useAuth } from '../contexts/AuthContext'
 import { NotificationBell } from './NotificationBell'
 import UserProfileDropdown from './UserProfileDropdown'
-import ThemeToggle from './ThemeToggle'
+import ThemeMenu from './ThemeMenu'
 import OrgSwitcher from './OrgSwitcher'
-import { Organization } from '../contexts/OrganizationContext'
+import { Organization, useOrganization } from '../contexts/OrganizationContext'
+import { useOrgLogo } from '../hooks/useOrgLogo'
 
 type Tab = 'dashboard' | 'capability-posture' | 'library' | 'scoping' | 'evidence' | 'mapping-matrix' | 'tasks' | 'systems' | 'users' | 'consultant-portal' | 'risk-register' | 'vendors' | 'settings' | 'webhooks' | 'audit-log' | 'engagements' | 'cdm'
 
@@ -25,12 +26,16 @@ export default function Header({
   onOrgSwitch
 }: HeaderProps) {
   const { user } = useAuth()
+  const { currentOrg } = useOrganization()
+  const { data: orgLogoUrl } = useOrgLogo(currentOrg?.id)
 
   // Get configurable logo and title from environment variables
   // If VITE_APP_LOGO is explicitly set to empty string, hide logo; otherwise use value or default
   const appLogoEnv = import.meta.env.VITE_APP_LOGO
   const appLogo = appLogoEnv === '' ? null : (appLogoEnv || '/cropped-Logo-301x101.webp')
   const appTitle = import.meta.env.VITE_APP_TITLE || 'SCF Controls Platform'
+  // Org-uploaded logo takes precedence over the deploy-time default
+  const logoSrc = orgLogoUrl || appLogo
 
   const showOrgSwitcher = isConsultant && clientOrgIds && clientOrgIds.length > 0
 
@@ -39,7 +44,7 @@ export default function Header({
       {/* Left: Brand */}
       <div className="header-left">
         <div className="brand">
-          {appLogo && <img src={appLogo} alt="Logo" />}
+          {logoSrc && <img src={logoSrc} alt="Logo" />}
           <div className="brand-title">{appTitle}</div>
         </div>
       </div>
@@ -57,7 +62,7 @@ export default function Header({
 
       {/* Right: Theme & User */}
       <div className="header-right">
-        <ThemeToggle />
+        <ThemeMenu />
 
         {user && (
           <div className="header-user-section">

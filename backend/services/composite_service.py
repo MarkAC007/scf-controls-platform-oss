@@ -155,7 +155,7 @@ def _get_sync_session() -> Session:
 
 
 # ---------------------------------------------------------------------------
-# Sync Redis (matches tasks_dpsia._get_sync_redis pattern)
+# Sync Redis (matches tasks_vendor_assessment._get_sync_redis pattern)
 # ---------------------------------------------------------------------------
 
 _REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")

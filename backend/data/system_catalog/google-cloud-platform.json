@@ -1,0 +1,191 @@
+{
+  "slug": "google-cloud-platform",
+  "name": "Google Cloud Platform",
+  "vendor": "Google LLC",
+  "category": "Cloud Infrastructure",
+  "description": "Public cloud platform; audit evidence via Cloud Audit Logs, IAM policy exports, Security Command Center findings and Cloud Asset Inventory.",
+  "website": "https://cloud.google.com",
+  "aliases": [
+    "gcp",
+    "google cloud",
+    "google cloud platform",
+    "cloud audit logs",
+    "security command center"
+  ],
+  "logo_hint": "google-cloud",
+  "system_type": "cloud_provider",
+  "version": "1.0",
+  "recipes": {
+    "L1": {
+      "title": "GCP Cloud Audit Logs Manual Evidence Collection",
+      "estimated_time": "15 minutes",
+      "frequency": "weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Sign in to the Google Cloud console, select the project or organisation, and navigate to Logging > Logs Explorer",
+          "permissions_required": "Logs Viewer (roles/logging.viewer); Private Logs Viewer (roles/logging.privateLogViewer) for Data Access audit logs",
+          "security_note": "Use a dedicated read-only account for evidence collection, not an Owner or Editor identity",
+          "vendor_docs_url": "https://cloud.google.com/logging/docs/view/logs-explorer-interface"
+        },
+        {
+          "step": 2,
+          "action": "In the query editor, run logName:\"cloudaudit.googleapis.com%2Factivity\" for Admin Activity audit logs, or logName:\"cloudaudit.googleapis.com%2Fdata_access\" for Data Access audit logs, and set the time range to the collection period",
+          "audit_note": "Admin Activity audit logs are always written and retained for 400 days in the _Required bucket; they cannot be disabled or deleted",
+          "vendor_docs_url": "https://cloud.google.com/logging/docs/audit"
+        },
+        {
+          "step": 3,
+          "action": "In the Query results pane, open the Actions menu and click Download, then choose CSV or JSON format",
+          "audit_note": "Each entry carries a Google-assigned timestamp and insertId, providing tamper-evident ordering"
+        },
+        {
+          "step": 4,
+          "action": "For IAM configuration evidence, navigate to IAM & Admin > IAM, or run gcloud projects get-iam-policy PROJECT_ID --format=json and save the output",
+          "permissions_required": "Viewer (roles/viewer) or Security Reviewer (roles/iam.securityReviewer)",
+          "vendor_docs_url": "https://cloud.google.com/sdk/gcloud/reference/projects/get-iam-policy"
+        },
+        {
+          "step": 5,
+          "action": "For security posture evidence, navigate to Security > Security Command Center > Findings, filter by state and category, then use Export > Cloud Storage or Export > CSV",
+          "permissions_required": "Security Center Findings Viewer (roles/securitycenter.findingsViewer)",
+          "vendor_docs_url": "https://cloud.google.com/security-command-center/docs/how-to-export-data"
+        },
+        {
+          "step": 6,
+          "action": "Save all exports with date-stamped filenames including the project ID and upload to the evidence repository",
+          "security_note": "Review IAM policy exports for service account email addresses before sharing outside the security team; never include service account keys"
+        }
+      ]
+    },
+    "L2": {
+      "title": "GCP Log Sinks Scheduled Evidence Export",
+      "estimated_time": "30 minutes (setup), then automated",
+      "frequency": "automated continuous",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Navigate to Logging > Log Router and click Create sink; name the sink, choose a BigQuery dataset or Cloud Storage bucket as the destination",
+          "permissions_required": "Logs Configuration Writer (roles/logging.configWriter) plus Owner on the destination project",
+          "vendor_docs_url": "https://cloud.google.com/logging/docs/export/configure_export_v2"
+        },
+        {
+          "step": 2,
+          "action": "Set the inclusion filter to logName:\"cloudaudit.googleapis.com\" so the sink routes Admin Activity and Data Access audit logs, and grant the sink's writer identity access to the destination",
+          "audit_note": "Sinks route entries continuously from creation time onward; they are not retroactive, so create them before the audit period begins",
+          "security_note": "Restrict write access on the destination bucket or dataset to the sink's service account only"
+        },
+        {
+          "step": 3,
+          "action": "Enable Data Access audit logs for in-scope services via IAM & Admin > Audit Logs (they are disabled by default except for BigQuery)",
+          "permissions_required": "Security Admin (roles/iam.securityAdmin) or Owner",
+          "audit_note": "Without this step, Data Access reads and writes are not logged and the evidence set is incomplete",
+          "vendor_docs_url": "https://cloud.google.com/logging/docs/audit/configure-data-access"
+        },
+        {
+          "step": 4,
+          "action": "For multi-project estates, create an aggregated sink at the organisation or folder level with --include-children so all project audit logs route to one destination",
+          "permissions_required": "roles/logging.configWriter on the organisation or folder",
+          "vendor_docs_url": "https://cloud.google.com/logging/docs/export/aggregated_sinks"
+        },
+        {
+          "step": 5,
+          "action": "In Security Command Center, configure a continuous export of findings to BigQuery (Settings > Continuous Exports, or gcloud scc bqexports)",
+          "permissions_required": "Security Center BigQuery Exports Editor (roles/securitycenter.bigQueryExportsEditor)",
+          "audit_note": "Continuous exports write each finding snapshot in near-real time, giving a dated record of posture over time",
+          "vendor_docs_url": "https://cloud.google.com/security-command-center/docs/how-to-analyze-findings-in-big-query"
+        },
+        {
+          "step": 6,
+          "action": "If exporting to Cloud Storage, set a retention policy with Bucket Lock on the evidence bucket to match your retention requirement",
+          "audit_note": "Bucket Lock makes the retention policy irremovable, demonstrating log immutability to assessors"
+        }
+      ]
+    },
+    "L3": {
+      "title": "GCP API-Driven Automated Collection",
+      "estimated_time": "3 hours initial setup",
+      "frequency": "automated daily",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Create a dedicated service account via IAM & Admin > Service Accounts and grant it roles/logging.viewer, roles/logging.privateLogViewer, roles/cloudasset.viewer and roles/securitycenter.findingsViewer",
+          "permissions_required": "Service Account Admin (roles/iam.serviceAccountAdmin) and Project IAM Admin (roles/resourcemanager.projectIamAdmin)",
+          "security_note": "Prefer Workload Identity Federation or attached service accounts over downloaded JSON keys; if a key is unavoidable, store it in a secrets manager and rotate it every 90 days",
+          "audit_note": "Service account creation and key events are themselves recorded in Admin Activity audit logs",
+          "vendor_docs_url": "https://cloud.google.com/iam/docs/service-accounts-create"
+        },
+        {
+          "step": 2,
+          "action": "Schedule a daily job that calls gcloud logging read 'logName:\"cloudaudit.googleapis.com\" AND timestamp>=\"START\"' --format=json (or the entries.list REST method) and writes the output to the evidence store",
+          "permissions_required": "roles/logging.viewer (plus roles/logging.privateLogViewer for Data Access logs)",
+          "vendor_docs_url": "https://cloud.google.com/logging/docs/reference/v2/rest/v2/entries/list"
+        },
+        {
+          "step": 3,
+          "action": "Export IAM policy and resource inventory snapshots daily with gcloud asset export --content-type iam-policy --organization ORG_ID --bigquery-table projects/PROJECT_ID/datasets/DATASET/tables/iam_policy --output-bigquery-force (repeat with --content-type resource)",
+          "permissions_required": "Cloud Asset Viewer (roles/cloudasset.viewer)",
+          "audit_note": "Use --snapshot-time to pin each export to a point in time so successive snapshots are directly comparable",
+          "vendor_docs_url": "https://cloud.google.com/sdk/gcloud/reference/asset/export"
+        },
+        {
+          "step": 4,
+          "action": "Pull Security Command Center findings daily with gcloud scc findings list ORGANIZATION_ID --filter='state=\"ACTIVE\"' --format=json and store alongside the log exports",
+          "permissions_required": "roles/securitycenter.findingsViewer",
+          "vendor_docs_url": "https://cloud.google.com/security-command-center/docs/how-to-export-data"
+        },
+        {
+          "step": 5,
+          "action": "Implement error handling: alert on non-zero exit codes or empty result sets, and re-run failed collections within a defined SLA",
+          "audit_note": "Keep a run log (start time, end time, record counts) as evidence that the collection process itself is controlled"
+        },
+        {
+          "step": 6,
+          "action": "Validate each day's collection against a volume baseline — flag if the audit log entry count drops materially below the trailing average",
+          "audit_note": "Volume validation provides assurance of collection completeness and surfaces silently broken filters"
+        }
+      ]
+    },
+    "L4": {
+      "title": "GCP Managed Evidence Pipeline with Completeness Metrics",
+      "estimated_time": "6 hours initial setup",
+      "frequency": "continuous with weekly reporting",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Deploy an organisation-level aggregated log sink routing all Cloud Audit Logs to a partitioned BigQuery dataset (gcloud logging sinks create with --use-partitioned-tables), giving a continuously updated, queryable audit archive",
+          "permissions_required": "roles/logging.configWriter on the organisation",
+          "security_note": "Lock down the BigQuery dataset with IAM so only the pipeline and auditors can read it",
+          "vendor_docs_url": "https://cloud.google.com/sdk/gcloud/reference/logging/sinks/create"
+        },
+        {
+          "step": 2,
+          "action": "Enable Security Command Center continuous exports to BigQuery for findings, and Cloud Asset Inventory feeds to Pub/Sub for real-time notification of resource and IAM policy changes",
+          "permissions_required": "roles/securitycenter.bigQueryExportsEditor and Cloud Asset Owner (roles/cloudasset.owner) for feeds",
+          "vendor_docs_url": "https://cloud.google.com/asset-inventory/docs/monitoring-asset-changes"
+        },
+        {
+          "step": 3,
+          "action": "Track collection completeness with the Cloud Logging exports/error_count and exports/byte_count metrics in Cloud Monitoring, and alert on sink export errors or a sustained drop in routed volume",
+          "audit_note": "Sink error metrics are the primary evidence that no audit records were dropped in transit",
+          "vendor_docs_url": "https://cloud.google.com/monitoring/alerts"
+        },
+        {
+          "step": 4,
+          "action": "Run scheduled BigQuery quality checks: detect gaps in the audit log time series per project, duplicate insertIds, and projects present in Cloud Asset Inventory but absent from the log dataset",
+          "audit_note": "Cross-referencing asset inventory against log coverage proves every in-scope project is actually being collected"
+        },
+        {
+          "step": 5,
+          "action": "Build a Cloud Monitoring or Looker Studio dashboard showing events per day, export error rate, coverage by project, and findings trend from the SCC export",
+          "audit_note": "The dashboard serves as standing evidence of a managed, monitored collection process"
+        },
+        {
+          "step": 6,
+          "action": "Generate an automated weekly collection health report (record counts, gaps detected, SLA breaches, remediation actions) and file it in the evidence repository",
+          "audit_note": "Periodic health reports demonstrate management review of the evidence pipeline"
+        }
+      ]
+    }
+  }
+}

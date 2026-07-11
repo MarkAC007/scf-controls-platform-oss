@@ -1,43 +1,57 @@
 /**
  * VendorDetail Component - Detail view for a single vendor record
  *
- * Three-tab layout:
- *   Overview   — vendor metadata, contact, contract, certs, assessment history
- *   Assessment — DPSIA assessment (primary action), CIA detail, claim verification
- *   Results    — action items, compensating controls, reports
+ * Structured around the vendor lifecycle: Add -> Assess -> Decide -> Review.
  *
- * Persistent header shows vendor name, status, criticality, and risk score
- * across all tabs.
+ *   Overview -- vendor metadata, contact, contract, certifications
+ *   Assess   -- AI assessment (run/progress/report viewer)
+ *   Decide   -- recommendation, conditions, action items, compensating controls
+ *   Review   -- assessment history and next annual review
+ *
+ * A persistent header strip shows the single authoritative risk score with
+ * RAG pill, the latest recommendation, provenance ("Assessed ... / Review
+ * due ...") and the primary assessment CTA.
  */
-import { useState, useEffect } from 'react'
-import type { Vendor, VendorAssessment, VendorCertification } from '../types'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import type {
+  Vendor,
+  VendorAssessment,
+  VendorCertification,
+  VendorAIAssessmentType,
+  VendorRAGStatus,
+  VendorRecommendation,
+} from '../types'
 import {
   VENDOR_STATUS_LABELS,
   VENDOR_CRITICALITY_LABELS,
   VENDOR_STATUS_COLORS,
   VENDOR_CRITICALITY_COLORS,
-  getRiskLevelColor,
+  VENDOR_RAG_COLORS,
+  VENDOR_RECOMMENDATION_LABELS,
+  VENDOR_RECOMMENDATION_COLORS,
+  vendorRiskLevelToRAG,
 } from '../types'
-import type { RiskLevel } from '../types'
 import {
   getVendor,
   getVendorAssessments,
-  getVendorCertifications
+  getVendorCertifications,
+  getVendorAssessmentStatus,
 } from '../data/apiClient'
-import VendorResearchPanel from './VendorResearchPanel'
-import VendorReportsPanel from './VendorReportsPanel'
-import VendorCIAPanel from './VendorCIAPanel'
-import VendorVerificationPanel from './VendorVerificationPanel'
+import VendorAssessmentRunDialog from './VendorAssessmentRunDialog'
+import VendorAssessmentReport from './VendorAssessmentReport'
 import VendorActionItemsPanel from './VendorActionItemsPanel'
 import VendorCompensatingControlsPanel from './VendorCompensatingControlsPanel'
 
-type VendorTab = 'overview' | 'assessment' | 'results'
+type VendorTab = 'overview' | 'assess' | 'decide' | 'review'
 
 const TAB_LABELS: Record<VendorTab, string> = {
   overview: 'Overview',
-  assessment: 'Assessment',
-  results: 'Results & Actions',
+  assess: 'Assess',
+  decide: 'Decide',
+  review: 'Review',
 }
+
+const POLL_INTERVAL_MS = 3000
 
 interface VendorDetailProps {
   organizationId: string
@@ -47,13 +61,34 @@ interface VendorDetailProps {
   onDelete: (vendor: Vendor) => void
 }
 
-function toRiskLevel(level: string | null | undefined): RiskLevel | null {
-  if (!level) return null
-  const normalised = level.toLowerCase()
-  if (normalised === 'low' || normalised === 'medium' || normalised === 'high' || normalised === 'critical') {
-    return normalised as RiskLevel
+const formatDate = (dateStr: string | null | undefined): string => {
+  if (!dateStr) return '-'
+  try {
+    return new Date(dateStr).toLocaleDateString('en-GB', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric'
+    })
+  } catch {
+    return dateStr
   }
-  return null
+}
+
+const formatCurrency = (value: number | null | undefined): string => {
+  if (value == null) return '-'
+  return new Intl.NumberFormat('en-GB', {
+    style: 'currency',
+    currency: 'GBP',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2
+  }).format(value)
+}
+
+const formatLabel = (value: string): string => {
+  return value
+    .split('_')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ')
 }
 
 export default function VendorDetail({
@@ -69,68 +104,111 @@ export default function VendorDetail({
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)
-  const [activeTab, setActiveTab] = useState<VendorTab>('overview')
+  const [activeTab, setActiveTab] = useState<VendorTab>('assess')
+  const [showRunDialog, setShowRunDialog] = useState(false)
+  const [pollError, setPollError] = useState<string | null>(null)
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  useEffect(() => {
-    const fetchVendorData = async () => {
-      setLoading(true)
-      setError(null)
-      try {
-        const [vendorData, assessmentData, certificationData] = await Promise.all([
-          getVendor(vendorId, organizationId),
-          getVendorAssessments(vendorId, organizationId),
-          getVendorCertifications(vendorId, organizationId)
-        ])
-        setVendor(vendorData)
-        setAssessments(assessmentData)
-        setCertifications(certificationData)
-      } catch (err) {
-        console.error('Failed to fetch vendor details:', err)
-        setError(err instanceof Error ? err.message : 'Failed to load vendor details')
-      } finally {
-        setLoading(false)
-      }
+  const loadVendorData = useCallback(async (withSpinner: boolean) => {
+    if (withSpinner) setLoading(true)
+    setError(null)
+    try {
+      const [vendorData, assessmentData, certificationData] = await Promise.all([
+        getVendor(vendorId, organizationId),
+        getVendorAssessments(vendorId, organizationId),
+        getVendorCertifications(vendorId, organizationId)
+      ])
+      setVendor(vendorData)
+      setAssessments(assessmentData)
+      setCertifications(certificationData)
+    } catch (err) {
+      console.error('Failed to fetch vendor details:', err)
+      setError(err instanceof Error ? err.message : 'Failed to load vendor details')
+    } finally {
+      if (withSpinner) setLoading(false)
     }
-
-    fetchVendorData()
   }, [vendorId, organizationId])
 
-  const formatDate = (dateStr: string | null | undefined): string => {
-    if (!dateStr) return '-'
-    try {
-      return new Date(dateStr).toLocaleDateString('en-GB', {
-        day: 'numeric',
-        month: 'short',
-        year: 'numeric'
-      })
-    } catch {
-      return dateStr
+  useEffect(() => {
+    loadVendorData(true)
+  }, [loadVendorData])
+
+  // ── Assessment lifecycle derivations ──────────────────────────────
+  const aiAssessments = useMemo(
+    () => assessments.filter(a => a.job_id != null),
+    [assessments]
+  )
+  const inProgressAssessment = useMemo(
+    () => aiAssessments.find(a => a.status === 'pending' || a.status === 'running') || null,
+    [aiAssessments]
+  )
+  const latestCompleted = useMemo(
+    () => aiAssessments.find(a => a.status === 'completed') || null,
+    [aiAssessments]
+  )
+  // A failed run is only surfaced if it is more recent than the last success
+  const latestFailed = useMemo(() => {
+    const newest = aiAssessments[0]
+    return newest && newest.status === 'failed' ? newest : null
+  }, [aiAssessments])
+
+  const reviewStatus = vendor?.review_status || null
+  const neverAssessed = !latestCompleted
+
+  const defaultAssessmentType: VendorAIAssessmentType =
+    reviewStatus === 'due_soon' || reviewStatus === 'overdue'
+      ? 'annual'
+      : neverAssessed
+        ? 'initial'
+        : 'adhoc'
+
+  const ctaLabel =
+    reviewStatus === 'due_soon' || reviewStatus === 'overdue'
+      ? 'Run annual review'
+      : neverAssessed
+        ? 'Run AI assessment'
+        : 'Re-run assessment'
+
+  // ── Poll while an assessment is in progress ────────────────────────
+  const stopPolling = useCallback(() => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current)
+      pollRef.current = null
     }
-  }
+  }, [])
 
-  const formatCurrency = (value: number | null | undefined): string => {
-    if (value == null) return '-'
-    return new Intl.NumberFormat('en-GB', {
-      style: 'currency',
-      currency: 'GBP',
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 2
-    }).format(value)
-  }
+  useEffect(() => {
+    stopPolling()
+    if (!inProgressAssessment) return
 
-  const formatAssessmentType = (type: string): string => {
-    return type
-      .split('_')
-      .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-      .join(' ')
-  }
+    const assessmentId = inProgressAssessment.id
+    pollRef.current = setInterval(async () => {
+      try {
+        const status = await getVendorAssessmentStatus(vendorId, assessmentId, organizationId)
+        if (status.status === 'completed' || status.status === 'failed') {
+          stopPolling()
+          setPollError(null)
+          // Refresh everything: vendor risk score/review date + assessments
+          await loadVendorData(false)
+          setRefreshKey(k => k + 1)
+        }
+      } catch (err) {
+        console.error('Assessment status poll failed:', err)
+        setPollError(err instanceof Error ? err.message : 'Failed to check assessment progress')
+        stopPolling()
+      }
+    }, POLL_INTERVAL_MS)
 
-  const formatStatus = (status: string): string => {
-    return status
-      .split('_')
-      .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-      .join(' ')
-  }
+    return stopPolling
+  }, [inProgressAssessment, vendorId, organizationId, stopPolling, loadVendorData])
+
+  const handleAssessmentStarted = useCallback(() => {
+    setShowRunDialog(false)
+    setPollError(null)
+    setActiveTab('assess')
+    // Re-fetch so the pending assessment row appears and polling starts
+    loadVendorData(false)
+  }, [loadVendorData])
 
   // ── Shared styles ──────────────────────────────────────────────────
   const cardStyle: React.CSSProperties = {
@@ -176,6 +254,16 @@ export default function VendorDetail({
     padding: '0.5rem 0.75rem',
     color: 'var(--text)',
   }
+
+  const pillStyle = (background: string): React.CSSProperties => ({
+    display: 'inline-block',
+    padding: '2px 10px',
+    borderRadius: '9999px',
+    fontSize: '0.75rem',
+    fontWeight: 500,
+    color: '#ffffff',
+    backgroundColor: background,
+  })
 
   // ── Loading state ──────────────────────────────────────────────────
   if (loading) {
@@ -237,14 +325,30 @@ export default function VendorDetail({
     return null
   }
 
-  const riskLevel = toRiskLevel(vendor.risk_level)
+  // The single authoritative risk display: prefer the latest completed
+  // AI assessment's RAG; fall back to a mapping from the vendor risk level.
+  const ragStatus: VendorRAGStatus | null =
+    (latestCompleted?.rag_status as VendorRAGStatus | null | undefined)
+    || vendorRiskLevelToRAG(vendor.risk_level)
+  const recommendation = (latestCompleted?.recommendation ?? null) as VendorRecommendation | null
+
+  const assessedDate = vendor.risk_provenance?.scored_at || latestCompleted?.completed_at || null
+  const reviewDue = vendor.next_review_date || null
+  const reviewColour =
+    reviewStatus === 'overdue' ? '#ef4444'
+    : reviewStatus === 'due_soon' ? '#f59e0b'
+    : 'var(--muted)'
+
+  const conditions = Array.isArray((latestCompleted?.report_json as Record<string, unknown> | null | undefined)?.conditions)
+    ? ((latestCompleted!.report_json as Record<string, unknown>).conditions as string[])
+    : []
 
   // ── Render ─────────────────────────────────────────────────────────
   return (
     <div className="vendor-detail" style={{ padding: '1.5rem' }}>
 
       {/* ================================================================
-          Persistent Header — visible across all tabs
+          Persistent Header Strip — visible across all tabs
           ================================================================ */}
       <div
         style={{
@@ -258,7 +362,7 @@ export default function VendorDetail({
           borderBottom: '1px solid var(--border)',
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flex: 1, minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '1rem', flex: 1, minWidth: 0 }}>
           <button
             onClick={onBack}
             title="Back to vendors"
@@ -280,68 +384,74 @@ export default function VendorDetail({
             &larr;
           </button>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', minWidth: 0 }}>
-            <h2 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 600, color: 'var(--text)' }}>
-              {vendor.name}
-            </h2>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', minWidth: 0 }}>
+              <h2 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 600, color: 'var(--text)' }}>
+                {vendor.name}
+              </h2>
 
-            <span
-              style={{
-                display: 'inline-block',
-                padding: '2px 10px',
-                borderRadius: '9999px',
-                fontSize: '0.75rem',
-                fontWeight: 500,
-                color: '#ffffff',
-                backgroundColor: VENDOR_STATUS_COLORS[vendor.status]
-              }}
-            >
-              {VENDOR_STATUS_LABELS[vendor.status]}
-            </span>
+              {vendor.category && (
+                <span style={{ fontSize: '0.8125rem', color: 'var(--muted)' }}>
+                  {vendor.category}
+                </span>
+              )}
 
-            <span
-              style={{
-                display: 'inline-block',
-                padding: '2px 10px',
-                borderRadius: '9999px',
-                fontSize: '0.75rem',
-                fontWeight: 500,
-                color: '#ffffff',
-                backgroundColor: VENDOR_CRITICALITY_COLORS[vendor.criticality]
-              }}
-            >
-              {VENDOR_CRITICALITY_LABELS[vendor.criticality]}
-            </span>
+              <span style={pillStyle(VENDOR_STATUS_COLORS[vendor.status])}>
+                {VENDOR_STATUS_LABELS[vendor.status]}
+              </span>
 
-            {/* Risk score in header */}
-            {vendor.risk_score != null && (
-              <span
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '0.375rem',
-                  padding: '2px 10px',
-                  borderRadius: '9999px',
-                  fontSize: '0.75rem',
+              <span style={pillStyle(VENDOR_CRITICALITY_COLORS[vendor.criticality])}>
+                {VENDOR_CRITICALITY_LABELS[vendor.criticality]}
+              </span>
+
+              {/* THE risk score — one score, RAG-coloured */}
+              {vendor.risk_score != null && (
+                <span
+                  style={{
+                    ...pillStyle(ragStatus ? VENDOR_RAG_COLORS[ragStatus] : 'var(--muted)'),
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '0.375rem',
+                    fontWeight: 600,
+                  }}
+                >
+                  Risk {vendor.risk_score}
+                  {ragStatus && <span style={{ fontWeight: 400 }}>· {ragStatus}</span>}
+                </span>
+              )}
+
+              {recommendation && (
+                <span style={{
+                  ...pillStyle(VENDOR_RECOMMENDATION_COLORS[recommendation]),
                   fontWeight: 600,
-                  color: '#ffffff',
-                  backgroundColor: riskLevel ? getRiskLevelColor(riskLevel) : 'var(--muted)',
-                }}
-              >
-                Risk: {vendor.risk_score}
-                {vendor.risk_level && (
-                  <span style={{ fontWeight: 400 }}>
-                    ({vendor.risk_level.charAt(0).toUpperCase() + vendor.risk_level.slice(1)})
+                }}>
+                  {VENDOR_RECOMMENDATION_LABELS[recommendation]}
+                </span>
+              )}
+            </div>
+
+            {/* Provenance line */}
+            {(assessedDate || reviewDue) && (
+              <div style={{ marginTop: '0.375rem', fontSize: '0.75rem', color: 'var(--muted)' }}>
+                {assessedDate && <span>Assessed {formatDate(assessedDate)}</span>}
+                {assessedDate && reviewDue && <span> · </span>}
+                {reviewDue && (
+                  <span style={{ color: reviewColour, fontWeight: reviewStatus === 'ok' || !reviewStatus ? 400 : 600 }}>
+                    Review due {formatDate(reviewDue)}
+                    {reviewStatus === 'due_soon' && ' (due soon)'}
+                    {reviewStatus === 'overdue' && ' (overdue)'}
                   </span>
                 )}
-              </span>
+              </div>
             )}
           </div>
         </div>
 
-        <div style={{ display: 'flex', gap: '0.5rem', flexShrink: 0 }}>
+        <div style={{ display: 'flex', gap: '0.5rem', flexShrink: 0, alignItems: 'center' }}>
+          {/* Primary CTA */}
           <button
-            onClick={() => vendor && onEdit(vendor)}
+            onClick={() => setShowRunDialog(true)}
+            disabled={!!inProgressAssessment}
             style={{
               display: 'inline-flex',
               alignItems: 'center',
@@ -351,12 +461,31 @@ export default function VendorDetail({
               color: '#ffffff',
               border: 'none',
               borderRadius: '6px',
+              cursor: inProgressAssessment ? 'not-allowed' : 'pointer',
+              fontSize: '0.875rem',
+              fontWeight: 600,
+              opacity: inProgressAssessment ? 0.6 : 1,
+            }}
+          >
+            {inProgressAssessment ? 'Assessment running...' : ctaLabel}
+          </button>
+          <button
+            onClick={() => vendor && onEdit(vendor)}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              padding: '0.5rem 1rem',
+              backgroundColor: 'transparent',
+              color: 'var(--text)',
+              border: '1px solid var(--border)',
+              borderRadius: '6px',
               cursor: 'pointer',
               fontSize: '0.875rem',
               fontWeight: 500,
             }}
           >
-            Edit Vendor
+            Edit
           </button>
           <button
             onClick={() => vendor && onDelete(vendor)}
@@ -540,7 +669,7 @@ export default function VendorDetail({
                                 : 'var(--muted)'
                             }}
                           >
-                            {formatStatus(cert.status)}
+                            {formatLabel(cert.status)}
                           </span>
                         </td>
                         <td style={tdStyle}>{formatDate(cert.issue_date)}</td>
@@ -553,6 +682,262 @@ export default function VendorDetail({
               </div>
             )}
           </section>
+        </>
+      )}
+
+      {/* ================================================================
+          Tab: Assess
+          ================================================================ */}
+      {activeTab === 'assess' && (
+        <>
+          {/* Poll failure (network etc.) */}
+          {pollError && (
+            <section style={{ ...cardStyle, borderColor: 'var(--destructive-border, #fecaca)' }}>
+              <p style={{ margin: 0, fontSize: '0.875rem', color: 'var(--destructive, #991b1b)' }}>
+                {pollError}
+              </p>
+              <button
+                onClick={() => { setPollError(null); loadVendorData(false) }}
+                style={{
+                  marginTop: '0.75rem',
+                  padding: '0.375rem 0.875rem',
+                  backgroundColor: 'var(--primary)',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  fontSize: '0.8125rem',
+                  fontWeight: 600,
+                }}
+              >
+                Check again
+              </button>
+            </section>
+          )}
+
+          {/* In progress */}
+          {inProgressAssessment && (
+            <section style={{ ...cardStyle, display: 'flex', alignItems: 'center', gap: '0.875rem' }}>
+              <div style={{
+                width: '1.25rem',
+                height: '1.25rem',
+                border: '2px solid var(--primary)',
+                borderTopColor: 'transparent',
+                borderRadius: '50%',
+                animation: 'spin 1s linear infinite',
+                flexShrink: 0,
+              }} />
+              <div>
+                <div style={{ fontSize: '0.875rem', fontWeight: 600, color: 'var(--text)' }}>
+                  {inProgressAssessment.status === 'pending'
+                    ? 'Assessment queued...'
+                    : 'Researching vendor online...'}
+                </div>
+                <div style={{ fontSize: '0.8125rem', color: 'var(--muted)' }}>
+                  The assessment researches certifications, breach history, CVEs and regulatory
+                  actions, then scores the vendor. This can take a couple of minutes.
+                </div>
+              </div>
+              <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+            </section>
+          )}
+
+          {/* Latest run failed */}
+          {!inProgressAssessment && latestFailed && (
+            <section
+              style={{
+                ...cardStyle,
+                backgroundColor: 'var(--destructive-bg, #fef2f2)',
+                borderColor: 'var(--destructive-border, #fecaca)',
+              }}
+            >
+              <h3 style={{ margin: '0 0 0.5rem 0', fontSize: '0.9375rem', fontWeight: 600, color: 'var(--destructive, #991b1b)' }}>
+                Assessment failed
+              </h3>
+              <p style={{ margin: 0, fontSize: '0.8125rem', color: 'var(--destructive, #991b1b)' }}>
+                {latestFailed.error_message || 'The assessment did not complete. Please try again.'}
+              </p>
+              <button
+                onClick={() => setShowRunDialog(true)}
+                style={{
+                  marginTop: '0.75rem',
+                  padding: '0.375rem 0.875rem',
+                  backgroundColor: 'var(--primary)',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  fontSize: '0.8125rem',
+                  fontWeight: 600,
+                }}
+              >
+                Try again
+              </button>
+            </section>
+          )}
+
+          {/* Completed report */}
+          {latestCompleted ? (
+            <VendorAssessmentReport
+              key={refreshKey}
+              assessment={latestCompleted}
+              vendorName={vendor.name}
+            />
+          ) : (
+            !inProgressAssessment && !latestFailed && (
+              <section style={{ ...cardStyle, textAlign: 'center', padding: '2.5rem 1rem' }}>
+                <div style={{ fontSize: '0.9375rem', fontWeight: 600, color: 'var(--text)', marginBottom: '0.375rem' }}>
+                  No AI assessment yet
+                </div>
+                <div style={{ fontSize: '0.8125rem', color: 'var(--muted)', marginBottom: '1rem' }}>
+                  Run an AI assessment to research this vendor's security posture and
+                  produce a full risk report.
+                </div>
+                <button
+                  onClick={() => setShowRunDialog(true)}
+                  style={{
+                    padding: '0.5rem 1.25rem',
+                    backgroundColor: 'var(--primary)',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                    fontSize: '0.875rem',
+                    fontWeight: 600,
+                  }}
+                >
+                  {ctaLabel}
+                </button>
+              </section>
+            )
+          )}
+        </>
+      )}
+
+      {/* ================================================================
+          Tab: Decide
+          ================================================================ */}
+      {activeTab === 'decide' && (
+        <>
+          {/* Recommendation + conditions */}
+          <section style={cardStyle}>
+            <h3 style={sectionHeading}>Recommendation</h3>
+            {latestCompleted && recommendation ? (
+              <>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                  <span style={{
+                    display: 'inline-block',
+                    padding: '0.375rem 1rem',
+                    borderRadius: '9999px',
+                    fontSize: '0.875rem',
+                    fontWeight: 700,
+                    color: '#fff',
+                    backgroundColor: VENDOR_RECOMMENDATION_COLORS[recommendation],
+                  }}>
+                    {VENDOR_RECOMMENDATION_LABELS[recommendation]}
+                  </span>
+                  {latestCompleted.completed_at && (
+                    <span style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>
+                      From assessment completed {formatDate(latestCompleted.completed_at)}
+                    </span>
+                  )}
+                </div>
+                {latestCompleted.executive_summary && (
+                  <p style={{ margin: '0.75rem 0 0 0', fontSize: '0.8125rem', color: 'var(--text)', lineHeight: 1.6 }}>
+                    {latestCompleted.executive_summary}
+                  </p>
+                )}
+                {conditions.length > 0 && (
+                  <div style={{ marginTop: '0.75rem' }}>
+                    <div style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text)', marginBottom: '0.25rem' }}>
+                      Conditions for use
+                    </div>
+                    <ul style={{ margin: '0 0 0 1rem', padding: 0 }}>
+                      {conditions.map((c, i) => (
+                        <li key={i} style={{ fontSize: '0.8125rem', color: 'var(--text)', lineHeight: 1.6, marginBottom: '0.25rem' }}>
+                          {c}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </>
+            ) : (
+              <p style={{ color: 'var(--muted)', fontSize: '0.875rem', margin: 0 }}>
+                No recommendation yet — run an AI assessment first.{' '}
+                <button
+                  onClick={() => setActiveTab('assess')}
+                  style={{ background: 'none', border: 'none', color: 'var(--primary)', cursor: 'pointer', fontSize: '0.875rem', fontWeight: 500, padding: 0 }}
+                >
+                  Go to Assess
+                </button>
+              </p>
+            )}
+          </section>
+
+          {/* Action Items */}
+          <section style={cardStyle}>
+            <VendorActionItemsPanel
+              key={`actions-${refreshKey}`}
+              organizationId={organizationId}
+              vendorId={vendorId}
+            />
+          </section>
+
+          {/* Compensating Controls */}
+          <section style={cardStyle}>
+            <VendorCompensatingControlsPanel
+              key={`comp-${refreshKey}`}
+              organizationId={organizationId}
+              vendorId={vendorId}
+            />
+          </section>
+        </>
+      )}
+
+      {/* ================================================================
+          Tab: Review
+          ================================================================ */}
+      {activeTab === 'review' && (
+        <>
+          {/* Next review */}
+          <section style={cardStyle}>
+            <h3 style={sectionHeading}>Next Review</h3>
+            {reviewDue ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: '0.875rem', color: 'var(--text)' }}>
+                  Annual review due <strong>{formatDate(reviewDue)}</strong>
+                </span>
+                {reviewStatus && reviewStatus !== 'ok' && (
+                  <span style={pillStyle(reviewStatus === 'overdue' ? '#ef4444' : '#f59e0b')}>
+                    {reviewStatus === 'overdue' ? 'Overdue' : 'Due soon'}
+                  </span>
+                )}
+                {(reviewStatus === 'due_soon' || reviewStatus === 'overdue') && !inProgressAssessment && (
+                  <button
+                    onClick={() => setShowRunDialog(true)}
+                    style={{
+                      padding: '0.375rem 0.875rem',
+                      backgroundColor: 'var(--primary)',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: '6px',
+                      cursor: 'pointer',
+                      fontSize: '0.8125rem',
+                      fontWeight: 600,
+                    }}
+                  >
+                    Run annual review
+                  </button>
+                )}
+              </div>
+            ) : (
+              <p style={{ color: 'var(--muted)', fontSize: '0.875rem', margin: 0 }}>
+                No review scheduled — the review date is set automatically when an
+                AI assessment completes.
+              </p>
+            )}
+          </section>
 
           {/* Assessment History */}
           <section style={cardStyle}>
@@ -561,10 +946,10 @@ export default function VendorDetail({
               <p style={{ color: 'var(--muted)', fontSize: '0.875rem', margin: 0 }}>
                 No assessments recorded yet.{' '}
                 <button
-                  onClick={() => setActiveTab('assessment')}
+                  onClick={() => setActiveTab('assess')}
                   style={{ background: 'none', border: 'none', color: 'var(--primary)', cursor: 'pointer', fontSize: '0.875rem', fontWeight: 500, padding: 0 }}
                 >
-                  Run a DPSIA Assessment
+                  Run an AI assessment
                 </button>
                 {' '}to get started.
               </p>
@@ -576,54 +961,56 @@ export default function VendorDetail({
                       <th style={thStyle}>Type</th>
                       <th style={thStyle}>Date</th>
                       <th style={thStyle}>Status</th>
-                      <th style={thStyle}>C / I / A</th>
-                      <th style={thStyle}>Risk Rating</th>
-                      <th style={thStyle}>Assessor</th>
+                      <th style={thStyle}>Risk Score</th>
+                      <th style={thStyle}>RAG</th>
+                      <th style={thStyle}>Recommendation</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {assessments.map((assessment) => (
-                      <tr key={assessment.id} style={{ borderBottom: '1px solid var(--border)' }}>
-                        <td style={tdStyle}>{formatAssessmentType(assessment.assessment_type)}</td>
-                        <td style={tdStyle}>{formatDate(assessment.assessment_date)}</td>
-                        <td style={tdStyle}>
-                          <span
-                            style={{
-                              display: 'inline-block',
-                              padding: '2px 8px',
-                              borderRadius: '4px',
-                              fontSize: '0.75rem',
-                              fontWeight: 500,
-                              backgroundColor:
-                                assessment.status === 'completed' ? '#dcfce7'
-                                : assessment.status === 'in_progress' ? '#fef3c7'
-                                : assessment.status === 'cancelled' ? '#fee2e2'
-                                : 'var(--secondary)',
-                              color:
-                                assessment.status === 'completed' ? '#166534'
-                                : assessment.status === 'in_progress' ? '#92400e'
-                                : assessment.status === 'cancelled' ? '#991b1b'
-                                : 'var(--muted)'
-                            }}
-                          >
-                            {formatStatus(assessment.status)}
-                          </span>
-                        </td>
-                        <td style={{ ...tdStyle, fontVariantNumeric: 'tabular-nums' }}>
-                          {assessment.confidentiality_score ?? '-'}
-                          {' / '}
-                          {assessment.integrity_score ?? '-'}
-                          {' / '}
-                          {assessment.availability_score ?? '-'}
-                        </td>
-                        <td style={tdStyle}>{assessment.risk_rating || '-'}</td>
-                        <td style={tdStyle}>
-                          {assessment.assessor
-                            ? assessment.assessor.display_name || assessment.assessor.email
-                            : '-'}
-                        </td>
-                      </tr>
-                    ))}
+                    {assessments.map((assessment) => {
+                      const rowRag = assessment.rag_status as VendorRAGStatus | null | undefined
+                      const rowRec = assessment.recommendation as VendorRecommendation | null | undefined
+                      return (
+                        <tr key={assessment.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                          <td style={tdStyle}>{formatLabel(assessment.assessment_type)}</td>
+                          <td style={tdStyle}>{formatDate(assessment.completed_at || assessment.assessment_date)}</td>
+                          <td style={tdStyle}>
+                            <span
+                              style={{
+                                display: 'inline-block',
+                                padding: '2px 8px',
+                                borderRadius: '4px',
+                                fontSize: '0.75rem',
+                                fontWeight: 500,
+                                backgroundColor:
+                                  assessment.status === 'completed' ? '#dcfce7'
+                                  : assessment.status === 'running' || assessment.status === 'in_progress' || assessment.status === 'pending' ? '#fef3c7'
+                                  : assessment.status === 'failed' || assessment.status === 'cancelled' ? '#fee2e2'
+                                  : 'var(--secondary)',
+                                color:
+                                  assessment.status === 'completed' ? '#166534'
+                                  : assessment.status === 'running' || assessment.status === 'in_progress' || assessment.status === 'pending' ? '#92400e'
+                                  : assessment.status === 'failed' || assessment.status === 'cancelled' ? '#991b1b'
+                                  : 'var(--muted)'
+                              }}
+                            >
+                              {formatLabel(assessment.status)}
+                            </span>
+                          </td>
+                          <td style={{ ...tdStyle, fontVariantNumeric: 'tabular-nums', fontWeight: assessment.final_risk_score != null ? 600 : 400 }}>
+                            {assessment.final_risk_score ?? '-'}
+                          </td>
+                          <td style={tdStyle}>
+                            {rowRag ? (
+                              <span style={pillStyle(VENDOR_RAG_COLORS[rowRag])}>{rowRag}</span>
+                            ) : '-'}
+                          </td>
+                          <td style={tdStyle}>
+                            {rowRec ? VENDOR_RECOMMENDATION_LABELS[rowRec] : '-'}
+                          </td>
+                        </tr>
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -633,78 +1020,16 @@ export default function VendorDetail({
       )}
 
       {/* ================================================================
-          Tab: Assessment
+          Run assessment dialog
           ================================================================ */}
-      {activeTab === 'assessment' && (
-        <>
-          {/* DPSIA Assessment — primary action */}
-          <section style={cardStyle}>
-            <VendorResearchPanel
-              organizationId={organizationId}
-              vendorId={vendorId}
-              vendorWebsite={vendor.website}
-              vendorName={vendor.name}
-              vendorDescription={vendor.description}
-              onAssessmentComplete={() => {
-                setRefreshKey(k => k + 1)
-                getVendor(vendorId, organizationId).then(v => setVendor(v)).catch(() => {})
-                getVendorAssessments(vendorId, organizationId).then(a => setAssessments(a)).catch(() => {})
-              }}
-            />
-          </section>
-
-          {/* CIA Detail */}
-          <section style={cardStyle}>
-            <VendorCIAPanel
-              key={refreshKey}
-              organizationId={organizationId}
-              vendorId={vendorId}
-            />
-          </section>
-
-          {/* Claim Verification */}
-          <section style={cardStyle}>
-            <VendorVerificationPanel
-              key={refreshKey}
-              organizationId={organizationId}
-              vendorId={vendorId}
-            />
-          </section>
-        </>
-      )}
-
-      {/* ================================================================
-          Tab: Results & Actions
-          ================================================================ */}
-      {activeTab === 'results' && (
-        <>
-          {/* Action Items */}
-          <section style={cardStyle}>
-            <VendorActionItemsPanel
-              key={refreshKey}
-              organizationId={organizationId}
-              vendorId={vendorId}
-            />
-          </section>
-
-          {/* Compensating Controls */}
-          <section style={cardStyle}>
-            <VendorCompensatingControlsPanel
-              key={refreshKey}
-              organizationId={organizationId}
-              vendorId={vendorId}
-            />
-          </section>
-
-          {/* Reports */}
-          <section style={cardStyle}>
-            <VendorReportsPanel
-              key={refreshKey}
-              organizationId={organizationId}
-              vendorId={vendorId}
-            />
-          </section>
-        </>
+      {showRunDialog && (
+        <VendorAssessmentRunDialog
+          organizationId={organizationId}
+          vendor={vendor}
+          defaultType={defaultAssessmentType}
+          onClose={() => setShowRunDialog(false)}
+          onStarted={handleAssessmentStarted}
+        />
       )}
     </div>
   )

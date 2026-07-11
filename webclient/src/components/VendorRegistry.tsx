@@ -4,7 +4,9 @@ import {
   VENDOR_STATUS_LABELS,
   VENDOR_CRITICALITY_LABELS,
   VENDOR_STATUS_COLORS,
-  VENDOR_CRITICALITY_COLORS
+  VENDOR_CRITICALITY_COLORS,
+  VENDOR_RAG_COLORS,
+  vendorRiskLevelToRAG
 } from '../types'
 import { getVendors } from '../data/apiClient'
 
@@ -278,14 +280,15 @@ export const VendorRegistry: React.FC<VendorRegistryProps> = ({
           <div
             className="systems-table-header"
             style={{
-              gridTemplateColumns: '2fr 1fr 1fr 1fr 0.75fr 1fr 1.25fr 0.5fr',
+              gridTemplateColumns: '2fr 1fr 1fr 1fr 0.9fr 0.9fr 1fr 1.25fr 0.5fr',
             }}
           >
             <div>Name</div>
             <div>Category</div>
             <div>Status</div>
             <div>Criticality</div>
-            <div>Risk Score</div>
+            <div>Risk</div>
+            <div>Review</div>
             <div>Contract End Date</div>
             <div>Contact</div>
             <div></div>
@@ -297,13 +300,16 @@ export const VendorRegistry: React.FC<VendorRegistryProps> = ({
             const statusLabel = VENDOR_STATUS_LABELS[vendor.status] || vendor.status
             const criticalityColor = VENDOR_CRITICALITY_COLORS[vendor.criticality] || '#6b7280'
             const criticalityLabel = VENDOR_CRITICALITY_LABELS[vendor.criticality] || vendor.criticality
+            const rag = vendorRiskLevelToRAG(vendor.risk_level)
+            const ragColor = rag ? VENDOR_RAG_COLORS[rag] : null
+            const reviewStatus = vendor.review_status
 
             return (
               <div
                 key={vendor.id}
                 className="systems-table-row"
                 style={{
-                  gridTemplateColumns: '2fr 1fr 1fr 1fr 0.75fr 1fr 1.25fr 0.5fr',
+                  gridTemplateColumns: '2fr 1fr 1fr 1fr 0.9fr 0.9fr 1fr 1.25fr 0.5fr',
                   cursor: 'pointer',
                 }}
                 onClick={() => onSelectVendor(vendor.id)}
@@ -361,14 +367,58 @@ export const VendorRegistry: React.FC<VendorRegistryProps> = ({
                   </span>
                 </div>
 
-                {/* Risk Score */}
-                <div
-                  style={{
-                    fontWeight: vendor.risk_score != null ? 600 : 400,
-                    color: vendor.risk_score != null ? 'var(--text)' : 'var(--muted)',
-                  }}
-                >
-                  {vendor.risk_score != null ? vendor.risk_score : '-'}
+                {/* Risk: single score + RAG pill */}
+                <div>
+                  {vendor.risk_score != null && ragColor ? (
+                    <span
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '0.25rem',
+                        padding: '0.2rem 0.6rem',
+                        borderRadius: '9999px',
+                        fontSize: '0.8rem',
+                        fontWeight: 600,
+                        whiteSpace: 'nowrap',
+                        backgroundColor: ragColor + '1a',
+                        color: ragColor,
+                        border: `1px solid ${ragColor}40`,
+                      }}
+                    >
+                      {vendor.risk_score} · {rag}
+                    </span>
+                  ) : vendor.risk_score != null ? (
+                    <span style={{ fontWeight: 600, color: 'var(--text)' }}>{vendor.risk_score}</span>
+                  ) : (
+                    <span style={{ color: 'var(--muted)' }}>-</span>
+                  )}
+                </div>
+
+                {/* Review due badge */}
+                <div>
+                  {reviewStatus === 'overdue' || reviewStatus === 'due_soon' ? (
+                    <span
+                      style={{
+                        display: 'inline-block',
+                        padding: '0.2rem 0.6rem',
+                        borderRadius: '4px',
+                        fontSize: '0.8rem',
+                        fontWeight: 600,
+                        whiteSpace: 'nowrap',
+                        backgroundColor: (reviewStatus === 'overdue' ? '#ef4444' : '#f59e0b') + '1a',
+                        color: reviewStatus === 'overdue' ? '#ef4444' : '#f59e0b',
+                        border: `1px solid ${(reviewStatus === 'overdue' ? '#ef4444' : '#f59e0b')}40`,
+                      }}
+                    >
+                      {reviewStatus === 'overdue' ? 'Overdue' : 'Due soon'}
+                    </span>
+                  ) : vendor.next_review_date ? (
+                    <span style={{ color: 'var(--muted)', fontSize: '0.8rem', whiteSpace: 'nowrap' }}>
+                      {formatDate(vendor.next_review_date)}
+                    </span>
+                  ) : (
+                    <span style={{ color: 'var(--muted)' }}>-</span>
+                  )}
                 </div>
 
                 {/* Contract End Date */}

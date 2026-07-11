@@ -1,0 +1,191 @@
+{
+  "slug": "confluence",
+  "name": "Confluence",
+  "vendor": "Atlassian Pty Ltd",
+  "category": "Knowledge Management",
+  "description": "Atlassian's cloud wiki and knowledge management platform; yields space permission exports, site and organisation audit logs, public link (external sharing) configuration and page history evidence of policy review cadence.",
+  "website": "https://www.atlassian.com/software/confluence",
+  "aliases": [
+    "confluence",
+    "confluence cloud",
+    "atlassian confluence"
+  ],
+  "logo_hint": "confluence",
+  "system_type": "document_management",
+  "version": "1.0",
+  "recipes": {
+    "L1": {
+      "title": "Confluence Cloud Manual Evidence Collection",
+      "estimated_time": "20 minutes",
+      "frequency": "weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Open your Confluence site, select the settings wheel in the top-right corner to enter Confluence administration, then under Monitoring select Audit log and set the date range for the reporting period",
+          "permissions_required": "Confluence Administrator (global permission)",
+          "audit_note": "The site audit log is not available on the Free plan; events are retained for a configurable 1-12 months (default one year), so capture regularly before the retention window closes",
+          "vendor_docs_url": "https://support.atlassian.com/confluence-cloud/docs/view-the-audit-log/"
+        },
+        {
+          "step": 2,
+          "action": "Export the filtered audit log to CSV from the same screen and save it with the capture date",
+          "permissions_required": "Confluence Administrator (global permission)",
+          "audit_note": "The site audit log records space, permission, public link and admin events but explicitly excludes content edits — pair it with page history evidence for content changes",
+          "vendor_docs_url": "https://support.atlassian.com/confluence-cloud/docs/view-the-audit-log/"
+        },
+        {
+          "step": 3,
+          "action": "For a site-wide permissions report, go to Confluence administration, under Admin tools select Export permissions data, then select Export all permissions combinations and start the export; for individual critical spaces, open the space, select More actions (•••) > Space settings and screenshot the Space permissions page",
+          "permissions_required": "Site admin (permissions export); Space Admin (per-space screenshots)",
+          "audit_note": "The site-wide export is only available on sites that have not yet fully moved to Confluence role-based access; on fully migrated sites rely on per-space permission screenshots instead",
+          "vendor_docs_url": "https://support.atlassian.com/confluence-cloud/docs/export-permissions-data-to-understand-access-across-your-site/"
+        },
+        {
+          "step": 4,
+          "action": "For external sharing evidence, go to Confluence administration > Settings > Security, open the Public links tab and screenshot the site-level 'Allow public links on this site' toggle plus the per-space allowed/not allowed list",
+          "permissions_required": "Confluence Administrator (global permission)",
+          "audit_note": "This page is the authoritative record of your external sharing posture; on Premium and Enterprise plans it also shows spaces blocked from allowing public links",
+          "vendor_docs_url": "https://support.atlassian.com/confluence-cloud/docs/manage-public-links-across-confluence-cloud/"
+        },
+        {
+          "step": 5,
+          "action": "For policy review cadence evidence, open each in-scope policy page, select More actions (•••) > Page history and screenshot the version list (version number, author, date); optionally insert the Change history macro on a policy register page for an always-current view",
+          "permissions_required": "View permission on the policy pages",
+          "audit_note": "Page versions are timestamped by Confluence and retained indefinitely, making version history a reliable record that policies were reviewed on schedule",
+          "vendor_docs_url": "https://support.atlassian.com/confluence-cloud/docs/insert-the-change-history-macro/"
+        },
+        {
+          "step": 6,
+          "action": "Upload the CSV exports and screenshots to the evidence repository with the evidence ID reference",
+          "security_note": "Ensure no API tokens or restricted page content is visible in screenshots, and restrict access to exports containing user email addresses"
+        }
+      ]
+    },
+    "L2": {
+      "title": "Atlassian Organisation Audit Log Exports",
+      "estimated_time": "30 minutes initial setup, then 10 minutes per export",
+      "frequency": "monthly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Confirm the Confluence site sits under your Atlassian organisation at admin.atlassian.com — the organisation audit log records user and admin management activity across products, and an Atlassian Guard subscription extends its coverage and retention",
+          "permissions_required": "Organisation Admin",
+          "vendor_docs_url": "https://support.atlassian.com/security-and-access-policies/docs/monitor-and-audit-activity-in-your-organization/"
+        },
+        {
+          "step": 2,
+          "action": "Navigate to admin.atlassian.com > Security > Audit log, filter by product (Confluence) and set the date range for the reporting period",
+          "permissions_required": "Organisation Admin",
+          "vendor_docs_url": "https://support.atlassian.com/security-and-access-policies/docs/view-audit-log-activities/"
+        },
+        {
+          "step": 3,
+          "action": "Select Export to download a CSV of the filtered events (up to the 10,000 most recent events per export)",
+          "permissions_required": "Organisation Admin",
+          "audit_note": "The organisation audit log retains activity for a limited window (around 180 days with Atlassian Guard); exporting monthly preserves evidence before the retention window closes",
+          "vendor_docs_url": "https://support.atlassian.com/security-and-access-policies/docs/accessing-audit-log-activities/"
+        },
+        {
+          "step": 4,
+          "action": "In Confluence administration, set the site audit log retention to the maximum 12 months, then set a recurring monthly task for both exports — Confluence has no natively scheduled evidence delivery — and record each run against the evidence ID",
+          "permissions_required": "Confluence Administrator (global permission)",
+          "audit_note": "Setting maximum retention gives you a recovery buffer if a monthly export run is missed",
+          "vendor_docs_url": "https://support.atlassian.com/confluence-cloud/docs/view-the-audit-log/"
+        },
+        {
+          "step": 5,
+          "action": "File each CSV in the evidence repository with restricted access",
+          "security_note": "Exports contain user email addresses and IP addresses; store them in a location with access limited to the compliance team"
+        }
+      ]
+    },
+    "L3": {
+      "title": "Confluence API-Driven Evidence Automation",
+      "estimated_time": "2-4 hours initial setup",
+      "frequency": "automated daily",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Create credentials: set up a dedicated service account with Confluence Administrator global permission, then create an API token with an expiry at id.atlassian.com > Security > API tokens while signed in as that account",
+          "permissions_required": "Confluence Administrator (the authenticating account); Site admin to grant the global permission",
+          "security_note": "The token is shown only once at creation — store it in a secrets manager, and use the service account rather than a personal admin login",
+          "vendor_docs_url": "https://support.atlassian.com/atlassian-account/docs/manage-api-tokens-for-your-atlassian-account/"
+        },
+        {
+          "step": 2,
+          "action": "Pull the site audit log daily: GET https://your-domain.atlassian.net/wiki/rest/api/audit/since?number=1&units=days for incremental records, or GET /wiki/rest/api/audit/export for a CSV/ZIP export, authenticating with Basic auth (account email + API token)",
+          "permissions_required": "Confluence Administrator global permission",
+          "audit_note": "Daily exports preserve audit records beyond the configurable 1-12 month retention period; OAuth apps need the read:audit-log:confluence scope",
+          "vendor_docs_url": "https://developer.atlassian.com/cloud/confluence/rest/v1/api-group-audit/"
+        },
+        {
+          "step": 3,
+          "action": "Run a daily space permission audit: GET https://your-domain.atlassian.net/wiki/api/v2/spaces to enumerate spaces, then GET /wiki/api/v2/spaces/{id}/permissions for each in-scope space, following cursor pagination (limit up to 250 per page)",
+          "permissions_required": "View permission on each space (use the Confluence admin service account for full coverage)",
+          "audit_note": "Capturing permission assignments daily gives you point-in-time evidence for access reviews without relying on the deprecating site-wide export",
+          "vendor_docs_url": "https://developer.atlassian.com/cloud/confluence/rest/v2/api-group-space-permissions/"
+        },
+        {
+          "step": 4,
+          "action": "Capture policy review cadence programmatically: GET https://your-domain.atlassian.net/wiki/api/v2/pages/{page-id}/versions for each in-scope policy page and store the version list (number, author, created date)",
+          "permissions_required": "View permission on the policy pages",
+          "vendor_docs_url": "https://developer.atlassian.com/cloud/confluence/rest/v2/api-group-version/"
+        },
+        {
+          "step": 5,
+          "action": "Collect organisation audit events programmatically: create an organisation API key in admin.atlassian.com > Settings > API keys, then call GET https://api.atlassian.com/admin/v1/orgs/{orgId}/events with Bearer authentication and from/to/cursor parameters",
+          "permissions_required": "Organisation Admin (to create the API key)",
+          "security_note": "Organisation API keys are highly privileged; scope usage to read operations, store the key securely and rotate it regularly",
+          "audit_note": "This endpoint is rate-limited to around 10 requests per minute; batch daily pulls rather than polling aggressively",
+          "vendor_docs_url": "https://developer.atlassian.com/cloud/admin/organization/rest/api-group-events/"
+        },
+        {
+          "step": 6,
+          "action": "Add error handling and validation: follow pagination cursors and 'next' links to completion, alert on authentication failures or empty result windows, and store outputs with run timestamps and checksums",
+          "audit_note": "Recording run metadata and checksums makes each collected file independently verifiable"
+        }
+      ]
+    },
+    "L4": {
+      "title": "Confluence Continuous Evidence Pipeline",
+      "estimated_time": "4-6 hours initial setup",
+      "frequency": "continuous with weekly reporting",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Stream audit events continuously: with a Confluence Cloud Enterprise plan or Atlassian Guard Premium, go to admin.atlassian.com > Security > Audit log > Settings > Webhook tab and register up to three webhooks that deliver organisation audit log activity to your SIEM or collector in near real time",
+          "permissions_required": "Organisation Admin",
+          "security_note": "Configure the optional authorisation credentials on the webhook and validate them at the receiving endpoint so forged events cannot enter the evidence store",
+          "audit_note": "Audit log webhooks are plan-gated (Enterprise plan or Guard Premium); confirm entitlement before designing the pipeline around them",
+          "vendor_docs_url": "https://support.atlassian.com/security-and-access-policies/docs/learn-more-about-audit-log-webhooks/"
+        },
+        {
+          "step": 2,
+          "action": "Without those plans, fall back to continuous cursor-based polling of GET https://api.atlassian.com/admin/v1/orgs/{orgId}/events combined with daily GET /wiki/rest/api/audit/export pulls from the site audit log",
+          "permissions_required": "Organisation Admin (API key holder); Confluence Administrator (site audit export)",
+          "vendor_docs_url": "https://developer.atlassian.com/cloud/admin/organization/rest/api-group-events/"
+        },
+        {
+          "step": 3,
+          "action": "Run a daily drift job that compares space permissions (GET /wiki/api/v2/spaces/{id}/permissions) and the public links posture against your approved baseline, alerting on newly public-link-enabled spaces, anonymous access grants or unexpected space admins",
+          "permissions_required": "Confluence Administrator (service account)",
+          "vendor_docs_url": "https://developer.atlassian.com/cloud/confluence/rest/v2/api-group-space-permissions/"
+        },
+        {
+          "step": 4,
+          "action": "Reconcile daily: compare webhook-received event counts against the organisation events API and the site audit export for the same window, and alert on gaps or webhook delivery failures",
+          "audit_note": "Completeness metrics from reconciliation are what turn continuous collection into audit-grade evidence"
+        },
+        {
+          "step": 5,
+          "action": "Publish a compliance dashboard: spaces allowing public links, space permission review coverage, and policy pages overdue for review (derived from page version history), reported weekly"
+        },
+        {
+          "step": 6,
+          "action": "Quarterly, rotate the service account API token and organisation API keys, and review the Confluence Administrator and Organisation Admin lists",
+          "security_note": "Expired or orphaned automation credentials are a common finding; tie rotation to the quarterly access review"
+        }
+      ]
+    }
+  }
+}
