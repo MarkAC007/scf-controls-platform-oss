@@ -1,0 +1,188 @@
+{
+  "slug": "microsoft-azure",
+  "name": "Microsoft Azure",
+  "vendor": "Microsoft Corporation",
+  "category": "Cloud Infrastructure",
+  "description": "Public cloud platform; audit evidence via the Azure Activity Log, Azure Monitor diagnostic settings, Microsoft Defender for Cloud posture reports, Azure Policy compliance and Azure Resource Graph inventory.",
+  "website": "https://azure.microsoft.com",
+  "aliases": [
+    "azure",
+    "microsoft azure",
+    "azure monitor",
+    "defender for cloud",
+    "azure policy"
+  ],
+  "logo_hint": "azure",
+  "system_type": "cloud_provider",
+  "version": "1.0",
+  "recipes": {
+    "L1": {
+      "title": "Azure Activity Log and Compliance Manual Evidence Collection",
+      "estimated_time": "15 minutes",
+      "frequency": "weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Sign in to the Azure portal and navigate to Monitor > Activity log; set the Timespan filter to the collection period and scope to the in-scope subscriptions",
+          "permissions_required": "Reader or Monitoring Reader on the subscription",
+          "security_note": "Use a dedicated read-only account for evidence collection, never an Owner or Global Administrator identity",
+          "audit_note": "The Activity Log records subscription-level control-plane operations and is retained by the platform for 90 days — collect before entries age out",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/azure/azure-monitor/platform/activity-log"
+        },
+        {
+          "step": 2,
+          "action": "Filter by Operation (e.g. role assignment writes, resource deletions) or Event severity as required, then click Download as CSV to export the filtered entries",
+          "audit_note": "Each event carries a platform-assigned timestamp, correlation ID and caller identity"
+        },
+        {
+          "step": 3,
+          "action": "For security posture evidence, navigate to Microsoft Defender for Cloud > Regulatory compliance, select the standard, and use Download report to export a point-in-time PDF or CSV",
+          "permissions_required": "Security Reader",
+          "audit_note": "The report reflects the current point in time for the subscriptions selected in the portal filter — record the date in the filename",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/azure/defender-for-cloud/regulatory-compliance-dashboard"
+        },
+        {
+          "step": 4,
+          "action": "For configuration compliance evidence, navigate to Policy > Compliance, filter by scope and initiative, and export the compliance results",
+          "permissions_required": "Reader on the assignment scope",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/azure/governance/policy/how-to/get-compliance-data"
+        },
+        {
+          "step": 5,
+          "action": "For resource inventory, open Azure Resource Graph Explorer (search 'Resource Graph Explorer' in the portal), run a query such as Resources | project name, type, location, resourceGroup, and use Download as CSV",
+          "permissions_required": "Reader on the resources in scope",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/azure/governance/resource-graph/first-query-azurecli"
+        },
+        {
+          "step": 6,
+          "action": "Save all exports with date-stamped filenames including subscription IDs and upload to the evidence repository",
+          "security_note": "Check exports for connection strings or secrets surfaced in operation payloads before uploading"
+        }
+      ]
+    },
+    "L2": {
+      "title": "Azure Diagnostic Settings Scheduled Evidence Export",
+      "estimated_time": "30 minutes (setup), then automated",
+      "frequency": "automated continuous",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Navigate to Monitor > Activity log > Export Activity Logs and create a diagnostic setting for each in-scope subscription, selecting the Administrative, Security and Policy categories",
+          "permissions_required": "Owner or Contributor on the subscription (Monitoring Contributor plus destination write access also works)",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/azure/azure-monitor/platform/diagnostic-settings"
+        },
+        {
+          "step": 2,
+          "action": "Set the destination to a Log Analytics workspace for querying and alerting, and/or an Azure Storage account for low-cost long-term archive beyond the 90-day platform retention",
+          "audit_note": "Diagnostic settings forward events continuously from creation onward; they are not retroactive, so configure them before the audit period begins",
+          "security_note": "Enable an immutability policy (time-based retention) on the archive storage container so exported logs cannot be modified or deleted",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/azure/azure-monitor/platform/activity-log"
+        },
+        {
+          "step": 3,
+          "action": "Repeat diagnostic settings on key resources (Key Vault, storage accounts, SQL) so resource-level logs land in the same workspace as the Activity Log",
+          "audit_note": "A single workspace gives one queryable evidence store covering control-plane and data-plane operations"
+        },
+        {
+          "step": 4,
+          "action": "In Microsoft Defender for Cloud, go to Environment settings > your subscription > Continuous export and enable export of security recommendations, secure score and regulatory compliance to the Log Analytics workspace, including weekly snapshots",
+          "permissions_required": "Owner on the resource group hosting the export configuration",
+          "audit_note": "Weekly snapshots of secure score and regulatory compliance provide a dated posture trail without manual downloads",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/azure/defender-for-cloud/continuous-export"
+        },
+        {
+          "step": 5,
+          "action": "Configure workspace retention (up to two years interactive, longer via archive tiers) to match your evidence retention requirement, and document the setting",
+          "audit_note": "Retention configuration itself is evidence of a controlled log management process"
+        }
+      ]
+    },
+    "L3": {
+      "title": "Azure API-Driven Automated Collection",
+      "estimated_time": "3 hours initial setup",
+      "frequency": "automated daily",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Create a service principal (or preferably a managed identity on the automation host) and assign it the Reader and Security Reader roles at subscription or management group scope",
+          "permissions_required": "User Access Administrator or Owner to assign the roles",
+          "security_note": "Prefer a managed identity so no client secret exists; if a service principal secret is unavoidable, store it in Azure Key Vault and rotate it at least every 90 days",
+          "audit_note": "Role assignment operations are themselves recorded in the Activity Log",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/cli/azure/azure-cli-sp-tutorial-1"
+        },
+        {
+          "step": 2,
+          "action": "Schedule a daily job that runs az monitor activity-log list --start-time YYYY-MM-DDT00:00:00Z --output json (or calls the Activity Logs - List REST API) and writes the output to the evidence store",
+          "permissions_required": "Reader on the subscription",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/rest/api/monitor/activity-logs/list"
+        },
+        {
+          "step": 3,
+          "action": "Collect policy compliance daily with az policy state summarize --output json for the roll-up and az policy state list --filter \"complianceState eq 'NonCompliant'\" for the exception detail",
+          "permissions_required": "Reader on the assignment scope",
+          "audit_note": "Retaining both the summary and the non-compliant detail supports exception tracking over time",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/cli/azure/policy/state"
+        },
+        {
+          "step": 4,
+          "action": "Export resource inventory with az graph query -q \"Resources | project id, name, type, location, subscriptionId, tags\" (install the resource-graph extension on first use), paginating with --first and --skip-token for large estates",
+          "permissions_required": "Reader on the resources in scope",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/azure/governance/resource-graph/first-query-azurecli"
+        },
+        {
+          "step": 5,
+          "action": "Implement error handling: alert on non-zero exit codes, authentication failures or empty result sets, and re-run failed collections within a defined SLA",
+          "security_note": "Ensure failure alerts do not include tokens or connection strings in their payloads",
+          "audit_note": "Keep a run log (start time, end time, record counts per source) as evidence the collection process is controlled"
+        },
+        {
+          "step": 6,
+          "action": "Validate each day's output against a baseline — flag if Activity Log entry counts or resource counts deviate materially from the trailing average",
+          "audit_note": "Volume validation provides assurance of collection completeness and surfaces broken filters or scope drift"
+        }
+      ]
+    },
+    "L4": {
+      "title": "Azure Managed Evidence Pipeline with Completeness Metrics",
+      "estimated_time": "6 hours initial setup",
+      "frequency": "continuous with weekly reporting",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Stream the Activity Log and key resource logs to Azure Event Hubs via diagnostic settings for near-real-time delivery into your SIEM (e.g. Microsoft Sentinel or a third-party platform)",
+          "permissions_required": "Owner or Contributor on the subscription plus Azure Event Hubs Data Owner on the namespace",
+          "security_note": "Restrict Event Hubs access with Microsoft Entra role assignments or scoped shared access policies; require TLS 1.2+ on consumers",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/azure/azure-monitor/platform/diagnostic-settings"
+        },
+        {
+          "step": 2,
+          "action": "Enable Microsoft Defender for Cloud continuous export of alerts, recommendations, secure score and regulatory compliance to Event Hubs and Log Analytics, deploying the configuration at scale with the built-in Azure Policy definitions",
+          "permissions_required": "Owner on the resource group hosting the export configuration",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/azure/defender-for-cloud/continuous-export"
+        },
+        {
+          "step": 3,
+          "action": "Assign an Azure Policy initiative that audits for missing diagnostic settings across subscriptions, so any resource or subscription falling out of the pipeline surfaces as non-compliant",
+          "audit_note": "Policy-as-code enforcement of log routing is direct evidence that collection coverage is managed, not assumed",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/azure/governance/policy/how-to/get-compliance-data"
+        },
+        {
+          "step": 4,
+          "action": "Monitor pipeline health in the Log Analytics workspace: query ingestion volume per table and per subscription, alert on ingestion gaps, latency spikes or a subscription going silent",
+          "audit_note": "Ingestion-gap alerting is the primary evidence that no audit records were dropped in transit"
+        },
+        {
+          "step": 5,
+          "action": "Run scheduled cross-checks: compare the subscription and resource list from Azure Resource Graph against the sources actually ingesting, and flag anything present in inventory but absent from the pipeline",
+          "audit_note": "Reconciling inventory against ingestion proves every in-scope subscription is actually being collected",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/azure/governance/resource-graph/first-query-azurecli"
+        },
+        {
+          "step": 6,
+          "action": "Publish an Azure Monitor workbook showing events per day, ingestion errors, coverage by subscription, secure score and compliance trend, and generate an automated weekly collection health report into the evidence repository",
+          "audit_note": "The workbook and weekly report serve as standing evidence of a managed, reviewed collection process"
+        }
+      ]
+    }
+  }
+}

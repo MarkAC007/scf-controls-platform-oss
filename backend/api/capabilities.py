@@ -29,8 +29,13 @@ from schemas import (
     RecipeStepSchema,
     RecipeFeedbackCreate,
     RecipeFeedbackResponse,
+    SystemRecipesResponse,
+    SystemCatalogRecipeResponse,
 )
 from auth import require_org_role, OrgMembership, get_current_user
+from services.system_catalog_resolution import resolve_recipes_for_system
+from services.system_catalog_validation import RECIPE_LEVELS
+from api.system_catalog import template_summary
 
 import json
 import os
@@ -57,16 +62,6 @@ def _find_data_file(filename: str) -> Optional[Path]:
 
 
 @lru_cache(maxsize=1)
-def _load_recipes() -> dict:
-    """Load and cache system collection recipes from JSON file."""
-    recipes_path = _find_data_file("system_collection_recipes.json")
-    if not recipes_path:
-        return {"systems": {}, "generic_fallbacks": {}}
-    with open(recipes_path, "r") as f:
-        return json.load(f)
-
-
-@lru_cache(maxsize=1)
 def _load_collection_interfaces() -> dict:
     """Load and cache collection interfaces from JSON file."""
     ci_path = _find_data_file("collection_interfaces.json")
@@ -78,89 +73,40 @@ def _load_collection_interfaces() -> dict:
 
 MATURITY_ORDER = ["L0", "L1", "L2", "L3", "L4", "L5"]
 
+# Catalog recipes exist for RECIPE_LEVELS (L1-L4, owned by the catalog
+# validation module); requests at the extremes clamp inward.
+RECIPE_LEVEL_ORDER = list(RECIPE_LEVELS)
 
-def _resolve_recipe(
-    vendor: Optional[str],
-    system_type: str,
-    maturity_level: str,
-) -> tuple[Optional[dict], str, Optional[dict]]:
-    """
-    Resolve a collection recipe using three-layer resolution:
-    1. Product-specific (highest confidence)
-    2. Vendor-level
-    3. Type-generic fallback
 
-    Returns: (recipe_dict, confidence, next_level_recipe_dict)
-    """
-    recipes_data = _load_recipes()
-    systems = recipes_data.get("systems", {})
-    fallbacks = recipes_data.get("generic_fallbacks", {})
+def clamp_recipe_level(level) -> str:
+    """Clamp a maturity level to the range recipes exist for (L1-L4)."""
+    if level == "L0":
+        return "L1"
+    if level == "L5":
+        return "L4"
+    return level if level in RECIPE_LEVEL_ORDER else "L1"
 
-    recipe = None
-    confidence = "type_generic"
-    next_recipe = None
 
-    # Calculate next level
-    level_idx = MATURITY_ORDER.index(maturity_level) if maturity_level in MATURITY_ORDER else -1
-    next_level = MATURITY_ORDER[level_idx + 1] if level_idx >= 0 and level_idx < len(MATURITY_ORDER) - 1 else None
+def matched_via_to_confidence(matched_via: str) -> str:
+    """Map catalog resolution provenance onto the recipe_confidence vocabulary
+    the frontend renders. An explicit template link is system-specific; a
+    heuristic alias match is honest about being vendor-level guidance."""
+    if matched_via == "template":
+        return "system_specific"
+    if matched_via == "alias":
+        return "vendor_generic"
+    return "type_generic"
 
-    # Try vendor match (case-insensitive)
-    vendor_key = None
-    if vendor:
-        vendor_lower = vendor.lower()
-        for key in systems:
-            sys_entry = systems[key]
-            if sys_entry.get("vendor", "").lower() in vendor_lower or vendor_lower in sys_entry.get("vendor", "").lower():
-                vendor_key = key
-                break
 
-    if vendor_key:
-        sys_entry = systems[vendor_key]
-        # Try product-level recipes first
-        products = sys_entry.get("products", {})
-        for prod_key, prod_data in products.items():
-            prod_recipes = prod_data.get("recipes", {})
-            if maturity_level in prod_recipes:
-                recipe = prod_recipes[maturity_level]
-                confidence = "system_specific"
-                if next_level and next_level in prod_recipes:
-                    next_recipe = prod_recipes[next_level]
-                break
-
-        # Fallback to vendor-level recipes
-        if not recipe:
-            vendor_recipes = sys_entry.get("recipes", {})
-            if maturity_level in vendor_recipes:
-                recipe = vendor_recipes[maturity_level]
-                confidence = "vendor_generic"
-                if next_level and next_level in vendor_recipes:
-                    next_recipe = vendor_recipes[next_level]
-
-    # Fallback to generic type
-    if not recipe:
-        type_fallbacks = fallbacks.get(system_type, {})
-        if maturity_level in type_fallbacks:
-            recipe = type_fallbacks[maturity_level]
-            confidence = "type_generic"
-            if next_level and next_level in type_fallbacks:
-                next_recipe = type_fallbacks[next_level]
-
-    # If still no next_recipe, try to find one at a higher level in any available source
-    if not next_recipe and next_level:
-        if vendor_key:
-            sys_entry = systems[vendor_key]
-            for prod_data in sys_entry.get("products", {}).values():
-                if next_level in prod_data.get("recipes", {}):
-                    next_recipe = prod_data["recipes"][next_level]
-                    break
-            if not next_recipe and next_level in sys_entry.get("recipes", {}):
-                next_recipe = sys_entry["recipes"][next_level]
-        if not next_recipe:
-            type_fallbacks = fallbacks.get(system_type, {})
-            if next_level in type_fallbacks:
-                next_recipe = type_fallbacks[next_level]
-
-    return recipe, confidence, next_recipe
+def _recipe_schema_from_row(recipe_row) -> CollectionRecipeSchema:
+    """Convert a SystemCatalogRecipe row to the guidance recipe schema."""
+    return CollectionRecipeSchema(
+        title=recipe_row.title,
+        estimated_time=recipe_row.estimated_time,
+        frequency=recipe_row.frequency,
+        steps=[RecipeStepSchema(**step) for step in (recipe_row.steps or [])],
+        source=recipe_row.source or "curated",
+    )
 
 
 def _get_maturity_appropriate_methods(system_type: str, maturity_level: str) -> list[dict]:
@@ -472,6 +418,124 @@ async def delete_capability(
 
 
 # ============================================================================
+# PER-SYSTEM RECIPE RESOLUTION
+# ============================================================================
+
+async def _get_org_system(db: AsyncSession, org_id: UUID, system_id: UUID) -> System:
+    """Load an org-scoped system or raise 404."""
+    result = await db.execute(
+        select(System).where(
+            and_(
+                System.id == system_id,
+                System.organization_id == org_id
+            )
+        )
+    )
+    system = result.scalar_one_or_none()
+    if not system:
+        raise HTTPException(status_code=404, detail="System not found")
+    return system
+
+
+@router.get(
+    "/organizations/{org_id}/systems/{system_id}/recipes",
+    response_model=SystemRecipesResponse
+)
+async def get_system_recipes(
+    org_id: UUID,
+    system_id: UUID,
+    membership: OrgMembership = Depends(require_org_role("viewer")),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Resolve collection recipes for a system from the systems knowledge catalog.
+    Requires: viewer role or higher.
+    Resolution order: explicit template link -> alias match -> per-type fallback.
+    """
+    system = await _get_org_system(db, org_id, system_id)
+
+    resolution = await resolve_recipes_for_system(db, system)
+
+    return SystemRecipesResponse(
+        system_id=system.id,
+        matched_via=resolution.matched_via,
+        template=template_summary(resolution.template) if resolution.template else None,
+        recipes=[SystemCatalogRecipeResponse.model_validate(r) for r in resolution.recipes],
+    )
+
+
+@router.post(
+    "/organizations/{org_id}/systems/{system_id}/generate-recipes",
+    status_code=202
+)
+async def generate_system_recipes(
+    org_id: UUID,
+    system_id: UUID,
+    membership: OrgMembership = Depends(require_org_role("editor")),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Queue AI generation of collection recipes for a system.
+    Requires: editor role or higher.
+    Output is stored as an org-private catalog template with
+    source='ai_generated' recipes; poll the status endpoint or re-fetch
+    the recipes endpoint to see results. Runs in mock mode without an
+    ANTHROPIC_API_KEY (returns clearly marked sample recipes).
+    """
+    await _get_org_system(db, org_id, system_id)
+
+    from tasks_recipe_generation import run_recipe_generation, recipegen_status_key, RECIPEGEN_STATUS_TTL
+    from redis_client import get_redis_client
+
+    try:
+        r = await get_redis_client()
+        await r.setex(
+            recipegen_status_key(str(system_id)),
+            RECIPEGEN_STATUS_TTL,
+            json.dumps({"status": "queued"}),
+        )
+    except Exception:
+        # Status tracking is best-effort; the task itself re-writes it.
+        pass
+
+    run_recipe_generation.delay(str(org_id), str(system_id))
+    return {"status": "queued"}
+
+
+@router.get(
+    "/organizations/{org_id}/systems/{system_id}/generate-recipes/status"
+)
+async def get_recipe_generation_status(
+    org_id: UUID,
+    system_id: UUID,
+    membership: OrgMembership = Depends(require_org_role("viewer")),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Read the AI recipe generation status for a system.
+    Requires: viewer role or higher.
+    Returns {"status": "idle"} when no generation has been requested recently.
+    """
+    await _get_org_system(db, org_id, system_id)
+
+    from tasks_recipe_generation import recipegen_status_key
+    from redis_client import get_redis_client
+
+    try:
+        r = await get_redis_client()
+        raw = await r.get(recipegen_status_key(str(system_id)))
+    except Exception:
+        raw = None
+
+    if not raw:
+        return {"status": "idle"}
+    try:
+        return json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return {"status": "idle"}
+
+
+# ============================================================================
 # EVIDENCE-CENTRIC QUERIES
 # ============================================================================
 
@@ -681,38 +745,23 @@ async def get_evidence_suggestions(
 
         if target_system:
             effective_maturity = maturity_level or "L1"  # Default to L1 if not specified
+            recipe_level = clamp_recipe_level(effective_maturity)
 
-            # Resolve recipe using three-layer resolution
-            recipe_dict, confidence, next_recipe_dict = _resolve_recipe(
-                vendor=target_system.vendor,
-                system_type=target_system.system_type,
-                maturity_level=effective_maturity,
-            )
+            # Resolve recipes from the systems knowledge catalog
+            resolution = await resolve_recipes_for_system(db, target_system)
+            recipes_by_level = {r.maturity_level: r for r in resolution.recipes}
 
-            # Convert recipe dicts to schema objects
             recipe_schema = None
-            if recipe_dict:
-                recipe_schema = CollectionRecipeSchema(
-                    title=recipe_dict.get("title", ""),
-                    estimated_time=recipe_dict.get("estimated_time"),
-                    frequency=recipe_dict.get("frequency"),
-                    steps=[
-                        RecipeStepSchema(**step)
-                        for step in recipe_dict.get("steps", [])
-                    ]
-                )
+            recipe_row = recipes_by_level.get(recipe_level)
+            if recipe_row:
+                recipe_schema = _recipe_schema_from_row(recipe_row)
 
             next_recipe_schema = None
-            if next_recipe_dict:
-                next_recipe_schema = CollectionRecipeSchema(
-                    title=next_recipe_dict.get("title", ""),
-                    estimated_time=next_recipe_dict.get("estimated_time"),
-                    frequency=next_recipe_dict.get("frequency"),
-                    steps=[
-                        RecipeStepSchema(**step)
-                        for step in next_recipe_dict.get("steps", [])
-                    ]
-                )
+            level_idx = RECIPE_LEVEL_ORDER.index(recipe_level)
+            if level_idx + 1 < len(RECIPE_LEVEL_ORDER):
+                next_row = recipes_by_level.get(RECIPE_LEVEL_ORDER[level_idx + 1])
+                if next_row:
+                    next_recipe_schema = _recipe_schema_from_row(next_row)
 
             # Get maturity-appropriate methods
             appropriate_methods = _get_maturity_appropriate_methods(
@@ -730,7 +779,8 @@ async def get_evidence_suggestions(
                 vendor=target_system.vendor,
                 current_maturity=effective_maturity,
                 recipe=recipe_schema,
-                recipe_confidence=confidence,
+                recipe_confidence=matched_via_to_confidence(resolution.matched_via),
+                matched_via=resolution.matched_via,
                 maturity_appropriate_methods=appropriate_methods,
                 next_level_preview=next_recipe_schema,
                 alternatives_count=alternatives,

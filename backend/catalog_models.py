@@ -12,7 +12,8 @@ Catalog Tables:
 - capability_theme_mappings: SCF control to capability theme mappings
 """
 from sqlalchemy import Column, String, Boolean, Text, Integer, DateTime, ForeignKey, UniqueConstraint
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
 from database import Base
@@ -236,3 +237,69 @@ class CapabilityThemeMapping(Base):
 
     def __repr__(self):
         return f"<CapabilityThemeMapping(theme_id={self.theme_id}, scf_id={self.scf_id}, relevance={self.relevance})>"
+
+
+class SystemCatalogTemplate(Base):
+    """Known-system template for the systems knowledge catalog.
+
+    Global entries (organization_id IS NULL) are seeded from
+    backend/data/system_catalog/*.json and power the add-system template
+    picker. Org-private entries (organization_id set) hold AI-generated
+    recipes for custom systems and never appear in the picker.
+    """
+    __tablename__ = "system_catalog_templates"
+
+    id = Column(Integer, primary_key=True)
+    slug = Column(String(100), unique=True, nullable=False)
+    name = Column(String(255), nullable=False)
+    vendor = Column(String(255), nullable=False)
+    system_type = Column(String(50), nullable=False)
+    category = Column(String(100))
+    description = Column(Text)
+    website = Column(String(500))
+    aliases = Column(JSONB, default=list)
+    logo_hint = Column(String(50))
+    is_fallback = Column(Boolean, default=False)
+    organization_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    version = Column(String(20), default="1.0")
+    created_at = Column(DateTime(timezone=False), server_default=func.now())
+    updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now())
+
+    recipes = relationship(
+        "SystemCatalogRecipe",
+        back_populates="template",
+        cascade="all, delete-orphan",
+        order_by="SystemCatalogRecipe.maturity_level",
+    )
+
+    def __repr__(self):
+        return f"<SystemCatalogTemplate(slug={self.slug}, type={self.system_type})>"
+
+
+class SystemCatalogRecipe(Base):
+    """Per-maturity-level collection recipe belonging to a catalog template."""
+    __tablename__ = "system_catalog_recipes"
+    __table_args__ = (
+        UniqueConstraint("template_id", "maturity_level", name="uq_system_catalog_recipe_level"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    template_id = Column(Integer, ForeignKey("system_catalog_templates.id", ondelete="CASCADE"), nullable=False)
+    maturity_level = Column(String(2), nullable=False)  # L1..L4
+    title = Column(String(500), nullable=False)
+    estimated_time = Column(String(100))
+    frequency = Column(String(100))
+    steps = Column(JSONB, default=list)
+    source = Column(String(20), default="curated")  # curated | ai_generated
+    version = Column(String(20), default="1.0")
+    created_at = Column(DateTime(timezone=False), server_default=func.now())
+    updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now())
+
+    template = relationship("SystemCatalogTemplate", back_populates="recipes")
+
+    def __repr__(self):
+        return f"<SystemCatalogRecipe(template={self.template_id}, level={self.maturity_level})>"

@@ -1,0 +1,180 @@
+{
+  "slug": "box",
+  "name": "Box",
+  "vendor": "Box, Inc.",
+  "category": "Cloud Content Management",
+  "description": "Cloud content management and collaboration platform. Yields shared link and collaboration policy evidence, Shield threat detection alerts, enterprise admin event logs, user activity reports and retention policy configuration.",
+  "website": "https://www.box.com",
+  "aliases": [
+    "box",
+    "box.com"
+  ],
+  "logo_hint": "box",
+  "system_type": "document_management",
+  "version": "1.0",
+  "recipes": {
+    "L1": {
+      "title": "Box Manual Evidence Collection",
+      "estimated_time": "15 minutes",
+      "frequency": "weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Navigate to Admin Console > Enterprise Settings > Content & Sharing and capture a screenshot of the Shared Links section (default link access, 'invited people only' restrictions, expiry defaults)",
+          "permissions_required": "Admin",
+          "audit_note": "Include the browser URL and system clock in the screenshot so the capture date is verifiable",
+          "vendor_docs_url": "https://support.box.com/hc/en-us/articles/4404822772755-Enterprise-Settings-Content-Sharing-Tab"
+        },
+        {
+          "step": 2,
+          "action": "Navigate to Admin Console > Reports > Create Report > User Activity, tick the Shared Links and Collaboration action types, set the date range for the collection period and select Export",
+          "permissions_required": "Admin, or Co-Admin with 'Run new reports and access existing reports'",
+          "audit_note": "The export is written as a CSV into the Box Reports folder; ensure date ranges between collections leave no gaps",
+          "vendor_docs_url": "https://support.box.com/hc/en-us/articles/4415012490387-User-Activity-Report"
+        },
+        {
+          "step": 3,
+          "action": "Navigate to Admin Console > Shield > Dashboard, review open threat detection alerts for the period and export or screenshot the alert list",
+          "permissions_required": "Admin (requires a Box Shield licence)",
+          "audit_note": "If your enterprise does not licence Box Shield, note that in the evidence record and rely on the User Activity report for anomaly review",
+          "vendor_docs_url": "https://support.box.com/hc/en-us/articles/360044196113-Using-Threat-Detection"
+        },
+        {
+          "step": 4,
+          "action": "Navigate to Admin Console > Governance > Retention and capture the list of retention policies, their durations and assignments",
+          "permissions_required": "Admin (requires a Box Governance licence)",
+          "audit_note": "Retention policy configuration is point-in-time evidence — capture it each period even if unchanged",
+          "vendor_docs_url": "https://support.box.com/hc/en-us/articles/360043694374-About-Retention-and-Retention-Policies"
+        },
+        {
+          "step": 5,
+          "action": "Download the CSVs from the Box Reports folder and upload them with the screenshots to the evidence repository using date-stamped filenames and evidence ID references",
+          "security_note": "Reports contain user names, email addresses and file paths — restrict access to the evidence repository and do not share the Box Reports folder broadly"
+        }
+      ]
+    },
+    "L2": {
+      "title": "Box Scheduled Reports Collection",
+      "estimated_time": "20 minutes (setup), then automated",
+      "frequency": "automated weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Navigate to Admin Console > Reports > Create Report > User Activity and configure the columns, action types (shared links, collaboration) and filters to match your evidence requirement",
+          "permissions_required": "Admin, or Co-Admin with 'Run new reports and access existing reports'",
+          "vendor_docs_url": "https://support.box.com/hc/en-us/articles/360043696534-Running-Reports"
+        },
+        {
+          "step": 2,
+          "action": "Enable 'Save these settings to use in the future', then select Schedule report and set the recurrence (weekly, monthly or yearly), start date and end date",
+          "audit_note": "Scheduled runs deposit a fresh CSV in the Box Reports folder on each cycle with Box's generation timestamp",
+          "vendor_docs_url": "https://support.box.com/hc/en-us/articles/4415267546387-Scheduling-Reports"
+        },
+        {
+          "step": 3,
+          "action": "Note that Security Logs and Outbound Activity reports cannot currently be scheduled — collect those on the L1 manual cadence or via the Events API (L3)",
+          "audit_note": "Record this limitation in your collection procedure so auditors understand why those reports are gathered differently",
+          "vendor_docs_url": "https://support.box.com/hc/en-us/articles/4415267546387-Scheduling-Reports"
+        },
+        {
+          "step": 4,
+          "action": "Restrict the Box Reports folder to the compliance team and add a collaboration on it for your evidence tooling or shared compliance account",
+          "security_note": "Scheduled report output inherits Box Reports folder permissions — audit its collaborator list so report data is not exposed enterprise-wide"
+        },
+        {
+          "step": 5,
+          "action": "Each cycle, move the generated CSV from the Box Reports folder into the evidence repository and confirm the run completed with status 'Complete'",
+          "audit_note": "Verify the first two scheduled runs arrive as expected, then spot-check monthly for skipped runs"
+        }
+      ]
+    },
+    "L3": {
+      "title": "Box API-Driven Automated Collection",
+      "estimated_time": "2-4 hours initial setup",
+      "frequency": "automated daily",
+      "steps": [
+        {
+          "step": 1,
+          "action": "In the Box Developer Console, create a Platform App using Server Authentication (Client Credentials Grant) or JWT, then generate credentials — a client ID/secret for CCG, or a public/private keypair for JWT",
+          "permissions_required": "Any user can create the app; a Box Admin or Co-Admin must authorise it",
+          "security_note": "Store the client secret or JWT private key in a secrets manager, never in source control. The app runs as a service account, not a personal login.",
+          "vendor_docs_url": "https://developer.box.com/guides/authentication/jwt/jwt-setup/"
+        },
+        {
+          "step": 2,
+          "action": "In the app's Configuration tab, enable the 'Manage enterprise properties' scope so the service account can read enterprise events, then have a Box Admin or Co-Admin authorise the app from the Admin Console",
+          "permissions_required": "Admin or Co-Admin to authorise the app",
+          "audit_note": "App authorisations and scope changes are themselves recorded in the enterprise event stream",
+          "vendor_docs_url": "https://developer.box.com/guides/authentication/client-credentials/"
+        },
+        {
+          "step": 3,
+          "action": "Call GET https://api.box.com/2.0/events?stream_type=admin_logs with created_after/created_before filters to collect the enterprise admin event history (shared link creation, collaboration changes, downloads, logins)",
+          "permissions_required": "Service account token from the authorised app",
+          "audit_note": "admin_logs favours completeness: events are chronological, de-duplicated and retained for up to one year — the right stream for audit evidence",
+          "vendor_docs_url": "https://developer.box.com/guides/events/enterprise-events/for-enterprise/"
+        },
+        {
+          "step": 4,
+          "action": "Also collect configuration evidence on the same schedule: GET https://api.box.com/2.0/retention_policies for retention policy state (requires Box Governance and the retention scopes enabled by Box support)",
+          "audit_note": "Pairing event evidence with configuration snapshots shows both that controls are set and that they were not changed unnoticed",
+          "vendor_docs_url": "https://developer.box.com/reference/get-retention-policies/"
+        },
+        {
+          "step": 5,
+          "action": "Schedule the collection daily via cron or a CI/CD pipeline, persisting the next_stream_position between runs, with error handling that logs failures and alerts the compliance team",
+          "security_note": "Rotate the client secret or JWT keypair on your credential rotation schedule and remove the app authorisation if it is decommissioned",
+          "audit_note": "Persisting the stream position guarantees consecutive runs leave no gaps"
+        },
+        {
+          "step": 6,
+          "action": "Validate each run by checking the daily event count against baseline and confirming event timestamps are contiguous with the previous run — flag anomalies for investigation",
+          "audit_note": "Volume and continuity validation provide assurance of collection completeness"
+        }
+      ]
+    },
+    "L4": {
+      "title": "Box Managed Evidence Pipeline with Event Streaming",
+      "estimated_time": "1-2 days initial setup",
+      "frequency": "continuous with daily reporting",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Stream near real-time enterprise events by long-polling GET https://api.box.com/2.0/events?stream_type=admin_logs_streaming into your SIEM or evidence platform",
+          "permissions_required": "Authorised Platform App service account (JWT or Client Credentials Grant)",
+          "audit_note": "admin_logs_streaming favours low latency: events may arrive out of order or duplicated and only two weeks are retained — de-duplicate on event_id at ingestion",
+          "vendor_docs_url": "https://developer.box.com/guides/events/enterprise-events/for-enterprise/"
+        },
+        {
+          "step": 2,
+          "action": "Ingest Box Shield alerts through the same stream — Shield alert events (e.g., suspicious locations, anomalous downloads, malicious content) appear in the enterprise event stream as SHIELD_ALERT events",
+          "permissions_required": "Requires a Box Shield licence",
+          "audit_note": "Streaming Shield alerts into the SIEM turns detections into retained, timestamped evidence rather than transient dashboard entries",
+          "vendor_docs_url": "https://developer.box.com/guides/events/event-triggers/shield-alert-events/"
+        },
+        {
+          "step": 3,
+          "action": "Run a daily reconciliation job that replays the same window from stream_type=admin_logs (the complete, chronological feed) and compares counts against what the streaming feed delivered",
+          "audit_note": "Reconciling the low-latency stream against the completeness-oriented history feed is what makes the pipeline defensible as gap-free",
+          "vendor_docs_url": "https://developer.box.com/guides/events/enterprise-events/for-enterprise/"
+        },
+        {
+          "step": 4,
+          "action": "Snapshot control configuration continuously: nightly pulls of Enterprise Settings evidence (shared link policy via scheduled reports) and GET /2.0/retention_policies, diffed against the prior snapshot with alerts on change",
+          "security_note": "Alert on any weakening of shared link defaults (e.g., open links re-enabled) as a potential control failure, not just a config change",
+          "vendor_docs_url": "https://developer.box.com/reference/get-retention-policies/"
+        },
+        {
+          "step": 5,
+          "action": "Publish a collection-health dashboard: events/day per stream, reconciliation mismatches, Shield alerts ingested vs raised, stream position lag and failed runs, with alerting on gaps",
+          "audit_note": "The dashboard itself is continuous evidence of a managed collection process"
+        },
+        {
+          "step": 6,
+          "action": "Run an automated quarterly review that produces a collection-health report, verifies credential rotation for the Platform App, and re-confirms the app's scopes and authorisation are still minimal",
+          "security_note": "Include a check of the Box Reports folder collaborator list and the SIEM ingestion endpoint's access controls"
+        }
+      ]
+    }
+  }
+}

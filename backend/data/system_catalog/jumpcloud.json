@@ -1,0 +1,182 @@
+{
+  "slug": "jumpcloud",
+  "name": "JumpCloud",
+  "vendor": "JumpCloud Inc.",
+  "category": "Directory & Device Management",
+  "description": "Cloud directory platform combining identity, SSO, MFA and device management. Yields user and group directory reports, MFA and conditional access policy evidence, device policy status and Directory Insights activity events.",
+  "website": "https://jumpcloud.com",
+  "aliases": [
+    "jumpcloud",
+    "jump cloud"
+  ],
+  "logo_hint": "jumpcloud",
+  "system_type": "identity_provider",
+  "version": "1.0",
+  "recipes": {
+    "L1": {
+      "title": "JumpCloud Manual Evidence Collection",
+      "estimated_time": "15 minutes",
+      "frequency": "weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Sign in to the JumpCloud Admin Portal (console.jumpcloud.com) and navigate to Insights > Reports",
+          "permissions_required": "Read Only admin role",
+          "security_note": "Use a least-privilege Read Only administrator for evidence collection, not an Administrator with Billing account",
+          "vendor_docs_url": "https://jumpcloud.com/support/jumpcloud-reports"
+        },
+        {
+          "step": 2,
+          "action": "Run the Users to Devices report and export it as CSV to evidence the user directory, attributes and device associations",
+          "permissions_required": "Read Only admin role",
+          "audit_note": "The export reflects live directory state at generation time — save with a date-stamped filename",
+          "vendor_docs_url": "https://jumpcloud.com/support/jumpcloud-reports"
+        },
+        {
+          "step": 3,
+          "action": "Navigate to SECURITY MANAGEMENT > Conditional Policies and capture dated screenshots of each MFA and conditional access policy, showing status, conditions and assigned targets",
+          "permissions_required": "Read Only admin role",
+          "audit_note": "Include the policy enabled/disabled status and the capture date in each screenshot so reviewers can tie evidence to the period",
+          "vendor_docs_url": "https://jumpcloud.com/support/get-started-conditional-access-policies"
+        },
+        {
+          "step": 4,
+          "action": "Navigate to DEVICE MANAGEMENT > Policy Management and record the device policies in force (names, OS targets, applied groups) as a screenshot or export",
+          "permissions_required": "Read Only admin role",
+          "vendor_docs_url": "https://jumpcloud.com/support/get-started-policies"
+        },
+        {
+          "step": 5,
+          "action": "Open the Directory Insights activity log, filter events to the collection period (e.g. admin console logins, SSO authentications) and export the results",
+          "permissions_required": "Read Only admin role (Directory Insights requires an eligible plan)",
+          "audit_note": "JumpCloud retains Directory Insights events for 90 days — collect well within that window to avoid unrecoverable gaps",
+          "vendor_docs_url": "https://jumpcloud.com/support/view-the-directory-insights-data-activity-log"
+        },
+        {
+          "step": 6,
+          "action": "Upload the exports and screenshots to the evidence repository with the evidence ID reference",
+          "security_note": "Directory exports contain personal data — handle in line with your data protection obligations and restrict repository access"
+        }
+      ]
+    },
+    "L2": {
+      "title": "JumpCloud Scheduled Reports Collection",
+      "estimated_time": "30 minutes (setup), then automated",
+      "frequency": "automated weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "In Insights > Reports, run each evidence report (e.g. Users to Devices), apply the filters and columns you need, and save it as a Saved Report",
+          "permissions_required": "Administrator role",
+          "vendor_docs_url": "https://jumpcloud.com/support/jumpcloud-reports"
+        },
+        {
+          "step": 2,
+          "action": "From the Saved Reports tab, use Actions > Schedule Report to set the sending frequency, time, timezone and output format to match your evidence cadence",
+          "audit_note": "Scheduled generation removes reliance on individuals remembering to run reports",
+          "vendor_docs_url": "https://jumpcloud.com/support/jumpcloud-reports"
+        },
+        {
+          "step": 3,
+          "action": "Add scheduled OS Patch Management and Browser Patch Management Policy reports to evidence device policy compliance status across the fleet",
+          "audit_note": "Patch policy reports include per-device policy status and last-contact timestamps, evidencing both policy deployment and effectiveness",
+          "vendor_docs_url": "https://jumpcloud.com/support/understand-os-patch-management-policy-reports"
+        },
+        {
+          "step": 4,
+          "action": "Limit report notification recipients to authorised compliance personnel",
+          "security_note": "Directory and device reports contain personal and configuration data — do not deliver them to shared or external mailboxes"
+        },
+        {
+          "step": 5,
+          "action": "Each cycle, download the generated reports from the Report History tab and file them in the evidence repository — download links are only valid for 7 days",
+          "audit_note": "Collect within the 7-day link validity window and verify a report exists for every scheduled period; a missing period is a collection gap",
+          "vendor_docs_url": "https://jumpcloud.com/support/jumpcloud-reports"
+        }
+      ]
+    },
+    "L3": {
+      "title": "JumpCloud API-Driven Automated Collection",
+      "estimated_time": "2 hours initial setup",
+      "frequency": "automated daily",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Create a dedicated service account administrator with the Read Only role and API access enabled, then generate its API key via the account initials menu > My API Key, setting an expiration (e.g. 90 days)",
+          "permissions_required": "Administrator with Billing role to enable API access for the service account",
+          "security_note": "The API key inherits the admin's role permissions and grants broad access to your directory — use a Read Only service account, store the key in a secrets manager and rotate it at expiry",
+          "vendor_docs_url": "https://jumpcloud.com/support/service-account-for-apis"
+        },
+        {
+          "step": 2,
+          "action": "Collect activity events by calling POST https://api.jumpcloud.com/insights/directory/v1/events with the x-api-key header and a body such as {\"service\": [\"all\"], \"start_time\": \"<last-run-timestamp>\"}",
+          "permissions_required": "API key from an admin with Directory Insights access",
+          "audit_note": "Directory Insights retains 90 days of events — daily pulls with overlapping time windows guarantee no events are lost",
+          "vendor_docs_url": "https://docs.jumpcloud.com/api/insights/directory/1.0/index.html"
+        },
+        {
+          "step": 3,
+          "action": "Export directory state by calling GET https://console.jumpcloud.com/api/systemusers (API v1) for users, paging through all results",
+          "permissions_required": "API key with Read Only role",
+          "vendor_docs_url": "https://docs.jumpcloud.com/api/1.0/index.html"
+        },
+        {
+          "step": 4,
+          "action": "Export groups and device policies via API v2: GET https://console.jumpcloud.com/api/v2/usergroups and GET https://console.jumpcloud.com/api/v2/policies",
+          "permissions_required": "API key with Read Only role",
+          "audit_note": "Point-in-time policy exports evidence configuration state; pair them with Directory Insights events to evidence change history",
+          "vendor_docs_url": "https://docs.jumpcloud.com/api/2.0/index.html"
+        },
+        {
+          "step": 5,
+          "action": "Schedule the collection script daily via cron or a CI/CD pipeline, writing dated JSON/CSV outputs to the evidence repository, with error handling that alerts the compliance team on failed runs",
+          "security_note": "Never embed the x-api-key in source code or CI logs — inject it at runtime from the secrets manager"
+        },
+        {
+          "step": 6,
+          "action": "Validate each run: compare user counts and daily event volume against the previous run's baseline and flag unexplained drops",
+          "audit_note": "Volume validation provides assurance of collection completeness"
+        }
+      ]
+    },
+    "L4": {
+      "title": "JumpCloud Continuous Evidence Pipeline via SIEM Integration",
+      "estimated_time": "4 hours initial setup",
+      "frequency": "continuous with daily reporting",
+      "steps": [
+        {
+          "step": 1,
+          "action": "JumpCloud does not offer native webhooks or push streaming for Directory Insights — the closest managed option is a SIEM connector or JumpCloud's serverless collection app polling the Directory Insights API on a near-real-time interval",
+          "audit_note": "Document the polling interval in the evidence collection procedure; it defines your maximum detection and collection latency",
+          "vendor_docs_url": "https://jumpcloud.com/support/directory-insights-api"
+        },
+        {
+          "step": 2,
+          "action": "Configure your SIEM's JumpCloud integration (e.g. Datadog, Elastic, Sumo Logic connectors) with a dedicated Read Only service account API key to continuously ingest Directory Insights events",
+          "permissions_required": "Administrator with Billing role to enable API access; SIEM admin to configure the connector",
+          "security_note": "Grant the SIEM connector its own service account key so it can be rotated or revoked independently of other automation",
+          "vendor_docs_url": "https://jumpcloud.com/support/directory-insights-api"
+        },
+        {
+          "step": 3,
+          "action": "Track collection completeness metrics in the SIEM: events per day per service (SSO, LDAP, RADIUS, systems, directory), ingestion latency and poll success rate",
+          "audit_note": "Completeness metrics are the key evidence that the collection process itself is managed and monitored"
+        },
+        {
+          "step": 4,
+          "action": "Reconcile streamed event counts periodically against direct queries to POST https://api.jumpcloud.com/insights/directory/v1/events for the same window, to detect silent connector gaps before the 90-day retention window closes",
+          "audit_note": "Reconciliation must happen well inside the 90-day retention period — after that, missed events are unrecoverable",
+          "vendor_docs_url": "https://docs.jumpcloud.com/api/insights/directory/1.0/index.html"
+        },
+        {
+          "step": 5,
+          "action": "Build a collection health dashboard (events/day by service, latency, failed polls, coverage) and alert the compliance team when volume drops below baseline or the connector stalls"
+        },
+        {
+          "step": 6,
+          "action": "Run an automated quarterly review that produces a collection health report, flags SLA breaches or gaps, and files the report in the evidence repository"
+        }
+      ]
+    }
+  }
+}

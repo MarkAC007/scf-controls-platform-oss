@@ -1,0 +1,186 @@
+{
+  "slug": "azure-devops",
+  "name": "Azure DevOps",
+  "vendor": "Microsoft Corporation",
+  "category": "Source Control & CI/CD",
+  "description": "Microsoft's DevOps platform providing Git repositories, build and release pipelines, boards and artefacts. Yields organisation audit logs, branch policy configurations, pipeline approval records and user access reports as evidence for change management and access control requirements.",
+  "website": "https://azure.microsoft.com/products/devops",
+  "aliases": [
+    "azure devops",
+    "ado",
+    "azure devops services",
+    "vsts"
+  ],
+  "logo_hint": "azure-devops",
+  "system_type": "code_repository",
+  "version": "1.0",
+  "recipes": {
+    "L1": {
+      "title": "Azure DevOps Manual Evidence Collection",
+      "estimated_time": "15 minutes",
+      "frequency": "weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Confirm auditing is enabled: navigate to Organization settings > Policies and check the 'Log Audit Events' toggle is on (if the Auditing page is missing, auditing is disabled)",
+          "permissions_required": "Organization Owner or Project Collection Administrators group member",
+          "audit_note": "Azure DevOps retains audit events for 90 days only — collect at least monthly to avoid gaps",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/azure/devops/organizations/audit/azure-devops-auditing"
+        },
+        {
+          "step": 2,
+          "action": "Navigate to Organization settings > Auditing, set the time filter to cover the collection period, and select Download > CSV (or JSON) to export the audit log",
+          "permissions_required": "Project Collection Administrators, or a user granted the 'View audit log' permission",
+          "audit_note": "Entries are timestamped by Microsoft and cannot be edited in the console; ensure the date range overlaps the previous export so there are no gaps",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/azure/devops/organizations/audit/azure-devops-auditing"
+        },
+        {
+          "step": 3,
+          "action": "Capture branch protection evidence: navigate to Project settings > Repositories > select the repository > Policies, and screenshot the branch policies for the default branch (minimum number of reviewers, build validation, required checks)",
+          "permissions_required": "Project Administrator (any project member can view policies on repositories they can read)",
+          "audit_note": "Screenshot should include the browser address bar and visible date to establish provenance",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/azure/devops/repos/git/branch-policies"
+        },
+        {
+          "step": 4,
+          "action": "Capture pipeline approval evidence: navigate to Pipelines > Environments > select a production environment > Approvals and checks, and screenshot the configured approvers and checks",
+          "permissions_required": "Environment Administrator or Project Administrator",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/azure/devops/pipelines/process/approvals"
+        },
+        {
+          "step": 5,
+          "action": "Export the user access report: navigate to Organization settings > Users and select Export users to download a CSV of all users with their access levels and last-access dates",
+          "permissions_required": "Project Collection Administrators",
+          "security_note": "The export contains personal data (names and email addresses) — handle per your data protection policy",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/azure/devops/organizations/security/export-users-audit-log"
+        },
+        {
+          "step": 6,
+          "action": "Upload the audit log export, screenshots and user report to the evidence repository with date-stamped filenames and the evidence ID reference",
+          "security_note": "Review exports for embedded secrets (e.g. audit entries referencing token names) before uploading"
+        }
+      ]
+    },
+    "L2": {
+      "title": "Azure DevOps Audit Streaming to Azure Monitor Logs",
+      "estimated_time": "45 minutes initial setup",
+      "frequency": "automated (events delivered every 30 minutes or less)",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Azure DevOps has no built-in scheduled email reports; its native no-code export mechanism is audit streaming. Navigate to Organization settings > Auditing > Streams tab and select New stream",
+          "permissions_required": "Project Collection Administrators, or a user granted the 'Manage audit streams' permission",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/azure/devops/organizations/audit/auditing-streaming"
+        },
+        {
+          "step": 2,
+          "action": "Select Azure Monitor Logs as the stream target and enter the Log Analytics workspace ID and shared key; events land in the AzureDevOpsAuditing table",
+          "permissions_required": "Log Analytics Contributor on the target workspace (to obtain the workspace key)",
+          "security_note": "Treat the Log Analytics shared key as a secret — enter it directly, never store it in documentation or tickets",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/azure/devops/organizations/audit/auditing-streaming"
+        },
+        {
+          "step": 3,
+          "action": "Set the Log Analytics workspace data retention to at least your evidence retention period (streaming removes the 90-day console limit, but retention is now governed by the workspace)",
+          "audit_note": "Streamed events are the authoritative long-term record; the console still only shows 90 days"
+        },
+        {
+          "step": 4,
+          "action": "Save a Log Analytics query over the AzureDevOpsAuditing table filtered to security-relevant categories (permissions changes, policy changes, token events) and export or pin the results on your evidence collection cadence",
+          "audit_note": "Query results include Azure Monitor ingestion timestamps, giving independent corroboration of event times"
+        },
+        {
+          "step": 5,
+          "action": "Each collection cycle, open Organization settings > Auditing > Streams and verify the stream shows as enabled with no delivery failures; screenshot the stream status as evidence the export process itself is operating",
+          "audit_note": "Stream setup, enablement and disablement are themselves recorded as audit events, evidencing continuity of collection"
+        }
+      ]
+    },
+    "L3": {
+      "title": "Azure DevOps API-Driven Automated Collection",
+      "estimated_time": "2-3 hours initial setup",
+      "frequency": "automated daily",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Create a personal access token: sign in as the evidence service account, open User settings > Personal access tokens > New Token, and grant custom-defined read-only scopes: Audit Log (Read), Code (Read) and Build (Read)",
+          "permissions_required": "The service account must be in Project Collection Administrators or hold the 'View audit log' permission for audit reads",
+          "security_note": "Use a dedicated service account, not a personal login. Set the shortest workable expiry (maximum 90 days recommended) and rotate on a schedule",
+          "audit_note": "PAT creation and revocation are recorded in the organisation audit log",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/azure/devops/organizations/accounts/use-personal-access-tokens-to-authenticate"
+        },
+        {
+          "step": 2,
+          "action": "Query the audit log via GET https://auditservice.dev.azure.com/{organization}/_apis/audit/auditlog?startTime={start}&endTime={end}&api-version=7.1-preview.1, following continuationToken until exhausted",
+          "permissions_required": "PAT with Audit Log (Read) scope (vso.auditlog)",
+          "audit_note": "Persist the raw JSON responses unmodified; the continuation loop guarantees completeness for the window",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/rest/api/azure/devops/audit/audit-log/query?view=azure-devops-rest-7.1"
+        },
+        {
+          "step": 3,
+          "action": "Collect branch policy configuration as evidence via GET https://dev.azure.com/{organization}/{project}/_apis/policy/configurations?api-version=7.1 for each in-scope project",
+          "permissions_required": "PAT with Code (Read) scope (vso.code)",
+          "audit_note": "The response records who created each policy and when, and whether it is enabled and blocking",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/rest/api/azure/devops/policy/configurations/list?view=azure-devops-rest-7.1"
+        },
+        {
+          "step": 4,
+          "action": "Collect pipeline approvals and checks via GET https://dev.azure.com/{organization}/{project}/_apis/pipelines/checks/configurations?api-version=7.1-preview.1 for production environments and protected resources",
+          "permissions_required": "PAT with Build (Read) scope (vso.build)",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/rest/api/azure/devops/approvalsandchecks/check-configurations/list?view=azure-devops-rest-7.1"
+        },
+        {
+          "step": 5,
+          "action": "Schedule the collection script daily via cron or a CI/CD pipeline, writing date-stamped outputs to the evidence repository",
+          "security_note": "Store the PAT in a secrets manager (e.g. Azure Key Vault) and inject it at runtime; never commit it to source control"
+        },
+        {
+          "step": 6,
+          "action": "Implement error handling and alerting for failed runs, and validate each day's audit event count against a rolling baseline, flagging drops that may indicate a collection gap",
+          "audit_note": "Failed collections should trigger re-collection within SLA; volume validation evidences completeness"
+        }
+      ]
+    },
+    "L4": {
+      "title": "Azure DevOps Managed Evidence Pipeline with Metrics",
+      "estimated_time": "4 hours initial setup",
+      "frequency": "continuous with daily reporting",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Configure an audit stream to your SIEM: Organization settings > Auditing > Streams > New stream, targeting Splunk, Azure Monitor Logs or Azure Event Grid (Event Grid fans out to any downstream evidence platform)",
+          "permissions_required": "Project Collection Administrators, or a user granted the 'Manage audit streams' permission",
+          "security_note": "Stream credentials (Splunk HEC token, Event Grid access key, workspace key) must be rotated on schedule and stored only in the stream configuration",
+          "audit_note": "Events are bundled and delivered every 30 minutes or less — near-continuous collection without polling",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/azure/devops/organizations/audit/auditing-streaming"
+        },
+        {
+          "step": 2,
+          "action": "Add service hooks for change events not covered by the audit log: Project settings > Service hooks > Create subscription (Web Hooks) for code pushed, pull request merged and build/release completed events, posting to the evidence pipeline",
+          "permissions_required": "Project Administrator ('Edit subscriptions' permission)",
+          "security_note": "Use HTTPS endpoints with authentication headers; validate payloads server-side before ingestion",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/azure/devops/service-hooks/overview"
+        },
+        {
+          "step": 3,
+          "action": "Implement completeness reconciliation: daily, compare streamed event counts against a query of GET https://auditservice.dev.azure.com/{organization}/_apis/audit/auditlog for the same window and alert on discrepancies",
+          "audit_note": "Independent reconciliation between the stream and the query API is strong evidence of collection completeness",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/rest/api/azure/devops/audit/audit-log/query?view=azure-devops-rest-7.1"
+        },
+        {
+          "step": 4,
+          "action": "Set up automated quality checks on ingested events — schema validation, duplicate detection on event IDs, and gap detection on the time series"
+        },
+        {
+          "step": 5,
+          "action": "Build a collection health dashboard (events/day per category, delivery latency, stream failures) and alert on audit events showing a stream was modified or disabled",
+          "audit_note": "Alerting on stream-disable events closes the loop: tampering with collection is itself captured and escalated"
+        },
+        {
+          "step": 6,
+          "action": "Generate an automated quarterly collection health report covering coverage, gaps, reconciliation results and any SLA breaches, and file it in the evidence repository"
+        }
+      ]
+    }
+  }
+}

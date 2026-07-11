@@ -51,7 +51,8 @@ celery_app = Celery(
     include=[
         "tasks",
         "tasks_research",
-        "tasks_dpsia",
+        "tasks_vendor_assessment",
+        "tasks_recipe_generation",
         "tasks_cdm",
         "tasks_assessment",
         "tasks_window_assessment",
@@ -146,7 +147,7 @@ celery_app.conf.update(
         "tasks_research.research_cve_nvd": {"queue": "tprm_research"},
         "tasks_research.research_regulatory": {"queue": "tprm_research"},
         "tasks_research.research_aggregator": {"queue": "tprm_research"},
-        "tasks_dpsia.dpsia_invoke_lambda": {"queue": "dpsia"},
+        "tasks_vendor_assessment.run_vendor_assessment": {"queue": "dpsia"},
         "tasks_assessment.assess_evidence_task": {"queue": "evidence_assessment"},
         "tasks_window_assessment.assess_window_task": {"queue": "evidence_window"},
         "tasks_window_assessment.nightly_window_refresh_task": {"queue": "evidence_window"},

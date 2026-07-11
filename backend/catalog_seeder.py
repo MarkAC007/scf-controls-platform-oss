@@ -26,7 +26,10 @@ from catalog_models import (
     SCFCatalogAssessmentObjective,
     CapabilityTheme,
     CapabilityThemeMapping,
+    SystemCatalogTemplate,
+    SystemCatalogRecipe,
 )
+from services.system_catalog_validation import validate_vendor_file, validate_fallbacks_file
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +44,11 @@ _LOCAL_DATA_PATH = Path(__file__).parent.parent / "webclient" / "public" / "data
 
 # Use Docker path if it exists, otherwise fall back to local development path
 DATA_DIR = _DOCKER_DATA_PATH if _DOCKER_DATA_PATH.exists() else _LOCAL_DATA_PATH
+
+# Systems knowledge catalog seed files (per-vendor JSON + _fallbacks.json).
+# Lives inside the backend source tree, so it ships in the image via
+# `COPY backend/ .` with no Dockerfile changes.
+SYSTEM_CATALOG_DIR = Path(__file__).parent / "data" / "system_catalog"
 
 
 def _resolve_catalog_version() -> str:
@@ -76,8 +84,165 @@ async def seed_catalog_if_empty() -> dict:
             "evidence": await seed_evidence_if_empty(session),
             "assessment_objectives": await seed_assessment_objectives_if_empty(session),
             "capability_themes": await seed_capability_themes_if_empty(session),
+            "system_catalog": await seed_system_catalog(session),
         }
         return results
+
+
+def load_system_catalog_files() -> tuple:
+    """
+    Load and validate all system catalog seed files.
+
+    Returns (vendors, fallbacks, fallbacks_version, errors):
+    - vendors: list of validated vendor dicts
+    - fallbacks: {system_type: {level: recipe}} from _fallbacks.json
+    - fallbacks_version: the _fallbacks.json content version (drives reseeding)
+    - errors: one string per unreadable/invalid file (never raises)
+    """
+    vendors = []
+    fallbacks = {}
+    fallbacks_version = "1.0"
+    errors = []
+
+    if not SYSTEM_CATALOG_DIR.is_dir():
+        return vendors, fallbacks, fallbacks_version, errors
+
+    for path in sorted(SYSTEM_CATALOG_DIR.glob("*.json")):
+        try:
+            with open(path, "r") as f:
+                data = json.load(f)
+        except (OSError, json.JSONDecodeError) as exc:
+            errors.append(f"{path.name}: {exc}")
+            continue
+
+        if path.name == "_fallbacks.json":
+            file_errors = validate_fallbacks_file(data)
+            if file_errors:
+                errors.append(f"{path.name}: " + "; ".join(file_errors))
+            else:
+                fallbacks = data["fallbacks"]
+                fallbacks_version = data["version"]
+        else:
+            file_errors = validate_vendor_file(data)
+            if file_errors:
+                errors.append(f"{path.name}: " + "; ".join(file_errors))
+            else:
+                vendors.append(data)
+
+    return vendors, fallbacks, fallbacks_version, errors
+
+
+def _fallback_template_dict(system_type: str, recipes: dict, version: str) -> dict:
+    """Synthesize a vendor-dict-shaped entry for a per-type generic fallback."""
+    label = system_type.replace("_", " ").title()
+    return {
+        "slug": f"fallback-{system_type.replace('_', '-')}",
+        "name": f"Generic {label}",
+        "vendor": "Generic",
+        "system_type": system_type,
+        "category": None,
+        "description": f"Generic collection guidance for {label.lower()} systems.",
+        "website": None,
+        "aliases": [],
+        "logo_hint": None,
+        "version": version,
+        "recipes": recipes,
+    }
+
+
+async def seed_system_catalog(session: AsyncSession) -> dict:
+    """
+    Seed/refresh the systems knowledge catalog from backend/data/system_catalog/.
+
+    Upsert keyed on slug, global templates only (organization_id IS NULL):
+    - missing slug -> insert template + recipes
+    - existing slug with a different file version -> update fields, recreate recipes
+    - org-private (AI-generated) templates are never touched
+
+    Invalid files are skipped with a logged warning; this never raises.
+    """
+    vendors, fallbacks, fallbacks_version, errors = load_system_catalog_files()
+    for err in errors:
+        logger.warning(f"System catalog seed file skipped: {err}")
+
+    entries = [(v, False) for v in vendors] + [
+        (_fallback_template_dict(st, recipes, fallbacks_version), True)
+        for st, recipes in fallbacks.items()
+    ]
+    if not entries:
+        return {"status": "skipped", "inserted": 0, "updated": 0, "errors": errors}
+
+    existing_result = await session.execute(
+        select(SystemCatalogTemplate).where(SystemCatalogTemplate.organization_id.is_(None))
+    )
+    existing = {t.slug: t for t in existing_result.scalars().all()}
+
+    inserted = updated = skipped = 0
+    for entry, is_fallback in entries:
+        template = existing.get(entry["slug"])
+
+        if template is None:
+            template = SystemCatalogTemplate(
+                slug=entry["slug"],
+                name=entry["name"],
+                vendor=entry["vendor"],
+                system_type=entry["system_type"],
+                category=entry.get("category"),
+                description=entry.get("description"),
+                website=entry.get("website"),
+                aliases=entry.get("aliases", []),
+                logo_hint=entry.get("logo_hint"),
+                is_fallback=is_fallback,
+                version=entry["version"],
+            )
+            session.add(template)
+            await session.flush()
+            inserted += 1
+        elif template.version != entry["version"]:
+            template.name = entry["name"]
+            template.vendor = entry["vendor"]
+            template.system_type = entry["system_type"]
+            template.category = entry.get("category")
+            template.description = entry.get("description")
+            template.website = entry.get("website")
+            template.aliases = entry.get("aliases", [])
+            template.logo_hint = entry.get("logo_hint")
+            template.is_fallback = is_fallback
+            template.version = entry["version"]
+            await session.execute(
+                SystemCatalogRecipe.__table__.delete().where(
+                    SystemCatalogRecipe.template_id == template.id
+                )
+            )
+            updated += 1
+        else:
+            skipped += 1
+            continue
+
+        for level, recipe in entry["recipes"].items():
+            session.add(SystemCatalogRecipe(
+                template_id=template.id,
+                maturity_level=level,
+                title=recipe["title"],
+                estimated_time=recipe.get("estimated_time"),
+                frequency=recipe.get("frequency"),
+                steps=recipe.get("steps", []),
+                source="curated",
+                version=entry["version"],
+            ))
+
+    await session.commit()
+    logger.info(
+        f"System catalog seeded: {inserted} inserted, {updated} updated, "
+        f"{skipped} unchanged, {len(errors)} files skipped"
+    )
+    return {
+        "status": "seeded",
+        "inserted": inserted,
+        "updated": updated,
+        "skipped": skipped,
+        "errors": errors,
+    }
 
 
 async def seed_controls_if_empty(session: AsyncSession) -> dict:

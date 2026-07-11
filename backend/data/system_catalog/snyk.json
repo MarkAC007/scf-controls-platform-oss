@@ -1,0 +1,176 @@
+{
+  "slug": "snyk",
+  "name": "Snyk",
+  "vendor": "Snyk Ltd",
+  "category": "Developer Security / SCA",
+  "description": "Developer security platform for open source (SCA), code, container and IaC scanning. Yields vulnerability and issue reports, project monitoring coverage, PR check enforcement settings and group/organisation audit logs.",
+  "website": "https://snyk.io",
+  "aliases": [
+    "snyk",
+    "snyk open source",
+    "snyk code"
+  ],
+  "logo_hint": "snyk",
+  "system_type": "vulnerability_management",
+  "version": "1.0",
+  "recipes": {
+    "L1": {
+      "title": "Snyk Manual Evidence Collection",
+      "estimated_time": "15 minutes",
+      "frequency": "weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Log in to the Snyk Web UI, select the Organisation, and open the Reports tab > Issues report; set the severity filters and date range to the collection period",
+          "permissions_required": "Org Collaborator or Org Admin",
+          "security_note": "Use a named individual or dedicated evidence-collection account, not a shared login",
+          "vendor_docs_url": "https://docs.snyk.io/manage-risk/analytics/reports-tab"
+        },
+        {
+          "step": 2,
+          "action": "Click Download CSV on the report table (or export to PDF) to capture the vulnerability and issue dataset",
+          "permissions_required": "Org Collaborator or Org Admin",
+          "audit_note": "The CSV includes all columns shown in the UI with no row limit (5GB file cap); save with a date-stamped filename covering the report period",
+          "vendor_docs_url": "https://docs.snyk.io/manage-risk/reporting/available-snyk-reports"
+        },
+        {
+          "step": 3,
+          "action": "Open the Projects page and capture a screenshot showing monitored projects, their import sources and last-tested timestamps as monitoring coverage evidence",
+          "permissions_required": "Org Collaborator or Org Admin",
+          "audit_note": "Coverage evidence should show that all in-scope repositories are imported and being retested, not just that scans exist"
+        },
+        {
+          "step": 4,
+          "action": "Navigate to Organisation Settings > Integrations, select the connected source code manager and screenshot the PR check fail conditions (e.g. fail on high or critical severity issues)",
+          "permissions_required": "Org Admin",
+          "audit_note": "Pair this with a screenshot of SCM branch protection requiring the Snyk status check, which evidences that failing checks actually block merges",
+          "vendor_docs_url": "https://docs.snyk.io/scan-with-snyk/pull-requests/pull-request-checks/configure-pull-request-checks"
+        },
+        {
+          "step": 5,
+          "action": "Upload the CSV exports and screenshots to the evidence repository with the evidence ID reference",
+          "security_note": "Check exports for internal repository names or paths that are restricted before sharing outside the security team"
+        }
+      ]
+    },
+    "L2": {
+      "title": "Snyk Scheduled Notifications and Reports",
+      "estimated_time": "30 minutes (setup), then automated",
+      "frequency": "automated weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "In Group Settings > Notifications, set the Group-level defaults so member Organisations send issue alert emails and weekly report emails",
+          "permissions_required": "Group Admin",
+          "vendor_docs_url": "https://docs.snyk.io/platform-administration/snyk-hierarchy/manage-notifications"
+        },
+        {
+          "step": 2,
+          "action": "In Organisation Settings > Notifications > Notification Settings, enable the weekly summary email and new-issue alert emails, selecting All severities or Critical and high severity to match your control threshold",
+          "permissions_required": "Org Admin",
+          "audit_note": "The weekly report email summarises vulnerability status across all projects in the Organisation, providing a regular point-in-time evidence artefact",
+          "vendor_docs_url": "https://docs.snyk.io/platform-administration/snyk-hierarchy/manage-notifications"
+        },
+        {
+          "step": 3,
+          "action": "Deliver the notifications to a restricted, monitored compliance mailbox and file each weekly report email into the evidence repository on receipt",
+          "security_note": "Limit mailbox access to authorised personnel; issue alert emails name vulnerable projects and dependencies"
+        },
+        {
+          "step": 4,
+          "action": "Note that the Snyk UI has no scheduled CSV export — weekly report emails are summaries only. For full scheduled datasets, use the Export API (see L3). Set a recurring calendar check to catch missed weekly emails",
+          "audit_note": "Record any missed weekly reports and the reason; unexplained gaps weaken the evidence trail"
+        }
+      ]
+    },
+    "L3": {
+      "title": "Snyk API-Driven Automated Collection",
+      "estimated_time": "2-4 hours initial setup",
+      "frequency": "automated daily",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Create a read-only service account: navigate to Group (or Organisation) Settings > Service accounts > Create a service account, choosing a least-privilege role such as Group Viewer (or Org Collaborator / a read-only custom role)",
+          "permissions_required": "Group Admin (Group service account); Org Admin (Organisation service account)",
+          "security_note": "The token is shown only once at creation — store it immediately in a secrets manager and rotate it on a defined schedule",
+          "audit_note": "Service account creation is itself recorded in the Snyk audit log (group.service_account.create)",
+          "vendor_docs_url": "https://docs.snyk.io/platform-administration/service-accounts/service-accounts"
+        },
+        {
+          "step": 2,
+          "action": "Use the Export API for issue data: POST https://api.snyk.io/rest/groups/{group_id}/export?version=2024-10-15 (or /rest/orgs/{org_id}/export) with dataset=issues and an introduced or updated date filter; poll the returned export_id for status, then download the results",
+          "permissions_required": "Service account token; Enterprise plan required for API access",
+          "audit_note": "The POST endpoint is limited to 20 export requests per hour; status and results calls are unlimited. The pr_checks datasets from the same API evidence PR check enforcement and adoption",
+          "vendor_docs_url": "https://docs.snyk.io/developer-tools/snyk-api/reference/export"
+        },
+        {
+          "step": 3,
+          "action": "Collect audit logs via GET https://api.snyk.io/rest/orgs/{org_id}/audit_logs/search?version=2024-10-15 and GET https://api.snyk.io/rest/groups/{group_id}/audit_logs/search?version=2024-10-15, paging with the cursor parameter",
+          "permissions_required": "Service account with Org Admin (org logs) or Group Admin (group logs) role",
+          "audit_note": "Audit logs cover only the past 90 days — schedule collection well inside that window (daily here) so no events age out uncollected",
+          "vendor_docs_url": "https://docs.snyk.io/developer-tools/snyk-api/reference/audit-logs"
+        },
+        {
+          "step": 4,
+          "action": "Export monitoring coverage with GET https://api.snyk.io/rest/orgs/{org_id}/projects?version=2024-10-15 and reconcile the monitored project list against your source-code repository inventory",
+          "permissions_required": "Service account with read access to the Organisation",
+          "audit_note": "Coverage reconciliation evidences that scanning applies to all in-scope repositories, not merely that scans run",
+          "vendor_docs_url": "https://docs.snyk.io/developer-tools/snyk-api/api-endpoints-index-and-tips"
+        },
+        {
+          "step": 5,
+          "action": "Schedule the collection script daily via cron or a CI/CD pipeline, authenticating with the 'Authorization: token <API_TOKEN>' header against your regional API base URL, with retries and alerting on failed runs",
+          "security_note": "Read the token from the secrets manager at runtime and ensure pipeline logs never print the Authorization header",
+          "vendor_docs_url": "https://docs.snyk.io/developer-tools/snyk-api/authentication-for-api"
+        },
+        {
+          "step": 6,
+          "action": "Validate each run: confirm exports are non-empty, compare issue and project counts against the previous run's baseline, and flag anomalies for investigation",
+          "audit_note": "Run-over-run validation provides assurance of collection completeness"
+        }
+      ]
+    },
+    "L4": {
+      "title": "Snyk Managed Evidence Pipeline with Metrics",
+      "estimated_time": "4-6 hours initial setup",
+      "frequency": "continuous with daily reporting",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Register a webhook with POST https://api.snyk.io/v1/org/{orgId}/webhooks (url and secret in the body); Snyk sends a project_snapshot event every time a monitored project is tested, whether or not new issues are found",
+          "permissions_required": "Org Admin service account or user token",
+          "security_note": "Generate a strong random webhook secret and store it in the secrets manager alongside the receiving service",
+          "vendor_docs_url": "https://docs.snyk.io/developer-tools/snyk-api/using-specific-snyk-apis/webhooks-apis/webhooks"
+        },
+        {
+          "step": 2,
+          "action": "Verify the X-Hub-Signature header (HMAC-SHA256 with the shared secret) on every delivery before processing, and pin handling to the payload version in the X-Snyk-Event header (e.g. project_snapshot/v0)",
+          "security_note": "Reject unsigned or mis-signed deliveries; serve the endpoint over TLS 1.2+",
+          "vendor_docs_url": "https://docs.snyk.io/snyk-api/using-specific-snyk-apis/webhooks-apis/validation-and-versioning-of-payloads"
+        },
+        {
+          "step": 3,
+          "action": "Stream Snyk audit events continuously to AWS CloudTrail Lake using Snyk's event forwarding integration, giving immutable long-term retention beyond Snyk's 90-day audit log window",
+          "permissions_required": "Group Admin (Snyk) and CloudTrail Lake administrator (AWS)",
+          "audit_note": "CloudTrail Lake retention removes the 90-day collection deadline and provides tamper-evident storage for audit events",
+          "vendor_docs_url": "https://docs.snyk.io/developer-tools/integrations/event-forwarding/aws-cloudtrail-lake"
+        },
+        {
+          "step": 4,
+          "action": "Reconcile received project_snapshot events daily against the projects list from the REST API to compute coverage %: every monitored project should produce snapshots on its test schedule",
+          "audit_note": "Snapshot-versus-inventory reconciliation is the core completeness metric for this pipeline",
+          "vendor_docs_url": "https://docs.snyk.io/developer-tools/snyk-api/api-endpoints-index-and-tips"
+        },
+        {
+          "step": 5,
+          "action": "Run automated quality checks and a collection-health dashboard: payload schema validation, gaps in snapshot time series, duplicate deliveries, PR check adoption trends (Export API pr_checks datasets), with alerts on any gap or threshold breach",
+          "audit_note": "The dashboard serves as continuous evidence of a managed collection process"
+        },
+        {
+          "step": 6,
+          "action": "Generate an automated quarterly collection-health report summarising coverage, gaps, webhook failures and remediation, and file it in the evidence repository"
+        }
+      ]
+    }
+  }
+}

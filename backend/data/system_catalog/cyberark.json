@@ -1,0 +1,183 @@
+{
+  "slug": "cyberark",
+  "name": "CyberArk Privilege Cloud",
+  "vendor": "CyberArk Software Ltd.",
+  "category": "Privileged Access Management",
+  "description": "SaaS privileged access management on CyberArk Identity Security Platform Shared Services. Yields safe and privileged account inventories, session recording metadata, access policy reports and audit activity evidence. Recipes target Privilege Cloud (SaaS); self-hosted PAM console paths (PVWA) differ.",
+  "website": "https://www.cyberark.com",
+  "aliases": [
+    "cyberark",
+    "cyber ark",
+    "privilege cloud",
+    "pvwa"
+  ],
+  "logo_hint": "cyberark",
+  "system_type": "security_tool",
+  "version": "1.0",
+  "recipes": {
+    "L1": {
+      "title": "CyberArk Privilege Cloud Manual Evidence Collection",
+      "estimated_time": "20 minutes",
+      "frequency": "weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Sign in to the Privilege Cloud portal via the CyberArk Identity Security Platform and navigate to Reports (self-hosted PAM users: the equivalent is the PVWA REPORTS page)",
+          "permissions_required": "Privilege Cloud Auditors role",
+          "security_note": "Use a dedicated auditor account with MFA for evidence collection, never a day-to-day Privilege Cloud Administrators account",
+          "vendor_docs_url": "https://docs.cyberark.com/privilege-cloud-shared-services/latest/en/content/privilege%20cloud/privcloud-generate-reports.htm"
+        },
+        {
+          "step": 2,
+          "action": "Generate the Privileged Accounts Inventory report and export it as CSV or Excel to evidence the safe and account inventory",
+          "permissions_required": "Privilege Cloud Auditors role",
+          "audit_note": "Reports only contain data the generating user is authorised to see — run them with auditor-level access so the inventory is complete",
+          "vendor_docs_url": "https://docs.cyberark.com/privilege-cloud-shared-services/latest/en/content/privilege%20cloud/privcloud-reports.htm"
+        },
+        {
+          "step": 3,
+          "action": "Open the Sessions monitoring page, filter recorded privileged sessions to the collection period, and capture the recordings grid (user, target account, start time, duration) as a dated screenshot or export",
+          "permissions_required": "Authorised auditor with access to the PSMRecordings Safe",
+          "security_note": "Session recordings can expose target hostnames and on-screen data — collect recording metadata as evidence, not the video files, unless a control specifically requires them",
+          "audit_note": "Recordings are stored in the PSMRecordings Safe and are tamper-resistant, which strengthens their evidentiary value",
+          "vendor_docs_url": "https://docs.cyberark.com/privilege-cloud-standard/latest/en/content/privilege%20cloud/privcloud-monitor-sessions.htm"
+        },
+        {
+          "step": 4,
+          "action": "Open Audit in the Identity Security Platform, filter activities to the collection period, and download the audit events to CSV",
+          "permissions_required": "Privilege Cloud Auditors role",
+          "audit_note": "Audit events are timestamped by CyberArk; keep collection periods contiguous so there are no gaps between exports",
+          "vendor_docs_url": "https://docs.cyberark.com/privilege-cloud-shared-services/latest/en/content/privilege%20cloud/privcloud-audit-view-audits.htm"
+        },
+        {
+          "step": 5,
+          "action": "Upload the exports and screenshots to the evidence repository with date-stamped filenames and the evidence ID reference",
+          "security_note": "PAM exports enumerate every privileged account in the estate — treat them as highly sensitive, restrict repository access, and confirm no credential values are present before uploading"
+        }
+      ]
+    },
+    "L2": {
+      "title": "CyberArk Privilege Cloud Scheduled Reports Collection",
+      "estimated_time": "30 minutes (setup), then automated",
+      "frequency": "automated weekly or monthly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "In the Privilege Cloud portal, navigate to Reports and create the reports you need for evidence — for example Privileged Accounts Inventory and Privileged Accounts Compliance Status",
+          "permissions_required": "Privilege Cloud Administrators role (or a dedicated reports role assigned to a reporting group)",
+          "vendor_docs_url": "https://docs.cyberark.com/privilege-cloud-shared-services/latest/en/content/privilege%20cloud/privcloud-generate-reports.htm"
+        },
+        {
+          "step": 2,
+          "action": "Set each report to generate automatically on a weekly or monthly schedule matching your evidence collection cadence",
+          "audit_note": "Scheduled generation removes reliance on individuals remembering to run reports, and each report carries a CyberArk generation timestamp",
+          "vendor_docs_url": "https://docs.cyberark.com/privilege-cloud-shared-services/latest/en/content/privilege%20cloud/privcloud-reports.htm"
+        },
+        {
+          "step": 3,
+          "action": "Confirm generated reports are stored in the PVWAReports Safe and restrict Safe membership to the compliance team and the collection service account",
+          "permissions_required": "Privilege Cloud Administrators role to manage Safe membership",
+          "security_note": "Scheduled inventory reports list all privileged accounts — keep PVWAReports Safe membership to the minimum set of authorised users"
+        },
+        {
+          "step": 4,
+          "action": "Add scheduled Entitlement and Activity reports to evidence access policies (who can access what) and privileged activity over time",
+          "audit_note": "Entitlement reports evidence access policy state; Activity reports evidence actual usage — collect both for access review controls",
+          "vendor_docs_url": "https://docs.cyberark.com/privilege-cloud-shared-services/latest/en/content/privilege%20cloud/privcloud-reports.htm"
+        },
+        {
+          "step": 5,
+          "action": "Each cycle, retrieve the generated reports from the PVWAReports Safe and file them in the evidence repository, recording the generation timestamp against the evidence item",
+          "audit_note": "Verify a report was produced for every scheduled period; a missing period is a collection gap that should be investigated and documented"
+        }
+      ]
+    },
+    "L3": {
+      "title": "CyberArk Privilege Cloud API-Driven Automated Collection",
+      "estimated_time": "2-4 hours initial setup",
+      "frequency": "automated daily",
+      "steps": [
+        {
+          "step": 1,
+          "action": "In the Identity Administration portal, create a dedicated service user with the 'Is OAuth confidential client' option selected, and assign it to the Privilege Cloud Auditors role for read-only collection",
+          "permissions_required": "Identity Administration rights to create service users and manage role membership",
+          "security_note": "This client can read your entire privileged account estate — scope it to auditor-level access only, store the client secret in a secrets manager, and rotate it on a defined schedule",
+          "audit_note": "Service user creation and role assignment are themselves audited events — retain them as evidence of controlled credential issuance",
+          "vendor_docs_url": "https://docs.cyberark.com/identity-administration/latest/en/Content/ISPSS/ISPSS-API-Authentication.htm"
+        },
+        {
+          "step": 2,
+          "action": "Authenticate by calling POST https://<tenant-id>.id.cyberark.cloud/oauth2/platformtoken with grant_type=client_credentials to obtain a bearer token for Shared Services APIs",
+          "permissions_required": "OAuth confidential client (service user)",
+          "security_note": "Tokens are short-lived — request a fresh token per collection run and hold it in memory only; never write tokens to disk or logs",
+          "vendor_docs_url": "https://docs.cyberark.com/identity-administration/latest/en/Content/ISPSS/ISPSS-API-Authentication.htm"
+        },
+        {
+          "step": 3,
+          "action": "Call GET https://<subdomain>.privilegecloud.cyberark.cloud/PasswordVault/API/Accounts to export the privileged account inventory, paging through all results",
+          "permissions_required": "List Accounts permission in each Safe, granted via Safe membership for the service user",
+          "audit_note": "The API returns only accounts in Safes the service user can list — reconcile the count against the Privileged Accounts Inventory report to confirm completeness",
+          "vendor_docs_url": "https://docs.cyberark.com/privilege-cloud-shared-services/latest/en/content/sdk/getaccounts.htm"
+        },
+        {
+          "step": 4,
+          "action": "Call GET https://<subdomain>.privilegecloud.cyberark.cloud/PasswordVault/API/Recordings with date filters to collect privileged session recording metadata for the period",
+          "permissions_required": "Auditor access to the PSMRecordings Safe",
+          "security_note": "Collect recording metadata only (session properties, timings, targets); do not bulk-download recording media through the pipeline",
+          "vendor_docs_url": "https://docs.cyberark.com/privilege-cloud-standard/latest/en/content/webservices/getrecordings.htm"
+        },
+        {
+          "step": 5,
+          "action": "Schedule the collection script daily via cron or a CI/CD pipeline, writing dated JSON/CSV outputs to the evidence repository, with error handling that alerts the compliance team on any failed run",
+          "security_note": "Run the job from a hardened host; API throttling in Privilege Cloud can reject bursts, so implement retry with backoff rather than tight retry loops",
+          "vendor_docs_url": "https://docs.cyberark.com/privilege-cloud-shared-services/latest/en/content/webservices/implementing%20privileged%20account%20security%20web%20services%20.htm"
+        },
+        {
+          "step": 6,
+          "action": "Validate each run: compare account and session counts against the previous run's baseline and flag unexplained drops for investigation",
+          "audit_note": "Volume validation demonstrates collection completeness and turns the pipeline itself into auditable evidence"
+        }
+      ]
+    },
+    "L4": {
+      "title": "CyberArk Privilege Cloud SIEM-Integrated Evidence Pipeline",
+      "estimated_time": "4-8 hours initial setup",
+      "frequency": "continuous with daily reporting",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Configure the Audit service's agentless SIEM integration to stream Privilege Cloud audit events to your SIEM over syslog (TCP or TLS only — UDP is not supported; up to five syslog targets)",
+          "permissions_required": "Privilege Cloud Administrators role",
+          "security_note": "Use TLS for the syslog transport; the agentless integration requires no on-premises agent or Secure Tunnel component",
+          "vendor_docs_url": "https://docs.cyberark.com/ispss-deployment/latest/en/content/privilege%20cloud/privcloud-connect-siem.htm"
+        },
+        {
+          "step": 2,
+          "action": "Enable forwarding for all evidence-relevant event categories: Vault Audit (credential access), Session Audit, Safe Management, User Management and Policy Changes",
+          "audit_note": "Streaming all five categories gives a complete, continuously collected audit picture of privileged activity, access policy changes and account lifecycle events",
+          "vendor_docs_url": "https://docs.cyberark.com/ispss-deployment/latest/en/content/privilege%20cloud/privcloud-connect-siem.htm"
+        },
+        {
+          "step": 3,
+          "action": "Track collection completeness metrics in the SIEM: events per day per category, ingestion latency and coverage across all Safes and platforms",
+          "audit_note": "Completeness metrics are the key evidence that the collection process itself is managed and monitored"
+        },
+        {
+          "step": 4,
+          "action": "Reconcile the event stream periodically against daily API pulls of the account inventory (GET /PasswordVault/API/Accounts) to detect silent streaming gaps",
+          "audit_note": "Cross-source reconciliation catches gaps that single-source monitoring misses — document each reconciliation as evidence",
+          "vendor_docs_url": "https://docs.cyberark.com/privilege-cloud-shared-services/latest/en/content/sdk/getaccounts.htm"
+        },
+        {
+          "step": 5,
+          "action": "Build a collection health dashboard (events/day, latency, per-category coverage, failed deliveries) and alert the compliance team when volume drops below baseline or a syslog target stops receiving",
+          "security_note": "A stalled privileged-activity feed is a security incident as well as a compliance gap — route gap alerts to security operations, not just compliance"
+        },
+        {
+          "step": 6,
+          "action": "Run an automated quarterly review that produces a collection health report, flags any SLA breaches or gaps, and files the report in the evidence repository"
+        }
+      ]
+    }
+  }
+}

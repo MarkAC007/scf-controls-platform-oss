@@ -378,6 +378,13 @@ export type SystemType =
   | 'security_tool'
   | 'code_repository'
   | 'document_management'
+  | 'endpoint_management'
+  | 'vulnerability_management'
+  | 'email_security'
+  | 'security_awareness'
+  | 'password_manager'
+  | 'communication'
+  | 'hr_system'
   | 'custom'
 
 export type SystemStatus = 'active' | 'inactive' | 'deprecated'
@@ -398,6 +405,7 @@ export interface System {
   vendor?: string
   status: SystemStatus
   connection_config?: Record<string, any>
+  catalog_template_id?: number | null
   created_at: string
   updated_at: string
   created_by_user_id?: string
@@ -414,6 +422,7 @@ export interface SystemInput {
   vendor?: string
   status?: SystemStatus
   connection_config?: Record<string, any>
+  catalog_template_id?: number | null
 }
 
 export interface SystemUpdate {
@@ -424,6 +433,7 @@ export interface SystemUpdate {
   vendor?: string
   status?: SystemStatus
   connection_config?: Record<string, any>
+  catalog_template_id?: number | null
 }
 
 // ============================================================================
@@ -527,14 +537,19 @@ export interface RecipeStep {
   vendor_docs_url?: string
 }
 
+export type RecipeSource = 'curated' | 'ai_generated'
+
 export interface CollectionRecipe {
   title: string
   estimated_time?: string
   frequency?: string
   steps: RecipeStep[]
+  source?: RecipeSource
 }
 
 export type RecipeConfidence = 'system_specific' | 'vendor_generic' | 'type_generic'
+
+export type RecipeMatchedVia = 'template' | 'alias' | 'fallback' | 'none'
 
 export interface CollectionGuidanceResponse {
   system_id: string
@@ -544,28 +559,35 @@ export interface CollectionGuidanceResponse {
   current_maturity: EvidenceMaturityLevel
   recipe?: CollectionRecipe
   recipe_confidence: RecipeConfidence
+  matched_via?: RecipeMatchedVia
   maturity_appropriate_methods: { id: string; title: string; collection_method: string }[]
   next_level_preview?: CollectionRecipe
   alternatives_count: number
 }
 
-export interface SystemRecipeProduct {
+// ============================================================================
+// System Catalog Types (systems knowledge catalog — template picker)
+// ============================================================================
+
+export interface SystemCatalogTemplate {
+  id: number
+  slug: string
   name: string
-  recipes: Partial<Record<EvidenceMaturityLevel, CollectionRecipe>>
-}
-
-export interface SystemRecipeEntry {
   vendor: string
-  system_type: string
-  products?: Record<string, SystemRecipeProduct>
-  recipes?: Partial<Record<EvidenceMaturityLevel, CollectionRecipe>>
+  system_type: SystemType
+  category?: string
+  description?: string
+  website?: string
+  logo_hint?: string
+  is_fallback: boolean
+  recipe_levels: string[]
 }
 
-export interface SystemCollectionRecipesFile {
-  $schema: string
-  version: string
-  systems: Record<string, SystemRecipeEntry>
-  generic_fallbacks: Record<string, Partial<Record<EvidenceMaturityLevel, CollectionRecipe>>>
+export interface RecipeGenerationStatus {
+  status: 'idle' | 'queued' | 'running' | 'completed' | 'failed'
+  error?: string
+  template_id?: number
+  updated_at?: string
 }
 
 // ============================================================================
@@ -1047,14 +1069,42 @@ export type VendorStatus =
 export type VendorCriticality = 'low' | 'medium' | 'high' | 'critical'
 
 /**
- * Vendor assessment type
+ * Vendor assessment type (unified). AI-triggered assessments use
+ * 'initial' | 'annual' | 'adhoc'; legacy manual rows may carry the older values.
  */
-export type VendorAssessmentType = 'initial' | 'periodic' | 'triggered' | 'follow_up'
+export type VendorAssessmentType = 'initial' | 'annual' | 'adhoc' | 'periodic' | 'triggered' | 'follow_up'
 
 /**
- * Vendor assessment status
+ * AI assessment types accepted by the trigger endpoint
  */
-export type VendorAssessmentStatusType = 'scheduled' | 'in_progress' | 'completed' | 'cancelled'
+export type VendorAIAssessmentType = 'initial' | 'annual' | 'adhoc'
+
+/**
+ * Vendor assessment status (unified). AI job rows use
+ * 'pending' | 'running' | 'completed' | 'failed'; legacy manual rows may
+ * carry the older workflow values.
+ */
+export type VendorAssessmentStatusType =
+  | 'pending'
+  | 'running'
+  | 'failed'
+  | 'scheduled'
+  | 'in_progress'
+  | 'completed'
+  | 'cancelled'
+
+/**
+ * Annual review status derived by the backend from next_review_date
+ */
+export type VendorReviewStatus = 'ok' | 'due_soon' | 'overdue'
+
+/**
+ * Provenance for the vendor's authoritative risk score
+ */
+export interface VendorRiskProvenance {
+  assessment_id: string
+  scored_at: string | null
+}
 
 /**
  * Vendor certification status
@@ -1093,6 +1143,12 @@ export interface Vendor {
   updated_by_user_id?: string | null
   created_by?: UserSimple | null
   updated_by?: UserSimple | null
+  // Risk provenance + annual review loop
+  risk_score_source?: string | null
+  risk_scored_at?: string | null
+  next_review_date?: string | null
+  review_status?: VendorReviewStatus | null
+  risk_provenance?: VendorRiskProvenance | null
 }
 
 /**
@@ -1170,26 +1226,29 @@ export interface VendorAssessment {
   updated_by_user_id?: string | null
   created_by?: UserSimple | null
   updated_by?: UserSimple | null
-  // DPSIA Enhancement fields
+  // Inherent vs residual risk
   inherent_risk_score?: number | null
   inherent_risk_level?: string | null
   control_effectiveness_pct?: number | null
-}
-
-/**
- * Input for creating a vendor assessment
- */
-export interface VendorAssessmentInput {
-  assessment_type?: VendorAssessmentType
-  assessment_date: string
-  status?: VendorAssessmentStatusType
-  confidentiality_score?: number | null
-  integrity_score?: number | null
-  availability_score?: number | null
-  findings?: string | null
-  risk_rating?: string | null
-  next_assessment_date?: string | null
-  assessor_user_id?: string | null
+  // AI assessment job tracking (null for legacy/manual rows)
+  job_id?: string | null
+  started_at?: string | null
+  completed_at?: string | null
+  error_message?: string | null
+  triggered_by_user_id?: string | null
+  // Assessment inputs
+  data_role?: string | null
+  services_used?: string | null
+  client_name?: string | null
+  additional_context?: string | null
+  // AI assessment outcome + report
+  rag_status?: VendorRAGStatus | null
+  recommendation?: VendorRecommendation | null
+  executive_summary?: string | null
+  report_markdown?: string | null
+  report_json?: Record<string, unknown> | null
+  research_sources?: string[] | null
+  processing_time_ms?: number | null
 }
 
 /**
@@ -1273,318 +1332,86 @@ export const VENDOR_CRITICALITY_COLORS: Record<VendorCriticality, string> = {
 }
 
 // ---------------------------------------------------------------------------
-// Vendor Research (Issue #59)
+// Vendor AI Assessment (unified pipeline)
 // ---------------------------------------------------------------------------
 
-export type ResearchJobStatus = 'pending' | 'running' | 'completed' | 'partial' | 'failed'
-export type RiskSignal = 'low' | 'medium' | 'high' | 'unknown'
-export type ResearchSource = 'hibp' | 'cisa_kev' | 'nvd' | 'regulatory' | 'gdpr' | 'ico'
+export type VendorRAGStatus = 'RED' | 'AMBER' | 'GREEN'
+export type VendorRecommendation = 'APPROVE' | 'CONDITIONAL_APPROVAL' | 'REJECT'
 
-export interface VendorResearchTriggerRequest {
-  domain_override?: string
-}
-
-export interface VendorResearchTriggerResponse {
-  job_id: string
-  vendor_id: string
-  status: string
-  domain: string
-}
-
-export interface VendorResearchStatusResponse {
-  job_id: string
-  vendor_id: string
-  status: ResearchJobStatus
-  source_statuses: Record<string, string>
-  errors: Array<{ source: string; error: string }>
-  started_at: string | null
-  completed_at: string | null
-  created_at: string | null
-}
-
-export interface VendorResearchResultResponse {
-  job_id: string
-  vendor_id: string
-  status: ResearchJobStatus
-  hibp_results: Record<string, unknown>
-  cisa_kev_results: Record<string, unknown>
-  cve_nvd_results: Record<string, unknown>
-  regulatory_results: Record<string, unknown>
-  summary: string | null
-  risk_indicators: Record<string, RiskSignal>
-  overall_risk_signal: RiskSignal | null
-  source_statuses: Record<string, string>
-  errors: Array<{ source: string; error: string }>
-  researched_domain: string | null
-  started_at: string | null
-  completed_at: string | null
-  created_at: string | null
-}
-
-export const RESEARCH_SOURCE_LABELS: Record<ResearchSource, string> = {
-  hibp: 'Have I Been Pwned',
-  cisa_kev: 'CISA KEV',
-  nvd: 'CVE / NVD',
-  regulatory: 'Regulatory',
-  gdpr: 'GDPR',
-  ico: 'ICO'
-}
-
-export const RISK_SIGNAL_COLORS: Record<RiskSignal, string> = {
-  low: '#22c55e',
-  medium: '#eab308',
-  high: '#ef4444',
-  unknown: '#9ca3af'
-}
-
-export const RISK_SIGNAL_LABELS: Record<RiskSignal, string> = {
-  low: 'Low Risk',
-  medium: 'Medium Risk',
-  high: 'High Risk',
-  unknown: 'Unknown'
-}
-
-// ---------------------------------------------------------------------------
-// DPSIA Assessment (Lambda Integration)
-// ---------------------------------------------------------------------------
-
-export type DPSIAJobStatus = 'pending' | 'running' | 'completed' | 'failed'
-export type DPSIARAGStatus = 'RED' | 'AMBER' | 'GREEN'
-export type DPSIARecommendation = 'APPROVE' | 'CONDITIONAL_APPROVAL' | 'REJECT'
-
-export interface DPSIATriggerRequest {
-  assessment_type?: string
+/**
+ * Request body for POST /organizations/{org}/vendors/{id}/assessments
+ */
+export interface VendorAIAssessmentTriggerRequest {
+  assessment_type: VendorAIAssessmentType
   services_used: string
-  data_role?: string
-  client_name?: string
+  data_role: 'Processor' | 'Controller' | 'Joint Controller'
   additional_context?: string
 }
 
-export interface DPSIATriggerResponse {
+/**
+ * 202 response from the assessment trigger endpoint
+ */
+export interface VendorAIAssessmentTriggerResponse {
+  assessment_id: string
   job_id: string
   vendor_id: string
   status: string
 }
 
-export interface DPSIAStatusResponse {
-  job_id: string
+/**
+ * Polling response for GET .../assessments/{assessment_id}/status
+ */
+export interface VendorAssessmentStatusResponse {
+  assessment_id: string
+  job_id: string | null
   vendor_id: string
-  status: DPSIAJobStatus
+  status: VendorAssessmentStatusType
   started_at: string | null
   completed_at: string | null
   created_at: string | null
   error_message: string | null
 }
 
-export interface DPSIAResultResponse {
-  job_id: string
-  vendor_id: string
-  status: DPSIAJobStatus
-  assessment_type: string | null
-  data_role: string | null
-  rag_status: DPSIARAGStatus | null
-  recommendation: DPSIARecommendation | null
-  risk_score: number | null
-  risk_level: string | null
-  executive_summary: string | null
-  report_markdown: string | null
-  report_json: Record<string, unknown> | null
-  report_filename: string | null
-  research_sources: string[] | null
-  linked_assessment_id: string | null
-  linked_report_id: string | null
-  processing_time_ms: number | null
-  error_message: string | null
-  started_at: string | null
-  completed_at: string | null
-  created_at: string | null
-}
-
-export const DPSIA_RAG_COLORS: Record<DPSIARAGStatus, string> = {
+export const VENDOR_RAG_COLORS: Record<VendorRAGStatus, string> = {
   RED: '#ef4444',
   AMBER: '#f59e0b',
   GREEN: '#22c55e',
 }
 
-export const DPSIA_RAG_LABELS: Record<DPSIARAGStatus, string> = {
+export const VENDOR_RAG_LABELS: Record<VendorRAGStatus, string> = {
   RED: 'High Risk',
   AMBER: 'Medium Risk',
   GREEN: 'Low Risk',
 }
 
-export const DPSIA_RECOMMENDATION_LABELS: Record<DPSIARecommendation, string> = {
+export const VENDOR_RECOMMENDATION_LABELS: Record<VendorRecommendation, string> = {
   APPROVE: 'Approve',
   CONDITIONAL_APPROVAL: 'Conditional Approval',
   REJECT: 'Reject',
 }
 
-export const DPSIA_RECOMMENDATION_COLORS: Record<DPSIARecommendation, string> = {
+export const VENDOR_RECOMMENDATION_COLORS: Record<VendorRecommendation, string> = {
   APPROVE: '#22c55e',
   CONDITIONAL_APPROVAL: '#f59e0b',
   REJECT: '#ef4444',
 }
 
-// ---------------------------------------------------------------------------
-// Vendor Risk Scoring (Issue #60)
-// ---------------------------------------------------------------------------
-
 /**
- * Vendor risk calculation result
+ * Map a vendor risk level (low/medium/high/critical) to a RAG status,
+ * used when only the vendor-level score is available (e.g. list views).
  */
-export interface VendorRiskCalculationResult {
-  assessment_id: string
-  vendor_id: string
-  breach_score: number | null
-  certification_score: number | null
-  cve_score: number | null
-  regulatory_score: number | null
-  data_handling_score: number | null
-  likelihood: number | null
-  impact: number | null
-  final_risk_score: number | null
-  risk_level: string | null
-  ai_analysis: string | null
-  has_research_data: boolean
-  dpsia_protected?: boolean
-}
-
-/**
- * Vendor risk matrix cell (for vendor risk view)
- */
-export interface VendorRiskMatrixCell {
-  likelihood: number
-  impact: number
-  score: number
-  level: RiskLevel
-  vendor_names: string[]
-  vendor_ids: string[]
-  count: number
-}
-
-/**
- * Vendor risk matrix response
- */
-export interface VendorRiskMatrixResponse {
-  organization_id: string
-  matrix_type: 'vendor'
-  cells: VendorRiskMatrixCell[]
-  total_vendors: number
-  total_assessed: number
-  total_unassessed: number
-  by_level: Record<RiskLevel, number>
+export function vendorRiskLevelToRAG(level: string | null | undefined): VendorRAGStatus | null {
+  switch ((level || '').toLowerCase()) {
+    case 'low': return 'GREEN'
+    case 'medium': return 'AMBER'
+    case 'high':
+    case 'critical': return 'RED'
+    default: return null
+  }
 }
 
 // ---------------------------------------------------------------------------
-// Vendor Reports (Issue #61)
-// ---------------------------------------------------------------------------
-
-/**
- * Vendor report record
- */
-export interface VendorReport {
-  id: string
-  vendor_id: string
-  assessment_id?: string | null
-  organization_id: string
-  report_type: string
-  title: string
-  content_markdown: string
-  content_json?: Record<string, any> | null
-  risk_score?: number | null
-  risk_level?: string | null
-  recommendation?: string | null
-  version: number
-  generated_by_user_id?: string | null
-  generated_by?: UserSimple | null
-  created_at: string
-  updated_at: string
-}
-
-// ---------------------------------------------------------------------------
-// Vendor Claim Verification (DPSIA Enhancement)
-// ---------------------------------------------------------------------------
-
-export type VerificationStatus = 'confirmed' | 'unverified' | 'discrepancy' | 'anomaly'
-export type ClaimType = 'certification' | 'breach_disclosure' | 'compliance' | 'security_control'
-
-export interface VendorClaimVerification {
-  id: string
-  vendor_id: string
-  assessment_id?: string | null
-  claim_type: ClaimType
-  claim_description: string
-  verification_status: VerificationStatus
-  verification_source?: string | null
-  verification_detail?: string | null
-  evidence_url?: string | null
-  created_at: string
-  updated_at: string
-}
-
-export interface VendorClaimVerificationInput {
-  claim_type: ClaimType
-  claim_description: string
-  verification_status?: VerificationStatus
-  verification_source?: string | null
-  verification_detail?: string | null
-  evidence_url?: string | null
-}
-
-export const VERIFICATION_STATUS_COLORS: Record<VerificationStatus, string> = {
-  confirmed: '#22c55e',
-  unverified: '#eab308',
-  discrepancy: '#ef4444',
-  anomaly: '#f97316'
-}
-
-export const VERIFICATION_STATUS_LABELS: Record<VerificationStatus, string> = {
-  confirmed: 'Confirmed',
-  unverified: 'Unverified',
-  discrepancy: 'Discrepancy',
-  anomaly: 'Anomaly'
-}
-
-// ---------------------------------------------------------------------------
-// CIA Control Breakdown (DPSIA Enhancement)
-// ---------------------------------------------------------------------------
-
-export type CIAPillar = 'confidentiality' | 'integrity' | 'availability'
-
-export interface VendorCIAControl {
-  id: string
-  assessment_id: string
-  pillar: CIAPillar
-  control_name: string
-  control_category?: string | null
-  score?: number | null
-  detail?: string | null
-  evidence?: string | null
-  created_at: string
-}
-
-export interface VendorCIAControlInput {
-  pillar: CIAPillar
-  control_name: string
-  control_category?: string | null
-  score?: number | null
-  detail?: string | null
-  evidence?: string | null
-}
-
-export const CIA_PILLAR_LABELS: Record<CIAPillar, string> = {
-  confidentiality: 'Confidentiality',
-  integrity: 'Integrity',
-  availability: 'Availability'
-}
-
-export const CIA_PILLAR_COLORS: Record<CIAPillar, string> = {
-  confidentiality: '#3b82f6',
-  integrity: '#8b5cf6',
-  availability: '#06b6d4'
-}
-
-// ---------------------------------------------------------------------------
-// Vendor Action Items (DPSIA Enhancement)
+// Vendor Action Items
 // ---------------------------------------------------------------------------
 
 export type ActionItemPriority = 'critical' | 'high' | 'medium' | 'low'
@@ -1636,7 +1463,7 @@ export const ACTION_STATUS_COLORS: Record<ActionItemStatus, string> = {
 }
 
 // ---------------------------------------------------------------------------
-// Vendor Compensating Controls (DPSIA Enhancement)
+// Vendor Compensating Controls
 // ---------------------------------------------------------------------------
 
 export type EffectivenessRating = 'full' | 'partial' | 'minimal'

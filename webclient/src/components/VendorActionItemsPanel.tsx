@@ -1,5 +1,5 @@
 /**
- * VendorActionItemsPanel -- Action items display for a vendor (DPSIA Enhancement).
+ * VendorActionItemsPanel -- Action items display for a vendor (assessment follow-up actions).
  *
  * Shows a table of action items with priority/status badges, status filter,
  * and inline status updates.

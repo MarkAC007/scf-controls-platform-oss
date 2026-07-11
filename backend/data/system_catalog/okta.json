@@ -1,0 +1,148 @@
+{
+  "slug": "okta",
+  "name": "Okta",
+  "vendor": "Okta, Inc.",
+  "category": "Identity & Access Management",
+  "description": "Workforce identity, single sign-on and MFA platform.",
+  "website": "https://www.okta.com",
+  "aliases": [
+    "okta",
+    "okta sso",
+    "okta workforce identity"
+  ],
+  "logo_hint": "okta",
+  "system_type": "identity_provider",
+  "version": "1.0",
+  "recipes": {
+    "L1": {
+      "title": "Okta Manual Evidence Collection",
+      "estimated_time": "10 minutes",
+      "frequency": "weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Navigate to Okta Admin Console > Reports > System Log",
+          "permissions_required": "Read-Only Admin",
+          "security_note": "Use a Read-Only Admin role for evidence collection, not Super Admin",
+          "audit_note": "System Log entries are immutable and timestamped by Okta",
+          "vendor_docs_url": "https://help.okta.com/en-us/content/topics/reports/reports-syslog.htm"
+        },
+        {
+          "step": 2,
+          "action": "Set the date range filter to cover the collection period (e.g., last 7 days)",
+          "audit_note": "Ensure no gaps between collection periods"
+        },
+        {
+          "step": 3,
+          "action": "Filter by event type: user.authentication.auth_via_mfa for MFA evidence, or user.session.start for login evidence",
+          "permissions_required": "Read-Only Admin"
+        },
+        {
+          "step": 4,
+          "action": "Click Download CSV to export the filtered log data",
+          "audit_note": "CSV export includes all visible columns; save with date-stamped filename"
+        },
+        {
+          "step": 5,
+          "action": "Upload the exported CSV to the evidence repository with evidence ID reference",
+          "security_note": "Verify the export does not contain API tokens or secrets before uploading"
+        }
+      ]
+    },
+    "L2": {
+      "title": "Okta Scheduled Reports Collection",
+      "estimated_time": "5 minutes (setup), then automated",
+      "frequency": "automated weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Navigate to Okta Admin Console > Reports > Reports",
+          "permissions_required": "Super Admin or Application Admin",
+          "vendor_docs_url": "https://help.okta.com/en-us/content/topics/reports/reports-scheduled.htm"
+        },
+        {
+          "step": 2,
+          "action": "Select the report type (e.g., 'Suspicious Activity', 'Password Health') and configure the schedule",
+          "audit_note": "Scheduled reports run automatically and are emailed to configured recipients"
+        },
+        {
+          "step": 3,
+          "action": "Set the delivery schedule to match your evidence collection frequency (e.g., weekly on Monday)",
+          "security_note": "Ensure report recipients are limited to authorised personnel only"
+        },
+        {
+          "step": 4,
+          "action": "Configure email delivery or Okta Workflows integration for automated storage",
+          "audit_note": "Reports include generation timestamp and are versioned by Okta"
+        }
+      ]
+    },
+    "L3": {
+      "title": "Okta API-Driven Automated Collection",
+      "estimated_time": "2 hours initial setup",
+      "frequency": "automated daily",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Create a dedicated API token in Okta Admin Console > Security > API > Tokens with read-only scopes",
+          "permissions_required": "Super Admin or API Admin",
+          "security_note": "Use a service account, not personal admin credentials. Rotate token every 90 days.",
+          "audit_note": "Token creation logged in System Log"
+        },
+        {
+          "step": 2,
+          "action": "Configure automated script or integration to call GET /api/v1/logs with date filters for authentication events",
+          "permissions_required": "API Token with okta.logs.read scope",
+          "vendor_docs_url": "https://developer.okta.com/docs/reference/api/system-log/"
+        },
+        {
+          "step": 3,
+          "action": "Schedule collection via cron job or CI/CD pipeline to run daily, exporting results to evidence repository",
+          "security_note": "Store API token in secrets manager, never in plaintext config files"
+        },
+        {
+          "step": 4,
+          "action": "Implement error handling and alerting for failed collection runs",
+          "audit_note": "Failed collections should be logged and trigger re-collection within SLA"
+        },
+        {
+          "step": 5,
+          "action": "Validate collected data against expected event volume — flag anomalies if daily count drops below baseline",
+          "audit_note": "Volume validation provides assurance of collection completeness"
+        }
+      ]
+    },
+    "L4": {
+      "title": "Okta Managed Evidence Pipeline with Metrics",
+      "estimated_time": "4 hours initial setup",
+      "frequency": "continuous with daily reporting",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Deploy Okta Event Hook or Log Streaming to push events in real-time to your SIEM or evidence platform",
+          "permissions_required": "Super Admin",
+          "vendor_docs_url": "https://developer.okta.com/docs/concepts/event-hooks/",
+          "security_note": "Use TLS 1.2+ for webhook endpoints. Verify webhook signatures."
+        },
+        {
+          "step": 2,
+          "action": "Configure collection completeness metrics: track event volume, latency, and coverage across all Okta org units",
+          "audit_note": "Completeness metrics are key evidence of a managed collection process"
+        },
+        {
+          "step": 3,
+          "action": "Set up automated quality checks — validate schema consistency, check for gaps in time series, flag duplicate events"
+        },
+        {
+          "step": 4,
+          "action": "Create dashboard showing collection health: events/day, p95 latency, coverage %, failed collections",
+          "audit_note": "Dashboard serves as continuous evidence of process health"
+        },
+        {
+          "step": 5,
+          "action": "Implement automated quarterly review that generates a collection health report and flags any SLA breaches"
+        }
+      ]
+    }
+  }
+}

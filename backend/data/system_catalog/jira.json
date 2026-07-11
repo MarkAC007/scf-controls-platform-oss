@@ -1,0 +1,120 @@
+{
+  "slug": "jira",
+  "name": "Jira",
+  "vendor": "Atlassian Pty Ltd",
+  "category": "IT Service & Change Management",
+  "description": "Issue tracking and change management platform (Jira Cloud).",
+  "website": "https://www.atlassian.com/software/jira",
+  "aliases": [
+    "jira",
+    "jira cloud",
+    "atlassian jira"
+  ],
+  "logo_hint": "jira",
+  "system_type": "ticketing",
+  "version": "1.0",
+  "recipes": {
+    "L1": {
+      "title": "Jira Change Management Evidence Collection",
+      "estimated_time": "10 minutes",
+      "frequency": "weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Navigate to Jira and open the relevant project board (e.g., Change Management, IT Operations)",
+          "permissions_required": "Project member with browse permissions"
+        },
+        {
+          "step": 2,
+          "action": "Create a JQL filter for change management evidence: project = 'CM' AND created >= -7d ORDER BY created DESC",
+          "audit_note": "Save this filter for consistent weekly collections; JQL filters are auditable",
+          "vendor_docs_url": "https://support.atlassian.com/jira-software-cloud/docs/use-advanced-search-with-jql/"
+        },
+        {
+          "step": 3,
+          "action": "Click the Export icon (top-right) and select 'Export Excel CSV (all fields)' to download the filtered results",
+          "permissions_required": "Project member with export permissions"
+        },
+        {
+          "step": 4,
+          "action": "For approval evidence, open individual tickets and screenshot the workflow transitions showing approver names and timestamps",
+          "audit_note": "Jira workflow transitions include user and timestamp metadata"
+        },
+        {
+          "step": 5,
+          "action": "Upload the CSV export and any approval screenshots to the evidence repository with the evidence ID reference"
+        }
+      ]
+    },
+    "L2": {
+      "title": "Jira Scheduled Change Management Export",
+      "estimated_time": "1 hour initial setup",
+      "frequency": "weekly automated",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Save a JQL filter for change management evidence: project = CHANGE AND status changed DURING (startOfWeek(), endOfWeek())",
+          "permissions_required": "Jira user with project access"
+        },
+        {
+          "step": 2,
+          "action": "Configure Jira Automation rule to export the saved filter results as CSV weekly and email to evidence mailbox"
+        },
+        {
+          "step": 3,
+          "action": "Set up a Confluence page that auto-embeds the JQL results as a living change log",
+          "audit_note": "Confluence page provides persistent, auditable evidence trail"
+        }
+      ]
+    },
+    "L3": {
+      "title": "Jira API-Driven Change Evidence Collection",
+      "estimated_time": "2 hours initial setup",
+      "frequency": "automated daily",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Create Jira API token and configure automated script to query /rest/api/3/search with JQL for change/incident tickets",
+          "permissions_required": "API token with Browse Projects permission",
+          "vendor_docs_url": "https://developer.atlassian.com/cloud/jira/platform/rest/v3/api-group-issue-search/"
+        },
+        {
+          "step": 2,
+          "action": "Automate daily extraction of change records with approval chains, implementation dates, and rollback status"
+        },
+        {
+          "step": 3,
+          "action": "Implement data validation — verify all changes have required fields: approver, change type, risk rating"
+        },
+        {
+          "step": 4,
+          "action": "Configure webhook for real-time change tracking to evidence platform",
+          "audit_note": "Real-time tracking eliminates gaps between change execution and evidence capture"
+        }
+      ]
+    },
+    "L4": {
+      "title": "Jira Managed Change Analytics Pipeline",
+      "estimated_time": "3 hours initial setup",
+      "frequency": "continuous with weekly reporting",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Build change management metrics dashboard: change frequency, approval cycle time, emergency change ratio, rollback rate"
+        },
+        {
+          "step": 2,
+          "action": "Implement automated CAB (Change Advisory Board) compliance checking — flag changes missing required approvals"
+        },
+        {
+          "step": 3,
+          "action": "Create trend analysis: compare change success rates month-over-month, identify problematic change categories"
+        },
+        {
+          "step": 4,
+          "action": "Generate automated monthly change management evidence report with KPIs and trend charts"
+        }
+      ]
+    }
+  }
+}

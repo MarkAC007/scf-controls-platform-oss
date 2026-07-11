@@ -131,6 +131,7 @@ SYSTEM_TRACKED_FIELDS: set = {
     'vendor',
     'status',
     'owner_user_id',
+    'catalog_template_id',
 }
 
 SYSTEM_CAPABILITY_TRACKED_FIELDS: set = {

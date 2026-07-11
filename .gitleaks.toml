@@ -13,10 +13,13 @@ description = "Allowlist for documentation and placeholder patterns"
 
 # Allowlist paths that contain example/documentation content
 # These files contain curl examples with placeholder tokens (YOUR_TOKEN, YOUR_API_KEY)
-# which trigger false positives on the curl-auth-header rule
+# which trigger false positives on the curl-auth-header rule.
+# backend/data/system_catalog/ holds curated evidence-collection guidance —
+# vendor API hostnames/endpoints in prose trip generic-api-key.
 paths = [
     '''docs-site/src/content/docs/.*\.md$''',
     '''docs/.*\.md$''',
+    '''backend/data/system_catalog/.*\.json$''',
 ]
 
 # Allowlist specific patterns that are clearly placeholders

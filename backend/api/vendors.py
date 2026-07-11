@@ -2,9 +2,9 @@
 Vendor Management API endpoints.
 Handles CRUD operations for vendors, assessments, and certifications (TPRM).
 """
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, func
+from sqlalchemy import select, and_, desc, func
 from sqlalchemy.orm import selectinload
 from typing import List, Optional
 from uuid import UUID
@@ -12,7 +12,6 @@ from uuid import UUID
 from database import get_db
 from models import (
     Vendor, VendorAssessment, VendorCertification,
-    VendorClaimVerification, VendorCIAControl,
     VendorActionItem, VendorCompensatingControl,
 )
 from schemas import (
@@ -20,8 +19,10 @@ from schemas import (
     VendorCreate,
     VendorUpdate,
     VendorAssessmentResponse,
-    VendorAssessmentCreate,
     VendorAssessmentUpdate,
+    VendorAIAssessmentTriggerRequest,
+    VendorAIAssessmentTriggerResponse,
+    VendorAssessmentStatusResponse,
     VendorCertificationResponse,
     VendorCertificationCreate,
     VendorCertificationUpdate,
@@ -30,12 +31,6 @@ from schemas import (
     VendorResearchTriggerResponse,
     VendorResearchStatusResponse,
     VendorResearchResultResponse,
-    VendorClaimVerificationResponse,
-    VendorClaimVerificationCreate,
-    VendorClaimVerificationUpdate,
-    VendorCIAControlResponse,
-    VendorCIAControlCreate,
-    VendorCIAControlUpdate,
     VendorActionItemResponse,
     VendorActionItemCreate,
     VendorActionItemUpdate,
@@ -57,11 +52,11 @@ from services.vendor_research import (
     get_latest as get_research_latest,
 )
 from services.dpsia_assessment import (
-    trigger_assessment as trigger_dpsia,
-    get_status as get_dpsia_status,
-    get_results as get_dpsia_results,
-    get_latest as get_dpsia_latest,
-    get_active as get_dpsia_active,
+    trigger_assessment as trigger_ai_assessment,
+    get_status as get_ai_status,
+    get_results as get_ai_results,
+    get_latest as get_ai_latest,
+    get_active as get_ai_active,
 )
 
 router = APIRouter(tags=["vendors"])
@@ -350,8 +345,16 @@ async def delete_vendor(
 
 
 # =============================================================================
-# Vendor Assessment CRUD
+# Vendor Assessments (unified: AI-triggered + legacy manual records)
 # =============================================================================
+
+def _assessment_query_options():
+    return (
+        selectinload(VendorAssessment.created_by),
+        selectinload(VendorAssessment.updated_by),
+        selectinload(VendorAssessment.assessor),
+    )
+
 
 @router.get(
     "/organizations/{org_id}/vendors/{vendor_id}/assessments",
@@ -364,19 +367,17 @@ async def list_vendor_assessments(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    List all assessments for a vendor.
+    List all assessments for a vendor, newest first.
     Requires: viewer role or higher.
     """
     # Verify vendor belongs to org
-    vendor = await _get_vendor_or_404(org_id, vendor_id, db)
+    await _get_vendor_or_404(org_id, vendor_id, db)
 
     query = select(VendorAssessment).where(
         VendorAssessment.vendor_id == vendor_id
     ).options(
-        selectinload(VendorAssessment.created_by),
-        selectinload(VendorAssessment.updated_by),
-        selectinload(VendorAssessment.assessor)
-    ).order_by(VendorAssessment.assessment_date.desc())
+        *_assessment_query_options()
+    ).order_by(desc(VendorAssessment.created_at))
 
     result = await db.execute(query)
     return result.scalars().all()
@@ -384,39 +385,142 @@ async def list_vendor_assessments(
 
 @router.post(
     "/organizations/{org_id}/vendors/{vendor_id}/assessments",
-    response_model=VendorAssessmentResponse,
-    status_code=201
+    response_model=VendorAIAssessmentTriggerResponse,
+    status_code=202
 )
-async def create_vendor_assessment(
+async def trigger_vendor_assessment(
     org_id: UUID,
     vendor_id: UUID,
-    assessment_data: VendorAssessmentCreate,
+    body: VendorAIAssessmentTriggerRequest,
     membership: OrgMembership = Depends(require_org_role("editor")),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Create a new vendor assessment.
-    Requires: editor role or higher.
+    Trigger an AI assessment for a vendor (the single assessment pipeline).
+    Creates the unified assessment record (status=pending) and dispatches the
+    background job. Requires: editor role or higher.
     """
-    current_user = membership.user
     await _get_vendor_or_404(org_id, vendor_id, db)
 
-    new_assessment = VendorAssessment(
-        vendor_id=vendor_id,
-        created_by_user_id=UUID(current_user.db_id) if current_user and current_user.db_id else None,
-        **assessment_data.model_dump()
-    )
-    db.add(new_assessment)
-    await db.commit()
-    await db.refresh(new_assessment)
+    try:
+        result = await trigger_ai_assessment(
+            db=db,
+            vendor_id=str(vendor_id),
+            organization_id=str(org_id),
+            services_used=body.services_used,
+            user_id=membership.user.db_id,
+            assessment_type=body.assessment_type,
+            data_role=body.data_role,
+            additional_context=body.additional_context,
+        )
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
-    query = select(VendorAssessment).where(VendorAssessment.id == new_assessment.id).options(
-        selectinload(VendorAssessment.created_by),
-        selectinload(VendorAssessment.updated_by),
-        selectinload(VendorAssessment.assessor)
+
+@router.get(
+    "/organizations/{org_id}/vendors/{vendor_id}/assessments/latest",
+    response_model=VendorAssessmentResponse,
+)
+async def get_latest_vendor_assessment(
+    org_id: UUID,
+    vendor_id: UUID,
+    membership: OrgMembership = Depends(require_org_role("viewer")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get the most recent completed AI assessment for a vendor.
+    Requires: viewer role or higher.
+    """
+    await _get_vendor_or_404(org_id, vendor_id, db)
+
+    query = (
+        select(VendorAssessment)
+        .where(
+            VendorAssessment.vendor_id == vendor_id,
+            VendorAssessment.job_id.isnot(None),
+            VendorAssessment.status == "completed",
+        )
+        .options(*_assessment_query_options())
+        .order_by(desc(VendorAssessment.created_at))
+        .limit(1)
     )
     result = await db.execute(query)
-    return result.scalar_one()
+    assessment = result.scalar_one_or_none()
+    if not assessment:
+        raise HTTPException(status_code=404, detail="No completed assessment found for this vendor")
+    return assessment
+
+
+@router.get(
+    "/organizations/{org_id}/vendors/{vendor_id}/assessments/{assessment_id}/status",
+    response_model=VendorAssessmentStatusResponse,
+)
+async def get_vendor_assessment_status(
+    org_id: UUID,
+    vendor_id: UUID,
+    assessment_id: UUID,
+    membership: OrgMembership = Depends(require_org_role("viewer")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Poll the status of a vendor assessment.
+    Requires: viewer role or higher.
+    """
+    await _get_vendor_or_404(org_id, vendor_id, db)
+
+    result = await db.execute(
+        select(VendorAssessment).where(
+            and_(
+                VendorAssessment.vendor_id == vendor_id,
+                VendorAssessment.id == assessment_id,
+            )
+        )
+    )
+    assessment = result.scalar_one_or_none()
+    if not assessment:
+        raise HTTPException(status_code=404, detail="Vendor assessment not found")
+
+    return {
+        "assessment_id": str(assessment.id),
+        "job_id": assessment.job_id,
+        "vendor_id": str(assessment.vendor_id),
+        "status": assessment.status,
+        "started_at": assessment.started_at.isoformat() if assessment.started_at else None,
+        "completed_at": assessment.completed_at.isoformat() if assessment.completed_at else None,
+        "created_at": assessment.created_at.isoformat() if assessment.created_at else None,
+        "error_message": assessment.error_message,
+    }
+
+
+@router.get(
+    "/organizations/{org_id}/vendors/{vendor_id}/assessments/{assessment_id}",
+    response_model=VendorAssessmentResponse,
+)
+async def get_vendor_assessment(
+    org_id: UUID,
+    vendor_id: UUID,
+    assessment_id: UUID,
+    membership: OrgMembership = Depends(require_org_role("viewer")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get a single vendor assessment (including full report fields).
+    Requires: viewer role or higher.
+    """
+    await _get_vendor_or_404(org_id, vendor_id, db)
+
+    query = select(VendorAssessment).where(
+        and_(
+            VendorAssessment.vendor_id == vendor_id,
+            VendorAssessment.id == assessment_id,
+        )
+    ).options(*_assessment_query_options())
+    result = await db.execute(query)
+    assessment = result.scalar_one_or_none()
+    if not assessment:
+        raise HTTPException(status_code=404, detail="Vendor assessment not found")
+    return assessment
 
 
 @router.patch(
@@ -799,269 +903,6 @@ async def _get_vendor_or_404(org_id: UUID, vendor_id: UUID, db: AsyncSession) ->
 
 
 # =============================================================================
-# Vendor Claim Verifications (DPSIA Enhancement)
-# =============================================================================
-
-@router.get(
-    "/organizations/{org_id}/vendors/{vendor_id}/claim-verifications",
-    response_model=List[VendorClaimVerificationResponse],
-)
-async def list_claim_verifications(
-    org_id: UUID,
-    vendor_id: UUID,
-    membership: OrgMembership = Depends(require_org_role("viewer")),
-    db: AsyncSession = Depends(get_db),
-):
-    """List all claim verifications for a vendor. Requires viewer role."""
-    await _get_vendor_or_404(org_id, vendor_id, db)
-
-    result = await db.execute(
-        select(VendorClaimVerification)
-        .where(VendorClaimVerification.vendor_id == vendor_id)
-        .order_by(VendorClaimVerification.created_at.desc())
-    )
-    return result.scalars().all()
-
-
-@router.post(
-    "/organizations/{org_id}/vendors/{vendor_id}/claim-verifications",
-    response_model=VendorClaimVerificationResponse,
-    status_code=201,
-)
-async def create_claim_verification(
-    org_id: UUID,
-    vendor_id: UUID,
-    data: VendorClaimVerificationCreate,
-    membership: OrgMembership = Depends(require_org_role("editor")),
-    db: AsyncSession = Depends(get_db),
-):
-    """Create a manual claim verification. Requires editor role."""
-    await _get_vendor_or_404(org_id, vendor_id, db)
-
-    verification = VendorClaimVerification(
-        vendor_id=vendor_id,
-        **data.model_dump(),
-    )
-    db.add(verification)
-    await db.commit()
-    await db.refresh(verification)
-    return verification
-
-
-@router.patch(
-    "/organizations/{org_id}/vendors/{vendor_id}/claim-verifications/{cv_id}",
-    response_model=VendorClaimVerificationResponse,
-)
-async def update_claim_verification(
-    org_id: UUID,
-    vendor_id: UUID,
-    cv_id: UUID,
-    data: VendorClaimVerificationUpdate,
-    membership: OrgMembership = Depends(require_org_role("editor")),
-    db: AsyncSession = Depends(get_db),
-):
-    """Update a claim verification. Requires editor role."""
-    await _get_vendor_or_404(org_id, vendor_id, db)
-
-    result = await db.execute(
-        select(VendorClaimVerification).where(
-            and_(
-                VendorClaimVerification.vendor_id == vendor_id,
-                VendorClaimVerification.id == cv_id,
-            )
-        )
-    )
-    verification = result.scalar_one_or_none()
-    if not verification:
-        raise HTTPException(status_code=404, detail="Claim verification not found")
-
-    update_data = data.model_dump(exclude_unset=True)
-    for key, value in update_data.items():
-        setattr(verification, key, value)
-
-    await db.commit()
-    await db.refresh(verification)
-    return verification
-
-
-@router.delete(
-    "/organizations/{org_id}/vendors/{vendor_id}/claim-verifications/{cv_id}",
-    response_model=SuccessResponse,
-)
-async def delete_claim_verification(
-    org_id: UUID,
-    vendor_id: UUID,
-    cv_id: UUID,
-    membership: OrgMembership = Depends(require_org_role("editor")),
-    db: AsyncSession = Depends(get_db),
-):
-    """Delete a claim verification. Requires editor role."""
-    await _get_vendor_or_404(org_id, vendor_id, db)
-
-    result = await db.execute(
-        select(VendorClaimVerification).where(
-            and_(
-                VendorClaimVerification.vendor_id == vendor_id,
-                VendorClaimVerification.id == cv_id,
-            )
-        )
-    )
-    verification = result.scalar_one_or_none()
-    if not verification:
-        raise HTTPException(status_code=404, detail="Claim verification not found")
-
-    await db.delete(verification)
-    await db.commit()
-    return SuccessResponse(message="Claim verification deleted successfully")
-
-
-@router.post(
-    "/organizations/{org_id}/vendors/{vendor_id}/verify-claims",
-    response_model=List[VendorClaimVerificationResponse],
-    status_code=201,
-)
-async def trigger_claim_verification(
-    org_id: UUID,
-    vendor_id: UUID,
-    membership: OrgMembership = Depends(require_org_role("editor")),
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    Trigger automated claim verification against research data.
-    Cross-references vendor certifications, breach disclosures, and
-    compliance claims against HIBP, regulatory, and other research sources.
-    Requires editor role.
-    """
-    await _get_vendor_or_404(org_id, vendor_id, db)
-
-    from services.vendor_verification import verify_vendor_claims
-
-    try:
-        verifications = await verify_vendor_claims(
-            db=db,
-            vendor_id=str(vendor_id),
-        )
-        return verifications
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Verification failed: {exc}")
-
-
-# =============================================================================
-# Vendor CIA Controls (DPSIA Enhancement)
-# =============================================================================
-
-@router.get(
-    "/organizations/{org_id}/vendors/{vendor_id}/assessments/{assessment_id}/cia-controls",
-    response_model=List[VendorCIAControlResponse],
-)
-async def list_cia_controls(
-    org_id: UUID,
-    vendor_id: UUID,
-    assessment_id: UUID,
-    membership: OrgMembership = Depends(require_org_role("viewer")),
-    db: AsyncSession = Depends(get_db),
-):
-    """List CIA controls for a specific assessment. Requires viewer role."""
-    await _get_vendor_or_404(org_id, vendor_id, db)
-
-    result = await db.execute(
-        select(VendorCIAControl)
-        .where(VendorCIAControl.assessment_id == assessment_id)
-        .order_by(VendorCIAControl.pillar, VendorCIAControl.control_name)
-    )
-    return result.scalars().all()
-
-
-@router.post(
-    "/organizations/{org_id}/vendors/{vendor_id}/assessments/{assessment_id}/cia-controls",
-    response_model=VendorCIAControlResponse,
-    status_code=201,
-)
-async def create_cia_control(
-    org_id: UUID,
-    vendor_id: UUID,
-    assessment_id: UUID,
-    data: VendorCIAControlCreate,
-    membership: OrgMembership = Depends(require_org_role("editor")),
-    db: AsyncSession = Depends(get_db),
-):
-    """Create a CIA control for an assessment. Requires editor role."""
-    await _get_vendor_or_404(org_id, vendor_id, db)
-
-    # Verify assessment exists
-    assess_result = await db.execute(
-        select(VendorAssessment).where(
-            and_(
-                VendorAssessment.vendor_id == vendor_id,
-                VendorAssessment.id == assessment_id,
-            )
-        )
-    )
-    if not assess_result.scalar_one_or_none():
-        raise HTTPException(status_code=404, detail="Vendor assessment not found")
-
-    control = VendorCIAControl(
-        assessment_id=assessment_id,
-        **data.model_dump(),
-    )
-    db.add(control)
-    await db.commit()
-    await db.refresh(control)
-    return control
-
-
-@router.patch(
-    "/organizations/{org_id}/cia-controls/{control_id}",
-    response_model=VendorCIAControlResponse,
-)
-async def update_cia_control(
-    org_id: UUID,
-    control_id: UUID,
-    data: VendorCIAControlUpdate,
-    membership: OrgMembership = Depends(require_org_role("editor")),
-    db: AsyncSession = Depends(get_db),
-):
-    """Update a CIA control. Requires editor role."""
-    result = await db.execute(
-        select(VendorCIAControl).where(VendorCIAControl.id == control_id)
-    )
-    control = result.scalar_one_or_none()
-    if not control:
-        raise HTTPException(status_code=404, detail="CIA control not found")
-
-    update_data = data.model_dump(exclude_unset=True)
-    for key, value in update_data.items():
-        setattr(control, key, value)
-
-    await db.commit()
-    await db.refresh(control)
-    return control
-
-
-@router.delete(
-    "/organizations/{org_id}/cia-controls/{control_id}",
-    response_model=SuccessResponse,
-)
-async def delete_cia_control(
-    org_id: UUID,
-    control_id: UUID,
-    membership: OrgMembership = Depends(require_org_role("editor")),
-    db: AsyncSession = Depends(get_db),
-):
-    """Delete a CIA control. Requires editor role."""
-    result = await db.execute(
-        select(VendorCIAControl).where(VendorCIAControl.id == control_id)
-    )
-    control = result.scalar_one_or_none()
-    if not control:
-        raise HTTPException(status_code=404, detail="CIA control not found")
-
-    await db.delete(control)
-    await db.commit()
-    return SuccessResponse(message="CIA control deleted successfully")
-
-
-# =============================================================================
 # Vendor Action Items (DPSIA Enhancement)
 # =============================================================================
 
@@ -1342,26 +1183,38 @@ async def delete_compensating_control(
 
 
 # =============================================================================
-# DPSIA Assessment (Lambda Integration)
+# Deprecated /dpsia/* aliases (thin wrappers over the unified assessments).
+# Same response shapes as before; every response carries `Deprecation: true`.
+# Use /organizations/{org_id}/vendors/{vendor_id}/assessments instead.
 # =============================================================================
+
+_DEPRECATION_HEADERS = {"Deprecation": "true"}
+
+
+def _mark_deprecated(response: Response) -> None:
+    response.headers["Deprecation"] = "true"
+
 
 @router.post(
     "/organizations/{org_id}/vendors/{vendor_id}/dpsia",
     response_model=DPSIATriggerResponse,
     status_code=202,
+    deprecated=True,
 )
 async def trigger_dpsia_assessment(
     org_id: UUID,
     vendor_id: UUID,
     body: DPSIATriggerRequest,
+    response: Response,
     membership: OrgMembership = Depends(require_org_role("editor")),
     db: AsyncSession = Depends(get_db),
 ):
-    """Trigger a DPSIA Lambda assessment for a vendor. Requires editor role."""
+    """Deprecated alias — use POST .../assessments. Requires editor role."""
+    _mark_deprecated(response)
     await _get_vendor_or_404(org_id, vendor_id, db)
 
     try:
-        result = await trigger_dpsia(
+        result = await trigger_ai_assessment(
             db=db,
             vendor_id=str(vendor_id),
             organization_id=str(org_id),
@@ -1378,85 +1231,87 @@ async def trigger_dpsia_assessment(
 
 
 @router.get(
-    "/organizations/{org_id}/vendors/{vendor_id}/dpsia/{job_id}/status",
-    response_model=DPSIAStatusResponse,
-)
-async def get_vendor_dpsia_status(
-    org_id: UUID,
-    vendor_id: UUID,
-    job_id: str,
-    membership: OrgMembership = Depends(require_org_role("viewer")),
-    db: AsyncSession = Depends(get_db),
-):
-    """Poll the status of a DPSIA assessment job. Requires viewer role."""
-    await _get_vendor_or_404(org_id, vendor_id, db)
-
-    result = await get_dpsia_status(db=db, vendor_id=str(vendor_id), job_id=job_id)
-    if not result:
-        raise HTTPException(status_code=404, detail="DPSIA assessment job not found")
-    return result
-
-
-@router.get(
-    "/organizations/{org_id}/vendors/{vendor_id}/dpsia/{job_id}",
-    response_model=DPSIAResultResponse,
-)
-async def get_vendor_dpsia_results(
-    org_id: UUID,
-    vendor_id: UUID,
-    job_id: str,
-    membership: OrgMembership = Depends(require_org_role("viewer")),
-    db: AsyncSession = Depends(get_db),
-):
-    """Get full results for a completed DPSIA assessment. Requires viewer role."""
-    await _get_vendor_or_404(org_id, vendor_id, db)
-
-    result = await get_dpsia_results(db=db, vendor_id=str(vendor_id), job_id=job_id)
-    if not result:
-        raise HTTPException(status_code=404, detail="DPSIA assessment job not found")
-    return result
-
-
-@router.get(
     "/organizations/{org_id}/vendors/{vendor_id}/dpsia/latest",
     response_model=DPSIAResultResponse,
+    deprecated=True,
 )
 async def get_vendor_dpsia_latest(
     org_id: UUID,
     vendor_id: UUID,
+    response: Response,
     membership: OrgMembership = Depends(require_org_role("viewer")),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get the most recent completed DPSIA assessment. Requires viewer role."""
+    """Deprecated alias — use GET .../assessments/latest. Requires viewer role."""
+    _mark_deprecated(response)
     await _get_vendor_or_404(org_id, vendor_id, db)
 
-    result = await get_dpsia_latest(db=db, vendor_id=str(vendor_id))
+    result = await get_ai_latest(db=db, vendor_id=str(vendor_id))
     if not result:
-        raise HTTPException(status_code=404, detail="No completed DPSIA assessment found for this vendor")
+        raise HTTPException(
+            status_code=404,
+            detail="No completed DPSIA assessment found for this vendor",
+            headers=_DEPRECATION_HEADERS,
+        )
     return result
 
 
 @router.get(
     "/organizations/{org_id}/vendors/{vendor_id}/dpsia/active",
     response_model=DPSIAStatusResponse,
+    deprecated=True,
 )
 async def get_vendor_dpsia_active(
     org_id: UUID,
     vendor_id: UUID,
+    response: Response,
     membership: OrgMembership = Depends(require_org_role("viewer")),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get the active (pending/running) DPSIA assessment, if any. Requires viewer role."""
+    """Deprecated alias — the active (pending/running) assessment, if any. Requires viewer role."""
+    _mark_deprecated(response)
     await _get_vendor_or_404(org_id, vendor_id, db)
 
-    result = await get_dpsia_active(db=db, vendor_id=str(vendor_id))
+    result = await get_ai_active(db=db, vendor_id=str(vendor_id))
     if not result:
-        raise HTTPException(status_code=404, detail="No active DPSIA assessment for this vendor")
+        raise HTTPException(
+            status_code=404,
+            detail="No active DPSIA assessment for this vendor",
+            headers=_DEPRECATION_HEADERS,
+        )
+    return result
+
+
+@router.get(
+    "/organizations/{org_id}/vendors/{vendor_id}/dpsia/{job_id}/status",
+    response_model=DPSIAStatusResponse,
+    deprecated=True,
+)
+async def get_vendor_dpsia_status(
+    org_id: UUID,
+    vendor_id: UUID,
+    job_id: str,
+    response: Response,
+    membership: OrgMembership = Depends(require_org_role("viewer")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Deprecated alias — use GET .../assessments/{assessment_id}/status. Requires viewer role."""
+    _mark_deprecated(response)
+    await _get_vendor_or_404(org_id, vendor_id, db)
+
+    result = await get_ai_status(db=db, vendor_id=str(vendor_id), job_id=job_id)
+    if not result:
+        raise HTTPException(
+            status_code=404,
+            detail="DPSIA assessment job not found",
+            headers=_DEPRECATION_HEADERS,
+        )
     return result
 
 
 @router.get(
     "/organizations/{org_id}/vendors/{vendor_id}/dpsia/{job_id}/docx",
+    deprecated=True,
 )
 async def download_dpsia_docx(
     org_id: UUID,
@@ -1465,28 +1320,42 @@ async def download_dpsia_docx(
     membership: OrgMembership = Depends(require_org_role("viewer")),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get a presigned URL to download the DPSIA DOCX report. Requires viewer role."""
-    from fastapi.responses import RedirectResponse
+    """Gone — DOCX reports have been retired; reports are markdown + JSON."""
+    await _get_vendor_or_404(org_id, vendor_id, db)
+    raise HTTPException(
+        status_code=410,
+        detail={
+            "message": "DOCX reports have been retired. Assessment reports are now "
+                       "available as markdown and JSON on the assessment record.",
+            "hint": f"GET /organizations/{org_id}/vendors/{vendor_id}/assessments/latest "
+                    "and use the report_markdown / report_json fields.",
+        },
+        headers=_DEPRECATION_HEADERS,
+    )
+
+
+@router.get(
+    "/organizations/{org_id}/vendors/{vendor_id}/dpsia/{job_id}",
+    response_model=DPSIAResultResponse,
+    deprecated=True,
+)
+async def get_vendor_dpsia_results(
+    org_id: UUID,
+    vendor_id: UUID,
+    job_id: str,
+    response: Response,
+    membership: OrgMembership = Depends(require_org_role("viewer")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Deprecated alias — use GET .../assessments/{assessment_id}. Requires viewer role."""
+    _mark_deprecated(response)
     await _get_vendor_or_404(org_id, vendor_id, db)
 
-    from models import VendorDPSIAAssessment
-    result = await db.execute(
-        select(VendorDPSIAAssessment).where(
-            and_(
-                VendorDPSIAAssessment.vendor_id == vendor_id,
-                VendorDPSIAAssessment.job_id == job_id,
-            )
+    result = await get_ai_results(db=db, vendor_id=str(vendor_id), job_id=job_id)
+    if not result:
+        raise HTTPException(
+            status_code=404,
+            detail="DPSIA assessment job not found",
+            headers=_DEPRECATION_HEADERS,
         )
-    )
-    row = result.scalar_one_or_none()
-    if not row or not row.report_docx_s3_key:
-        raise HTTPException(status_code=404, detail="DOCX report not available")
-
-    from services.azure_blob_service import generate_download_url_by_key, is_configured as azure_configured
-    if not azure_configured():
-        raise HTTPException(status_code=503, detail="Blob storage not configured")
-    presigned_url = generate_download_url_by_key(
-        file_key=row.report_docx_s3_key,
-        filename=row.report_filename,
-    )
-    return RedirectResponse(url=presigned_url)
+    return result

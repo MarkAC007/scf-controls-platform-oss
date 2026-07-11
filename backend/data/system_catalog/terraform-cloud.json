@@ -1,0 +1,198 @@
+{
+  "slug": "terraform-cloud",
+  "name": "HCP Terraform",
+  "vendor": "HashiCorp, Inc. (IBM)",
+  "category": "Infrastructure as Code",
+  "description": "Managed Terraform platform (formerly Terraform Cloud) for provisioning infrastructure through version-controlled workspaces with policy-as-code guardrails. Evidence covers workspace run history and apply approvals as change management records, Sentinel/OPA policy sets, team access permissions, state version history and the organisation audit trail.",
+  "website": "https://www.hashicorp.com/products/terraform",
+  "aliases": [
+    "terraform cloud",
+    "hcp terraform",
+    "terraform enterprise",
+    "tfc"
+  ],
+  "logo_hint": "terraform",
+  "system_type": "cloud_provider",
+  "version": "1.0",
+  "recipes": {
+    "L1": {
+      "title": "HCP Terraform Manual Run History and Access Evidence Collection",
+      "estimated_time": "25 minutes",
+      "frequency": "weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Sign in to app.terraform.io, open each in-scope workspace and select Runs; capture the run list (status, source, triggering user, timestamps), then open a sample applied run to capture the plan summary, the approver recorded against the apply confirmation and the completion timestamp",
+          "permissions_required": "Team access of at least Read on the workspace",
+          "audit_note": "A run that required manual confirmation before apply is direct change management evidence — the plan is the proposed change and the confirming user is the approver",
+          "vendor_docs_url": "https://developer.hashicorp.com/terraform/cloud-docs/run/manage"
+        },
+        {
+          "step": 2,
+          "action": "Navigate to Organization Settings > Policy Sets and capture each policy set's kind (Sentinel or OPA), enforcement level, scope (global or selected workspaces/projects) and source repository",
+          "permissions_required": "Organization Owner (organisation settings access)",
+          "audit_note": "Policy set scope and enforcement levels evidence preventative guardrails applied to infrastructure changes before apply",
+          "vendor_docs_url": "https://developer.hashicorp.com/terraform/cloud-docs/policy-enforcement/manage-policy-sets"
+        },
+        {
+          "step": 3,
+          "action": "Navigate to Organization Settings > Teams to capture team membership and organisation-level permissions, then open each in-scope workspace's Settings > Team Access to capture the access level (read, plan, write, admin or custom) granted to each team",
+          "permissions_required": "Organization Owner, or Workspace Admin for the per-workspace team access view",
+          "audit_note": "Team access levels are the authoritative record of who can queue plans, approve applies and administer each workspace",
+          "vendor_docs_url": "https://developer.hashicorp.com/terraform/cloud-docs/users-teams-organizations/teams"
+        },
+        {
+          "step": 4,
+          "action": "Open each in-scope workspace's States page and capture the state version history — serial numbers, creation timestamps and the run or user that produced each version",
+          "permissions_required": "Team access including read state versions on the workspace",
+          "security_note": "Capture the version list metadata only — do not download raw state files for evidence, as state can contain plaintext secrets",
+          "audit_note": "State version history corroborates that infrastructure changes only occurred through recorded runs",
+          "vendor_docs_url": "https://developer.hashicorp.com/terraform/cloud-docs/workspaces/state"
+        },
+        {
+          "step": 5,
+          "action": "Navigate to Organization Settings > API Token and record which organisation, audit trail and team tokens exist, when they were created and their expiry dates",
+          "permissions_required": "Organization Owner",
+          "security_note": "Record token metadata only — token values are shown once at creation and must never appear in evidence",
+          "audit_note": "A token inventory with enforced expiry dates evidences credential lifecycle management for the platform's API access",
+          "vendor_docs_url": "https://developer.hashicorp.com/terraform/cloud-docs/users-teams-organizations/api-tokens"
+        },
+        {
+          "step": 6,
+          "action": "Upload the screenshots and exports to the evidence repository with date-stamped filenames and evidence ID references",
+          "security_note": "Review captures for exposed variable values or state contents before uploading"
+        }
+      ]
+    },
+    "L2": {
+      "title": "HCP Terraform Notification-Driven Run Records with Scheduled Reviews",
+      "estimated_time": "1 hour initial setup, then 15 minutes per cycle",
+      "frequency": "automated per run, monthly review",
+      "steps": [
+        {
+          "step": 1,
+          "action": "HCP Terraform has no built-in scheduled evidence report or export feature — the closest reliable alternative is workspace notifications delivering a record of every run outcome, combined with a scheduled manual export of configuration evidence",
+          "audit_note": "Documenting this design decision evidences a deliberate, repeatable collection process rather than ad hoc screenshots"
+        },
+        {
+          "step": 2,
+          "action": "In each in-scope workspace, navigate to Settings > Notifications and create an email notification to a monitored compliance mailbox, triggered on the Needs Attention, Completed and Errored run events",
+          "permissions_required": "Workspace Admin on the workspace",
+          "audit_note": "Each notification is a vendor-timestamped record of a run outcome, including runs that required human confirmation before apply",
+          "vendor_docs_url": "https://developer.hashicorp.com/terraform/cloud-docs/workspaces/settings/notifications"
+        },
+        {
+          "step": 3,
+          "action": "Retain the notification emails in a retention-managed mailbox or archive folder so the full period's run outcomes accumulate automatically between review cycles",
+          "security_note": "Restrict the compliance mailbox to authorised personnel — run notifications reveal workspace names and change activity",
+          "audit_note": "An append-only mail archive gives a continuous, independently timestamped run record without custom code"
+        },
+        {
+          "step": 4,
+          "action": "On a recurring calendar schedule, export the slower-moving configuration evidence — Organization Settings > Policy Sets, Organization Settings > Teams and each workspace's Settings > Team Access — following the L1 steps",
+          "permissions_required": "Organization Owner",
+          "audit_note": "Policy sets and team access change infrequently, so a monthly snapshot cadence is proportionate provided each snapshot is date-stamped",
+          "vendor_docs_url": "https://developer.hashicorp.com/terraform/cloud-docs/policy-enforcement/manage-policy-sets"
+        },
+        {
+          "step": 5,
+          "action": "File the period's run notification archive and configuration snapshots in the evidence repository, and record each cycle's completion and period coverage in the evidence tracker",
+          "audit_note": "Reconciling notification counts against the workspace Runs page confirms no run records were missed during the period"
+        }
+      ]
+    },
+    "L3": {
+      "title": "HCP Terraform API-Driven Automated Collection",
+      "estimated_time": "3 hours initial setup",
+      "frequency": "automated daily",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Create the collection credentials in Organization Settings > API Token: generate an organisation API token for configuration and run collection, and a separate audit trail token (under the Audit Token heading) for the audit trail endpoint, each with an explicit expiry date",
+          "permissions_required": "Organization Owner",
+          "security_note": "Token values are displayed once — store them immediately in your secrets manager, never in scripts or CI variables in plaintext, and diarise rotation before the mandatory expiry date",
+          "vendor_docs_url": "https://developer.hashicorp.com/terraform/cloud-docs/users-teams-organizations/api-tokens"
+        },
+        {
+          "step": 2,
+          "action": "Schedule the collection script to call GET https://app.terraform.io/api/v2/organizations/:organization_name/runs (with page[size] and filter[status] parameters) to capture run history across workspaces, storing the JSON responses date-stamped; each run's status, created-by and timestamps form the change record",
+          "permissions_required": "Organisation API token",
+          "audit_note": "Run records showing a plan followed by a human-confirmed apply are machine-readable change management evidence, filterable by status and source",
+          "vendor_docs_url": "https://developer.hashicorp.com/terraform/cloud-docs/api-docs/run"
+        },
+        {
+          "step": 3,
+          "action": "Collect access and policy configuration in the same run: GET /api/v2/organizations/:organization_name/policy-sets for Sentinel/OPA policy sets and their enforcement scope, GET /api/v2/organizations/:organization_name/teams for team membership, and GET /api/v2/team-workspaces?filter[workspace][id]=:workspace_id for per-workspace access levels",
+          "permissions_required": "Organisation API token",
+          "audit_note": "The team-workspaces response records the exact access level (read, plan, write, admin or custom) per team per workspace — the authoritative permissions evidence",
+          "vendor_docs_url": "https://developer.hashicorp.com/terraform/cloud-docs/api-docs/team-access"
+        },
+        {
+          "step": 4,
+          "action": "Capture state lineage with GET /api/v2/state-versions?filter[organization][name]=:org&filter[workspace][name]=:workspace, recording serial, created-at and status per version but discarding the hosted-state-download-url without fetching it",
+          "permissions_required": "Organisation API token with read state versions permission on the workspaces",
+          "security_note": "Never download raw state into the evidence store — state files can contain plaintext credentials; the version metadata alone evidences change lineage",
+          "vendor_docs_url": "https://developer.hashicorp.com/terraform/cloud-docs/api-docs/state-versions"
+        },
+        {
+          "step": 5,
+          "action": "Pull the organisation audit trail with GET https://app.terraform.io/api/v2/organization/audit-trail?since=<last-run-ISO8601> using the audit trail token; note this endpoint requires the HCP Terraform Standard or Premium edition and is not available on lower tiers — if unavailable, document run history plus notifications as the compensating record",
+          "permissions_required": "Audit trail token (organisation or user tokens are not accepted)",
+          "audit_note": "HCP Terraform retains only 14 days of audit trail data, so daily collection is required to build a gap-free archive",
+          "vendor_docs_url": "https://developer.hashicorp.com/terraform/cloud-docs/api-docs/audit-trails"
+        },
+        {
+          "step": 6,
+          "action": "Implement error handling and alerting for failed runs — 401/403 responses indicating expired or revoked tokens, and 429 rate limiting (the runs endpoints allow 30 requests per minute) — and validate each cycle by diffing policy sets, teams and workspace access against the approved baseline",
+          "audit_note": "Failed collections must alert within the day, because the 14-day audit trail retention window makes late re-collection unrecoverable beyond two weeks"
+        }
+      ]
+    },
+    "L4": {
+      "title": "HCP Terraform Continuous Evidence Pipeline with Webhooks and Audit Trail Ingestion",
+      "estimated_time": "4-6 hours initial setup",
+      "frequency": "continuous with daily reporting",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Run a continuous audit trail ingester that polls GET https://app.terraform.io/api/v2/organization/audit-trail on a short interval (e.g. every 15 minutes) with a persisted since cursor, forwarding events to the SIEM; HCP Terraform offers no push or streaming delivery for this endpoint, so cursor-based polling is the supported continuous pattern",
+          "permissions_required": "Audit trail token; SIEM administrator for the ingestion pipeline",
+          "security_note": "Store the audit trail token in the pipeline's secrets manager and scope SIEM index access to the security and compliance teams",
+          "audit_note": "Continuous ingestion is the only way to preserve audit trail events beyond the platform's 14-day retention; requires the Standard or Premium edition",
+          "vendor_docs_url": "https://developer.hashicorp.com/terraform/cloud-docs/api-docs/audit-trails"
+        },
+        {
+          "step": 2,
+          "action": "Add real-time run event capture by creating a generic webhook notification per workspace via POST /api/v2/workspaces/:workspace_id/notification-configurations with destination-type generic and triggers run:created, run:planning, run:needs_attention, run:applying, run:completed and run:errored, pointed at your collector endpoint",
+          "permissions_required": "Workspace Admin, or an organisation API token",
+          "audit_note": "Webhook payloads arrive at each run state transition, giving an independent near-real-time change feed alongside the polled audit trail",
+          "vendor_docs_url": "https://developer.hashicorp.com/terraform/cloud-docs/api-docs/notification-configurations"
+        },
+        {
+          "step": 3,
+          "action": "Configure the collector to verify the X-TFE-Notification-Signature header on every webhook delivery — an HMAC-SHA512 of the payload using the notification token you set — and reject unsigned or mismatched requests before ingesting into the SIEM",
+          "permissions_required": "Collector service administrator",
+          "security_note": "HMAC verification prevents forged run events from polluting the evidence stream; keep the notification token in the collector's secret store",
+          "audit_note": "Signature-verified events carry integrity assurance that screenshots and manual exports cannot provide",
+          "vendor_docs_url": "https://developer.hashicorp.com/terraform/cloud-docs/api-docs/notification-configurations"
+        },
+        {
+          "step": 4,
+          "action": "Reconcile the three sources continuously in the SIEM: webhook run events against the daily runs API snapshots (GET /api/v2/organizations/:organization_name/runs) and against audit trail entries, flagging any run visible in one feed but missing from another",
+          "audit_note": "Cross-source reconciliation turns three independent feeds into a completeness claim for the change record",
+          "vendor_docs_url": "https://developer.hashicorp.com/terraform/cloud-docs/api-docs/run"
+        },
+        {
+          "step": 5,
+          "action": "Publish completeness metrics and alerts: audit events ingested per day, cursor lag against the 14-day retention window, webhook delivery failures per workspace, runs applied without a matching approval event, and policy set or team access changes detected outside change windows",
+          "audit_note": "Cursor lag alerting well inside the 14-day retention window is the key control against unrecoverable audit trail gaps"
+        },
+        {
+          "step": 6,
+          "action": "Generate an automated quarterly collection health report reconciling SIEM run counts against the workspace Runs pages and state version serials, recording coverage per workspace and any gaps with their remediation",
+          "audit_note": "Independent reconciliation against state version lineage validates that every infrastructure change is represented in the evidence archive"
+        }
+      ]
+    }
+  }
+}

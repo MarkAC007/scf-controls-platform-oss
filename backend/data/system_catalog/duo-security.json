@@ -1,0 +1,177 @@
+{
+  "slug": "duo-security",
+  "name": "Duo Security",
+  "vendor": "Cisco Systems, Inc. (Duo)",
+  "category": "Multi-Factor Authentication",
+  "description": "Cloud multi-factor authentication and device trust platform. Yields MFA policy configuration, authentication logs, user and device enrolment reports, and Admin API log feeds for SIEM ingestion.",
+  "website": "https://duo.com",
+  "aliases": [
+    "duo",
+    "duo security",
+    "cisco duo"
+  ],
+  "logo_hint": "duo",
+  "system_type": "identity_provider",
+  "version": "1.0",
+  "recipes": {
+    "L1": {
+      "title": "Duo Manual Evidence Collection",
+      "estimated_time": "15 minutes",
+      "frequency": "weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Sign in to the Duo Admin Panel and navigate to Policies; capture the Global Policy and any custom policy settings (authentication methods, new user policy, authorised networks) via screenshots",
+          "permissions_required": "Read-only administrator role (or higher)",
+          "security_note": "Use a Read-only administrator account for evidence collection, not an Owner login",
+          "audit_note": "Capture which applications each custom policy is applied to, so reviewers can verify MFA enforcement coverage",
+          "vendor_docs_url": "https://duo.com/docs/policy"
+        },
+        {
+          "step": 2,
+          "action": "Navigate to Reports > Authentication Log and set the date range and filters to cover the collection period (e.g., last 7 days)",
+          "permissions_required": "Any administrator role except Billing",
+          "audit_note": "Ensure no gaps between collection periods",
+          "vendor_docs_url": "https://duo.com/docs/administration-reporting"
+        },
+        {
+          "step": 3,
+          "action": "Click Export in the upper right of the log display and download the authentication log as CSV or JSON",
+          "audit_note": "Exported files include additional log fields not shown in the Admin Panel and reflect the applied filters — record the filter set with the evidence"
+        },
+        {
+          "step": 4,
+          "action": "Navigate to Users and use the export option to download the user list as CSV for enrolment status evidence; for a summary view, use Reports > Deployment Progress",
+          "vendor_docs_url": "https://duo.com/docs/administration-users",
+          "audit_note": "The user export evidences enrolment coverage; flag any users in bypass status for review"
+        },
+        {
+          "step": 5,
+          "action": "Export Reports > Administrator Actions for the same period to evidence administrative changes to policies and configuration",
+          "vendor_docs_url": "https://duo.com/docs/administration-reporting"
+        },
+        {
+          "step": 6,
+          "action": "Upload the exports and screenshots to the evidence repository with date-stamped filenames and the evidence ID reference",
+          "security_note": "Verify exports do not contain secrets or personal data beyond what the evidence requires before uploading"
+        }
+      ]
+    },
+    "L2": {
+      "title": "Duo Scheduled Log Collection via Duo Log Sync",
+      "estimated_time": "1-2 hours initial setup, then automated",
+      "frequency": "automated daily",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Note: the Duo Admin Panel does not offer built-in scheduled or emailed report exports. The closest vendor-supported no-code option is Duo Log Sync (duologsync), Duo's own configuration-driven log collection utility",
+          "vendor_docs_url": "https://duo.com/docs/administration-reporting"
+        },
+        {
+          "step": 2,
+          "action": "Have an Owner create an Admin API application via Applications > Application Catalog > Admin API in the Duo Admin Panel, granting only the 'Grant read log' permission, and record the integration key, secret key and API hostname",
+          "permissions_required": "Owner",
+          "security_note": "Treat the secret key (skey) like a password; grant only 'Grant read log' so the credential cannot modify the Duo account",
+          "audit_note": "Admin API application creation is itself recorded in Administrator Actions",
+          "vendor_docs_url": "https://duo.com/docs/adminapi"
+        },
+        {
+          "step": 3,
+          "action": "Install duologsync on a hardened collection host and configure config.yml with the API hostname, integration key and secret key, enabling the required endpoints (authentication, administrator actions, telephony)",
+          "security_note": "Restrict read access to config.yml, which contains the API credentials; run the utility under a dedicated service account",
+          "vendor_docs_url": "https://github.com/duosecurity/duo_log_sync"
+        },
+        {
+          "step": 4,
+          "action": "Point the output at your log collector or evidence store (TCP, TCP over SSL, or UDP transport; JSON or CEF format) and run duologsync as a scheduled service (e.g., systemd)",
+          "audit_note": "Duo Log Sync checkpoints its last-known offset, so restarts resume without gaps in the evidence timeline"
+        },
+        {
+          "step": 5,
+          "action": "Verify each cycle that logs arrived for the collection period and file the collected output in the evidence repository with generation timestamps"
+        }
+      ]
+    },
+    "L3": {
+      "title": "Duo Admin API Automated Collection",
+      "estimated_time": "2-4 hours initial setup",
+      "frequency": "automated daily",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Create a dedicated Admin API application via Applications > Application Catalog > Admin API in the Duo Admin Panel and record the integration key (ikey), secret key (skey) and API hostname (https://api-XXXXXXXX.duosecurity.com)",
+          "permissions_required": "Owner (only Owners can create or modify Admin API applications)",
+          "security_note": "Grant least privilege — 'Grant read log' plus 'Grant read information'/'Grant read resource' as needed; never grant write permissions to an evidence-collection credential",
+          "vendor_docs_url": "https://duo.com/docs/adminapi"
+        },
+        {
+          "step": 2,
+          "action": "Implement the collection script to call GET /admin/v2/logs/authentication with mintime/maxtime parameters, signing each request with HMAC-SHA1 using the skey and passing the ikey as the HTTP Basic Auth username",
+          "permissions_required": "Admin API application with 'Grant read log'",
+          "audit_note": "The v2 authentication logs endpoint returns Duo-generated, timestamped events; the API serves up to 180 days of history, so daily collection stays well within retention",
+          "vendor_docs_url": "https://duo.com/docs/adminapi"
+        },
+        {
+          "step": 3,
+          "action": "Extend the script to also collect GET /admin/v1/logs/administrator (administrator actions) and GET /admin/v1/users (enrolment and MFA status per user, with limit/offset paging)",
+          "vendor_docs_url": "https://duo.com/docs/adminapi",
+          "audit_note": "Pairing authentication logs with the user inventory evidences both MFA operation and enrolment coverage"
+        },
+        {
+          "step": 4,
+          "action": "Schedule the script via cron or a CI/CD pipeline to run daily, writing date-stamped outputs to the evidence repository",
+          "security_note": "Store the skey in a secrets manager, never in plaintext configuration files or source control; rotate the credential on a defined schedule"
+        },
+        {
+          "step": 5,
+          "action": "Implement error handling and alerting for failed collection runs, including HTTP 429 rate-limit handling with retry and backoff",
+          "audit_note": "Failed collections should be logged and trigger re-collection within SLA"
+        },
+        {
+          "step": 6,
+          "action": "Validate collected data against expected volumes — flag anomalies if the daily authentication event count drops below baseline or the user count changes unexpectedly",
+          "audit_note": "Volume validation provides assurance of collection completeness"
+        }
+      ]
+    },
+    "L4": {
+      "title": "Duo Managed Evidence Pipeline with Metrics",
+      "estimated_time": "4-8 hours initial setup",
+      "frequency": "continuous with daily reporting",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Run Duo Log Sync as a continuously running service (or use your SIEM's native Duo connector) streaming authentication, administrator action, telephony and Trust Monitor logs into the SIEM. Note: Duo does not offer outbound webhooks for log delivery — API polling via Duo Log Sync or a SIEM connector is the vendor-supported continuous option",
+          "permissions_required": "Owner to create the Admin API application; SIEM administrator for the collector",
+          "security_note": "Use TCP over SSL transport to the SIEM collector and restrict access to the credential-bearing configuration",
+          "vendor_docs_url": "https://github.com/duosecurity/duo_log_sync"
+        },
+        {
+          "step": 2,
+          "action": "Enable Duo Trust Monitor in the Admin Panel to surface anomalous authentication events, and include its security events in the streamed feed",
+          "permissions_required": "Owner or Administrator",
+          "vendor_docs_url": "https://duo.com/docs/trust-monitor",
+          "audit_note": "Trust Monitor events evidence active monitoring of MFA anomalies, not just log retention"
+        },
+        {
+          "step": 3,
+          "action": "Configure collection completeness metrics in the SIEM: events per day per log type, ingestion latency, and gap detection using the Duo Log Sync checkpoint offsets",
+          "audit_note": "Completeness metrics are the key evidence that the collection process itself is managed and reliable"
+        },
+        {
+          "step": 4,
+          "action": "Set up automated quality checks: schema validation of ingested events, duplicate detection, and coverage checks across all Duo-protected applications"
+        },
+        {
+          "step": 5,
+          "action": "Build a collection-health dashboard (events/day, p95 ingestion latency, coverage by application, failed collections) with alerting when any feed stalls or volume drops below baseline",
+          "audit_note": "The dashboard serves as continuous evidence of process health"
+        },
+        {
+          "step": 6,
+          "action": "Generate an automated quarterly collection health report flagging SLA breaches, credential rotation status and any evidence gaps for review"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,174 @@
+{
+  "slug": "knowbe4",
+  "name": "KnowBe4",
+  "vendor": "KnowBe4, Inc.",
+  "category": "Security Awareness Training",
+  "description": "Security awareness training and simulated phishing platform (KMSAT). Yields evidence of training campaign completion, phishing simulation click and report rates, and organisational and per-user risk scores.",
+  "website": "https://www.knowbe4.com",
+  "aliases": [
+    "knowbe4",
+    "kmsat",
+    "know be 4"
+  ],
+  "logo_hint": "knowbe4",
+  "system_type": "security_awareness",
+  "version": "1.0",
+  "recipes": {
+    "L1": {
+      "title": "KnowBe4 Manual Evidence Collection",
+      "estimated_time": "15 minutes",
+      "frequency": "monthly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Sign in to the KSAT console and navigate to the Reports tab",
+          "permissions_required": "Full Admin, or a security role with Reports permission",
+          "security_note": "Use a named admin account with the least privilege needed; report viewing does not require Full Admin",
+          "vendor_docs_url": "https://support.knowbe4.com/hc/en-us/articles/360033951614-Security-Awareness-Training-Console-Reporting-Overview"
+        },
+        {
+          "step": 2,
+          "action": "Generate a phishing report (e.g. Phishing Security Test Results) and set the date range to cover the collection period",
+          "audit_note": "Ensure the date range abuts the previous collection period so there are no coverage gaps",
+          "vendor_docs_url": "https://support.knowbe4.com/hc/en-us/articles/360033951614-Security-Awareness-Training-Console-Reporting-Overview"
+        },
+        {
+          "step": 3,
+          "action": "Generate a training report (e.g. Training Campaign Enrollments) showing completion status for active campaigns over the same period",
+          "audit_note": "Completion percentages against total enrolled users demonstrate training coverage, not just activity"
+        },
+        {
+          "step": 4,
+          "action": "From the Dashboard, capture a screenshot of the organisational Risk Score and Phish-Prone Percentage with the console URL and date visible",
+          "audit_note": "Risk Score trend over time is stronger evidence than a single point-in-time value"
+        },
+        {
+          "step": 5,
+          "action": "Download the generated reports as CSV or PDF from the Download Center and save with date-stamped filenames",
+          "audit_note": "Generated reports remain in the Download Center for 90 days only — download before expiry",
+          "vendor_docs_url": "https://support.knowbe4.com/hc/en-us/articles/4406329132691-Save-and-Send-Reports"
+        },
+        {
+          "step": 6,
+          "action": "Upload the exports and screenshots to the evidence repository with the evidence ID reference",
+          "security_note": "Reports contain employee names, email addresses and failure data — handle as personal data under your data protection policy"
+        }
+      ]
+    },
+    "L2": {
+      "title": "KnowBe4 Scheduled Reports Collection",
+      "estimated_time": "30 minutes setup, then automated",
+      "frequency": "automated monthly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Navigate to the Reports tab, open the Scheduled Reports subtab and click Schedule Report",
+          "permissions_required": "Full Admin, or a security role with Reports permission",
+          "vendor_docs_url": "https://support.knowbe4.com/hc/en-us/articles/4406329132691-Save-and-Send-Reports"
+        },
+        {
+          "step": 2,
+          "action": "Select the report types needed as evidence — phishing security test results (click/report rates) and training campaign completion — and set the recurrence to match your evidence collection cadence (e.g. monthly or quarterly)",
+          "audit_note": "Align the report period with the schedule so consecutive reports form a continuous record"
+        },
+        {
+          "step": 3,
+          "action": "Add report recipients; each recipient receives a notification email with a link to download the report in PDF or CSV format",
+          "security_note": "Limit recipients to authorised compliance personnel — reports contain per-user failure data",
+          "vendor_docs_url": "https://support.knowbe4.com/hc/en-us/articles/4406329132691-Save-and-Send-Reports"
+        },
+        {
+          "step": 4,
+          "action": "On each delivery, download the report via the emailed link and file it in the evidence repository with the evidence ID reference",
+          "audit_note": "Reports carry a KnowBe4 generation timestamp; download links and Download Center copies expire after 90 days, so file promptly"
+        },
+        {
+          "step": 5,
+          "action": "Review the Scheduled Reports subtab quarterly to confirm schedules are still active and cover all live phishing and training campaigns",
+          "audit_note": "A schedule silently disabled or scoped to an ended campaign creates an evidence gap"
+        }
+      ]
+    },
+    "L3": {
+      "title": "KnowBe4 Reporting API Automated Collection",
+      "estimated_time": "2-3 hours initial setup",
+      "frequency": "automated weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "In the KSAT console, click your email address (top right) > Account Settings > Account Integrations > API, enable Reporting API Access and click Create New API Token",
+          "permissions_required": "Full Admin",
+          "security_note": "The token is displayed once only — store it immediately in a secrets manager. Only the last 10 digits are visible afterwards; if lost, create a new token.",
+          "vendor_docs_url": "https://support.knowbe4.com/hc/en-us/articles/12769050560403-KnowBe4-Console-Account-Settings-Account-Integrations"
+        },
+        {
+          "step": 2,
+          "action": "Configure a script or integration to call GET /v1/phishing/security_tests and GET /v1/phishing/security_tests/{pst_id}/recipients on your regional base URL (us.api.knowbe4.com, eu.api.knowbe4.com, ca.api.knowbe4.com, uk.api.knowbe4.com or de.api.knowbe4.com) with an Authorization: Bearer header, capturing delivered/opened/clicked/reported counts",
+          "permissions_required": "Reporting API token",
+          "vendor_docs_url": "https://developer.knowbe4.com/rest/reporting/"
+        },
+        {
+          "step": 3,
+          "action": "Also collect GET /v1/training/enrollments for training completion status and GET /v1/users for per-user Phish-Prone Percentage and current risk scores; paginate with page and per_page parameters",
+          "permissions_required": "Reporting API token",
+          "audit_note": "Enrollment records include status and completion dates, giving a per-user audit trail",
+          "vendor_docs_url": "https://developer.knowbe4.com/rest/reporting/"
+        },
+        {
+          "step": 4,
+          "action": "Schedule the collection via cron or a CI/CD pipeline to run weekly, writing timestamped JSON exports to the evidence repository",
+          "security_note": "Store the API token in a secrets manager, never in plaintext configuration, and rotate it on your credential rotation schedule"
+        },
+        {
+          "step": 5,
+          "action": "Implement error handling with alerting on failed runs, and back off on HTTP 429 responses to stay within KnowBe4's published rate limits",
+          "audit_note": "Failed collections should trigger re-collection within your SLA and be recorded",
+          "vendor_docs_url": "https://developer.knowbe4.com/rest/reporting/"
+        },
+        {
+          "step": 6,
+          "action": "Validate each run against expected volumes — user count versus active headcount and enrolment count versus campaign size — and flag anomalies",
+          "audit_note": "Volume validation provides assurance of collection completeness"
+        }
+      ]
+    },
+    "L4": {
+      "title": "KnowBe4 Managed Evidence Pipeline with Metrics",
+      "estimated_time": "1-2 days initial setup",
+      "frequency": "continuous polling with monthly reporting",
+      "steps": [
+        {
+          "step": 1,
+          "action": "KMSAT does not provide webhooks or native event streaming; the closest real alternative is continuous high-frequency polling of the Reporting API, either directly or via a SIEM cloud connector (e.g. Splunk, Sumo Logic or Microsoft Sentinel integrations built on the same API)",
+          "audit_note": "Document the polling interval as the collection latency bound — there is no push mechanism to cite",
+          "vendor_docs_url": "https://developer.knowbe4.com/rest/reporting/"
+        },
+        {
+          "step": 2,
+          "action": "Deploy the pipeline with a dedicated Reporting API token created solely for this integration, polling users, phishing security test results and training enrolments on a fixed schedule",
+          "permissions_required": "Full Admin (to create the token)",
+          "security_note": "Use a dedicated token per integration so it can be revoked independently; store it in a secrets manager",
+          "vendor_docs_url": "https://support.knowbe4.com/hc/en-us/articles/115016090908-Reporting-API-Overview"
+        },
+        {
+          "step": 3,
+          "action": "Configure completeness metrics: enrolled users versus active headcount, phishing campaign coverage percentage, records collected per run and collection latency",
+          "audit_note": "Completeness metrics are key evidence of a managed collection process"
+        },
+        {
+          "step": 4,
+          "action": "Set up automated quality checks — schema validation of API responses, duplicate suppression keyed on record IDs, and gap detection between consecutive polling windows"
+        },
+        {
+          "step": 5,
+          "action": "Create a dashboard showing collection health (runs per day, failure rate, coverage %) alongside the organisational Risk Score and Phish-Prone Percentage trend",
+          "audit_note": "The dashboard serves as continuous evidence of both process health and awareness programme effectiveness"
+        },
+        {
+          "step": 6,
+          "action": "Implement an automated quarterly review that generates a collection health report and flags SLA breaches or campaigns missing from the evidence set"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,178 @@
+{
+  "slug": "bitbucket",
+  "name": "Bitbucket",
+  "vendor": "Atlassian Pty Ltd",
+  "category": "Source Control & CI/CD",
+  "description": "Atlassian's cloud Git hosting and Pipelines CI/CD platform; yields workspace audit log, permission audit and branch restriction evidence.",
+  "website": "https://bitbucket.org",
+  "aliases": [
+    "bitbucket",
+    "bitbucket cloud"
+  ],
+  "logo_hint": "bitbucket",
+  "system_type": "code_repository",
+  "version": "1.0",
+  "recipes": {
+    "L1": {
+      "title": "Bitbucket Cloud Manual Evidence Collection",
+      "estimated_time": "15 minutes",
+      "frequency": "weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Navigate to bitbucket.org > your workspace > Workspace settings, then under Security select Audit log",
+          "permissions_required": "Workspace Admin",
+          "audit_note": "The workspace audit log retains roughly the last 30 days of events, so a weekly capture cadence avoids gaps",
+          "vendor_docs_url": "https://support.atlassian.com/bitbucket-cloud/kb/bitbucket-cloud-audit-log-events/"
+        },
+        {
+          "step": 2,
+          "action": "Filter for key events (user added/removed from workspace, repository created/deleted, settings changed) and take dated screenshots — the workspace audit log has no CSV export; historic data can be requested from Atlassian Support if required",
+          "permissions_required": "Workspace Admin",
+          "audit_note": "Include the browser date/time and workspace name in each screenshot to preserve evidentiary context",
+          "vendor_docs_url": "https://support.atlassian.com/bitbucket-cloud/kb/request-audit-log-data-for-a-workspace/"
+        },
+        {
+          "step": 3,
+          "action": "For the workspace permission audit, navigate to Workspace settings > User groups and screenshot each group's permission level and membership",
+          "permissions_required": "Workspace Admin",
+          "vendor_docs_url": "https://support.atlassian.com/bitbucket-cloud/docs/grant-access-to-a-workspace/"
+        },
+        {
+          "step": 4,
+          "action": "For branch protection evidence, open each critical repository, select Repository settings, then under Workflow select Branch restrictions, and screenshot the configured restrictions (write access, merge access, merge checks)",
+          "permissions_required": "Repository Admin",
+          "audit_note": "Capture the current configuration directly — branch restriction changes may not appear in the workspace audit log, so the screenshot is the primary record",
+          "vendor_docs_url": "https://support.atlassian.com/bitbucket-cloud/docs/use-branch-permissions/"
+        },
+        {
+          "step": 5,
+          "action": "Upload the screenshots to the evidence repository with the evidence ID reference",
+          "security_note": "Ensure no API tokens, app passwords or pipeline variable values are visible in screenshots"
+        }
+      ]
+    },
+    "L2": {
+      "title": "Atlassian Guard Organisation Audit Log Exports",
+      "estimated_time": "30 minutes initial setup, then 10 minutes per export",
+      "frequency": "monthly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Link the Bitbucket workspace to your Atlassian organisation and confirm an Atlassian Guard subscription — this enables the organisation-level audit log for Bitbucket events",
+          "permissions_required": "Organisation Admin",
+          "vendor_docs_url": "https://support.atlassian.com/bitbucket-cloud/kb/bitbucket-cloud-audit-log-in-atlassian-guard/"
+        },
+        {
+          "step": 2,
+          "action": "Navigate to admin.atlassian.com > Security > Audit log, filter by product (Bitbucket) and set the date range for the reporting period",
+          "permissions_required": "Organisation Admin",
+          "vendor_docs_url": "https://support.atlassian.com/bitbucket-cloud/kb/bitbucket-cloud-audit-log-in-atlassian-guard/"
+        },
+        {
+          "step": 3,
+          "action": "Select Export to download a CSV of the filtered events (up to the 10,000 most recent events per export)",
+          "permissions_required": "Organisation Admin",
+          "audit_note": "Guard retains audit log activity for up to 180 days; exporting monthly preserves evidence before the retention window closes",
+          "vendor_docs_url": "https://support.atlassian.com/bitbucket-cloud/kb/bitbucket-cloud-audit-log-in-atlassian-guard/"
+        },
+        {
+          "step": 4,
+          "action": "Bitbucket has no natively scheduled evidence delivery, so set a recurring monthly task for the export and record each run against the evidence ID",
+          "audit_note": "Note that Bitbucket events are being added to the Guard audit log incrementally; verify the event types you rely on actually appear"
+        },
+        {
+          "step": 5,
+          "action": "File each CSV in the evidence repository with restricted access",
+          "security_note": "Exports contain user email addresses and IP addresses; store them in a location with access limited to the compliance team"
+        }
+      ]
+    },
+    "L3": {
+      "title": "Bitbucket API-Driven Evidence Automation",
+      "estimated_time": "2-4 hours initial setup",
+      "frequency": "automated daily",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Create credentials: on a Premium plan, create a workspace access token (restricted to the single workspace, with read-only scopes and an expiry); otherwise create a scoped API token at id.atlassian.com > Security > API tokens — API tokens are the long-term replacement for the deprecated app passwords",
+          "permissions_required": "Workspace Admin (workspace access token) or individual Atlassian account (API token)",
+          "security_note": "Prefer a workspace access token for service automation as it is not tied to a person; store either token in a secrets manager — they cannot be viewed again after creation",
+          "vendor_docs_url": "https://support.atlassian.com/bitbucket-cloud/docs/workspace-access-tokens/"
+        },
+        {
+          "step": 2,
+          "action": "Authenticate API calls with Basic auth (Atlassian account email + API token) or a Bearer header for access tokens, per the Bitbucket Cloud REST API authentication guidance",
+          "security_note": "Send credentials only over HTTPS and never log the Authorization header",
+          "vendor_docs_url": "https://support.atlassian.com/bitbucket-cloud/docs/api-tokens/"
+        },
+        {
+          "step": 3,
+          "action": "Run a daily workspace permission audit: GET https://api.bitbucket.org/2.0/workspaces/{workspace}/permissions for workspace members and their permission (owner/collaborator/member), and GET .../permissions/repositories for effective repository permissions",
+          "permissions_required": "Workspace Admin (the authenticating identity must be a workspace admin)",
+          "audit_note": "The repository permissions endpoint returns effective permissions, so group-derived access is included — this is what an access review needs",
+          "vendor_docs_url": "https://developer.atlassian.com/cloud/bitbucket/rest/api-group-workspaces/"
+        },
+        {
+          "step": 4,
+          "action": "Export branch protection configuration per repository: GET https://api.bitbucket.org/2.0/repositories/{workspace}/{repo_slug}/branch-restrictions for every in-scope repository",
+          "permissions_required": "Repository Admin on the target repositories",
+          "vendor_docs_url": "https://developer.atlassian.com/cloud/bitbucket/rest/api-group-branch-restrictions/"
+        },
+        {
+          "step": 5,
+          "action": "Collect organisation audit events programmatically: create an organisation API key in admin.atlassian.com, then call GET https://api.atlassian.com/admin/v1/orgs/{orgId}/events with Bearer authentication and from/to/cursor parameters",
+          "permissions_required": "Organisation Admin (to create the API key)",
+          "security_note": "Organisation API keys are highly privileged; scope usage to read operations, store the key securely and rotate it regularly",
+          "audit_note": "This endpoint is rate-limited to around 10 requests per minute; batch daily pulls rather than polling aggressively",
+          "vendor_docs_url": "https://developer.atlassian.com/cloud/admin/organization/rest/api-group-events/"
+        },
+        {
+          "step": 6,
+          "action": "Add error handling and validation: follow pagination 'next' links to completion, alert on authentication failures or empty result windows, and store outputs with run timestamps and checksums",
+          "audit_note": "Recording run metadata and checksums makes each collected file independently verifiable"
+        }
+      ]
+    },
+    "L4": {
+      "title": "Bitbucket Continuous Evidence Pipeline",
+      "estimated_time": "4-6 hours initial setup",
+      "frequency": "continuous with weekly reporting",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Bitbucket Cloud has no native SIEM audit streaming; the closest real capability is continuous cursor-based polling of the Atlassian organisation events API (GET https://api.atlassian.com/admin/v1/orgs/{orgId}/events, with the events-stream variant recommended for higher-frequency collection)",
+          "permissions_required": "Organisation Admin (API key holder)",
+          "vendor_docs_url": "https://developer.atlassian.com/cloud/admin/organization/rest/api-group-events/"
+        },
+        {
+          "step": 2,
+          "action": "Supplement with repository webhooks: in each in-scope repository, go to Repository settings > Webhooks and register a collector endpoint for push, pull request and merge events; configure the webhook secret so the collector can validate request signatures",
+          "permissions_required": "Repository Admin",
+          "security_note": "Use an HTTPS endpoint and reject webhook deliveries that fail signature validation to keep forged events out of the evidence store",
+          "vendor_docs_url": "https://support.atlassian.com/bitbucket-cloud/docs/manage-webhooks/"
+        },
+        {
+          "step": 3,
+          "action": "Run a scheduled Bitbucket Pipelines job that verifies branch restrictions and workspace permissions against your approved baseline via the REST API, raising an alert on any drift",
+          "permissions_required": "Repository Admin (pipeline configuration); workspace access token for the API calls",
+          "vendor_docs_url": "https://support.atlassian.com/bitbucket-cloud/docs/pipeline-triggers/"
+        },
+        {
+          "step": 4,
+          "action": "Reconcile daily: compare webhook-received event counts against the organisation events API for the same window, and alert on gaps or webhook delivery failures",
+          "audit_note": "Completeness metrics from reconciliation are what turn continuous collection into audit-grade evidence"
+        },
+        {
+          "step": 5,
+          "action": "Publish a compliance dashboard: branch restriction compliance rate across repositories, workspace admin count trend and access review coverage, reported weekly"
+        },
+        {
+          "step": 6,
+          "action": "Quarterly, rotate API tokens, workspace access tokens and organisation API keys, and review the workspace admin and organisation admin lists",
+          "security_note": "Expired or orphaned automation credentials are a common finding; tie rotation to the quarterly access review"
+        }
+      ]
+    }
+  }
+}

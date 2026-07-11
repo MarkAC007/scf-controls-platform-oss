@@ -1,0 +1,173 @@
+{
+  "slug": "zscaler",
+  "name": "Zscaler Internet Access",
+  "vendor": "Zscaler, Inc.",
+  "category": "Secure Web Gateway / SSE",
+  "description": "Cloud-delivered secure web gateway (SSE) that inspects and filters user internet and SaaS traffic. Yields URL filtering policy configuration, web transaction and security reports, admin audit logs, and NSS/Cloud NSS log streams for SIEM ingestion.",
+  "website": "https://www.zscaler.com",
+  "aliases": [
+    "zscaler",
+    "zia",
+    "zscaler internet access"
+  ],
+  "logo_hint": "zscaler",
+  "system_type": "security_tool",
+  "version": "1.0",
+  "recipes": {
+    "L1": {
+      "title": "ZIA Manual Evidence Collection",
+      "estimated_time": "20 minutes",
+      "frequency": "weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Sign in to the ZIA Admin Portal and navigate to Policy > URL & Cloud App Control; capture the URL Filtering rule set (rule order, criteria, action) via screenshots or the portal's export option",
+          "permissions_required": "Super Admin, or a custom admin role with view-only access to Policy",
+          "security_note": "Use a view-only admin role for evidence collection rather than a Super Admin login",
+          "audit_note": "Capture the full rule order so reviewers can verify precedence; include the portal-rendered timestamp in screenshots",
+          "vendor_docs_url": "https://help.zscaler.com/zia/configuring-url-filtering-policy"
+        },
+        {
+          "step": 2,
+          "action": "Navigate to Analytics > Insights > Web Insights and set the timeframe to the collection period (e.g., last 7 days), filtering on the transactions of interest such as blocked transactions by URL category",
+          "permissions_required": "Admin role with report access",
+          "vendor_docs_url": "https://help.zscaler.com/zia/about-insights"
+        },
+        {
+          "step": 3,
+          "action": "Open Insights Logs for the filtered view and download the log data as CSV",
+          "audit_note": "Insights Logs exports reflect the applied filters; record the filter set alongside the export so the evidence is reproducible",
+          "vendor_docs_url": "https://help.zscaler.com/zia/about-insights-logs"
+        },
+        {
+          "step": 4,
+          "action": "Navigate to Administration > Audit Logs, filter by time range for the collection period, and download the admin activity audit log as CSV",
+          "permissions_required": "Super Admin, or a custom admin role with view-only access to Administration",
+          "audit_note": "ZIA retains audit logs for up to 6 months and CSV timestamps are in PDT — export at least monthly and note the timezone in the evidence record",
+          "vendor_docs_url": "https://help.zscaler.com/zia/about-audit-logs"
+        },
+        {
+          "step": 5,
+          "action": "Upload the exports and screenshots to the evidence repository with date-stamped filenames and the evidence ID reference",
+          "security_note": "Review exports for internal IP addresses and usernames before sharing outside the security team"
+        }
+      ]
+    },
+    "L2": {
+      "title": "ZIA Scheduled Reports Collection",
+      "estimated_time": "30 minutes (setup), then automated",
+      "frequency": "automated weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Navigate to Analytics > Interactive Reports > Scheduled Reports in the ZIA Admin Portal",
+          "permissions_required": "Super Admin (can view and edit all scheduled reports); other admins manage their own schedules",
+          "vendor_docs_url": "https://help.zscaler.com/zia/about-scheduled-reports"
+        },
+        {
+          "step": 2,
+          "action": "Create a schedule for the standard or saved report that evidences your control (e.g., a saved Web Insights report covering blocked transactions and policy enforcement)",
+          "audit_note": "Base the schedule on a saved report with fixed filters so each cycle produces comparable evidence",
+          "vendor_docs_url": "https://help.zscaler.com/zia/scheduling-reports"
+        },
+        {
+          "step": 3,
+          "action": "Set the frequency and time of day to match your evidence collection cadence (e.g., weekly on Monday) and add authorised recipients",
+          "security_note": "Limit recipients to authorised compliance personnel — scheduled reports are delivered as emailed links"
+        },
+        {
+          "step": 4,
+          "action": "On each cycle, open the emailed report link, save the report, and file it in the evidence repository",
+          "audit_note": "Zscaler report links expire after 15 days, so download and archive the report promptly to avoid evidence gaps"
+        },
+        {
+          "step": 5,
+          "action": "Retain the schedule configuration screen as one-off setup evidence showing the schedule name, report name, frequency and recipients"
+        }
+      ]
+    },
+    "L3": {
+      "title": "ZIA API-Driven Automated Collection",
+      "estimated_time": "2-4 hours initial setup",
+      "frequency": "automated daily",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Register an API Client in the ZIdentity Admin Portal for OAuth 2.0 client-credentials access to Zscaler OneAPI (legacy alternative: create an API key under Administration > API Key Management in the ZIA Admin Portal)",
+          "permissions_required": "ZIdentity administrator (OneAPI) or ZIA Super Admin (legacy API key)",
+          "security_note": "Create a dedicated API client for evidence collection with the minimum ZIA scopes; do not reuse automation credentials from other integrations",
+          "vendor_docs_url": "https://help.zscaler.com/zidentity/understanding-oneapi-authentication"
+        },
+        {
+          "step": 2,
+          "action": "Authenticate: exchange the client credentials for an OAuth 2.0 access token and call ZIA endpoints via the OneAPI base (api.zsapi.net); the legacy cloud service API instead uses POST /api/v1/authenticatedSession on https://zsapi.<Zscaler Cloud Name>/api/v1 with a JSESSIONID cookie",
+          "vendor_docs_url": "https://help.zscaler.com/zia/getting-started-zia-api",
+          "security_note": "The legacy API requires client-side obfuscation of the API key with a timestamp — never log the raw key or the obfuscated value"
+        },
+        {
+          "step": 3,
+          "action": "Collect policy configuration evidence by calling GET /urlFilteringRules to export the full URL Filtering rule set as JSON",
+          "permissions_required": "API client/token with policy read access",
+          "audit_note": "A dated JSON snapshot of the rule set provides point-in-time configuration evidence that can be diffed between collections",
+          "vendor_docs_url": "https://help.zscaler.com/zia/url-filtering-policies"
+        },
+        {
+          "step": 4,
+          "action": "Collect admin audit evidence via the audit log report workflow: POST /auditlogEntryReport with the date range, capture the statusId from the response, poll GET /auditlogEntryReport until complete, then GET /auditlogEntryReport/download",
+          "audit_note": "Audit log entries are generated by Zscaler and cover admin portal and API actions; schedule collection well within the 6-month retention window",
+          "vendor_docs_url": "https://help.zscaler.com/zia/generating-admin-audit-logs-using-api"
+        },
+        {
+          "step": 5,
+          "action": "Schedule the collection script via cron or a CI/CD pipeline to run daily, writing outputs to the evidence repository with run metadata",
+          "security_note": "Store the OAuth client secret or API key in a secrets manager, never in plaintext configuration or source control"
+        },
+        {
+          "step": 6,
+          "action": "Implement error handling, alerting on failed runs, and validation of collected volumes against a baseline (e.g., flag if the audit log download is empty or rule count changes unexpectedly)",
+          "audit_note": "Failed collections should trigger re-collection within SLA and be recorded, preserving a complete evidence timeline"
+        }
+      ]
+    },
+    "L4": {
+      "title": "ZIA Managed Log Streaming Pipeline with Metrics",
+      "estimated_time": "4-8 hours initial setup",
+      "frequency": "continuous with daily reporting",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Add a Cloud NSS feed on the Cloud NSS Feeds page (Logs > Log Streaming > Internet & SaaS Log Streaming) to push web logs over HTTPS directly to your cloud SIEM's log collection API, using JSON output as recommended by Zscaler",
+          "permissions_required": "Super Admin",
+          "security_note": "The SIEM collector endpoint must be HTTPS; store any collector API keys used in the feed configuration in accordance with your secrets policy",
+          "vendor_docs_url": "https://help.zscaler.com/zia/adding-cloud-nss-feeds"
+        },
+        {
+          "step": 2,
+          "action": "For on-premises SIEMs, deploy an NSS server (virtual machine) instead and configure NSS feeds to stream logs to the SIEM over the local network",
+          "audit_note": "One Cloud NSS feed is required per ZIA log type — confirm every in-scope log type has a feed to avoid coverage gaps",
+          "vendor_docs_url": "https://help.zscaler.com/zia/about-nss-servers"
+        },
+        {
+          "step": 3,
+          "action": "Include an admin audit log feed so administrator changes to policy and configuration stream continuously alongside web transaction logs",
+          "audit_note": "Streaming admin audit logs to the SIEM preserves them beyond ZIA's 6-month portal retention",
+          "vendor_docs_url": "https://help.zscaler.com/zia/nss-feed-output-format-admin-audit-logs"
+        },
+        {
+          "step": 4,
+          "action": "Configure collection completeness metrics in the SIEM: events per day per feed, ingestion latency, and gap detection on the log time series",
+          "audit_note": "Completeness metrics are the key evidence that the collection process itself is managed and reliable"
+        },
+        {
+          "step": 5,
+          "action": "Set up automated quality checks and alerting: schema validation of the feed format, duplicate detection, and alerts when a feed stops delivering or volume drops below baseline"
+        },
+        {
+          "step": 6,
+          "action": "Build a collection-health dashboard (events/day, latency, feed coverage, failed deliveries) and generate an automated quarterly collection health report flagging any SLA breaches",
+          "audit_note": "The dashboard and quarterly report serve as continuous evidence of process health"
+        }
+      ]
+    }
+  }
+}

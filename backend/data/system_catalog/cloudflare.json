@@ -1,0 +1,192 @@
+{
+  "slug": "cloudflare",
+  "name": "Cloudflare",
+  "vendor": "Cloudflare, Inc.",
+  "category": "CDN / WAF / DNS",
+  "description": "Global CDN, web application firewall, DNS and Zero Trust access platform. Yields evidence of WAF rule configuration, DNSSEC and TLS settings, access policies and account audit logs.",
+  "website": "https://www.cloudflare.com",
+  "aliases": [
+    "cloudflare",
+    "cloudflare waf",
+    "cloudflare zero trust",
+    "cloudflare access",
+    "cloudflare dns",
+    "cloudflare cdn"
+  ],
+  "logo_hint": "cloudflare",
+  "system_type": "security_tool",
+  "version": "1.0",
+  "recipes": {
+    "L1": {
+      "title": "Cloudflare Manual Evidence Collection",
+      "estimated_time": "20 minutes",
+      "frequency": "weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Sign in to the Cloudflare dashboard and navigate to Manage Account > Audit Logs; set the date filter to cover the collection period and review account changes",
+          "permissions_required": "Administrator Read Only",
+          "security_note": "Use an Administrator Read Only account role for evidence collection, not Super Administrator",
+          "audit_note": "Audit log entries are recorded by Cloudflare with actor, action and timestamp; the dashboard shows the most recent 90 days",
+          "vendor_docs_url": "https://developers.cloudflare.com/fundamentals/account/account-security/audit-logs/"
+        },
+        {
+          "step": 2,
+          "action": "For each in-scope zone, navigate to Security > WAF > Custom rules and Managed rules; capture a dated screenshot of the rule list showing rule names, actions and enabled status",
+          "permissions_required": "Administrator Read Only",
+          "audit_note": "Include the zone name and rule order in the capture — rule order affects enforcement",
+          "vendor_docs_url": "https://developers.cloudflare.com/waf/custom-rules/create-dashboard/"
+        },
+        {
+          "step": 3,
+          "action": "Navigate to DNS > Settings and capture the DNSSEC status (enabled, with DS record published); then use DNS > Records > Export to download the zone file as a BIND-format record export",
+          "permissions_required": "Administrator Read Only",
+          "audit_note": "The exported zone file is a point-in-time record set; save it with a date-stamped filename",
+          "vendor_docs_url": "https://developers.cloudflare.com/dns/dnssec/"
+        },
+        {
+          "step": 4,
+          "action": "Navigate to SSL/TLS > Edge Certificates and capture the Minimum TLS Version, TLS 1.3 and Always Use HTTPS settings",
+          "permissions_required": "Administrator Read Only",
+          "vendor_docs_url": "https://developers.cloudflare.com/ssl/edge-certificates/additional-options/minimum-tls/"
+        },
+        {
+          "step": 5,
+          "action": "In the Zero Trust dashboard (one.dash.cloudflare.com), navigate to Access > Applications and capture the application list plus the Allow/Block policies attached to each protected application",
+          "permissions_required": "Cloudflare Zero Trust Read Only",
+          "audit_note": "Capture the policy rules (include/exclude/require groups) — they are the enforced access control configuration",
+          "vendor_docs_url": "https://developers.cloudflare.com/cloudflare-one/access-controls/policies/"
+        },
+        {
+          "step": 6,
+          "action": "Upload the screenshots and exports to the evidence repository with evidence ID reference and collection date",
+          "security_note": "Review captures for exposed API tokens, tunnel secrets or personal data before uploading"
+        }
+      ]
+    },
+    "L2": {
+      "title": "Cloudflare Scheduled Log Delivery via Logpush",
+      "estimated_time": "30 minutes (setup), then automated",
+      "frequency": "automated continuous delivery",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Navigate to the account-level Logpush page (Cloudflare dashboard > Analytics & Logs > Logs) and select Create a Logpush job",
+          "permissions_required": "Super Administrator or Administrator",
+          "vendor_docs_url": "https://developers.cloudflare.com/logs/logpush/"
+        },
+        {
+          "step": 2,
+          "action": "Select the account-scoped Audit Logs V2 dataset so account configuration changes are delivered automatically",
+          "audit_note": "Logpush provides up to 18 months of audit log coverage versus 90 days in the dashboard UI",
+          "vendor_docs_url": "https://developers.cloudflare.com/logs/logpush/logpush-job/datasets/account/audit_logs_v2/"
+        },
+        {
+          "step": 3,
+          "action": "Choose a storage destination (Cloudflare R2, Amazon S3, Google Cloud Storage or Azure Blob) and complete the destination ownership challenge",
+          "security_note": "Restrict the destination bucket to write-only for Cloudflare and read-only for the compliance team; enable bucket versioning",
+          "audit_note": "The ownership challenge proves your organisation controls the evidence destination",
+          "vendor_docs_url": "https://developers.cloudflare.com/logs/logpush/logpush-job/enable-destinations/"
+        },
+        {
+          "step": 4,
+          "action": "Create a second zone-scoped Logpush job for the Firewall Events dataset to capture WAF rule matches and actions taken",
+          "audit_note": "Firewall events demonstrate the WAF is actively enforcing, not just configured",
+          "vendor_docs_url": "https://developers.cloudflare.com/logs/logpush/logpush-job/datasets/"
+        },
+        {
+          "step": 5,
+          "action": "Enable the 'Failing Logpush Job Disabled' notification under Notifications so delivery failures are alerted to the compliance team",
+          "audit_note": "Configuration evidence (WAF rules, TLS, DNSSEC settings) still requires periodic manual capture at this level — Cloudflare has no scheduled configuration report emails",
+          "vendor_docs_url": "https://developers.cloudflare.com/notifications/"
+        }
+      ]
+    },
+    "L3": {
+      "title": "Cloudflare API-Driven Automated Collection",
+      "estimated_time": "2-4 hours initial setup",
+      "frequency": "automated daily",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Create a dedicated read-only API token via Manage Account > API Tokens (account-owned) or My Profile > API Tokens > Create Token, granting only: Account Settings Read, Zone WAF Read, DNS Read, SSL and Certificates Read, and Access: Apps and Policies Read",
+          "permissions_required": "Super Administrator (to create account-owned tokens)",
+          "security_note": "The token secret is shown only once — store it in a secrets manager immediately. Set a TTL and client IP filtering on the token, and rotate it on a defined schedule.",
+          "audit_note": "Token creation and use are themselves recorded in the account audit log",
+          "vendor_docs_url": "https://developers.cloudflare.com/fundamentals/api/get-started/create-token/"
+        },
+        {
+          "step": 2,
+          "action": "Schedule a script to call GET /accounts/{account_id}/logs/audit with since/before parameters to pull audit log events for the collection window",
+          "permissions_required": "API token with Account Settings Read",
+          "audit_note": "The API returns up to 18 months of audit history; use non-overlapping since/before windows to avoid gaps or duplicates",
+          "vendor_docs_url": "https://developers.cloudflare.com/api/resources/audit_logs/methods/list/"
+        },
+        {
+          "step": 3,
+          "action": "Snapshot security configuration daily: GET /zones/{zone_id}/rulesets/phases/http_request_firewall_custom/entrypoint for WAF custom rules, GET /zones/{zone_id}/dnssec for DNSSEC status, and GET /zones/{zone_id}/settings/min_tls_version for TLS policy",
+          "permissions_required": "API token with Zone WAF Read, DNS Read, SSL and Certificates Read",
+          "audit_note": "Store each JSON response with retrieval timestamp — diffs between snapshots evidence change control",
+          "vendor_docs_url": "https://developers.cloudflare.com/waf/custom-rules/create-api/"
+        },
+        {
+          "step": 4,
+          "action": "Export Zero Trust access configuration with GET /accounts/{account_id}/access/apps to capture protected applications and their attached policies",
+          "permissions_required": "API token with Access: Apps and Policies Read",
+          "vendor_docs_url": "https://developers.cloudflare.com/api/resources/zero_trust/subresources/access/subresources/applications/"
+        },
+        {
+          "step": 5,
+          "action": "Run the collection via cron or a CI/CD pipeline, writing outputs to the evidence repository; verify token validity at the start of each run with GET /user/tokens/verify",
+          "security_note": "Inject the token from the secrets manager at runtime — never store it in code or plaintext configuration",
+          "vendor_docs_url": "https://developers.cloudflare.com/fundamentals/api/get-started/create-token/"
+        },
+        {
+          "step": 6,
+          "action": "Implement error handling and alerting for failed runs, and validate collected audit event volume against a baseline to flag collection gaps",
+          "audit_note": "Failed collections should trigger re-collection within SLA; volume validation provides assurance of completeness"
+        }
+      ]
+    },
+    "L4": {
+      "title": "Cloudflare Managed Evidence Pipeline with Metrics",
+      "estimated_time": "4-8 hours initial setup",
+      "frequency": "continuous with daily reporting",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Configure Logpush jobs streaming the Audit Logs V2 (account-scoped) and Firewall Events (zone-scoped) datasets directly to your SIEM (Datadog, Splunk, Sumo Logic, Elastic or an HTTP endpoint)",
+          "permissions_required": "Super Administrator, or API token with Logs Edit",
+          "security_note": "Use an HTTPS destination with authentication; allowlist Cloudflare Logpush egress IPs at the receiving end",
+          "vendor_docs_url": "https://developers.cloudflare.com/logs/logpush/logpush-job/enable-destinations/"
+        },
+        {
+          "step": 2,
+          "action": "Add zone-scoped HTTP Requests or DNS log datasets where control coverage requires traffic-level evidence, keeping each dataset in a separate Logpush job",
+          "audit_note": "Batches are delivered continuously as logs are generated, minimising the evidence gap between event and capture",
+          "vendor_docs_url": "https://developers.cloudflare.com/logs/logpush/logpush-job/datasets/"
+        },
+        {
+          "step": 3,
+          "action": "Enable Cloudflare Notifications for failing or disabled Logpush jobs, routed to the on-call channel, so pipeline breaks are detected within minutes",
+          "audit_note": "Alerting on delivery failure is the control that prevents silent evidence gaps",
+          "vendor_docs_url": "https://developers.cloudflare.com/notifications/"
+        },
+        {
+          "step": 4,
+          "action": "Build completeness metrics in the SIEM: events per day per dataset, delivery latency, and per-zone coverage; alert when volume drops below the rolling baseline",
+          "audit_note": "Completeness metrics are key evidence of a managed collection process"
+        },
+        {
+          "step": 5,
+          "action": "Retain the daily API configuration snapshots (WAF rulesets, DNSSEC, TLS, Access policies) from the L3 pipeline and diff them automatically, raising a ticket for any unapproved change",
+          "audit_note": "Config-drift detection converts static screenshots into continuous control monitoring"
+        },
+        {
+          "step": 6,
+          "action": "Generate an automated quarterly collection health report covering pipeline uptime, alert response times and any SLA breaches"
+        }
+      ]
+    }
+  }
+}

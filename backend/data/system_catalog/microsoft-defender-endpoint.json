@@ -1,0 +1,171 @@
+{
+  "slug": "microsoft-defender-endpoint",
+  "name": "Microsoft Defender for Endpoint",
+  "vendor": "Microsoft Corporation",
+  "category": "Endpoint Detection & Response",
+  "description": "Microsoft's enterprise EDR platform. Yields device onboarding and sensor health reports, Defender Vulnerability Management exposure data, secure configuration assessments, alert and incident exports, programmatic access via the Defender for Endpoint APIs, and continuous streaming to Azure Event Hubs.",
+  "website": "https://www.microsoft.com/en-us/security/business/endpoint-security/microsoft-defender-endpoint",
+  "aliases": [
+    "defender for endpoint",
+    "mde",
+    "microsoft defender atp",
+    "defender atp"
+  ],
+  "logo_hint": "microsoft",
+  "system_type": "security_tool",
+  "version": "1.0",
+  "recipes": {
+    "L1": {
+      "title": "Defender for Endpoint Manual Evidence Collection",
+      "estimated_time": "15 minutes",
+      "frequency": "weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Sign in to the Microsoft Defender portal (https://security.microsoft.com) with a read-only account",
+          "permissions_required": "Security Reader (Microsoft Entra role) or an equivalent read-only unified RBAC role",
+          "security_note": "Use a least-privilege reader account for evidence collection; do not use Security Administrator for read-only tasks",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/defender-endpoint/machines-view-overview"
+        },
+        {
+          "step": 2,
+          "action": "Navigate to Assets > Devices, filter by Onboarding status and Sensor health state, then select Export to download the device inventory as CSV",
+          "audit_note": "The device inventory evidences onboarding coverage — inactive or misconfigured sensors are visible per device with last-seen timestamps",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/defender-endpoint/machines-view-overview"
+        },
+        {
+          "step": 3,
+          "action": "Navigate to Reports > Endpoints > Device health and export the Sensor health & OS and Microsoft Defender Antivirus health cards for the collection period",
+          "permissions_required": "View Data - Threat and vulnerability management permission (or Security Reader)",
+          "audit_note": "Sensor health trends demonstrate continuous protection rather than point-in-time status",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/defender-endpoint/device-health-reports"
+        },
+        {
+          "step": 4,
+          "action": "Navigate to Endpoints > Vulnerability management > Dashboard, capture the exposure score, and export the Security recommendations list to CSV",
+          "audit_note": "Exposure score and recommendation exports evidence the vulnerability management control; record the capture date as scores change daily",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/defender-vulnerability-management/tvm-exposure-score"
+        },
+        {
+          "step": 5,
+          "action": "Navigate to Incidents & alerts > Alerts, set the time filter to the evidence period, and use Export to download the alert list",
+          "audit_note": "Alert exports include severity, detection source, status and resolution, evidencing detection and response activity"
+        },
+        {
+          "step": 6,
+          "action": "Upload all exports and screenshots to the evidence repository with evidence ID references and the collection date"
+        }
+      ]
+    },
+    "L2": {
+      "title": "Defender for Endpoint Scheduled Notification Collection",
+      "estimated_time": "1 hour initial setup",
+      "frequency": "weekly automated",
+      "steps": [
+        {
+          "step": 1,
+          "action": "In the Defender portal, go to Settings > Endpoints > General > Email notifications > Alerts and create a notification rule that sends alerts at or above the chosen severity to the evidence collection mailbox",
+          "permissions_required": "Security Administrator",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/defender-xdr/configure-email-notifications"
+        },
+        {
+          "step": 2,
+          "action": "On the Vulnerabilities tab of the same Email notifications page, create a rule notifying the evidence mailbox of new vulnerability events (new CVEs, exploits verified)",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/defender-endpoint/configure-vulnerability-email-notifications"
+        },
+        {
+          "step": 3,
+          "action": "Note that the Defender portal has no built-in scheduled report export to email — the Device health and Vulnerability management reports must still be exported on a recurring calendar task at this maturity level; full automation of report data requires the API (see L3)",
+          "audit_note": "Record the recurring export procedure and cadence in the evidence collection runbook so the manual step is itself auditable"
+        },
+        {
+          "step": 4,
+          "action": "File delivered notification emails and the periodic report exports in the evidence repository per period, noting any gaps",
+          "audit_note": "Vendor-sent notification emails carry Microsoft's own timestamps, strengthening evidentiary value over manual screenshots"
+        }
+      ]
+    },
+    "L3": {
+      "title": "Defender for Endpoint API-Driven Collection",
+      "estimated_time": "3-4 hours initial setup",
+      "frequency": "automated daily",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Register an application in the Azure portal: App registrations > New registration, then under Manage > API permissions > Add a permission > APIs my organization uses select WindowsDefenderATP and add the Application permissions Machine.Read.All, Alert.Read.All and Vulnerability.Read.All, then grant admin consent",
+          "permissions_required": "Application Administrator (app registration) and Global Administrator or Privileged Role Administrator (admin consent)",
+          "security_note": "Grant only read scopes; never add response/remediation permissions to an evidence collection app",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/defender-endpoint/api/exposed-apis-create-app-webapp"
+        },
+        {
+          "step": 2,
+          "action": "Create a client secret (or certificate) for the app and store it in Azure Key Vault; acquire tokens from https://login.microsoftonline.com/<tenant-id>/oauth2/v2.0/token using scope https://api.securitycenter.microsoft.com/.default",
+          "security_note": "Store the client secret in a secrets manager with a recorded expiry and rotate before it lapses; prefer certificate credentials over secrets where possible. Some APIs still require tokens issued for the legacy https://api.securitycenter.microsoft.com resource.",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/defender-endpoint/api/exposed-apis-create-app-webapp"
+        },
+        {
+          "step": 3,
+          "action": "Implement a daily job calling GET https://api.security.microsoft.com/api/machines for device onboarding and health, and GET https://api.security.microsoft.com/api/alerts for detections, following @odata.nextLink pagination",
+          "audit_note": "Persist raw JSON responses with a collection timestamp; machine records include onboarding status and health state per device",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/defender-endpoint/api/exposed-apis-list"
+        },
+        {
+          "step": 4,
+          "action": "Extend the job with the vulnerability management export APIs: GET /api/machines/SecureConfigurationsAssessmentByMachine for secure configuration assessment and GET /api/machines/SoftwareVulnerabilitiesByMachine for per-device software vulnerabilities (use the 'Export ... via files' variants above ~100K devices)",
+          "audit_note": "These exports are current-state snapshots with no history — retain each day's pull to build the historical record auditors expect",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/defender-endpoint/api/get-assessment-secure-config"
+        },
+        {
+          "step": 5,
+          "action": "Validate each run: reconcile API device counts against the portal device inventory and alert on discrepancies; respect the documented rate limits (for example 100 calls/min and 1,500 calls/hour on the alerts API) with retry and backoff on HTTP 429",
+          "audit_note": "Automated reconciliation evidences completeness and catches silently broken collection",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/defender-endpoint/api/get-alerts"
+        },
+        {
+          "step": 6,
+          "action": "Alert the compliance team on authentication failures or credential expiry so collection gaps are detected within a day",
+          "security_note": "Repeated 401/403 responses usually mean an expired secret or a token audience mismatch — both silently halt evidence collection"
+        }
+      ]
+    },
+    "L4": {
+      "title": "Defender for Endpoint Managed Evidence Pipeline",
+      "estimated_time": "4 hours initial setup",
+      "frequency": "continuous with weekly reporting",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Configure the Streaming API: in the Defender portal go to Settings > Microsoft Defender XDR > Streaming API > Add, and forward device event tables (DeviceInfo, DeviceEvents, DeviceLogonEvents and alert-related tables) to an Azure Event Hubs namespace",
+          "permissions_required": "Security Administrator in the Defender portal plus Contributor on the target Event Hubs namespace",
+          "security_note": "Lock the Event Hubs namespace to trusted networks and use Azure RBAC rather than shared access keys where possible",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/defender-xdr/streaming-api-event-hub"
+        },
+        {
+          "step": 2,
+          "action": "For long-term retention, add a second streaming destination to an Azure Storage account so raw device events are preserved beyond SIEM retention windows",
+          "audit_note": "Immutable storage of streamed events in an account you control provides a durable evidentiary record independent of portal retention",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/defender-xdr/streaming-api-storage"
+        },
+        {
+          "step": 3,
+          "action": "Ingest the Event Hubs stream into Microsoft Sentinel or the organisation's SIEM and map device health, detection and vulnerability events to the relevant control evidence requirements",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/defender-endpoint/api/raw-data-export-event-hub"
+        },
+        {
+          "step": 4,
+          "action": "Implement completeness monitoring: reconcile devices reporting via the DeviceInfo stream against the device inventory API and the authoritative asset inventory (CMDB); alert when unonboarded or silent devices exceed the agreed threshold",
+          "audit_note": "Coverage-gap alerting is direct evidence of a managed, self-correcting endpoint protection process"
+        },
+        {
+          "step": 5,
+          "action": "Run automated stream health checks — alert if no events arrive on Event Hubs within the expected interval — and log all gaps with remediation notes",
+          "audit_note": "Documented gap detection and remediation preserves the evidentiary chain across pipeline outages"
+        },
+        {
+          "step": 6,
+          "action": "Generate a monthly endpoint evidence pack: onboarding coverage, sensor health trends, exposure score trajectory, secure configuration compliance, alert MTTR, and pipeline completeness metrics"
+        }
+      ]
+    }
+  }
+}

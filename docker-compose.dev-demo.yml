@@ -1,0 +1,36 @@
+# Isolated Postgres + Redis for the live dev demo (scripts/dev-demo.sh).
+# Runs side-by-side with any other SCF stack: own project name, own
+# container names, own volume, loopback-only ports 7796/7797.
+name: scf-dev-demo
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: scf-demo-redis
+    ports:
+      - "127.0.0.1:7797:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: scf-demo-postgres
+    environment:
+      POSTGRES_USER: scfdev
+      POSTGRES_PASSWORD: ${DEMO_DB_PASSWORD:-scfdev-local}
+      POSTGRES_DB: scf_demo
+    ports:
+      - "127.0.0.1:7796:5432"
+    volumes:
+      - scf-demo-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U scfdev -d scf_demo"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  scf-demo-pgdata:

@@ -1,0 +1,142 @@
+{
+  "slug": "github",
+  "name": "GitHub",
+  "vendor": "GitHub, Inc.",
+  "category": "Source Control & CI/CD",
+  "description": "Code hosting, review and CI/CD platform; audit log and security evidence.",
+  "website": "https://github.com",
+  "aliases": [
+    "github",
+    "github enterprise",
+    "github enterprise cloud"
+  ],
+  "logo_hint": "github",
+  "system_type": "code_repository",
+  "version": "1.0",
+  "recipes": {
+    "L1": {
+      "title": "GitHub Manual Evidence Collection",
+      "estimated_time": "10 minutes",
+      "frequency": "weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Navigate to your GitHub Organization > Settings > Audit log",
+          "permissions_required": "Organization Owner",
+          "security_note": "Audit log access requires Owner role; consider creating a dedicated audit account",
+          "vendor_docs_url": "https://docs.github.com/en/organizations/keeping-your-organization-secure/managing-security-settings-for-your-organization/reviewing-the-audit-log-for-your-organization"
+        },
+        {
+          "step": 2,
+          "action": "Use the search bar to filter events (e.g., action:repo.create for new repos, action:org.update_member for membership changes)",
+          "audit_note": "GitHub audit log retains events for 180 days (Enterprise Cloud) or 90 days (free)"
+        },
+        {
+          "step": 3,
+          "action": "Click Export > JSON or CSV to download the filtered audit log entries",
+          "permissions_required": "Organization Owner"
+        },
+        {
+          "step": 4,
+          "action": "For branch protection evidence, navigate to repo > Settings > Branches and screenshot the protection rules",
+          "audit_note": "Branch protection changes appear in the audit log with before/after values"
+        },
+        {
+          "step": 5,
+          "action": "Upload the exports and screenshots to the evidence repository with the evidence ID reference",
+          "security_note": "Ensure no personal access tokens or webhook secrets are visible in screenshots"
+        }
+      ]
+    },
+    "L2": {
+      "title": "GitHub Audit Log Streaming & API Automation",
+      "estimated_time": "15 minutes (setup), then automated",
+      "frequency": "automated continuous",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Navigate to Organization Settings > Audit log > Audit log streaming and configure a stream destination (S3, Azure Blob, Datadog, or Splunk)",
+          "permissions_required": "Organization Owner",
+          "vendor_docs_url": "https://docs.github.com/en/enterprise-cloud@latest/admin/monitoring-activity-in-your-enterprise/reviewing-audit-logs-for-your-enterprise/streaming-the-audit-log-for-your-enterprise",
+          "security_note": "Audit log streaming requires Enterprise Cloud plan"
+        },
+        {
+          "step": 2,
+          "action": "Use the GitHub REST API to programmatically query branch protection rules: GET /repos/{owner}/{repo}/branches/{branch}/protection",
+          "permissions_required": "admin:repo_hook or repo scope PAT",
+          "vendor_docs_url": "https://docs.github.com/en/rest/branches/branch-protection"
+        },
+        {
+          "step": 3,
+          "action": "Create a scheduled GitHub Action workflow that exports audit log data using the Audit Log API and stores it as a workflow artifact",
+          "audit_note": "GitHub Actions workflows are themselves audited in the audit log"
+        },
+        {
+          "step": 4,
+          "action": "Configure Dependabot alerts and security advisories to auto-create issues for vulnerability tracking",
+          "vendor_docs_url": "https://docs.github.com/en/code-security/dependabot/dependabot-alerts/about-dependabot-alerts"
+        }
+      ]
+    },
+    "L3": {
+      "title": "GitHub Automated Audit Log Collection",
+      "estimated_time": "2 hours initial setup",
+      "frequency": "automated daily",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Enable GitHub Audit Log Streaming to your SIEM or S3 bucket via enterprise settings",
+          "permissions_required": "Enterprise Owner",
+          "vendor_docs_url": "https://docs.github.com/en/enterprise-cloud@latest/admin/monitoring-activity-in-your-enterprise/reviewing-audit-logs-for-your-enterprise/streaming-the-audit-log-for-your-enterprise",
+          "security_note": "Use dedicated service credentials for the streaming endpoint"
+        },
+        {
+          "step": 2,
+          "action": "Create GitHub Actions workflow that calls the Audit Log API daily to export organisation-level events",
+          "permissions_required": "Organization admin PAT with admin:org scope"
+        },
+        {
+          "step": 3,
+          "action": "Automate branch protection compliance checks — script that verifies all repos meet required protection rules via API"
+        },
+        {
+          "step": 4,
+          "action": "Configure Dependabot and code scanning alerts as automated security evidence",
+          "audit_note": "Automated scanning results serve as evidence of secure development practices"
+        },
+        {
+          "step": 5,
+          "action": "Set up alerting for audit log streaming failures and policy violations"
+        }
+      ]
+    },
+    "L4": {
+      "title": "GitHub Managed DevSecOps Evidence Pipeline",
+      "estimated_time": "6 hours initial setup",
+      "frequency": "continuous with weekly reporting",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Deploy GitHub Advanced Security metrics tracking — code scanning alerts, secret scanning, dependency review across all repos"
+        },
+        {
+          "step": 2,
+          "action": "Create evidence dashboard: MTTR for security alerts, code review coverage %, branch protection compliance rate"
+        },
+        {
+          "step": 3,
+          "action": "Implement automated compliance gating in CI/CD — PRs cannot merge without passing security checks, serving as continuous evidence"
+        },
+        {
+          "step": 4,
+          "action": "Build monthly DevSecOps evidence package: scanning trends, remediation velocity, policy compliance rates",
+          "audit_note": "Trend data demonstrates sustained security practice maturity"
+        },
+        {
+          "step": 5,
+          "action": "Configure automated quarterly review of GitHub organisation settings, SSO enforcement, and IP allow lists"
+        }
+      ]
+    }
+  }
+}

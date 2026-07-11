@@ -1,0 +1,171 @@
+{
+  "slug": "proofpoint",
+  "name": "Proofpoint Email Protection",
+  "vendor": "Proofpoint, Inc.",
+  "category": "Email Security Gateway",
+  "description": "Enterprise email security gateway (Proofpoint Protection Server / Proofpoint on Demand) with Targeted Attack Protection (TAP). Yields evidence of mail filtering policy configuration, quarantine activity and blocked/delivered threat events.",
+  "website": "https://www.proofpoint.com",
+  "aliases": [
+    "proofpoint",
+    "proofpoint tap",
+    "proofpoint essentials"
+  ],
+  "logo_hint": "proofpoint",
+  "system_type": "email_security",
+  "version": "1.0",
+  "recipes": {
+    "L1": {
+      "title": "Proofpoint Manual Evidence Collection",
+      "estimated_time": "20 minutes",
+      "frequency": "weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Sign in to the Proofpoint Protection Server (PPS) management console and capture the active filtering policy configuration — Email Protection > Spam Detection > Policies and Email Protection > Email Firewall > Rules — via screenshots with the console URL and date visible",
+          "permissions_required": "PPS administrator with Email Protection module access",
+          "audit_note": "Policy configuration evidence shows the control is designed and enabled; pair it with activity evidence below to show it operates",
+          "vendor_docs_url": "https://proofpoint.my.site.com/community/s/article/Latest-PPS-Documentation"
+        },
+        {
+          "step": 2,
+          "action": "Navigate to System > Quarantine in the PPS console and capture the quarantine folder summaries (spam, malware, policy quarantines) for the collection period",
+          "audit_note": "Quarantine counts demonstrate the gateway is actively intercepting mail, not just configured to"
+        },
+        {
+          "step": 3,
+          "action": "Use System > Smart Search to trace message disposition for the period and click Export in the results table to download a CSV (named smart_search_results_ plus a timestamp)",
+          "permissions_required": "PPS administrator with Smart Search access",
+          "audit_note": "The export filename carries a system-generated timestamp, supporting evidentiary dating",
+          "vendor_docs_url": "https://proofpoint.my.site.com/community/s/article/Finding-Messages-with-Smart-Search"
+        },
+        {
+          "step": 4,
+          "action": "Sign in to the TAP dashboard at https://threatinsight.proofpoint.com and capture the threat overview for the period — messages blocked, messages delivered with threats, and top clicked threats",
+          "permissions_required": "TAP dashboard user account",
+          "vendor_docs_url": "https://help.proofpoint.com/Threat_Insight_Dashboard/API_Documentation/SIEM_API"
+        },
+        {
+          "step": 5,
+          "action": "Upload the screenshots and CSV exports to the evidence repository with date-stamped filenames and the evidence ID reference",
+          "security_note": "Smart Search exports contain sender/recipient addresses and subject lines — treat as confidential and check for sensitive content before uploading"
+        }
+      ]
+    },
+    "L2": {
+      "title": "Proofpoint Scheduled Digest and Report Collection",
+      "estimated_time": "30 minutes setup, then automated",
+      "frequency": "automated weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "In the TAP dashboard, enable the scheduled email digest of threat activity for your account so blocked/delivered threat summaries are delivered on a regular cadence",
+          "permissions_required": "TAP dashboard user account",
+          "security_note": "Digest emails summarise live threat activity — deliver only to authorised security and compliance mailboxes",
+          "vendor_docs_url": "https://help.proofpoint.com/Threat_Insight_Dashboard/API_Documentation/SIEM_API"
+        },
+        {
+          "step": 2,
+          "action": "Note that the PPS management console does not offer a general-purpose scheduled report builder; the closest built-in options are exporting console reports on a fixed calendar cadence (cog wheel > Export to PDF or Export to CSV) and the TAP digest above. For fully unattended delivery, use the L3 API recipe.",
+          "audit_note": "Record the chosen cadence in your evidence procedure so the manual export step is itself auditable",
+          "vendor_docs_url": "https://proofpoint.my.site.com/community/s/article/Latest-PPS-Documentation"
+        },
+        {
+          "step": 3,
+          "action": "Configure quarantine digest delivery for representative mailboxes where mailbox-level filtering evidence is required",
+          "audit_note": "Digests evidence that quarantine review is operating for end users on schedule"
+        },
+        {
+          "step": 4,
+          "action": "File each delivered digest and export into the evidence repository with the evidence ID reference, preserving the original email where the delivery timestamp matters",
+          "audit_note": "The received email header provides an independent delivery timestamp for the evidence"
+        },
+        {
+          "step": 5,
+          "action": "Review digest recipients and export cadence quarterly to confirm coverage has not lapsed",
+          "audit_note": "A disabled digest or a missed export window creates an evidence gap"
+        }
+      ]
+    },
+    "L3": {
+      "title": "Proofpoint TAP SIEM API Automated Collection",
+      "estimated_time": "2-3 hours initial setup",
+      "frequency": "automated hourly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "In the TAP dashboard, go to Settings > Connected Applications, click Create New Credential, name it and click Generate to obtain a service principal and secret",
+          "permissions_required": "TAP dashboard administrator",
+          "security_note": "The secret is displayed once only — store the principal and secret in a secrets manager immediately; if lost, generate a new credential",
+          "vendor_docs_url": "https://help.proofpoint.com/Threat_Insight_Dashboard/API_Documentation/SIEM_API"
+        },
+        {
+          "step": 2,
+          "action": "Configure a script or integration to call GET https://tap-api-v2.proofpoint.com/v2/siem/all?format=json&sinceSeconds=3600 using HTTP Basic authentication (principal as username, secret as password); use /v2/siem/messages/blocked, /v2/siem/messages/delivered, /v2/siem/clicks/blocked or /v2/siem/clicks/permitted for targeted event sets",
+          "permissions_required": "TAP service credential",
+          "vendor_docs_url": "https://help.proofpoint.com/Threat_Insight_Dashboard/API_Documentation/SIEM_API"
+        },
+        {
+          "step": 3,
+          "action": "Schedule the collection to run at least hourly with a small overlap between windows — the API accepts a maximum query interval of one hour and only retains the last 7 days",
+          "audit_note": "Anything not collected within 7 days is unrecoverable from this API, so gap handling directly affects evidence completeness",
+          "vendor_docs_url": "https://help.proofpoint.com/Threat_Insight_Dashboard/API_Documentation/SIEM_API"
+        },
+        {
+          "step": 4,
+          "action": "Implement error handling and alerting for failed runs, staying within the throttle of 1,800 requests per 24-hour rolling window",
+          "security_note": "Log authentication failures separately — repeated 401s can indicate a revoked or leaked credential",
+          "vendor_docs_url": "https://help.proofpoint.com/Threat_Insight_Dashboard/API_Documentation/SIEM_API"
+        },
+        {
+          "step": 5,
+          "action": "Optionally enrich collected events with the TAP Threats and Campaign APIs for threat detail, and write timestamped JSON exports to the evidence repository",
+          "permissions_required": "TAP service credential",
+          "vendor_docs_url": "https://help.proofpoint.com/Threat_Insight_Dashboard/API_Documentation/Threat_API"
+        },
+        {
+          "step": 6,
+          "action": "Validate collected data against expected event volume relative to overall mail flow and flag anomalies such as zero-event windows during business hours",
+          "audit_note": "Volume validation provides assurance of collection completeness"
+        }
+      ]
+    },
+    "L4": {
+      "title": "Proofpoint Managed Evidence Pipeline with Streaming and Metrics",
+      "estimated_time": "1-2 days setup plus Proofpoint licensing lead time",
+      "frequency": "continuous with daily reporting",
+      "steps": [
+        {
+          "step": 1,
+          "action": "License and enable the Proofpoint on Demand (PoD) Log API — a secure WebSocket (wss) service that streams filtering (message) and MTA (maillog) events in real time; request your cluster ID and API token from Proofpoint",
+          "permissions_required": "PoD customer licensed for the Remote Syslog feature; token issued by Proofpoint",
+          "security_note": "A PoD Log API token permits one concurrent session only — request additional tokens for parallel consumers, and store all tokens in a secrets manager",
+          "vendor_docs_url": "https://proofpoint.my.site.com/community/s/article/Proofpoint-on-Demand-Pod-Log-API"
+        },
+        {
+          "step": 2,
+          "action": "Connect your SIEM or evidence pipeline to the PoD Log API stream and run the TAP SIEM API poller (L3) in parallel so both mail-flow and threat events feed the evidence store",
+          "audit_note": "If the WebSocket connection drops and is restored within one hour, the stream resumes from the drop point — beyond that, backfill from archived logs (queryable in hourly intervals up to 30 days back)",
+          "vendor_docs_url": "https://proofpoint.my.site.com/community/s/article/Proofpoint-on-Demand-Pod-Log-API"
+        },
+        {
+          "step": 3,
+          "action": "Configure collection completeness metrics: events per day versus overall mail volume, stream uptime, ingestion latency and TAP polling coverage",
+          "audit_note": "Completeness metrics are key evidence of a managed collection process"
+        },
+        {
+          "step": 4,
+          "action": "Set up automated quality checks — JSON schema validation, de-duplication keyed on message GUID, and gap detection across both the streaming and polled feeds"
+        },
+        {
+          "step": 5,
+          "action": "Create a dashboard showing collection health: events/day, stream disconnect count, p95 ingestion latency, TAP poll success rate and failed collections",
+          "audit_note": "The dashboard serves as continuous evidence of process health"
+        },
+        {
+          "step": 6,
+          "action": "Implement an automated quarterly review that generates a collection health report, verifies filtering policy exports are current, and flags any SLA breaches"
+        }
+      ]
+    }
+  }
+}

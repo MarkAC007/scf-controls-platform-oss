@@ -37,6 +37,7 @@ from api import (
     evidence_tasks,
     notifications,
     systems,
+    system_catalog,
     capabilities,
     catalog,
     cdm,
@@ -49,7 +50,6 @@ from api import (
     provisioning,
     webhooks,
     vendors,
-    vendor_reports,
     api_keys,
     dashboard,
     audit_log,
@@ -363,6 +363,7 @@ app.include_router(scoped_controls.router, prefix="/api")
 app.include_router(evidence_tracking.router, prefix="/api")
 app.include_router(evidence_maturity.router, prefix="/api")  # Evidence maturity advisory
 app.include_router(systems.router, prefix="/api")
+app.include_router(system_catalog.router, prefix="/api")  # Systems knowledge catalog (template picker)
 app.include_router(capabilities.router, prefix="/api")
 app.include_router(database_stats.router, prefix="/api")
 app.include_router(catalog.router, prefix="/api")  # SCF catalog reference data
@@ -382,7 +383,6 @@ app.include_router(admin.router, prefix="/api")  # Platform Admin Toolkit
 app.include_router(provisioning.router, prefix="/api")  # Subscription Provisioning
 app.include_router(webhooks.router, prefix="/api")  # External Webhooks (Stripe)
 app.include_router(vendors.router, prefix="/api")  # Vendor Management (TPRM)
-app.include_router(vendor_reports.router, prefix="/api")  # Vendor Reports & Risk Scoring (TPRM)
 app.include_router(api_keys.router, prefix="/api")  # Per-org user API keys
 app.include_router(dashboard.router, prefix="/api")  # GRC Dashboard work queue
 app.include_router(audit_log.router, prefix="/api")  # Audit trail (SOC 2 Type II)

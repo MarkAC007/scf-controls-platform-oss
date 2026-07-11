@@ -1,0 +1,189 @@
+{
+  "slug": "tenable",
+  "name": "Tenable Vulnerability Management",
+  "vendor": "Tenable, Inc.",
+  "category": "Vulnerability Management",
+  "description": "Cloud vulnerability management platform (formerly Tenable.io) built on Nessus scanning. Yields scan result and coverage evidence, findings reports and dashboard exports, scheduled report deliveries, scan policy configuration and full vulnerability/asset datasets via the REST API.",
+  "website": "https://www.tenable.com/products/vulnerability-management",
+  "aliases": [
+    "tenable",
+    "tenable io",
+    "tenable vm",
+    "nessus"
+  ],
+  "logo_hint": "tenable",
+  "system_type": "vulnerability_management",
+  "version": "1.0",
+  "recipes": {
+    "L1": {
+      "title": "Tenable VM Manual Evidence Collection",
+      "estimated_time": "20 minutes",
+      "frequency": "weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Log in to Tenable Vulnerability Management (cloud.tenable.com) and open the Scans page; screenshot the scan list showing scan names, targets, schedules and last-run status as scan-coverage evidence",
+          "permissions_required": "Scan Operator or higher (Basic users see only scans shared with them)",
+          "security_note": "Use a named individual or dedicated evidence-collection account, not a shared login",
+          "vendor_docs_url": "https://docs.tenable.com/vulnerability-management/Content/Scans/Scans.htm"
+        },
+        {
+          "step": 2,
+          "action": "Open a completed scan for the collection period and export the results (Nessus, CSV or HTML format) via the scan's Export option",
+          "permissions_required": "Scan Operator or higher with Can View on the scan",
+          "audit_note": "Filtered exports are not supported for scan results older than 60 days, and unfiltered .nessus exports truncate plugin output at 5 MB — export promptly after each scan window",
+          "vendor_docs_url": "https://docs.tenable.com/vulnerability-management/Content/Scans/ExportScanResults.htm"
+        },
+        {
+          "step": 3,
+          "action": "Go to Explore > Findings, apply your severity and asset filters, and generate a Findings report (PDF) or CSV export capturing the current vulnerability position",
+          "permissions_required": "Standard or higher with Can View on the assets",
+          "audit_note": "The generated report is timestamped by Tenable and reflects the filter set — record the filters used so successive periods are comparable",
+          "vendor_docs_url": "https://docs.tenable.com/vulnerability-management/Content/Explore/Findings/FindingsReports.htm"
+        },
+        {
+          "step": 4,
+          "action": "Screenshot the scan configuration evidence: open Scans > User Defined templates and capture the scan policy settings (credentialed checks, plugin families, assessment settings) for the in-scope scans",
+          "permissions_required": "Template owner, or user with Can Use/Can Edit template permissions",
+          "audit_note": "Policy configuration evidences how scans assess targets (e.g. authenticated scanning enabled), which auditors weigh alongside the results themselves",
+          "vendor_docs_url": "https://docs.tenable.com/vulnerability-management/Content/Scans/manage-user-defined-templates.htm"
+        },
+        {
+          "step": 5,
+          "action": "Upload the exports and screenshots to the evidence repository with the evidence ID reference",
+          "security_note": "Scan exports enumerate exploitable weaknesses per asset — restrict access to authorised personnel and check before sharing outside the security team"
+        }
+      ]
+    },
+    "L2": {
+      "title": "Tenable VM Scheduled Scans and Reports",
+      "estimated_time": "45 minutes (setup), then automated",
+      "frequency": "automated weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Confirm each in-scope scan has a recurring schedule: in the scan's Basic Settings, enable Schedule and set the frequency, start time and timezone so results are generated on a defined cadence",
+          "permissions_required": "Scan Manager or Administrator (or scan owner with configure rights)",
+          "audit_note": "Scheduled scans paired with scheduled reports evidence continuous operation of the vulnerability management process",
+          "vendor_docs_url": "https://docs.tenable.com/vulnerability-management/Content/Scans/CreateScan.htm"
+        },
+        {
+          "step": 2,
+          "action": "Click Reports in the left navigation and create or select a report template covering the in-scope assets and severities (My Report Templates or All Report Templates tab)",
+          "permissions_required": "Scan Operator, Standard, Scan Manager or Administrator",
+          "vendor_docs_url": "https://docs.tenable.com/vulnerability-management/Content/Act/ReportTemplates.htm"
+        },
+        {
+          "step": 3,
+          "action": "Select the template's check box and click Schedule; set the recurrence and email recipients, and enable the password protection toggle so the emailed PDF requires a password to open",
+          "permissions_required": "Report owner, Administrator, or a user granted Can Configure on the report",
+          "security_note": "Share the report password through a separate channel from the report emails",
+          "audit_note": "Each scheduled run produces a vendor-timestamped report artefact on a fixed cadence",
+          "vendor_docs_url": "https://docs.tenable.com/vulnerability-management/Content/Act/ScheduleAReport.htm"
+        },
+        {
+          "step": 4,
+          "action": "Deliver the scheduled reports to a restricted, monitored compliance mailbox and file each report into the evidence repository on receipt",
+          "security_note": "Limit mailbox access to authorised personnel; report contents identify vulnerable assets"
+        },
+        {
+          "step": 5,
+          "action": "Set a recurring calendar check to catch missed report emails or failed scheduled scans, and record any gaps with the reason",
+          "audit_note": "Unexplained gaps in a scheduled evidence series weaken the audit trail"
+        }
+      ]
+    },
+    "L3": {
+      "title": "Tenable VM REST API Automated Collection",
+      "estimated_time": "2-4 hours initial setup",
+      "frequency": "automated daily",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Create a dedicated least-privilege service user (e.g. Basic role with Can View permissions on in-scope assets, or a custom role with the VM.VM_EXPLORE.VM_EXPLORE.EXPORT privilege), then generate its API keys via My Account > API Keys > Generate",
+          "permissions_required": "Administrator (create user and enable API access)",
+          "security_note": "The access and secret keys are shown only once and regenerating replaces any existing keys — store them immediately in a secrets manager and rotate on a defined schedule",
+          "vendor_docs_url": "https://docs.tenable.com/vulnerability-management/Content/Settings/my-account/GenerateAPIKey.htm"
+        },
+        {
+          "step": 2,
+          "action": "Authenticate API calls with the header 'X-ApiKeys: accessKey=<ACCESS_KEY>;secretKey=<SECRET_KEY>' against https://cloud.tenable.com",
+          "permissions_required": "Service account API keys",
+          "security_note": "Read the keys from the secrets manager at runtime and ensure pipeline logs never print the X-ApiKeys header",
+          "vendor_docs_url": "https://developer.tenable.com/docs/authorization"
+        },
+        {
+          "step": 3,
+          "action": "Export vulnerability data: POST https://cloud.tenable.com/vulns/export with filters (severity, state, since for incremental runs), poll GET /vulns/export/{export_uuid}/status until FINISHED, then download each chunk via GET /vulns/export/{export_uuid}/chunks/{chunk_id}",
+          "permissions_required": "Basic role or VM.VM_EXPLORE.VM_EXPLORE.EXPORT privilege, plus Can View on the exported assets",
+          "audit_note": "Include the fixed state in filters so remediation closure is captured, not just open findings; chunks expire 24 hours after creation, so download within the same run",
+          "vendor_docs_url": "https://developer.tenable.com/reference/exports-vulns-request-export"
+        },
+        {
+          "step": 4,
+          "action": "Export the asset inventory with POST https://cloud.tenable.com/assets/export (same status/chunk polling pattern) and reconcile it against your CMDB to evidence that scanning covers all in-scope assets",
+          "permissions_required": "Service account with Can View on the assets",
+          "audit_note": "Coverage reconciliation evidences completeness of scanning scope, not merely that scans run",
+          "vendor_docs_url": "https://developer.tenable.com/docs/retrieve-asset-data-from-tenableio"
+        },
+        {
+          "step": 5,
+          "action": "Archive raw scan results on a cadence: POST https://cloud.tenable.com/scans/{scan_id}/export (format nessus or csv), poll the export status, then download the file for the evidence store",
+          "permissions_required": "Scan Operator or higher with Can View on the scan",
+          "audit_note": "The .nessus file preserves full per-plugin output and scan policy metadata, the strongest artefact for auditor re-verification",
+          "vendor_docs_url": "https://developer.tenable.com/reference/scans-export-request"
+        },
+        {
+          "step": 6,
+          "action": "Schedule the collection script daily via cron or a CI/CD pipeline with retry on HTTP 429 (honouring the Retry-After header), alerting on failed runs, and validation that chunk counts and finding totals are consistent with the previous run's baseline",
+          "audit_note": "Run-over-run validation provides assurance of collection completeness",
+          "vendor_docs_url": "https://developer.tenable.com/docs/rate-limiting"
+        }
+      ]
+    },
+    "L4": {
+      "title": "Tenable VM Managed Evidence Pipeline with Metrics",
+      "estimated_time": "4-6 hours initial setup",
+      "frequency": "continuous with daily reporting",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Tenable Vulnerability Management has no native outbound webhooks or event streaming — the closest real capability is frequent incremental exports: run POST /vulns/export hourly with since set to the last successful run and state filters covering open, reopened and fixed",
+          "permissions_required": "Service account API keys",
+          "audit_note": "Advance the since watermark only after a verified successful download so no findings are skipped between runs",
+          "vendor_docs_url": "https://developer.tenable.com/docs/retrieve-vulnerability-data-from-tenableio"
+        },
+        {
+          "step": 2,
+          "action": "Deploy the Tenable Add-on for Splunk (TA-tenable) to continuously pull vulnerability and asset data into your SIEM, giving indexed, long-term retention independent of Tenable's export windows",
+          "permissions_required": "Administrator (Tenable API keys for the add-on); Splunk administrator",
+          "security_note": "Configure the add-on with the dedicated service account's keys and store them in Splunk's encrypted credential store",
+          "audit_note": "SIEM retention provides tamper-evident storage and removes reliance on 24-hour chunk availability",
+          "vendor_docs_url": "https://docs.tenable.com/integrations/Splunk/Content/SplunkAddOn.htm"
+        },
+        {
+          "step": 3,
+          "action": "Collect the platform activity log continuously via GET https://cloud.tenable.com/audit-log/v1/events (filterable by date) to evidence administrative changes to scans, policies and users",
+          "permissions_required": "Administrator",
+          "audit_note": "Tenable retains activity log data for 3 years; regular collection into your own store preserves it beyond that and supports change-control evidence",
+          "vendor_docs_url": "https://developer.tenable.com/docs/vm-activity-log"
+        },
+        {
+          "step": 4,
+          "action": "Reconcile daily: compare the asset export against expected inventory and flag assets whose last scan time exceeds the scan-frequency SLA, computing a coverage percentage as the pipeline's core completeness metric",
+          "audit_note": "Asset-versus-inventory reconciliation evidences that every in-scope asset is being assessed on schedule",
+          "vendor_docs_url": "https://developer.tenable.com/docs/retrieve-asset-data-from-tenableio"
+        },
+        {
+          "step": 5,
+          "action": "Run automated quality checks and a collection-health dashboard: export failures, gaps in the incremental time series, SLA breaches, remediation ageing trends, with alerts on any gap or threshold breach",
+          "audit_note": "The dashboard serves as continuous evidence of a managed collection process"
+        },
+        {
+          "step": 6,
+          "action": "Generate an automated quarterly collection-health report summarising scan coverage, export gaps, SLA breaches and remediation, and file it in the evidence repository"
+        }
+      ]
+    }
+  }
+}

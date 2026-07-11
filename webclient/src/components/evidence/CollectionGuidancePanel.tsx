@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import type {
   EvidenceId,
   EvidenceSuggestionsResponse,
@@ -6,9 +6,18 @@ import type {
   EvidenceMaturityLevel,
   CollectionGuidanceResponse,
 } from '../../types'
-import { getEvidenceSuggestions, submitRecipeFeedback } from '../../data/apiClient'
+import {
+  getEvidenceSuggestions,
+  submitRecipeFeedback,
+  generateSystemRecipes,
+  getRecipeGenerationStatus,
+} from '../../data/apiClient'
 import { RecipeCard } from './RecipeCard'
 import { MaturityBadge } from '../maturity/MaturityBadge'
+
+// Poll the generation status every 3s for at most ~3 minutes
+const GENERATION_POLL_INTERVAL_MS = 3000
+const GENERATION_POLL_MAX_ATTEMPTS = 60
 
 interface CollectionGuidancePanelProps {
   evidenceId: EvidenceId
@@ -33,19 +42,16 @@ export function CollectionGuidancePanel({
   const [guidance, setGuidance] = useState<CollectionGuidanceResponse | null>(null)
   const [loadingGuidance, setLoadingGuidance] = useState(false)
   const [feedbackSubmitted, setFeedbackSubmitted] = useState<string | null>(null)
+  const [generationState, setGenerationState] = useState<'idle' | 'requesting' | 'generating' | 'failed'>('idle')
+  const [generationError, setGenerationError] = useState<string | null>(null)
+  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const handleSystemClick = useCallback(async (systemId: string, systemName: string) => {
-    if (selectedSystemId === systemId) {
-      // Deselect — back to discovery mode
-      setSelectedSystemId(null)
-      setGuidance(null)
-      return
-    }
+  useEffect(() => () => {
+    if (pollTimerRef.current) clearTimeout(pollTimerRef.current)
+  }, [])
 
-    setSelectedSystemId(systemId)
+  const loadGuidance = useCallback(async (systemId: string) => {
     setLoadingGuidance(true)
-    setFeedbackSubmitted(null)
-
     try {
       const result = await getEvidenceSuggestions(evidenceId, orgId, {
         systemId,
@@ -58,7 +64,86 @@ export function CollectionGuidancePanel({
     } finally {
       setLoadingGuidance(false)
     }
-  }, [selectedSystemId, evidenceId, orgId, currentMaturityLevel])
+  }, [evidenceId, orgId, currentMaturityLevel])
+
+  const cancelGenerationPoll = useCallback(() => {
+    if (pollTimerRef.current) {
+      clearTimeout(pollTimerRef.current)
+      pollTimerRef.current = null
+    }
+  }, [])
+
+  const handleSystemClick = useCallback(async (systemId: string, systemName: string) => {
+    // A poll for a previously selected system must never overwrite the
+    // guidance of the newly selected one
+    cancelGenerationPoll()
+
+    if (selectedSystemId === systemId) {
+      // Deselect — back to discovery mode
+      setSelectedSystemId(null)
+      setGuidance(null)
+      setGenerationState('idle')
+      return
+    }
+
+    setSelectedSystemId(systemId)
+    setFeedbackSubmitted(null)
+    setGenerationState('idle')
+    setGenerationError(null)
+    await loadGuidance(systemId)
+  }, [selectedSystemId, loadGuidance, cancelGenerationPoll])
+
+  const handleGenerate = useCallback(async () => {
+    if (!selectedSystemId || !orgId) return
+    cancelGenerationPoll()
+    setGenerationState('requesting')
+    setGenerationError(null)
+
+    try {
+      await generateSystemRecipes(selectedSystemId, orgId)
+    } catch (error: any) {
+      console.error('Failed to queue recipe generation:', error)
+      setGenerationState('failed')
+      const msg: string = error?.message || ''
+      setGenerationError(
+        msg.includes('403') || /forbidden/i.test(msg)
+          ? 'Generating guidance requires editor access to this organisation.'
+          : msg || 'Could not start generation'
+      )
+      return
+    }
+
+    setGenerationState('generating')
+    const systemId = selectedSystemId
+    let attempts = 0
+
+    const poll = async () => {
+      attempts += 1
+      try {
+        const status = await getRecipeGenerationStatus(systemId, orgId)
+        if (status.status === 'completed') {
+          setGenerationState('idle')
+          await loadGuidance(systemId)
+          return
+        }
+        if (status.status === 'failed') {
+          setGenerationState('failed')
+          setGenerationError(status.error || 'Generation failed')
+          return
+        }
+      } catch (error) {
+        console.error('Failed to poll generation status:', error)
+      }
+      if (attempts >= GENERATION_POLL_MAX_ATTEMPTS) {
+        setGenerationState('failed')
+        setGenerationError('Generation timed out — try refreshing later')
+        return
+      }
+      pollTimerRef.current = setTimeout(poll, GENERATION_POLL_INTERVAL_MS)
+    }
+
+    pollTimerRef.current = setTimeout(poll, GENERATION_POLL_INTERVAL_MS)
+  }, [selectedSystemId, orgId, loadGuidance])
 
   const handleFeedback = useCallback(async (feedbackType: 'helpful' | 'not_matching') => {
     if (!guidance || !orgId) return
@@ -76,6 +161,35 @@ export function CollectionGuidancePanel({
   }, [guidance, orgId, evidenceId])
 
   const isGuidanceMode = selectedSystemId && guidance
+
+  const generateSection = orgId ? (
+    <div className="recipe-generate-section">
+      {generationState === 'generating' || generationState === 'requesting' ? (
+        <p className="recipe-generate-hint">
+          <span className="spinner" /> Generating guidance from vendor documentation… this can take a couple of minutes.
+        </p>
+      ) : (
+        <>
+          {guidance && (
+            <p className="recipe-generate-hint">
+              This is generic guidance for the system type. Generate guidance
+              tailored to {guidance.system_name} from its vendor documentation.
+            </p>
+          )}
+          <button
+            type="button"
+            className="recipe-generate-btn"
+            onClick={handleGenerate}
+          >
+            {'✨'} Generate collection guidance for this system
+          </button>
+          {generationState === 'failed' && generationError && (
+            <p className="recipe-generate-error">{generationError}</p>
+          )}
+        </>
+      )}
+    </div>
+  ) : null
 
   return (
     <div className="collection-guidance-panel">
@@ -223,9 +337,15 @@ export function CollectionGuidancePanel({
                     {guidance.alternatives_count} other system{guidance.alternatives_count > 1 ? 's' : ''} can also provide this evidence.
                   </p>
                 )}
+
+                {/* AI generation for systems with only generic guidance */}
+                {guidance.recipe_confidence === 'type_generic' && generateSection}
               </>
             ) : (
-              <p className="muted">No recipe available for this system at the current maturity level.</p>
+              <>
+                <p className="muted">No recipe available for this system at the current maturity level.</p>
+                {generateSection}
+              </>
             )}
           </div>
         </div>

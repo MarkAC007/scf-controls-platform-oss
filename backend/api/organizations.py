@@ -16,7 +16,9 @@ SUBSCRIPTION: Organisation creation limits
 - API key authenticated requests bypass subscription limits
 """
 import logging
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from datetime import datetime, timezone
+from fastapi import APIRouter, Depends, HTTPException, status, Request, File, UploadFile
+from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from typing import List
@@ -24,7 +26,7 @@ from uuid import UUID
 
 from database import get_db
 from models import Organization, OrganizationMember
-from schemas import OrganizationResponse, OrganizationCreate, SuccessResponse, OrganizationSettingsResponse, OrganizationSettingsUpdate
+from schemas import OrganizationResponse, OrganizationCreate, SuccessResponse, OrganizationSettingsResponse, OrganizationSettingsUpdate, OrganizationLogoResponse
 from auth import (
     require_auth,
     require_org_role,
@@ -356,3 +358,132 @@ async def update_organization_settings(
         is_trust_portal_enabled=current_settings.get("is_trust_portal_enabled", False),
         trust_portal_description=current_settings.get("trust_portal_description"),
     )
+
+
+ALLOWED_LOGO_CONTENT_TYPES = {
+    "image/png", "image/jpeg", "image/webp", "image/svg+xml", "image/gif",
+}
+MAX_LOGO_SIZE_BYTES = 1 * 1024 * 1024  # 1 MB
+
+
+@router.put("/{org_id}/logo", response_model=OrganizationLogoResponse)
+async def upload_organization_logo(
+    org_id: UUID,
+    request: Request,
+    file: UploadFile = File(...),
+    membership: OrgMembership = Depends(require_org_role("admin")),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Upload or replace the organization's logo (stored in the database).
+
+    SECURITY: Requires admin role. Content type allowlisted, size capped at 1 MB.
+    """
+    if file.content_type not in ALLOWED_LOGO_CONTENT_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported logo content type '{file.content_type}'. "
+                   f"Allowed: {', '.join(sorted(ALLOWED_LOGO_CONTENT_TYPES))}"
+        )
+
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Uploaded logo file is empty")
+    if len(data) > MAX_LOGO_SIZE_BYTES:
+        raise HTTPException(status_code=400, detail="Logo must be 1 MB or smaller")
+
+    result = await db.execute(select(Organization).where(Organization.id == org_id))
+    organization = result.scalar_one_or_none()
+    if not organization:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    old_filename = organization.logo_filename
+    organization.logo_data = data
+    organization.logo_content_type = file.content_type
+    organization.logo_filename = file.filename
+    organization.logo_updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    await log_entity_changes(
+        db=db, organization_id=org_id, entity_type='organization',
+        entity_id=organization.id, action='update',
+        changed_by_user_id=UUID(membership.user.db_id) if membership.user and membership.user.db_id else None,
+        old_values={'logo_filename': old_filename},
+        new_values={'logo_filename': file.filename},
+        tracked_fields={'logo_filename'},
+        action_source=detect_action_source(request),
+        request_id=get_request_id(request),
+    )
+
+    await db.commit()
+
+    return OrganizationLogoResponse(
+        filename=organization.logo_filename,
+        content_type=organization.logo_content_type,
+        size_bytes=len(data),
+        updated_at=organization.logo_updated_at,
+    )
+
+
+@router.get("/{org_id}/logo")
+async def get_organization_logo(
+    org_id: UUID,
+    membership: OrgMembership = Depends(require_org_role("viewer")),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Serve the organization's logo bytes.
+
+    SECURITY: Requires viewer role. CSP/nosniff headers guard direct navigation
+    (SVG scripts do not execute in <img> contexts, headers cover the rest).
+    """
+    result = await db.execute(select(Organization).where(Organization.id == org_id))
+    organization = result.scalar_one_or_none()
+    if not organization or not organization.logo_data:
+        raise HTTPException(status_code=404, detail="No logo uploaded for this organization")
+
+    return Response(
+        content=organization.logo_data,
+        media_type=organization.logo_content_type or "application/octet-stream",
+        headers={
+            "Cache-Control": "private, max-age=300",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "default-src 'none'",
+        },
+    )
+
+
+@router.delete("/{org_id}/logo", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_organization_logo(
+    org_id: UUID,
+    request: Request,
+    membership: OrgMembership = Depends(require_org_role("admin")),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Remove the organization's logo.
+
+    SECURITY: Requires admin role.
+    """
+    result = await db.execute(select(Organization).where(Organization.id == org_id))
+    organization = result.scalar_one_or_none()
+    if not organization:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    old_filename = organization.logo_filename
+    organization.logo_data = None
+    organization.logo_content_type = None
+    organization.logo_filename = None
+    organization.logo_updated_at = None
+
+    await log_entity_changes(
+        db=db, organization_id=org_id, entity_type='organization',
+        entity_id=organization.id, action='update',
+        changed_by_user_id=UUID(membership.user.db_id) if membership.user and membership.user.db_id else None,
+        old_values={'logo_filename': old_filename},
+        new_values={'logo_filename': None},
+        tracked_fields={'logo_filename'},
+        action_source=detect_action_source(request),
+        request_id=get_request_id(request),
+    )
+
+    await db.commit()

@@ -1,0 +1,184 @@
+{
+  "slug": "google-workspace",
+  "name": "Google Workspace",
+  "vendor": "Google LLC",
+  "category": "Productivity & Collaboration",
+  "description": "Google's productivity suite (Gmail, Drive, Docs, Meet) with compliance evidence from the Admin console audit and investigation tool, Drive sharing reports, the security health page, the Admin SDK Reports API and BigQuery log exports.",
+  "website": "https://workspace.google.com",
+  "aliases": [
+    "google workspace",
+    "gsuite",
+    "g suite",
+    "google apps",
+    "google drive",
+    "gmail",
+    "workspace"
+  ],
+  "logo_hint": "google-workspace",
+  "system_type": "document_management",
+  "version": "1.0",
+  "recipes": {
+    "L1": {
+      "title": "Google Workspace Manual Evidence Collection",
+      "estimated_time": "20 minutes",
+      "frequency": "weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Sign in to the Google Admin console (admin.google.com) and go to Menu > Reporting > Audit and investigation > Admin log events. Set the date range to cover the collection period with no gap since the previous export",
+          "permissions_required": "Super Admin, or a delegated admin with the Audit and Investigation (Reports) privilege",
+          "security_note": "Use a delegated admin account with only the reporting privileges needed, not a shared Super Admin login",
+          "audit_note": "Log events are generated and timestamped by Google and cannot be edited by administrators; most log event data is retained for 6 months, so collect well within that window",
+          "vendor_docs_url": "https://knowledge.workspace.google.com/admin/reports/about-the-audit-and-investigation-tool"
+        },
+        {
+          "step": 2,
+          "action": "Switch the data source to Drive log events and add a filter/condition of Visibility change = External (or Visibility = Shared externally) to capture external file-sharing activity for the period",
+          "permissions_required": "Audit and Investigation administrator privilege for Drive log events",
+          "audit_note": "External-sharing events are the primary Drive evidence for data-sharing controls; note that Drive log events require an edition that includes Drive audit",
+          "vendor_docs_url": "https://support.google.com/a/answer/7584076"
+        },
+        {
+          "step": 3,
+          "action": "Export each filtered view using Export all — results are delivered to Google Sheets (export is limited to 100,000 rows, or 30 million rows with the security investigation tool). Name each export with the data source and date range",
+          "audit_note": "Download the Sheets export as CSV/PDF for the evidence pack and record the covered date range so period completeness can be demonstrated",
+          "vendor_docs_url": "https://knowledge.workspace.google.com/admin/reports/about-the-audit-and-investigation-tool"
+        },
+        {
+          "step": 4,
+          "action": "Go to Menu > Security > Security centre > Security health and capture the page showing the status of security settings (Drive sharing settings, automatic email forwarding, 2-Step Verification and so on), including any items flagged for attention",
+          "permissions_required": "Super Admin, or an admin with the Security Centre administrator privilege plus read access to users and organisational units",
+          "audit_note": "Changes to Admin console settings can take up to 24 hours to propagate to the security health page — capture it after settings changes have settled. Requires an edition with the security centre (e.g. Enterprise Standard/Plus)",
+          "vendor_docs_url": "https://support.google.com/a/answer/7492006"
+        },
+        {
+          "step": 5,
+          "action": "Upload the log exports and security health captures to the evidence repository with evidence ID references and the covered date ranges",
+          "security_note": "Review exports before upload — Drive log events include document titles and user email addresses; ensure the evidence repository access is appropriately restricted"
+        }
+      ]
+    },
+    "L2": {
+      "title": "Google Workspace BigQuery Log Export (Built-In Scheduled)",
+      "estimated_time": "1-2 hours initial setup, then automated",
+      "frequency": "automated continuous export, weekly evidence extraction",
+      "steps": [
+        {
+          "step": 1,
+          "action": "In the Google Cloud console, create (or designate) a BigQuery project and dataset to receive Workspace logs, and grant the Workspace administrator the BigQuery Admin (roles/bigquery.admin) and Project IAM Admin (roles/resourcemanager.projectIamAdmin) roles on the project",
+          "permissions_required": "Google Cloud project Owner or IAM admin; Google Workspace Super Admin for the Workspace side",
+          "security_note": "Use a dedicated project for compliance logs and restrict dataset access to the compliance team via IAM",
+          "vendor_docs_url": "https://support.google.com/a/answer/9082756"
+        },
+        {
+          "step": 2,
+          "action": "In the Admin console go to Menu > Reporting > Data integrations and tick 'Enable Google Workspace data export to Google BigQuery', selecting the target project and dataset. Requires Enterprise Standard/Plus, Education Standard/Plus, Frontline Standard/Plus or Enterprise Essentials Plus",
+          "permissions_required": "Super Admin",
+          "audit_note": "Once enabled, Google exports the logs automatically on an ongoing basis (near-real-time, typically under 10 minutes) with no code or scheduler to maintain — this is the built-in scheduled export path",
+          "vendor_docs_url": "https://support.google.com/a/answer/9079365"
+        },
+        {
+          "step": 3,
+          "action": "Confirm data is arriving in the dataset's activity and usage tables (activity tables hold the audit log events; usage tables hold service usage data). The first data appears after the export is activated — it is not backfilled",
+          "audit_note": "Because the export is forward-only, enable it before the audit period you need to evidence begins",
+          "vendor_docs_url": "https://support.google.com/a/answer/9079364"
+        },
+        {
+          "step": 4,
+          "action": "Create saved queries for the evidence you need (e.g. Drive external-sharing events, admin setting changes) using Google's published example queries as a starting point, and export query results to the evidence repository on the collection cadence",
+          "permissions_required": "BigQuery Data Viewer plus BigQuery Job User on the logs dataset",
+          "vendor_docs_url": "https://support.google.com/a/answer/9079965"
+        },
+        {
+          "step": 5,
+          "action": "Document the export configuration (project, dataset, activation date, dataset ACLs) and file it with the evidence — it demonstrates the collection mechanism itself is controlled",
+          "security_note": "Review dataset IAM bindings quarterly; the tables contain user activity for the whole organisation"
+        }
+      ]
+    },
+    "L3": {
+      "title": "Google Workspace Reports API Automated Collection",
+      "estimated_time": "3-4 hours initial setup",
+      "frequency": "automated daily",
+      "steps": [
+        {
+          "step": 1,
+          "action": "In the Google Cloud console, create a dedicated service account, enable the Admin SDK API on its project and generate a key (or use workload identity federation to avoid long-lived keys)",
+          "permissions_required": "Google Cloud project Owner/Editor to create the service account",
+          "security_note": "Prefer workload identity federation over downloaded JSON keys; if a key is unavoidable, store it in a secrets manager and rotate it regularly",
+          "vendor_docs_url": "https://developers.google.com/workspace/admin/reports/v1/overview"
+        },
+        {
+          "step": 2,
+          "action": "In the Admin console go to Security > Access and data control > API controls > Domain-wide delegation and authorise the service account's client ID with the scope https://www.googleapis.com/auth/admin.reports.audit.readonly only",
+          "permissions_required": "Super Admin",
+          "security_note": "Grant only the read-only audit scope — domain-wide delegation with broad scopes is a common over-privilege finding",
+          "audit_note": "The delegation grant itself appears in Admin log events, evidencing controlled provisioning",
+          "vendor_docs_url": "https://support.google.com/a/answer/162106"
+        },
+        {
+          "step": 3,
+          "action": "Schedule a daily job that impersonates an admin with the Reports privilege and calls GET https://admin.googleapis.com/admin/reports/v1/activity/users/all/applications/{applicationName} for the applications you need (admin, drive, token; login events belong to the identity provider's evidence), using startTime/endTime bounded to the collection window and handling nextPageToken pagination",
+          "permissions_required": "Impersonated admin with the Reports privilege; service account with domain-wide delegation",
+          "vendor_docs_url": "https://developers.google.com/admin-sdk/reports/reference/rest/v1/activities/list"
+        },
+        {
+          "step": 4,
+          "action": "Write the returned activity records to the evidence store as timestamped, immutable objects (e.g. write-once storage) named by application and date range",
+          "audit_note": "Keep the raw API JSON — it includes the Google-assigned event time and actor detail that gives the export its evidentiary value"
+        },
+        {
+          "step": 5,
+          "action": "Implement error handling and alerting: retry on 429/5xx with backoff, alert the compliance team on failed runs, and log every run's outcome and row counts",
+          "audit_note": "Failed collections should trigger re-collection promptly; most log event data is retained about 6 months, but collecting daily avoids any dependence on retention limits",
+          "vendor_docs_url": "https://support.google.com/a/answer/7061566"
+        },
+        {
+          "step": 6,
+          "action": "Validate completeness daily — compare per-application event counts against a rolling baseline, and account for Google's documented data lag times (some applications' events can take hours to days to appear) by re-querying a trailing window",
+          "audit_note": "Re-querying a trailing window (e.g. the previous 3 days) guards against events that arrive late due to reporting lag",
+          "vendor_docs_url": "https://support.google.com/a/answer/7061566"
+        }
+      ]
+    },
+    "L4": {
+      "title": "Google Workspace Managed Evidence Pipeline with Metrics",
+      "estimated_time": "1-2 days initial setup",
+      "frequency": "continuous with daily reporting",
+      "steps": [
+        {
+          "step": 1,
+          "action": "In the Admin console, enable sharing of Google Workspace data with Google Cloud services (Account settings > Legal and compliance > Sharing options) so Workspace audit logs flow into Cloud Logging in your Google Cloud organisation",
+          "permissions_required": "Super Admin (Workspace) and Organisation Administrator (Google Cloud)",
+          "audit_note": "Cloud Logging holds Workspace audit logs alongside Google Cloud audit logs, giving a single, centrally governed log estate",
+          "vendor_docs_url": "https://support.google.com/a/answer/9320190"
+        },
+        {
+          "step": 2,
+          "action": "Create an organisation-level Cloud Logging sink that routes the Workspace audit log entries continuously to Pub/Sub (for streaming into your SIEM) and/or to a locked BigQuery dataset or Cloud Storage bucket with a retention lock for immutable archive",
+          "permissions_required": "Logs Configuration Writer (roles/logging.configWriter) at the organisation level",
+          "security_note": "Grant the sink's writer identity access to the destination only; lock the archive bucket/dataset so pipeline operators cannot delete evidence",
+          "audit_note": "A bucket retention lock makes the archived logs demonstrably immutable, which materially strengthens their evidentiary value",
+          "vendor_docs_url": "https://docs.cloud.google.com/logging/docs/audit/gsuite-audit-logging"
+        },
+        {
+          "step": 3,
+          "action": "Keep the BigQuery Workspace export (Reporting > Data integrations) running in parallel as the analytical copy — its near-real-time activity tables are the source for completeness metrics and evidence queries",
+          "permissions_required": "Super Admin",
+          "vendor_docs_url": "https://support.google.com/a/answer/9079365"
+        },
+        {
+          "step": 4,
+          "action": "Build completeness metrics with scheduled BigQuery queries: events per day per application, arrival latency versus Google's published lag times, and coverage across organisational units; alert via Cloud Monitoring when a day's volume drops below baseline or the export stalls",
+          "audit_note": "Gap alerts and their resolution records are the evidence that collection is actively managed, not best-effort",
+          "vendor_docs_url": "https://support.google.com/a/answer/7061566"
+        },
+        {
+          "step": 5,
+          "action": "Publish a collection-health dashboard (events/day, latency, coverage, failed exports) and run an automated quarterly review that files a health report — including any gap incidents and the security health page trend — in the evidence repository",
+          "audit_note": "Pair the health report with the sink and export configuration exports to evidence both continuous collection and controlled configuration"
+        }
+      ]
+    }
+  }
+}

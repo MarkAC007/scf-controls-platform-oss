@@ -13,11 +13,14 @@
     <!-- Prevent flash of wrong theme -->
     <script>
       (function() {
-        var theme = localStorage.getItem('scf-theme-preference');
-        if (!theme) {
-          theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        var base = localStorage.getItem('scf-theme-base');
+        if (base !== 'light' && base !== 'dark') {
+          base = localStorage.getItem('scf-theme-preference');
         }
-        document.documentElement.setAttribute('data-theme', theme);
+        if (base !== 'light' && base !== 'dark') {
+          base = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        }
+        document.documentElement.setAttribute('data-theme', base);
       })();
     </script>
   </head>

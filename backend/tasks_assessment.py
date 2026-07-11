@@ -5,7 +5,7 @@ Runs evidence content assessment against mapped control requirements
 using Claude LLM. Executes in Celery workers (separate from web server)
 to avoid blocking the uvicorn event loop.
 
-Follows conventions from tasks_research.py and tasks_dpsia.py.
+Follows conventions from tasks_research.py and tasks_vendor_assessment.py.
 """
 import json
 import logging

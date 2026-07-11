@@ -1,0 +1,187 @@
+{
+  "slug": "rapid7",
+  "name": "Rapid7 InsightVM",
+  "vendor": "Rapid7, Inc.",
+  "category": "Vulnerability Management",
+  "description": "Vulnerability risk management platform combining the on-premises Security Console (formerly Nexpose) with Insight cloud capabilities. Yields scan coverage and asset inventory evidence, vulnerability reports, remediation project and SLA tracking, and scheduled report artefacts.",
+  "website": "https://www.rapid7.com/products/insightvm/",
+  "aliases": [
+    "rapid7",
+    "insightvm",
+    "nexpose"
+  ],
+  "logo_hint": "rapid7",
+  "system_type": "vulnerability_management",
+  "version": "1.0",
+  "recipes": {
+    "L1": {
+      "title": "InsightVM Manual Evidence Collection",
+      "estimated_time": "20 minutes",
+      "frequency": "weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Log in to the InsightVM Security Console, open Assets from the left navigation and capture a screenshot of the asset inventory showing total assets and last-scan timestamps; also screenshot the Sites page showing each site's most recent scan date as scan coverage evidence",
+          "permissions_required": "Security Manager (accessible sites) or Global Administrator (all sites)",
+          "security_note": "Use a named individual or dedicated evidence-collection account, not a shared login",
+          "audit_note": "Coverage evidence should show that all in-scope sites are being scanned on schedule, not merely that scans exist",
+          "vendor_docs_url": "https://docs.rapid7.com/insightvm/insightvm-quick-start-guide/"
+        },
+        {
+          "step": 2,
+          "action": "Click the Reports icon in the left navigation, create a report using a Document template (PDF) or Export template (CSV), scope it to the in-scope sites or asset groups, then click Save & run the report and download the output",
+          "permissions_required": "Any console role with report creation rights scoped to the relevant sites (Security Manager or Global Administrator recommended)",
+          "audit_note": "Export (CSV/XML) templates carry the full vulnerability dataset; Document templates suit management-facing summaries. Save with a date-stamped filename covering the report period",
+          "vendor_docs_url": "https://docs.rapid7.com/insightvm/creating-a-basic-report/"
+        },
+        {
+          "step": 3,
+          "action": "Open Remediation Projects from the left navigation, screenshot the project list showing progress and due dates, and use the CSV export options (Solutions Listing or Remediator export) for the projects covering the collection period",
+          "permissions_required": "Global Administrator for full access; other roles (Security Manager, Site Owner, User) see their own projects. Custom roles need the 'Remediation Projects and Goals & SLAs' platform permission",
+          "audit_note": "Remediation project exports evidence that vulnerabilities are tracked to closure with owners and due dates, not just detected",
+          "vendor_docs_url": "https://docs.rapid7.com/insightvm/remediation-workflow/"
+        },
+        {
+          "step": 4,
+          "action": "Click the Goals icon in the left navigation, open the Goals and SLAs view and screenshot each SLA card showing its Compliant / In grace period / Past due status and the compliance trend graph",
+          "permissions_required": "Global Administrator, or a site administrator with a Command Platform (Insight) account",
+          "audit_note": "SLA status against your documented remediation timescales is direct evidence for vulnerability remediation controls",
+          "vendor_docs_url": "https://docs.rapid7.com/insightvm/manage-goals-and-slas/"
+        },
+        {
+          "step": 5,
+          "action": "Upload the report outputs, CSV exports and screenshots to the evidence repository with the evidence ID reference",
+          "security_note": "Vulnerability reports name exploitable weaknesses on identified hosts — restrict access to authorised personnel and check exports before sharing outside the security team"
+        }
+      ]
+    },
+    "L2": {
+      "title": "InsightVM Scheduled Reports",
+      "estimated_time": "30-45 minutes (setup), then automated",
+      "frequency": "automated weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "In the Security Console, create or edit a report, open Configure advanced settings > Frequency and select 'Run a recurring report on a repeated schedule'; set the start date, time and repeat interval to match your evidence cadence (e.g. weekly)",
+          "permissions_required": "Report owner, Security Manager or Global Administrator",
+          "audit_note": "The schedule timezone is fixed at creation; record it so report timestamps reconcile with your evidence calendar",
+          "vendor_docs_url": "https://docs.rapid7.com/insightvm/creating-a-basic-report/"
+        },
+        {
+          "step": 2,
+          "action": "For scan-driven evidence, instead select 'Run a recurring report after each scan' so a fresh report is generated automatically on every scan completion of the scoped sites",
+          "permissions_required": "Report owner, Security Manager or Global Administrator",
+          "audit_note": "Scan-triggered reports tie each evidence artefact directly to a completed scan, evidencing both scan execution and its results in one artefact",
+          "vendor_docs_url": "https://docs.rapid7.com/insightvm/creating-a-basic-report/"
+        },
+        {
+          "step": 3,
+          "action": "For platform dashboards and Query Builder scopes, go to Reports > Cloud-Generated in InsightVM, create a report from Easy Reports templates, Your Dashboards or Export as CSV, and set a daily, weekly or monthly schedule",
+          "permissions_required": "Insight Platform user with InsightVM access",
+          "audit_note": "Cloud report schedules use your browser's timezone at creation and keep it thereafter; note it alongside the evidence",
+          "vendor_docs_url": "https://docs.rapid7.com/insightvm/create-cloud-reports/"
+        },
+        {
+          "step": 4,
+          "action": "Configure report distribution to a restricted, monitored compliance mailbox or shared location, and file each generated report into the evidence repository on receipt",
+          "security_note": "Limit distribution list membership to authorised personnel; scheduled reports contain host and vulnerability detail. External sharing of cloud reports issues view tokens by email — enable it only if required"
+        },
+        {
+          "step": 5,
+          "action": "Set a recurring check for missed report runs (console report history and cloud report run history) and record any gaps and their cause",
+          "audit_note": "Unexplained gaps in a scheduled evidence series weaken the evidence trail; documented gap handling preserves it"
+        }
+      ]
+    },
+    "L3": {
+      "title": "InsightVM API-Driven Automated Collection",
+      "estimated_time": "2-4 hours initial setup",
+      "frequency": "automated daily",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Create a dedicated local console account for automation via Administration > Users in the Security Console. The v3 console API authorises with HTTP Basic authentication and requires a Global Administrator local account for full endpoint coverage — use a dedicated service account, never a personal login",
+          "permissions_required": "Global Administrator (to create the account; the API account itself needs Global Administrator for full v3 API access)",
+          "security_note": "Store the account credentials in a secrets manager, restrict console network access to the collection host, and rotate the password on a defined schedule",
+          "vendor_docs_url": "https://docs.rapid7.com/insightvm/managing-users-and-authentication/"
+        },
+        {
+          "step": 2,
+          "action": "Pull inventory and findings from the v3 console API at https://<console>:3780/api/3/: GET /api/3/assets for the asset inventory, GET /api/3/sites for site scan status, and GET /api/3/vulnerabilities for finding detail, paging with the page and size parameters",
+          "permissions_required": "Global Administrator service account (Basic auth over HTTPS)",
+          "audit_note": "Reconcile the returned asset list against your CMDB or cloud inventory — coverage reconciliation evidences that scanning applies to all in-scope assets",
+          "vendor_docs_url": "https://help.rapid7.com/insightvm/en-us/api/index.html"
+        },
+        {
+          "step": 3,
+          "action": "Automate report artefacts: POST /api/3/reports/{id}/generate to run a saved report configuration, poll GET /api/3/reports/{id}/history/{instance} for completion, then download the output from GET /api/3/reports/{id}/history/{instance}/output",
+          "permissions_required": "Global Administrator service account",
+          "audit_note": "Console-generated reports are timestamped by InsightVM and reproduce the exact saved report configuration, giving a consistent artefact series",
+          "vendor_docs_url": "https://help.rapid7.com/insightvm/en-us/api/index.html"
+        },
+        {
+          "step": 4,
+          "action": "For Insight cloud data (including remediation projects and Query Builder scopes), generate a Platform API key: from the Command Platform Home page open Administration > API Key Management and create a User key (inherits your permissions) or, as a platform admin, an Organization key",
+          "permissions_required": "Any platform user (User key); Platform Administrator (Organization key)",
+          "security_note": "The key is shown only once at generation — store it immediately in a secrets manager. Prefer a least-privilege User key tied to a service identity over an Organization 'super key'",
+          "vendor_docs_url": "https://docs.rapid7.com/insight/managing-platform-api-keys/"
+        },
+        {
+          "step": 5,
+          "action": "Call the InsightVM Cloud Integrations API (v4) with the key in the X-Api-Key header against your regional base URL, e.g. POST https://us.api.insight.rapid7.com/vm/v4/integration/assets to search assets with their vulnerability counts and last-assessed timestamps",
+          "permissions_required": "Platform API key with InsightVM access",
+          "security_note": "Use the regional endpoint matching your data residency; read the key from the secrets manager at runtime and ensure pipeline logs never print the X-Api-Key header",
+          "vendor_docs_url": "https://help.rapid7.com/insightvm/en-us/api/integrations.html"
+        },
+        {
+          "step": 6,
+          "action": "Schedule the collection script daily via cron or a CI/CD pipeline with retries and alerting on failure, and validate each run: confirm outputs are non-empty and compare asset and vulnerability counts against the previous run's baseline, flagging anomalies for investigation",
+          "audit_note": "Run-over-run validation provides assurance of collection completeness"
+        }
+      ]
+    },
+    "L4": {
+      "title": "InsightVM Managed Evidence Pipeline with Warehouse and Metrics",
+      "estimated_time": "4-6 hours initial setup",
+      "frequency": "continuous with daily reporting",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Configure data warehousing: on the Security Console Administration page, click Manage data warehousing under Data Warehousing, point it at a dedicated PostgreSQL warehouse and set the export schedule; the ETL ships the full dimensional reporting model on each run",
+          "permissions_required": "Global Administrator (console); database owner rights on the warehouse",
+          "security_note": "Enable 'Encrypt data in transit' (SSL) for the ETL connection and encrypt the warehouse at rest yourself — it is not encrypted at rest by default",
+          "audit_note": "The warehouse accumulates scan history independently of console data retention, giving a durable, queryable evidence store",
+          "vendor_docs_url": "https://docs.rapid7.com/insightvm/configuring-data-warehousing-settings/"
+        },
+        {
+          "step": 2,
+          "action": "Note that InsightVM has no native webhook/event-push mechanism for findings; the closest real alternatives are the scheduled warehouse ETL plus daily Cloud Integrations API (v4) polling — combine both so the warehouse gives depth and the API gives freshness",
+          "audit_note": "Documenting the collection mechanism and its cadence honestly is itself part of a managed evidence process",
+          "vendor_docs_url": "https://help.rapid7.com/insightvm/en-us/api/integrations.html"
+        },
+        {
+          "step": 3,
+          "action": "Compute coverage completeness daily: reconcile assets returned by POST https://{region}.api.insight.rapid7.com/vm/v4/integration/assets against your authoritative asset inventory, and flag assets missing from InsightVM or with stale last-assessed timestamps",
+          "permissions_required": "Platform API key with InsightVM access",
+          "audit_note": "Inventory-versus-scan reconciliation is the core completeness metric for a vulnerability management pipeline",
+          "vendor_docs_url": "https://help.rapid7.com/insightvm/en-us/api/integrations.html"
+        },
+        {
+          "step": 4,
+          "action": "Track remediation performance continuously with Goals and SLAs and scheduled cloud reports built from dashboards and Query Builder scopes, delivering daily or weekly posture artefacts without manual intervention",
+          "permissions_required": "Insight Platform user with InsightVM access",
+          "vendor_docs_url": "https://docs.rapid7.com/insightvm/create-cloud-reports/"
+        },
+        {
+          "step": 5,
+          "action": "Run automated quality checks and a collection-health dashboard: warehouse ETL success/failure, gaps in the scan time series per site, stale-asset thresholds, SLA breach trends, with alerts on any ETL failure or coverage drop",
+          "audit_note": "The dashboard serves as continuous evidence of a managed collection process"
+        },
+        {
+          "step": 6,
+          "action": "Generate an automated quarterly collection-health report summarising scan coverage, ETL reliability, SLA performance, gaps and remediation, and file it in the evidence repository"
+        }
+      ]
+    }
+  }
+}

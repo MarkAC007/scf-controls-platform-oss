@@ -1,0 +1,127 @@
+{
+  "slug": "crowdstrike",
+  "name": "CrowdStrike Falcon",
+  "vendor": "CrowdStrike, Inc.",
+  "category": "Endpoint Detection & Response",
+  "description": "Cloud-native EDR/XDR platform (Falcon).",
+  "website": "https://www.crowdstrike.com",
+  "aliases": [
+    "crowdstrike",
+    "falcon",
+    "crowdstrike falcon"
+  ],
+  "logo_hint": "crowdstrike",
+  "system_type": "security_tool",
+  "version": "1.0",
+  "recipes": {
+    "L1": {
+      "title": "CrowdStrike Falcon Manual Evidence Collection",
+      "estimated_time": "10 minutes",
+      "frequency": "weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Sign in to the CrowdStrike Falcon console (falcon.crowdstrike.com)",
+          "permissions_required": "Falcon Analyst or Read-Only Analyst",
+          "security_note": "Use the minimum privilege role; avoid using Falcon Administrator for read-only tasks",
+          "vendor_docs_url": "https://falcon.crowdstrike.com/documentation/page/d3c4541e/falcon-console-overview"
+        },
+        {
+          "step": 2,
+          "action": "Navigate to Activity > Detections and set the time filter to the evidence collection period",
+          "audit_note": "Falcon detection events include kill chain stage, MITRE ATT&CK mapping, and severity"
+        },
+        {
+          "step": 3,
+          "action": "Apply filters for severity level and detection status as needed, then click Export to download as CSV",
+          "permissions_required": "Falcon Analyst with export capability"
+        },
+        {
+          "step": 4,
+          "action": "Navigate to Host Management > Sensor Coverage to verify endpoint protection coverage",
+          "audit_note": "Sensor coverage percentage is key evidence for endpoint protection controls"
+        },
+        {
+          "step": 5,
+          "action": "Export the sensor coverage report and dashboard screenshot for coverage evidence"
+        },
+        {
+          "step": 6,
+          "action": "Upload all exports to the evidence repository with evidence ID references"
+        }
+      ]
+    },
+    "L2": {
+      "title": "CrowdStrike Falcon Scheduled Report Collection",
+      "estimated_time": "45 minutes initial setup",
+      "frequency": "weekly automated",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Configure Falcon Scheduled Reports for detections, sensor coverage, and prevention policy compliance",
+          "permissions_required": "Falcon Administrator",
+          "vendor_docs_url": "https://falcon.crowdstrike.com/documentation/46/falcon-reports"
+        },
+        {
+          "step": 2,
+          "action": "Set up email delivery of scheduled reports to evidence collection mailbox on weekly cadence"
+        },
+        {
+          "step": 3,
+          "action": "Create a Falcon custom dashboard summarising endpoint protection posture as visual evidence",
+          "audit_note": "Dashboard screenshots serve as evidence of continuous endpoint monitoring"
+        }
+      ]
+    },
+    "L3": {
+      "title": "CrowdStrike Falcon API-Driven Collection",
+      "estimated_time": "3 hours initial setup",
+      "frequency": "automated daily",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Create CrowdStrike API client with Detections Read, Hosts Read, and Prevention Policies Read scopes",
+          "permissions_required": "Falcon Administrator",
+          "vendor_docs_url": "https://falcon.crowdstrike.com/documentation/46/crowdstrike-oauth2-based-apis",
+          "security_note": "Store client ID and secret in a secrets manager. Rotate annually."
+        },
+        {
+          "step": 2,
+          "action": "Implement automated daily collection: GET /detects/queries/detects/v1 for detections, /devices/queries/devices/v1 for coverage"
+        },
+        {
+          "step": 3,
+          "action": "Configure SIEM integration via Falcon Data Replicator (FDR) or Falcon LogScale for real-time event streaming"
+        },
+        {
+          "step": 4,
+          "action": "Set up automated sensor coverage gap detection — flag endpoints missing Falcon agent",
+          "audit_note": "Coverage gap reporting demonstrates proactive security management"
+        }
+      ]
+    },
+    "L4": {
+      "title": "CrowdStrike Managed Endpoint Evidence Pipeline",
+      "estimated_time": "4 hours initial setup",
+      "frequency": "continuous with weekly reporting",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Deploy Falcon Spotlight vulnerability metrics alongside detection data for holistic endpoint evidence"
+        },
+        {
+          "step": 2,
+          "action": "Build endpoint evidence dashboard: detection-to-resolution MTTR, sensor coverage %, prevention policy compliance, vulnerability remediation rate"
+        },
+        {
+          "step": 3,
+          "action": "Implement automated weekly evidence quality validation — verify all expected data sources are reporting within SLA"
+        },
+        {
+          "step": 4,
+          "action": "Generate automated monthly endpoint protection evidence package: detection trends, coverage metrics, policy compliance, vulnerability posture"
+        }
+      ]
+    }
+  }
+}

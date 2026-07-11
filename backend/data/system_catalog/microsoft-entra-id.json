@@ -1,0 +1,148 @@
+{
+  "slug": "microsoft-entra-id",
+  "name": "Microsoft Entra ID",
+  "vendor": "Microsoft Corporation",
+  "category": "Identity & Access Management",
+  "description": "Microsoft's cloud identity platform (formerly Azure Active Directory).",
+  "website": "https://www.microsoft.com/en-gb/security/business/identity-access/microsoft-entra-id",
+  "aliases": [
+    "entra",
+    "entra id",
+    "azure ad",
+    "azure active directory",
+    "microsoft entra"
+  ],
+  "logo_hint": "microsoft-entra",
+  "system_type": "identity_provider",
+  "version": "1.0",
+  "recipes": {
+    "L1": {
+      "title": "Entra ID Manual Evidence Collection",
+      "estimated_time": "10 minutes",
+      "frequency": "weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Sign in to the Microsoft Entra admin center (entra.microsoft.com) > Identity > Monitoring > Sign-in logs",
+          "permissions_required": "Reports Reader or Security Reader",
+          "security_note": "Use a least-privilege role; Global Reader works but is broader than needed",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/entra/identity/monitoring-health/concept-sign-ins"
+        },
+        {
+          "step": 2,
+          "action": "Set the date range filter to the evidence collection period",
+          "audit_note": "Entra ID retains sign-in logs for 30 days (free) or 30 days+ (P1/P2 license)"
+        },
+        {
+          "step": 3,
+          "action": "Apply filters: Status = Success/Failure, Conditional Access = desired policy, or MFA requirement as needed",
+          "permissions_required": "Reports Reader"
+        },
+        {
+          "step": 4,
+          "action": "Click Download > CSV to export the filtered sign-in data",
+          "audit_note": "CSV includes correlation ID for cross-referencing with other logs"
+        },
+        {
+          "step": 5,
+          "action": "For audit logs, navigate to Identity > Monitoring > Audit logs and repeat the export process",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/entra/identity/monitoring-health/concept-audit-logs"
+        },
+        {
+          "step": 6,
+          "action": "Upload both exports to the evidence repository with the evidence ID reference",
+          "security_note": "Review exports for any PII that should be redacted before sharing"
+        }
+      ]
+    },
+    "L2": {
+      "title": "Entra ID Diagnostic Settings Automated Collection",
+      "estimated_time": "20 minutes (setup), then automated",
+      "frequency": "automated continuous",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Navigate to Entra admin center > Identity > Monitoring > Diagnostic settings > Add diagnostic setting",
+          "permissions_required": "Security Administrator or Global Administrator",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/entra/identity/monitoring-health/howto-configure-diagnostic-settings"
+        },
+        {
+          "step": 2,
+          "action": "Select the log categories to stream: SignInLogs, AuditLogs, NonInteractiveUserSignInLogs, ManagedIdentitySignInLogs",
+          "audit_note": "Streaming to Log Analytics extends retention beyond the default 30 days"
+        },
+        {
+          "step": 3,
+          "action": "Configure destination: Send to Log Analytics workspace for querying, or Archive to storage account for long-term retention",
+          "security_note": "Ensure the storage account has encryption at rest and restricted access"
+        },
+        {
+          "step": 4,
+          "action": "Create saved KQL queries in Log Analytics for your evidence types (e.g., MFA usage, conditional access outcomes)",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/entra/identity/monitoring-health/howto-analyze-sign-ins-log-analytics"
+        },
+        {
+          "step": 5,
+          "action": "Set up scheduled query alerts in Azure Monitor for compliance-critical events",
+          "audit_note": "Scheduled queries can export results to storage for automated evidence archival"
+        }
+      ]
+    },
+    "L3": {
+      "title": "Entra ID Automated Log Streaming",
+      "estimated_time": "2 hours initial setup",
+      "frequency": "automated continuous",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Configure Entra ID Diagnostic Settings to stream Sign-in Logs and Audit Logs to Log Analytics Workspace",
+          "permissions_required": "Global Administrator or Security Administrator",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/entra/identity/monitoring-health/howto-integrate-activity-logs-with-azure-monitor-logs"
+        },
+        {
+          "step": 2,
+          "action": "Create KQL queries in Log Analytics to extract evidence-specific data — MFA usage, conditional access hits, risky sign-ins"
+        },
+        {
+          "step": 3,
+          "action": "Schedule Logic App or Azure Function to run daily KQL queries and export results to evidence repository"
+        },
+        {
+          "step": 4,
+          "action": "Configure Azure Monitor alerts for collection failures and anomalous event volumes",
+          "audit_note": "Alerting on collection failures demonstrates process maturity"
+        },
+        {
+          "step": 5,
+          "action": "Set up automated weekly identity governance reports — access reviews, privilege changes, guest account activity"
+        }
+      ]
+    },
+    "L4": {
+      "title": "Entra ID Managed Identity Governance Pipeline",
+      "estimated_time": "4 hours initial setup",
+      "frequency": "continuous with monthly reporting",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Deploy Microsoft Entra ID Governance with automated access reviews on a recurring schedule",
+          "permissions_required": "Identity Governance Administrator",
+          "vendor_docs_url": "https://learn.microsoft.com/en-us/entra/id-governance/access-reviews-overview"
+        },
+        {
+          "step": 2,
+          "action": "Configure Privileged Identity Management (PIM) with just-in-time activation metrics tracking",
+          "audit_note": "PIM activation logs serve as evidence of least-privilege enforcement"
+        },
+        {
+          "step": 3,
+          "action": "Build identity evidence dashboard: access review completion rates, PIM activation frequency, conditional access coverage"
+        },
+        {
+          "step": 4,
+          "action": "Implement automated quarterly identity attestation report generation with trend analysis"
+        }
+      ]
+    }
+  }
+}

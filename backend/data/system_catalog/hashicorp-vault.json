@@ -1,0 +1,194 @@
+{
+  "slug": "hashicorp-vault",
+  "name": "HashiCorp Vault",
+  "vendor": "HashiCorp, Inc. (IBM)",
+  "category": "Secrets Management",
+  "description": "Secrets management platform for storing, dynamically generating and brokering access to credentials, with policy-based access control and detailed audit devices. Evidence covers audit device configuration, audit logs, policies, auth methods and lease/TTL settings.",
+  "website": "https://www.hashicorp.com/products/vault",
+  "aliases": [
+    "vault",
+    "hashicorp vault",
+    "hcp vault"
+  ],
+  "logo_hint": "hashicorp-vault",
+  "system_type": "security_tool",
+  "version": "1.0",
+  "recipes": {
+    "L1": {
+      "title": "Vault Manual Configuration and Audit Log Collection",
+      "estimated_time": "20 minutes",
+      "frequency": "weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Authenticate to Vault with a dedicated auditor token (vault login), then run 'vault audit list -detailed' to capture the enabled audit devices and their configuration (type, file path, log format)",
+          "permissions_required": "Vault token with a policy granting read and sudo on sys/audit",
+          "security_note": "Never use the root token for evidence collection — use a token bound to a least-privilege auditor policy",
+          "audit_note": "Evidence that at least one audit device is enabled demonstrates all authenticated requests and responses are being logged",
+          "vendor_docs_url": "https://developer.hashicorp.com/vault/docs/audit"
+        },
+        {
+          "step": 2,
+          "action": "Run 'vault auth list -detailed' to export the enabled auth methods with their accessors, default TTLs, max TTLs and token types",
+          "permissions_required": "Vault token with read and sudo on sys/auth",
+          "audit_note": "Auth method inventory evidences which authentication mechanisms can mint Vault tokens and their lifetime limits",
+          "vendor_docs_url": "https://developer.hashicorp.com/vault/docs/commands/auth/list"
+        },
+        {
+          "step": 3,
+          "action": "Run 'vault policy list' followed by 'vault policy read <name>' for each key policy, saving the HCL output to date-stamped files",
+          "permissions_required": "Vault token with read on sys/policies/acl and list on sys/policies/acl",
+          "audit_note": "Policy documents are the authoritative statement of who may access which secret paths and with what capabilities",
+          "vendor_docs_url": "https://developer.hashicorp.com/vault/docs/concepts/policies"
+        },
+        {
+          "step": 4,
+          "action": "Run 'vault secrets list -detailed' to export the mounted secrets engines including their default and max lease TTLs per mount",
+          "permissions_required": "Vault token with read and sudo on sys/mounts",
+          "audit_note": "Per-mount TTL settings evidence credential lifetime controls for dynamic secrets",
+          "vendor_docs_url": "https://developer.hashicorp.com/vault/docs/commands/secrets/list"
+        },
+        {
+          "step": 5,
+          "action": "Extract a sample of audit log entries covering the collection period from the file audit device path (e.g. the last 7 days from /var/log/vault/vault_audit.log)",
+          "permissions_required": "Operating system read access to the audit log path on the Vault host",
+          "security_note": "Sensitive values in audit logs are HMAC-hashed by Vault, but logs still reveal paths, identities and metadata — handle as confidential",
+          "audit_note": "Audit entries are timestamped by Vault and hashed values allow verification without exposing secrets",
+          "vendor_docs_url": "https://developer.hashicorp.com/vault/docs/audit"
+        },
+        {
+          "step": 6,
+          "action": "Upload the command outputs and audit log sample to the evidence repository with date-stamped filenames and evidence ID references",
+          "security_note": "Review outputs for any accidentally captured plaintext secrets or tokens before uploading"
+        }
+      ]
+    },
+    "L2": {
+      "title": "Vault Scheduled Configuration Snapshots and Rotated Audit Logs",
+      "estimated_time": "1 hour initial setup, then automated",
+      "frequency": "automated weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Vault has no built-in scheduled report or export feature — the closest reliable alternative is a scheduled job (cron/systemd timer) running read-only Vault CLI commands, combined with rotated audit log files",
+          "audit_note": "Documenting this design decision evidences a deliberate, repeatable collection process"
+        },
+        {
+          "step": 2,
+          "action": "Create a dedicated auditor policy granting read (and sudo where required) on sys/audit, sys/auth, sys/mounts and sys/policies/acl, and issue a renewable token bound to it for the scheduled job",
+          "permissions_required": "Vault administrator able to write policies and create tokens",
+          "security_note": "Bind the token to the auditor policy only, set a bounded TTL, and store it in the host's credential store — never in the crontab or scripts",
+          "vendor_docs_url": "https://developer.hashicorp.com/vault/docs/concepts/policies"
+        },
+        {
+          "step": 3,
+          "action": "Schedule the job to run 'vault audit list -detailed -format=json', 'vault auth list -format=json', 'vault secrets list -detailed -format=json' and 'vault policy list -format=json', writing date-stamped JSON snapshots to the evidence share",
+          "permissions_required": "Token bound to the auditor policy",
+          "audit_note": "Machine-generated JSON snapshots on a fixed cadence give consistent, comparable configuration evidence",
+          "vendor_docs_url": "https://developer.hashicorp.com/vault/docs/commands/secrets/list"
+        },
+        {
+          "step": 4,
+          "action": "Configure log rotation (e.g. logrotate) for the file audit device path so each period produces a closed, date-stamped audit log file, using a copy-then-truncate or SIGHUP-based rotation that Vault supports",
+          "permissions_required": "Operating system administrator on the Vault host",
+          "audit_note": "Closed, rotated log files are effectively immutable period records — verify no events are lost at rotation boundaries",
+          "vendor_docs_url": "https://developer.hashicorp.com/vault/docs/audit/best-practices"
+        },
+        {
+          "step": 5,
+          "action": "Deliver the snapshots and rotated audit logs to the evidence repository automatically, and record each cycle's completion and period coverage in the evidence tracker",
+          "security_note": "Restrict the evidence share to authorised compliance personnel — audit logs contain identity and access metadata"
+        }
+      ]
+    },
+    "L3": {
+      "title": "Vault API-Driven Automated Collection via AppRole",
+      "estimated_time": "3 hours initial setup",
+      "frequency": "automated daily",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Enable the AppRole auth method ('vault auth enable approle') and create a role for the collection service with token_policies set to the auditor policy and a short token_ttl (e.g. 20m)",
+          "permissions_required": "Vault administrator with write on sys/auth and auth/approle",
+          "security_note": "AppRole gives the collector machine identity without embedding a long-lived human token",
+          "vendor_docs_url": "https://developer.hashicorp.com/vault/docs/auth/approle"
+        },
+        {
+          "step": 2,
+          "action": "Write the auditor policy in HCL granting only the paths needed, e.g. path \"sys/audit\" { capabilities = [\"read\", \"sudo\"] }, plus read on sys/auth and sys/mounts and read/list on sys/policies/acl",
+          "permissions_required": "Vault administrator with write on sys/policies/acl",
+          "audit_note": "A least-privilege collection policy is itself evidence of access control discipline",
+          "vendor_docs_url": "https://developer.hashicorp.com/vault/docs/concepts/policies"
+        },
+        {
+          "step": 3,
+          "action": "Configure the collection script to authenticate with POST /v1/auth/approle/login (role_id + secret_id), then call GET /v1/sys/audit, GET /v1/sys/auth, GET /v1/sys/mounts and LIST /v1/sys/policies/acl with the X-Vault-Token header, storing responses as date-stamped JSON",
+          "permissions_required": "AppRole role_id and secret_id bound to the auditor policy",
+          "audit_note": "The /v1/sys/mounts response includes default_lease_ttl and max_lease_ttl per mount — direct evidence of credential lifetime controls",
+          "vendor_docs_url": "https://developer.hashicorp.com/vault/api-docs/system/mounts"
+        },
+        {
+          "step": 4,
+          "action": "Store the role_id and secret_id in a secrets store on the collector, use response wrapping when delivering the secret_id, and set secret_id_ttl and secret_id_num_uses to bound its exposure",
+          "security_note": "Never persist the secret_id in plaintext config; rotate it on schedule and rely on the short-lived login token for each run",
+          "vendor_docs_url": "https://developer.hashicorp.com/vault/docs/auth/approle/approle-pattern"
+        },
+        {
+          "step": 5,
+          "action": "Implement error handling and alerting for failed runs, including 403 responses that indicate policy drift or an expired/revoked secret_id",
+          "audit_note": "Failed collections should be logged and trigger re-collection within SLA",
+          "vendor_docs_url": "https://developer.hashicorp.com/vault/api-docs/system/audit"
+        },
+        {
+          "step": 6,
+          "action": "Validate each run by diffing the collected audit devices, auth methods, mounts and policy list against the approved baseline, flagging any unexpected additions, removals or TTL changes",
+          "audit_note": "Baseline drift detection turns configuration snapshots into continuous change evidence"
+        }
+      ]
+    },
+    "L4": {
+      "title": "Vault Continuous Audit Streaming Pipeline with Metrics",
+      "estimated_time": "4-6 hours initial setup",
+      "frequency": "continuous with daily reporting",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Enable a second audit device streaming to your SIEM collector — a socket audit device ('vault audit enable socket address=<collector>:<port> socket_type=tcp') or syslog device — alongside the existing file device",
+          "permissions_required": "Vault token with sudo on sys/audit",
+          "security_note": "Keep at least two audit devices enabled: Vault blocks all requests if every audit device fails to write, so a resilient pair protects both availability and evidence continuity",
+          "audit_note": "Streaming plus file gives near-real-time evidence with a durable local fallback",
+          "vendor_docs_url": "https://developer.hashicorp.com/vault/docs/audit/socket"
+        },
+        {
+          "step": 2,
+          "action": "Alternatively (or additionally) ship the file audit device output with a log forwarder (e.g. Fluent Bit, Splunk forwarder) to the SIEM, following Vault's audit logging best practices for rotation and delivery guarantees",
+          "permissions_required": "Operating system administrator on the Vault host plus SIEM administrator",
+          "audit_note": "Forwarding the file device avoids the blocking risk of a slow network audit device while still centralising evidence",
+          "vendor_docs_url": "https://developer.hashicorp.com/vault/docs/audit/best-practices"
+        },
+        {
+          "step": 3,
+          "action": "Configure completeness metrics in the SIEM: audit events per day, ingestion latency, and per-node coverage across the Vault cluster, cross-checked against Vault telemetry and the health endpoint (GET /v1/sys/health)",
+          "permissions_required": "SIEM administrator; unauthenticated or minimally privileged access for /v1/sys/health",
+          "audit_note": "Completeness metrics are key evidence of a managed collection process",
+          "vendor_docs_url": "https://developer.hashicorp.com/vault/api-docs/system/health"
+        },
+        {
+          "step": 4,
+          "action": "Set up automated quality checks — validate audit entry schema, confirm sensitive fields remain HMAC-hashed, detect gaps in the event time series and duplicate request IDs",
+          "audit_note": "Gap and duplicate detection on request-level audit data underpins the integrity claim for the whole pipeline"
+        },
+        {
+          "step": 5,
+          "action": "Create a dashboard showing pipeline health (events/day per audit device, latency, blocked-device alerts, failed forwarder deliveries) alongside daily configuration snapshot status from the L3 collector",
+          "audit_note": "The dashboard serves as continuous evidence of process health"
+        },
+        {
+          "step": 6,
+          "action": "Implement an automated quarterly review that reconciles SIEM event counts against rotated file audit logs, generates a collection health report and flags any SLA breaches or unexplained gaps",
+          "audit_note": "Independent reconciliation between the streaming and file devices validates end-to-end completeness"
+        }
+      ]
+    }
+  }
+}

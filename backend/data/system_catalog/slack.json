@@ -1,0 +1,180 @@
+{
+  "slug": "slack",
+  "name": "Slack",
+  "vendor": "Slack Technologies (Salesforce)",
+  "category": "Team Communication",
+  "description": "Team messaging and collaboration platform. Yields evidence of retention and external-sharing policy, app governance, membership and access reports, and (on Enterprise Grid) organisation-wide audit logs.",
+  "website": "https://slack.com",
+  "aliases": [
+    "slack",
+    "slack enterprise grid"
+  ],
+  "logo_hint": "slack",
+  "system_type": "communication",
+  "version": "1.0",
+  "recipes": {
+    "L1": {
+      "title": "Slack Manual Evidence Collection",
+      "estimated_time": "20 minutes",
+      "frequency": "weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Navigate to Workspace Settings (click your workspace name > Tools & settings > Workspace settings) and screenshot the Message & File Retention configuration",
+          "permissions_required": "Workspace Owner",
+          "audit_note": "Capture the full browser window so the workspace URL and date are visible in the screenshot",
+          "vendor_docs_url": "https://slack.com/help/articles/203457187-Customize-data-retention-in-Slack"
+        },
+        {
+          "step": 2,
+          "action": "In Workspace Settings, open the Permissions tab and screenshot the Slack Connect settings governing external channel and DM invitations",
+          "permissions_required": "Workspace Owner (Org Owner for organisation-level Slack Connect policies)",
+          "audit_note": "External sharing policy evidence should show who may send and accept Slack Connect invitations",
+          "vendor_docs_url": "https://slack.com/help/articles/360050528953-Manage-settings-and-permissions-for-Slack-Connect-channels"
+        },
+        {
+          "step": 3,
+          "action": "Navigate to Admin > Apps and workflows > App Management Settings and capture the app approval policy and the list of approved/restricted apps",
+          "permissions_required": "Workspace Owner or App Manager",
+          "audit_note": "Demonstrates that third-party app installation is governed by an approval process",
+          "vendor_docs_url": "https://slack.com/help/articles/222386767-Manage-app-approval-for-your-workspace"
+        },
+        {
+          "step": 4,
+          "action": "Open the analytics dashboard (Tools & settings > Workspace analytics), select the Members tab and click Export CSV for a member and activity report",
+          "permissions_required": "Workspace Owner or Workspace Admin",
+          "audit_note": "The CSV includes account type, activity and deactivation status — useful for access review evidence",
+          "vendor_docs_url": "https://slack.com/help/articles/218407447-View-your-Slack-analytics-dashboard"
+        },
+        {
+          "step": 5,
+          "action": "On Enterprise Grid, open the organisation admin dashboard > Security > Audit Logs, filter by date range and export administrative and sign-in events",
+          "permissions_required": "Org Owner",
+          "audit_note": "Audit logs are only available on the Enterprise Grid plan; entries are timestamped by Slack and read-only",
+          "vendor_docs_url": "https://slack.com/help/articles/360000394286-Audit-logs-in-Slack"
+        },
+        {
+          "step": 6,
+          "action": "Upload the screenshots and CSV exports to the evidence repository with date-stamped filenames and the evidence ID reference",
+          "security_note": "Review exports for message content, personal data or tokens before uploading; redact where required"
+        }
+      ]
+    },
+    "L2": {
+      "title": "Slack Scheduled Exports Collection",
+      "estimated_time": "15 minutes (setup), then automated",
+      "frequency": "automated weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Navigate to Workspace Settings > Import/Export Data (Admin > Workspace settings, then the Import & export data option)",
+          "permissions_required": "Workspace Owner",
+          "vendor_docs_url": "https://slack.com/help/articles/201658943-Export-your-workspace-data"
+        },
+        {
+          "step": 2,
+          "action": "On Business+ or Enterprise Grid, choose Schedule Exports and set the frequency (daily, weekly or monthly) to match your evidence collection cadence",
+          "permissions_required": "Workspace Owner (org-wide exports on Enterprise Grid require Org Owner approval)",
+          "audit_note": "Each scheduled export covers only the period since the previous run — keep the schedule unbroken to avoid evidence gaps",
+          "vendor_docs_url": "https://slack.com/help/articles/201658943-Export-your-workspace-data"
+        },
+        {
+          "step": 3,
+          "action": "When each export completes, download the ZIP archive from the notification link and file it in the evidence repository",
+          "security_note": "Export archives can contain message content; restrict the download link and store per your data classification policy",
+          "audit_note": "Slack timestamps each export job; retain the completion notification alongside the archive"
+        },
+        {
+          "step": 4,
+          "action": "Screenshot the configured export schedule itself as standing evidence that collection is automated",
+          "audit_note": "The schedule configuration demonstrates a repeatable, defined collection process"
+        },
+        {
+          "step": 5,
+          "action": "Supplement with a recurring monthly Export CSV from the analytics dashboard Members tab, as Slack does not schedule member reports automatically",
+          "permissions_required": "Workspace Owner or Workspace Admin",
+          "vendor_docs_url": "https://slack.com/help/articles/218407447-View-your-Slack-analytics-dashboard"
+        }
+      ]
+    },
+    "L3": {
+      "title": "Slack API-Driven Automated Collection",
+      "estimated_time": "2-4 hours initial setup",
+      "frequency": "automated daily",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Create a Slack app at api.slack.com/apps requesting the auditlogs:read user scope, then have an Org Owner install it at the organisation level (not a single workspace)",
+          "permissions_required": "Org Owner (Enterprise Grid)",
+          "security_note": "Store the resulting OAuth token in a secrets manager and treat it as a privileged credential; rotate on personnel change",
+          "audit_note": "The Audit Logs API is only available on Enterprise Grid — on other plans use scheduled exports (L2) instead",
+          "vendor_docs_url": "https://docs.slack.dev/admins/audit-logs-api/"
+        },
+        {
+          "step": 2,
+          "action": "Configure a scheduled script to call GET https://api.slack.com/audit/v1/logs with oldest/latest timestamps and action filters (e.g. user_login, app_approved, pref.retention_changed)",
+          "permissions_required": "Org-level OAuth token with auditlogs:read scope",
+          "vendor_docs_url": "https://docs.slack.dev/admins/audit-logs-api/"
+        },
+        {
+          "step": 3,
+          "action": "Collect the member list on any plan via GET https://slack.com/api/users.list (users:read scope) for automated access review evidence",
+          "permissions_required": "Bot or user token with users:read scope",
+          "vendor_docs_url": "https://docs.slack.dev/reference/methods/users.list/"
+        },
+        {
+          "step": 4,
+          "action": "Schedule the collection daily via cron or a CI/CD pipeline, writing date-stamped output to the evidence repository",
+          "security_note": "Never embed tokens in scripts or config files; inject them at runtime from the secrets manager"
+        },
+        {
+          "step": 5,
+          "action": "Implement error handling and alerting so failed runs (HTTP errors, rate limits, empty responses) page the evidence owner",
+          "audit_note": "Failed collections should trigger re-collection within your defined SLA and be recorded"
+        },
+        {
+          "step": 6,
+          "action": "Validate each run against a baseline event volume and alert if daily counts drop unexpectedly",
+          "audit_note": "Volume validation provides assurance of collection completeness"
+        }
+      ]
+    },
+    "L4": {
+      "title": "Slack Managed Evidence Pipeline with Metrics",
+      "estimated_time": "4-8 hours initial setup",
+      "frequency": "continuous with daily reporting",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Feed Slack audit events continuously into your SIEM: Slack has no native webhook push for audit logs, so use your SIEM's Slack Audit connector (Splunk, Datadog, Google SecOps) or near-real-time polling of GET https://api.slack.com/audit/v1/logs every 5-15 minutes with cursor pagination",
+          "permissions_required": "Org Owner to authorise the connector (Enterprise Grid)",
+          "security_note": "Grant the connector only the auditlogs:read scope and restrict its token to the SIEM integration",
+          "audit_note": "Be honest in audit narratives that collection is high-frequency polling, not vendor push",
+          "vendor_docs_url": "https://docs.slack.dev/admins/audit-logs-api/"
+        },
+        {
+          "step": 2,
+          "action": "Track collection completeness metrics: events per day per workspace, ingest latency, and coverage across all workspaces in the organisation",
+          "audit_note": "Completeness metrics are key evidence of a managed collection process"
+        },
+        {
+          "step": 3,
+          "action": "Implement automated quality checks — deduplicate on the audit event id field, detect time-series gaps between polling windows, and validate schema consistency"
+        },
+        {
+          "step": 4,
+          "action": "Build a collection-health dashboard showing events/day, p95 ingest latency, workspace coverage and failed polling runs",
+          "audit_note": "The dashboard serves as continuous evidence of process health"
+        },
+        {
+          "step": 5,
+          "action": "Alert on collection gaps (no events received within an expected window) and on scheduled export failures so gaps are remediated within SLA"
+        },
+        {
+          "step": 6,
+          "action": "Generate an automated quarterly collection-health report covering volumes, gaps and SLA breaches, and file it as evidence of continuous monitoring"
+        }
+      ]
+    }
+  }
+}

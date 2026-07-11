@@ -1,0 +1,175 @@
+{
+  "slug": "jamf-pro",
+  "name": "Jamf Pro",
+  "vendor": "Jamf Software, LLC",
+  "category": "Apple Device Management",
+  "description": "Apple endpoint management platform for macOS, iOS and iPadOS. Yields smart group compliance reports, configuration profile deployment status, FileVault recovery key escrow evidence and device inventory via advanced computer searches and the Jamf Pro API.",
+  "website": "https://www.jamf.com/products/jamf-pro/",
+  "aliases": [
+    "jamf",
+    "jamf pro"
+  ],
+  "logo_hint": "jamf",
+  "system_type": "endpoint_management",
+  "version": "1.0",
+  "recipes": {
+    "L1": {
+      "title": "Jamf Pro Manual Evidence Collection",
+      "estimated_time": "15 minutes",
+      "frequency": "weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Sign in to Jamf Pro and navigate to Computers > Smart Computer Groups; open each compliance smart group (e.g. 'FileVault Not Enabled', 'OS Out of Date') and review the membership count and list",
+          "permissions_required": "Jamf Pro account with read privileges for Smart Computer Groups",
+          "security_note": "Use a dedicated read-only Jamf Pro account for evidence collection, not a full administrator login",
+          "vendor_docs_url": "https://learn.jamf.com/r/en-US/jamf-pro-documentation-current/Smart_Groups"
+        },
+        {
+          "step": 2,
+          "action": "Navigate to Computers > Search Inventory, run the saved advanced computer search for your compliance criteria (encryption state, OS version, last check-in) and select Export to download the results as CSV",
+          "permissions_required": "Jamf Pro account with read privileges for Advanced Computer Searches",
+          "audit_note": "Export results reflect each device's last inventory submission — include the Last Inventory Update column so evidence freshness is verifiable",
+          "vendor_docs_url": "https://learn.jamf.com/r/en-US/jamf-pro-documentation-current/Advanced_Computer_Searches"
+        },
+        {
+          "step": 3,
+          "action": "Navigate to Computers > Configuration Profiles, open each security-relevant profile and record the deployment status (Completed/Pending/Failed counts) via screenshot or export",
+          "audit_note": "Capture failed installations as well — auditors expect exceptions to be visible and tracked, not filtered out",
+          "vendor_docs_url": "https://learn.jamf.com/r/en-US/jamf-pro-documentation-current/Computer_Configuration_Profiles"
+        },
+        {
+          "step": 4,
+          "action": "Spot-check FileVault recovery key escrow: open a computer record and check Inventory > Disk Encryption shows a valid escrowed personal recovery key",
+          "permissions_required": "Jamf Pro account with the View Disk Encryption Recovery Key privilege (only if the key itself must be viewed)",
+          "security_note": "Evidence the escrow state, never the recovery key value — do not screenshot or export actual keys",
+          "vendor_docs_url": "https://learn.jamf.com/r/en-US/jamf-pro-documentation-current/Activating_FileVault_Disk_Encryption_using_a_Configuration_Profile"
+        },
+        {
+          "step": 5,
+          "action": "Upload the exports and screenshots to the evidence repository with date-stamped filenames and the evidence ID reference"
+        }
+      ]
+    },
+    "L2": {
+      "title": "Jamf Pro Smart Group Notifications and Saved Searches",
+      "estimated_time": "1 hour initial setup, then 10 minutes per cycle",
+      "frequency": "event-driven notifications, weekly export",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Configure SMTP server integration in Settings > System so Jamf Pro can send email notifications",
+          "permissions_required": "Jamf Pro Administrator",
+          "vendor_docs_url": "https://learn.jamf.com/r/en-US/jamf-pro-documentation-current/SMTP_Server_Integration"
+        },
+        {
+          "step": 2,
+          "action": "On each compliance smart computer group, enable 'Send email notification on membership change' so drift out of compliance is reported automatically to the compliance mailbox",
+          "audit_note": "Notification emails are vendor-timestamped and demonstrate continuous monitoring of compliance drift between collection cycles",
+          "vendor_docs_url": "https://learn.jamf.com/r/en-US/jamf-pro-documentation-current/Smart_Groups"
+        },
+        {
+          "step": 3,
+          "action": "Jamf Pro has no native scheduled report export — mitigate by saving an advanced computer search per evidence requirement so the weekly CSV export is a single click, or move to L3 API automation",
+          "vendor_docs_url": "https://learn.jamf.com/r/en-US/jamf-pro-documentation-current/Advanced_Computer_Searches"
+        },
+        {
+          "step": 4,
+          "action": "Review computer inventory collection settings (Settings > Computer Management) to confirm inventory update frequency supports your evidence cadence",
+          "permissions_required": "Jamf Pro Administrator",
+          "audit_note": "Evidence is only as fresh as the last inventory submission — a weekly report over stale inventory undermines evidentiary value",
+          "vendor_docs_url": "https://learn.jamf.com/r/en-US/jamf-pro-documentation-current/Computer_Inventory_Collection_Settings"
+        },
+        {
+          "step": 5,
+          "action": "File the notification emails and weekly search exports in the evidence repository each cycle",
+          "security_note": "Restrict the notification mailbox to authorised compliance personnel — membership changes reveal which devices are non-compliant"
+        }
+      ]
+    },
+    "L3": {
+      "title": "Jamf Pro API Automated Collection",
+      "estimated_time": "2-4 hours initial setup",
+      "frequency": "automated daily",
+      "steps": [
+        {
+          "step": 1,
+          "action": "In Jamf Pro, navigate to Settings > System > API Roles and Clients and create an API role with read-only privileges: Read Computers, Read Advanced Computer Searches and Read Smart Computer Groups",
+          "permissions_required": "Jamf Pro Administrator (to create API roles and clients)",
+          "security_note": "Grant the View Disk Encryption Recovery Key privilege only if key retrieval is genuinely required — escrow status can be evidenced without it",
+          "vendor_docs_url": "https://learn.jamf.com/r/en-US/jamf-pro-documentation-current/API_Roles_and_Clients"
+        },
+        {
+          "step": 2,
+          "action": "Create an API client assigned to that role, enable it and generate a client secret",
+          "security_note": "The client secret is displayed only once — store it immediately in a secrets manager, never in plaintext config. Rotating the secret is required if the client's roles change.",
+          "vendor_docs_url": "https://learn.jamf.com/r/en-US/jamf-pro-documentation-current/API_Roles_and_Clients"
+        },
+        {
+          "step": 3,
+          "action": "In the collection script, obtain an access token via POST /api/oauth/token with grant_type=client_credentials, client_id and client_secret",
+          "security_note": "Access tokens are short-lived — request a fresh token per run rather than caching long-lived credentials",
+          "vendor_docs_url": "https://developer.jamf.com/jamf-pro/docs/client-credentials"
+        },
+        {
+          "step": 4,
+          "action": "Call GET /api/v1/computers-inventory with the GENERAL, HARDWARE, OPERATING_SYSTEM and SECURITY sections (paginated) to export device inventory, encryption and compliance-relevant attributes daily",
+          "permissions_required": "API client with Read Computers privilege",
+          "audit_note": "Record the collection timestamp and total device count with each run so completeness can be reconciled",
+          "vendor_docs_url": "https://developer.jamf.com/jamf-pro/reference/get_v1-computers-inventory"
+        },
+        {
+          "step": 5,
+          "action": "For FileVault escrow evidence, call GET /api/v1/computers-inventory/filevault and record per-device escrow presence — discard the key material itself before writing evidence",
+          "permissions_required": "API client with Read Computers and View Disk Encryption Recovery Key privileges",
+          "security_note": "This endpoint returns personal recovery keys — process in memory, redact keys from stored evidence, and never log responses",
+          "vendor_docs_url": "https://developer.jamf.com/jamf-pro/reference/get_v1-computers-inventory-filevault"
+        },
+        {
+          "step": 6,
+          "action": "Schedule the script daily via cron or CI/CD, implement error handling and alerting for failed runs, and validate device counts against the previous run to detect silent gaps",
+          "audit_note": "Failed collections should trigger re-collection within SLA and be logged as exceptions"
+        }
+      ]
+    },
+    "L4": {
+      "title": "Jamf Pro Webhook-Driven Evidence Pipeline",
+      "estimated_time": "4-6 hours initial setup",
+      "frequency": "continuous with daily reconciliation",
+      "steps": [
+        {
+          "step": 1,
+          "action": "In Jamf Pro, navigate to Settings > Global > Webhooks and create webhooks for ComputerInventoryCompleted and SmartGroupComputerMembershipChange pointing at your evidence pipeline or SIEM receiver",
+          "permissions_required": "Jamf Pro Administrator",
+          "security_note": "Use an HTTPS endpoint with authentication enabled on the webhook — payloads identify devices and their compliance group membership",
+          "vendor_docs_url": "https://learn.jamf.com/r/en-US/jamf-pro-documentation-current/Webhooks"
+        },
+        {
+          "step": 2,
+          "action": "Route webhook events into your SIEM (e.g. via the Jamf-documented Splunk integration) so inventory completions and compliance group changes are captured continuously",
+          "vendor_docs_url": "https://learn.jamf.com/r/en-US/technical-paper-splunk-current/Jamf_Pro_Webhooks_for_Splunk"
+        },
+        {
+          "step": 3,
+          "action": "Jamf Pro webhooks are fire-and-forget with no delivery guarantee or replay — run a daily reconciliation against GET /api/v1/computers-inventory to detect and backfill missed events",
+          "audit_note": "The API reconciliation is what makes the webhook stream defensible as complete evidence",
+          "vendor_docs_url": "https://developer.jamf.com/jamf-pro/reference/get_v1-computers-inventory"
+        },
+        {
+          "step": 4,
+          "action": "Configure completeness and quality metrics: percentage of devices with inventory updated within the last 7 days, FileVault escrow coverage percentage, and smart group membership deltas per day",
+          "audit_note": "Coverage metrics against the full enrolment baseline demonstrate collection completeness, not just activity"
+        },
+        {
+          "step": 5,
+          "action": "Build a dashboard showing pipeline health (events per day, reconciliation mismatches, stale-inventory devices) and alert when webhook volume drops to zero or reconciliation finds gaps",
+          "audit_note": "The dashboard serves as continuous evidence of a managed collection process"
+        },
+        {
+          "step": 6,
+          "action": "Automate a quarterly collection-health report summarising missed events, backfills and SLA breaches, and file it in the evidence repository"
+        }
+      ]
+    }
+  }
+}
