@@ -14,6 +14,7 @@
  */
 
 export { MaturityBadge } from './MaturityBadge'
+export { MaturityStepper } from './MaturityStepper'
 export { MaturityAdvisoryCard } from './MaturityAdvisoryCard'
 export { MaturityDistributionWidget } from './MaturityDistributionWidget'
 

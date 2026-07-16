@@ -1,11 +1,14 @@
 import React, { useState, useEffect } from 'react'
 import { createSystem, updateSystem } from '../data/apiClient'
 import { SystemTemplatePicker } from './SystemTemplatePicker'
-import type { System, SystemInput, SystemType, SystemStatus, SystemCatalogTemplate } from '../types'
+import { VendorPicker } from './VendorPicker'
+import type { System, SystemInput, SystemType, SystemStatus, SystemCatalogTemplate, VendorSimple } from '../types'
 
 interface AddSystemModalProps {
   organizationId?: string
   editSystem?: System | null  // If provided, modal is in edit mode
+  /** Pre-fills (and links) a vendor — used when opening from a vendor's detail view */
+  initialVendor?: VendorSimple
   onClose: () => void
   onSuccess: () => void
 }
@@ -37,21 +40,28 @@ const systemStatuses: { value: SystemStatus; label: string }[] = [
 export const AddSystemModal: React.FC<AddSystemModalProps> = ({
   organizationId,
   editSystem,
+  initialVendor,
   onClose,
   onSuccess,
 }) => {
   const isEditMode = !!editSystem
 
-  // Add mode starts on the template picker; edit mode goes straight to the form
-  const [step, setStep] = useState<'pick' | 'form'>(isEditMode ? 'form' : 'pick')
+  // Add mode starts on the template picker; edit mode (and a pre-linked vendor)
+  // go straight to the form.
+  const [step, setStep] = useState<'pick' | 'form'>(
+    isEditMode || initialVendor ? 'form' : 'pick'
+  )
   const [selectedTemplate, setSelectedTemplate] = useState<SystemCatalogTemplate | null>(null)
+  // Canonical vendor link. The free-text `formData.vendor` is kept in sync for
+  // legacy display back-compat.
+  const [linkedVendor, setLinkedVendor] = useState<VendorSimple | null>(initialVendor ?? null)
 
   const [formData, setFormData] = useState<SystemInput>({
     name: '',
     system_type: 'custom',
     category: '',
     description: '',
-    vendor: '',
+    vendor: initialVendor?.name ?? '',
     status: 'active',
     connection_config: {},
     catalog_template_id: null,
@@ -72,8 +82,16 @@ export const AddSystemModal: React.FC<AddSystemModalProps> = ({
         connection_config: editSystem.connection_config || {},
         catalog_template_id: editSystem.catalog_template_id ?? null,
       })
+      setLinkedVendor(editSystem.linked_vendor ?? null)
     }
   }, [editSystem])
+
+  const handleVendorChange = (vendor: VendorSimple | null) => {
+    setLinkedVendor(vendor)
+    // Keep the legacy free-text column populated for display back-compat.
+    setFormData(prev => ({ ...prev, vendor: vendor?.name ?? '' }))
+    setError(null)
+  }
 
   const handleChange = (field: keyof SystemInput, value: string) => {
     setFormData(prev => ({ ...prev, [field]: value }))
@@ -116,11 +134,16 @@ export const AddSystemModal: React.FC<AddSystemModalProps> = ({
     setLoading(true)
     setError(null)
 
+    const payload: SystemInput = {
+      ...formData,
+      vendor_id: linkedVendor?.id ?? null,
+    }
+
     try {
       if (isEditMode && editSystem) {
-        await updateSystem(editSystem.id, formData, organizationId)
+        await updateSystem(editSystem.id, payload, organizationId)
       } else {
-        await createSystem(formData, organizationId)
+        await createSystem(payload, organizationId)
       }
       onSuccess()
     } catch (err: any) {
@@ -241,13 +264,11 @@ export const AddSystemModal: React.FC<AddSystemModalProps> = ({
             {/* Vendor */}
             <div className="form-group">
               <label htmlFor="vendor">Vendor</label>
-              <input
-                id="vendor"
-                type="text"
-                value={formData.vendor || ''}
-                onChange={(e) => handleChange('vendor', e.target.value)}
-                placeholder="e.g., Amazon Web Services"
-                disabled={loading}
+              <VendorPicker
+                organizationId={organizationId}
+                value={linkedVendor}
+                onChange={handleVendorChange}
+                suggestedName={!linkedVendor ? (selectedTemplate?.vendor || undefined) : undefined}
               />
             </div>
 

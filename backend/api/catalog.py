@@ -12,7 +12,7 @@ This data is seeded from SCF 2025.4 JSON files on application startup.
 """
 import logging
 from typing import Optional, List
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_, text
 from sqlalchemy.orm import load_only
@@ -62,8 +62,36 @@ router = APIRouter(prefix="/catalog", tags=["catalog"])
 # BULK EXPORT ENDPOINTS (for frontend initial load)
 # =============================================================================
 
+# Catalog data only changes on reseed, but the bulk exports are multi-megabyte
+# responses rebuilt on every app boot. An ETag derived from row count +
+# max(updated_at) lets the browser revalidate with If-None-Match and get a
+# bodiless 304 instead of the full payload (and skips the serialization work).
+_BULK_CACHE_CONTROL = "private, no-cache"
+
+
+async def _catalog_etag(db: AsyncSession, model) -> str:
+    row = (
+        await db.execute(
+            select(func.count(), func.max(model.updated_at)).select_from(model)
+        )
+    ).one()
+    stamp = row[1].isoformat() if row[1] else "empty"
+    return f'W/"{row[0]}-{stamp}"'
+
+
+def _not_modified(request: Request, etag: str) -> Optional[Response]:
+    if request.headers.get("if-none-match") == etag:
+        return Response(
+            status_code=304,
+            headers={"ETag": etag, "Cache-Control": _BULK_CACHE_CONTROL},
+        )
+    return None
+
+
 @router.get("/bulk/controls")
 async def bulk_export_controls(
+    request: Request,
+    response: Response,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_auth),
 ):
@@ -76,6 +104,12 @@ async def bulk_export_controls(
 
     Returns the same format as control_guidance.json for compatibility.
     """
+    etag = await _catalog_etag(db, SCFCatalogControl)
+    if (cached := _not_modified(request, etag)) is not None:
+        return cached
+    response.headers["ETag"] = etag
+    response.headers["Cache-Control"] = _BULK_CACHE_CONTROL
+
     result = await db.execute(
         select(SCFCatalogControl).order_by(SCFCatalogControl.scf_id)
     )
@@ -134,6 +168,8 @@ async def bulk_export_controls(
 
 @router.get("/bulk/evidence")
 async def bulk_export_evidence(
+    request: Request,
+    response: Response,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_auth),
 ):
@@ -142,6 +178,12 @@ async def bulk_export_evidence(
 
     Returns the same format as erl.json for compatibility.
     """
+    etag = await _catalog_etag(db, SCFCatalogEvidence)
+    if (cached := _not_modified(request, etag)) is not None:
+        return cached
+    response.headers["ETag"] = etag
+    response.headers["Cache-Control"] = _BULK_CACHE_CONTROL
+
     result = await db.execute(
         select(SCFCatalogEvidence).order_by(SCFCatalogEvidence.evidence_id)
     )

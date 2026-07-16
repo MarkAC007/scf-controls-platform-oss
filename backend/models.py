@@ -478,6 +478,7 @@ class EvidenceTracking(Base):
     owner = Column(String(255))  # Legacy text field
     frequency = Column(String(50))
     comments = Column(Text)
+    maturity_level = Column(String(2))  # Evidence collection maturity L0-L5
     created_at = Column(DateTime(timezone=False), server_default=func.now())
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now())
 
@@ -655,6 +656,15 @@ class System(Base):
         nullable=True,
     )
 
+    # Structural link to the rich TPRM Vendor entity. Distinct from the legacy
+    # free-text `vendor` column above (which is retained): this is the FK to the
+    # org-scoped vendors table. SET NULL so retiring a vendor never deletes systems.
+    vendor_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("vendors.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
     # Timestamps
     created_at = Column(DateTime(timezone=False), server_default=func.now())
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now())
@@ -666,6 +676,7 @@ class System(Base):
     # Relationships
     organization = relationship("Organization", back_populates="systems")
     catalog_template = relationship("SystemCatalogTemplate", foreign_keys=[catalog_template_id])
+    linked_vendor = relationship("Vendor", foreign_keys=[vendor_id], back_populates="systems")
     created_by = relationship("User", foreign_keys=[created_by_user_id])
     updated_by = relationship("User", foreign_keys=[updated_by_user_id])
     evidence_tracking = relationship("EvidenceTracking", back_populates="system")
@@ -1448,6 +1459,15 @@ class Vendor(Base):
     claim_verifications = relationship("VendorClaimVerification", back_populates="vendor", cascade="all, delete-orphan")
     action_items = relationship("VendorActionItem", back_populates="vendor", cascade="all, delete-orphan")
     compensating_controls = relationship("VendorCompensatingControl", back_populates="vendor", cascade="all, delete-orphan")
+    # Systems that reference this vendor. passive_deletes defers to the DB-level
+    # ON DELETE SET NULL on systems.vendor_id — deleting a vendor never cascades
+    # into (or deletes) its systems; their vendor_id is simply nulled.
+    systems = relationship(
+        "System",
+        back_populates="linked_vendor",
+        foreign_keys="System.vendor_id",
+        passive_deletes=True,
+    )
 
     def __repr__(self):
         return f"<Vendor(id={self.id}, name={self.name}, status={self.status})>"

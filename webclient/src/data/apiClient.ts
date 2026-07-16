@@ -147,7 +147,12 @@ async function apiFetch<T>(
       errorMessage = `Authentication failed: ${errorMessage}. Check console for details.`
     }
 
-    throw new Error(errorMessage)
+    // Preserve the HTTP status on the thrown error so callers can branch on it
+    // (e.g. VendorPicker distinguishing 409 duplicate from 403 tier-cap).
+    // Additive and backward compatible — existing callers only read `.message`.
+    const apiError = new Error(errorMessage) as Error & { status?: number }
+    apiError.status = response.status
+    throw apiError
   }
 
   // Handle 204 No Content (e.g. DELETE endpoints) — no body to parse
@@ -737,6 +742,7 @@ export interface EvidenceTracking {
   owner?: string | null
   frequency?: string | null
   comments?: string | null
+  maturity_level?: string | null
   created_at: string
   updated_at: string
 }
@@ -749,6 +755,7 @@ export interface EvidenceTrackingInput {
   owner?: string | null
   frequency?: string | null
   comments?: string | null
+  maturity_level?: string | null
 }
 
 export async function getEvidenceTracking(orgId?: string): Promise<EvidenceTracking[]> {
@@ -803,7 +810,7 @@ export async function getSystems(orgId?: string): Promise<System[]> {
 }
 
 export async function getSystemsFiltered(
-  filters: { system_type?: SystemType; status?: SystemStatus },
+  filters: { system_type?: SystemType; status?: SystemStatus; vendor_id?: string },
   orgId?: string
 ): Promise<System[]> {
   if (!orgId) {
@@ -813,6 +820,7 @@ export async function getSystemsFiltered(
   const params = new URLSearchParams()
   if (filters.system_type) params.append('system_type', filters.system_type)
   if (filters.status) params.append('status', filters.status)
+  if (filters.vendor_id) params.append('vendor_id', filters.vendor_id)
   const queryString = params.toString()
   return apiFetch<System[]>(`/organizations/${orgId}/systems${queryString ? `?${queryString}` : ''}`)
 }

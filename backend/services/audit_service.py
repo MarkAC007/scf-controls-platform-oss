@@ -129,6 +129,7 @@ SYSTEM_TRACKED_FIELDS: set = {
     'description',
     'system_type',
     'vendor',
+    'vendor_id',
     'status',
     'owner_user_id',
     'catalog_template_id',
