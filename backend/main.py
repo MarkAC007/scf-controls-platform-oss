@@ -5,6 +5,7 @@ FastAPI application for managing compliance controls and evidence tracking.
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 import os
@@ -270,6 +271,12 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type", "Accept", "Origin", "X-Requested-With", "X-Audit-Source"],
     expose_headers=["Content-Length", "Content-Type"],
 )
+
+# Compress large JSON responses. The catalog bulk exports are ~7 MB raw and
+# compress ~10x; without this every app boot ships the full payload over the
+# wire, which saturates slow links (VPN/mesh clients). Level 6 keeps CPU cost
+# low on the single-process server.
+app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)
 
 
 # Health check endpoint - exempt from rate limiting

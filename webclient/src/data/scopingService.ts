@@ -291,7 +291,9 @@ export async function updateEvidenceTracking(
       collecting_system: tracking.collecting_system,
       owner: tracking.owner,
       frequency: tracking.frequency,
-      comments: tracking.comments
+      comments: tracking.comments,
+      // '' would fail the API's ^L[0-5]$ pattern; omit so the stored value is untouched
+      maturity_level: tracking.maturity_level || undefined
     })
 
     // Update local data with response (includes database ID)

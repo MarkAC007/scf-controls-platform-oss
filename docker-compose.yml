@@ -198,6 +198,15 @@ services:
     networks:
       - cg-network
     restart: unless-stopped
+    # Override the inherited backend-image healthcheck (HTTP probe to :8000) —
+    # the worker serves no HTTP, so that check can never pass. Mirrors the
+    # proven ECS worker check (terraform-aws/ecs-celery.tf).
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A celery_app inspect ping -d celery@$$HOSTNAME || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
   celery-beat:
     # Shares the backend image (same Dockerfile.backend); only the command differs.
@@ -222,6 +231,16 @@ services:
     networks:
       - cg-network
     restart: unless-stopped
+    # Override the inherited backend-image healthcheck (HTTP probe to :8000) —
+    # beat serves no HTTP. `pgrep` is NOT in the image (python:3.11-slim, no
+    # procps), so probe PID 1's cmdline directly: liveness = the beat process
+    # is still the container's main process.
+    healthcheck:
+      test: ["CMD-SHELL", "grep -q beat /proc/1/cmdline || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
   # One-shot SCF catalogue importer — "bring your own SCF Excel" install step.
   # Not part of the normal stack (profile: init), so `docker compose up` never starts it.

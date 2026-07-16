@@ -10,7 +10,7 @@ from typing import List, Optional
 from uuid import UUID
 
 from database import get_db
-from models import System, Organization, User
+from models import System, Organization, User, Vendor
 from catalog_models import SystemCatalogTemplate
 from schemas import (
     SystemResponse,
@@ -33,12 +33,13 @@ async def list_systems(
     membership: OrgMembership = Depends(require_org_role("viewer")),
     system_type: Optional[str] = Query(None, description="Filter by system type"),
     status: Optional[str] = Query(None, description="Filter by status (active, inactive, deprecated)"),
+    vendor_id: Optional[UUID] = Query(None, description="Filter by linked TPRM vendor id"),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Get all systems for an organization.
     Requires: viewer role or higher.
-    Optionally filter by system_type and/or status.
+    Optionally filter by system_type, status and/or linked vendor_id.
     """
     # Organization existence verified by require_org_role
 
@@ -49,11 +50,14 @@ async def list_systems(
         query = query.where(System.system_type == system_type)
     if status:
         query = query.where(System.status == status)
+    if vendor_id:
+        query = query.where(System.vendor_id == vendor_id)
 
-    # Include user relationships for response
+    # Include user and linked-vendor relationships for response
     query = query.options(
         selectinload(System.created_by),
-        selectinload(System.updated_by)
+        selectinload(System.updated_by),
+        selectinload(System.linked_vendor)
     )
 
     # Order by name for consistent results
@@ -85,7 +89,8 @@ async def get_system(
         )
     ).options(
         selectinload(System.created_by),
-        selectinload(System.updated_by)
+        selectinload(System.updated_by),
+        selectinload(System.linked_vendor)
     )
 
     result = await db.execute(query)
@@ -118,7 +123,8 @@ async def get_system_by_name(
         )
     ).options(
         selectinload(System.created_by),
-        selectinload(System.updated_by)
+        selectinload(System.updated_by),
+        selectinload(System.linked_vendor)
     )
 
     result = await db.execute(query)
@@ -181,6 +187,22 @@ async def create_system(
                 detail="Unknown catalog template"
             )
 
+    # If linking a TPRM vendor, it must exist and belong to this same org
+    if system_data.vendor_id is not None:
+        vendor_result = await db.execute(
+            select(Vendor).where(
+                and_(
+                    Vendor.id == system_data.vendor_id,
+                    Vendor.organization_id == org_id
+                )
+            )
+        )
+        if not vendor_result.scalar_one_or_none():
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid vendor_id: Vendor not found or belongs to different organization"
+            )
+
     # Create new system
     new_system = System(
         organization_id=org_id,
@@ -208,7 +230,8 @@ async def create_system(
     # Load relationships for response
     query = select(System).where(System.id == new_system.id).options(
         selectinload(System.created_by),
-        selectinload(System.updated_by)
+        selectinload(System.updated_by),
+        selectinload(System.linked_vendor)
     )
     result = await db.execute(query)
     return result.scalar_one()
@@ -266,6 +289,23 @@ async def update_system(
             if update_data["catalog_template_id"] != system.catalog_template_id:
                 raise HTTPException(status_code=400, detail="Unknown catalog template")
 
+    # If linking a TPRM vendor, it must exist and belong to this same org
+    # (None is allowed to unlink and is not validated)
+    if update_data.get("vendor_id") is not None:
+        vendor_result = await db.execute(
+            select(Vendor).where(
+                and_(
+                    Vendor.id == update_data["vendor_id"],
+                    Vendor.organization_id == org_id
+                )
+            )
+        )
+        if not vendor_result.scalar_one_or_none():
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid vendor_id: Vendor not found or belongs to different organization"
+            )
+
     # If name is being changed, check for conflicts
     if "name" in update_data and update_data["name"] != system.name:
         existing = await db.execute(
@@ -309,7 +349,8 @@ async def update_system(
     # Load relationships for response
     query = select(System).where(System.id == system.id).options(
         selectinload(System.created_by),
-        selectinload(System.updated_by)
+        selectinload(System.updated_by),
+        selectinload(System.linked_vendor)
     )
     result = await db.execute(query)
     return result.scalar_one()

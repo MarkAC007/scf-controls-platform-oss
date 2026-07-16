@@ -7410,23 +7410,23 @@ textarea.form-control{
 
 .inline-guide-loading {
   padding: 12px 16px;
-  color: #94a3b8;
+  color: var(--muted);
   font-size: 0.85rem;
   font-style: italic;
-  background: rgba(30, 41, 59, 0.3);
+  background: var(--secondary);
   border-radius: 8px;
-  border: 1px dashed rgba(148, 163, 184, 0.2);
+  border: 1px dashed var(--border);
 }
 
 .inline-guide-details {
-  border: 1px solid rgba(59, 130, 246, 0.2);
+  border: 1px solid var(--border);
   border-radius: 8px;
-  background: rgba(30, 41, 59, 0.3);
+  background: var(--secondary);
   overflow: hidden;
 }
 
 .inline-guide-details[open] {
-  border-color: rgba(59, 130, 246, 0.35);
+  border-color: var(--field-ring);
 }
 
 .inline-guide-summary {
@@ -7437,7 +7437,7 @@ textarea.form-control{
   cursor: pointer;
   font-size: 0.85rem;
   font-weight: 500;
-  color: #cbd5e1;
+  color: var(--text);
   user-select: none;
   list-style: none;
 }
@@ -7449,7 +7449,7 @@ textarea.form-control{
 .inline-guide-summary::before {
   content: '\25B6';
   font-size: 0.65rem;
-  color: #64748b;
+  color: var(--muted);
   transition: transform 0.15s ease;
 }
 
@@ -7463,7 +7463,7 @@ textarea.form-control{
 
 .inline-guide-content {
   padding: 0 14px 14px 14px;
-  border-top: 1px solid rgba(148, 163, 184, 0.1);
+  border-top: 1px solid var(--border);
 }
 
 .inline-guide-content .recipe-card {
@@ -7479,24 +7479,24 @@ textarea.form-control{
   gap: 8px;
   padding: 10px 14px;
   font-size: 0.85rem;
-  color: #94a3b8;
-  background: rgba(30, 41, 59, 0.3);
+  color: var(--muted);
+  background: var(--secondary);
   border-radius: 8px;
-  border: 1px dashed rgba(148, 163, 184, 0.15);
+  border: 1px dashed var(--border);
 }
 
 .suggestion-inline-hint {
   margin-top: 6px;
   padding: 6px 10px;
   font-size: 0.8rem;
-  color: #94a3b8;
+  color: var(--muted);
   background: rgba(59, 130, 246, 0.08);
   border-radius: 6px;
   border-left: 3px solid rgba(59, 130, 246, 0.3);
 }
 
 .suggestion-inline-hint strong {
-  color: #cbd5e1;
+  color: var(--text);
 }
 
 /* ============================================
@@ -15040,17 +15040,6 @@ textarea.form-control{
   color: var(--muted);
 }
 
-/* Maturity select row layout */
-.maturity-select-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.maturity-select-row .form-control {
-  flex: 1;
-}
-
 /* Evidence Maturity Section on Dashboard */
 .evidence-maturity-section {
   margin-bottom: 32px;
@@ -15094,10 +15083,6 @@ textarea.form-control{
     display: none;
   }
 
-  .maturity-select-row {
-    flex-direction: column;
-    align-items: stretch;
-  }
 }
 
 /* ============================================================================
@@ -24457,9 +24442,10 @@ textarea.form-control{
 }
 
 /* Sticky detail headers: bedrock on the inner main keeps stickiness on the
-   outer; strip the outer card background so the header reads flat. */
+   outer; the header is sticky with content scrolling beneath it, so it must
+   stay opaque — the page background keeps the flat read without bleed-through. */
 .detail-header-compact:has(> .detail-header-main.surface-bedrock) {
-  background: transparent !important;
+  background: var(--bg) !important;
 }
 
 /* Dark-mode overrides elsewhere force panel/card backgrounds with higher
@@ -24570,3 +24556,131 @@ textarea.form-control{
 .theme-menu-remove:hover { background: var(--danger-bg); }
 .theme-menu-divider { border-top: 1px solid var(--border-visible); margin: 6px 4px; }
 .theme-menu-install { color: var(--primary); font-weight: 500; }
+
+/* ============================================================================
+   EVIDENCE WORKSPACE UX — maturity stepper + header save chip
+   ============================================================================ */
+
+/* Header save-state chip (mirrors the sidebar toast, visible where you work) */
+.detail-save-chip {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  background: var(--secondary);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 10px;
+  animation: save-chip-pulse 1.2s ease-in-out infinite;
+}
+@keyframes save-chip-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+/* Maturity stepper — L0..L5 segmented progression */
+.maturity-stepper {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.maturity-stepper-track {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 6px;
+}
+.maturity-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 4px;
+  background: var(--field-bg, var(--secondary));
+  border: 1px solid var(--field-border, var(--border));
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease, transform 0.08s ease;
+}
+.maturity-step:hover {
+  border-color: var(--field-border-hover, var(--primary));
+  transform: translateY(-1px);
+}
+.maturity-step.reached {
+  /* colour + background set inline from the level palette */
+  opacity: 0.85;
+}
+.maturity-step.selected {
+  opacity: 1;
+  box-shadow: var(--field-ring, 0 0 0 3px rgba(59, 130, 246, 0.25));
+}
+.maturity-step-level {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: 0.3px;
+}
+.maturity-step-name {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--muted);
+  text-align: center;
+  line-height: 1.2;
+}
+.maturity-stepper-detail {
+  border-left: 3px solid var(--border);
+  background: var(--secondary);
+  border-radius: 0 8px 8px 0;
+  padding: 10px 14px;
+  font-size: 13px;
+  color: var(--text);
+}
+.maturity-stepper-detail-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.maturity-stepper-detail-desc {
+  color: var(--muted);
+}
+.maturity-stepper-characteristics {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px 16px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.maturity-stepper-next {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+  font-size: 12px;
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: baseline;
+}
+.maturity-stepper-next-time {
+  color: var(--muted);
+  opacity: 0.85;
+}
+.maturity-stepper-empty {
+  color: var(--muted);
+  font-style: italic;
+}
+.maturity-stepper-disabled {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+@media (max-width: 900px) {
+  .maturity-stepper-track {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  .maturity-stepper-characteristics {
+    grid-template-columns: 1fr;
+  }
+}

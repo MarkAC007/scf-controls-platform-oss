@@ -24,7 +24,7 @@ import type { System, EvidenceSuggestionsResponse } from '../types'
 import { AssignmentPicker } from './AssignmentPicker'
 import { ModernCommentThread } from './ModernCommentThread'
 import { EvidenceTaskList } from './EvidenceTaskList'
-import { MaturityBadge, MaturityAdvisoryCard, EVIDENCE_MATURITY_LEVELS } from './maturity'
+import { MaturityBadge, MaturityStepper, MaturityAdvisoryCard } from './maturity'
 import { RecipeCard, RecipeConfidenceBadge, EvidenceTemplateGuidance, EvidenceFileUpload, EvidenceFileList, CollectionWizard } from './evidence'
 import { WindowReviewPanel } from './evidence/WindowReviewPanel'
 import { ScfReference } from './provenance/ScfReference'
@@ -943,6 +943,7 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
                         {tracking.maturity_level && (
                           <MaturityBadge level={tracking.maturity_level} size="small" />
                         )}
+                        {saving && <span className="detail-save-chip">Saving…</span>}
                       </div>
                     </div>
                   </div>
@@ -1097,17 +1098,6 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
                       </div>
 
                       <div className="form-group">
-                        <label>Method of Collection</label>
-                        <input
-                          type="text"
-                          value={tracking.method_of_collection || ''}
-                          onChange={e => updateEvidenceTracking(evidenceItem.id, 'method_of_collection', e.target.value)}
-                          placeholder="e.g., Automated export, Manual review, Screenshot"
-                          className="form-control"
-                        />
-                      </div>
-
-                      <div className="form-group">
                         <label>Collecting System</label>
                         {(() => {
                           // Smart defaults: suggested systems at top, then divider, then rest
@@ -1157,7 +1147,15 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
                         )}
                       </div>
 
-                      {/* Inline Collection Guide — appears when a system is selected */}
+                      <div className="form-group">
+                        <label>Collection Maturity</label>
+                        <MaturityStepper
+                          value={tracking.maturity_level}
+                          onChange={level => updateEvidenceTracking(evidenceItem.id, 'maturity_level', level)}
+                        />
+                      </div>
+
+                      {/* Inline Collection Guide — reacts to the selected system and maturity level above */}
                       {tracking.collecting_system && tracking.collecting_system !== 'Manual' && (
                         <div className="inline-collection-guide">
                           {loadingGuidance ? (
@@ -1208,6 +1206,27 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
                         </div>
                       )}
 
+                      {tracking.maturity_level && (
+                        <MaturityAdvisoryCard
+                          currentLevel={tracking.maturity_level}
+                          evidenceId={evidenceItem.id}
+                          evidenceTitle={evidenceItem.title}
+                          nextLevelRecipe={collectionGuidance?.next_level_preview || undefined}
+                          systemName={collectionGuidance?.system_name || undefined}
+                        />
+                      )}
+
+                      <div className="form-group">
+                        <label>Method of Collection</label>
+                        <input
+                          type="text"
+                          value={tracking.method_of_collection || ''}
+                          onChange={e => updateEvidenceTracking(evidenceItem.id, 'method_of_collection', e.target.value)}
+                          placeholder="e.g., Automated export, Manual review, Screenshot"
+                          className="form-control"
+                        />
+                      </div>
+
                       <div className="form-row">
                         <div className="form-group">
                           <label>Owner Team</label>
@@ -1238,27 +1257,6 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
                       </div>
 
                       <div className="form-group">
-                        <label>Collection Maturity Level</label>
-                        <div className="maturity-select-row">
-                          <select
-                            value={tracking.maturity_level || ''}
-                            onChange={e => updateEvidenceTracking(evidenceItem.id, 'maturity_level', e.target.value as EvidenceMaturityLevel)}
-                            className="form-control"
-                          >
-                            <option value="">Select Maturity Level...</option>
-                            {Object.entries(EVIDENCE_MATURITY_LEVELS).map(([level, info]) => (
-                              <option key={level} value={level}>
-                                {level} - {info.name}
-                              </option>
-                            ))}
-                          </select>
-                          {tracking.maturity_level && (
-                            <MaturityBadge level={tracking.maturity_level} size="medium" />
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="form-group">
                         <label>Comments</label>
                         <textarea
                           value={tracking.comments || ''}
@@ -1279,19 +1277,6 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
                       orgId={scopingData.organizationId}
                     />
                   </ScfReference>
-
-                  {/* Maturity Advisory — with next-level recipe preview when system is selected */}
-                  {tracking.maturity_level && (
-                    <div className="detail-section-container">
-                      <MaturityAdvisoryCard
-                        currentLevel={tracking.maturity_level}
-                        evidenceId={evidenceItem.id}
-                        evidenceTitle={evidenceItem.title}
-                        nextLevelRecipe={collectionGuidance?.next_level_preview || undefined}
-                        systemName={collectionGuidance?.system_name || undefined}
-                      />
-                    </div>
-                  )}
 
                   {/* Tasks, Assignment and Comments */}
                   {(() => {

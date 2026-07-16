@@ -20,6 +20,8 @@ import type {
   VendorAIAssessmentType,
   VendorRAGStatus,
   VendorRecommendation,
+  System,
+  VendorSimple,
 } from '../types'
 import {
   VENDOR_STATUS_LABELS,
@@ -36,11 +38,13 @@ import {
   getVendorAssessments,
   getVendorCertifications,
   getVendorAssessmentStatus,
+  getSystemsFiltered,
 } from '../data/apiClient'
 import VendorAssessmentRunDialog from './VendorAssessmentRunDialog'
 import VendorAssessmentReport from './VendorAssessmentReport'
 import VendorActionItemsPanel from './VendorActionItemsPanel'
 import VendorCompensatingControlsPanel from './VendorCompensatingControlsPanel'
+import AddSystemModal from './AddSystemModal'
 
 type VendorTab = 'overview' | 'assess' | 'decide' | 'review'
 
@@ -101,6 +105,8 @@ export default function VendorDetail({
   const [vendor, setVendor] = useState<Vendor | null>(null)
   const [assessments, setAssessments] = useState<VendorAssessment[]>([])
   const [certifications, setCertifications] = useState<VendorCertification[]>([])
+  const [systems, setSystems] = useState<System[]>([])
+  const [showAddSystem, setShowAddSystem] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)
@@ -132,6 +138,20 @@ export default function VendorDetail({
   useEffect(() => {
     loadVendorData(true)
   }, [loadVendorData])
+
+  const loadSystems = useCallback(async () => {
+    try {
+      const linkedSystems = await getSystemsFiltered({ vendor_id: vendorId }, organizationId)
+      setSystems(linkedSystems)
+    } catch (err) {
+      console.error('Failed to load linked systems:', err)
+      // Non-fatal: the Systems section simply shows an empty/error-free state.
+    }
+  }, [vendorId, organizationId])
+
+  useEffect(() => {
+    loadSystems()
+  }, [loadSystems])
 
   // ── Assessment lifecycle derivations ──────────────────────────────
   const aiAssessments = useMemo(
@@ -682,6 +702,57 @@ export default function VendorDetail({
               </div>
             )}
           </section>
+
+          {/* Systems */}
+          <section style={cardStyle}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
+              <h3 style={{ ...sectionHeading, margin: 0 }}>Systems ({systems.length})</h3>
+              <button
+                onClick={() => setShowAddSystem(true)}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.4rem',
+                  padding: '0.375rem 0.875rem',
+                  backgroundColor: 'var(--primary)',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  fontSize: '0.8125rem',
+                  fontWeight: 600,
+                }}
+              >
+                + Add system
+              </button>
+            </div>
+            {systems.length === 0 ? (
+              <p style={{ color: 'var(--muted)', fontSize: '0.875rem', margin: 0 }}>
+                No systems linked to this vendor yet.
+              </p>
+            ) : (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '2px solid var(--border)', textAlign: 'left' }}>
+                      <th style={thStyle}>Name</th>
+                      <th style={thStyle}>Type</th>
+                      <th style={thStyle}>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {systems.map((system) => (
+                      <tr key={system.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                        <td style={{ ...tdStyle, fontWeight: 500 }}>{system.name}</td>
+                        <td style={tdStyle}>{formatLabel(system.system_type)}</td>
+                        <td style={tdStyle}>{formatLabel(system.status)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
         </>
       )}
 
@@ -1031,6 +1102,32 @@ export default function VendorDetail({
           onStarted={handleAssessmentStarted}
         />
       )}
+
+      {/* ================================================================
+          Add system dialog — pre-linked to this vendor
+          ================================================================ */}
+      {showAddSystem && (
+        <AddSystemModal
+          organizationId={organizationId}
+          initialVendor={vendorToSimple(vendor)}
+          onClose={() => setShowAddSystem(false)}
+          onSuccess={() => {
+            setShowAddSystem(false)
+            loadSystems()
+          }}
+        />
+      )}
     </div>
   )
+}
+
+/** Project the full Vendor record down to the lightweight VendorSimple shape. */
+function vendorToSimple(vendor: Vendor): VendorSimple {
+  return {
+    id: vendor.id,
+    name: vendor.name,
+    website: vendor.website ?? null,
+    category: vendor.category ?? null,
+    status: vendor.status ?? null,
+  }
 }

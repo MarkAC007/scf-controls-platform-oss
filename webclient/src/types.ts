@@ -395,6 +395,19 @@ export interface UserSimple {
   display_name?: string
 }
 
+/**
+ * Lightweight vendor reference embedded on a linked System.
+ * Mirrors the backend ``linked_vendor`` payload — just enough to display
+ * and re-select a vendor without loading the full Vendor record.
+ */
+export interface VendorSimple {
+  id: string
+  name: string
+  website?: string | null
+  category?: string | null
+  status?: string | null
+}
+
 export interface System {
   id: SystemId
   organization_id: string
@@ -406,6 +419,10 @@ export interface System {
   status: SystemStatus
   connection_config?: Record<string, any>
   catalog_template_id?: number | null
+  // Vendor-system cohesion: canonical link to a Vendor record. ``vendor`` (above)
+  // remains the legacy free-text label for display back-compat.
+  vendor_id?: string | null
+  linked_vendor?: VendorSimple | null
   created_at: string
   updated_at: string
   created_by_user_id?: string
@@ -423,6 +440,7 @@ export interface SystemInput {
   status?: SystemStatus
   connection_config?: Record<string, any>
   catalog_template_id?: number | null
+  vendor_id?: string | null
 }
 
 export interface SystemUpdate {
@@ -434,6 +452,7 @@ export interface SystemUpdate {
   status?: SystemStatus
   connection_config?: Record<string, any>
   catalog_template_id?: number | null
+  vendor_id?: string | null
 }
 
 // ============================================================================

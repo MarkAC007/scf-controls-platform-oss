@@ -49,17 +49,34 @@ export function getInterfacesForEvidence(
     .filter((item): item is { id: string; interface: CollectionInterface } => item !== null)
 }
 
-/**
- * Load all data from catalog API.
- */
-export async function loadAllData(): Promise<{
+interface AllData {
   controls: ControlGuidance[]
   mappings: ControlsMappingFile
   erl: ERLFile
   frameworkNames: FrameworkNameMap
   collectionInterfaces: CollectionInterfacesFile
   evidenceTemplates: EvidenceTemplatesFile
-}> {
+}
+
+// Dedupe concurrent boot loads: React StrictMode double-mounts the App effect
+// in dev, which fired the multi-megabyte bulk catalog fetches twice per page
+// load. Only the in-flight promise is shared — once settled, a later call
+// fetches again (and the ETag on the bulk endpoints turns that into a 304).
+let inflightLoad: Promise<AllData> | null = null
+
+/**
+ * Load all data from catalog API.
+ */
+export function loadAllData(): Promise<AllData> {
+  if (!inflightLoad) {
+    inflightLoad = doLoadAllData().finally(() => {
+      inflightLoad = null
+    })
+  }
+  return inflightLoad
+}
+
+async function doLoadAllData(): Promise<AllData> {
   const [controls, erl, collectionInterfaces, evidenceTemplates] = await Promise.all([
     fetchBulkControls(),
     fetchBulkEvidence(),

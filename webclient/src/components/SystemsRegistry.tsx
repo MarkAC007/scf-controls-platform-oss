@@ -309,6 +309,14 @@ export const SystemsRegistry: React.FC<SystemsRegistryProps> = ({
                 {/* Vendor */}
                 <div className="systems-vendor">
                   {system.vendor || '-'}
+                  {(system.vendor_id || system.linked_vendor) && (
+                    <span
+                      title="Linked to vendor record"
+                      style={{ marginLeft: '4px', cursor: 'default' }}
+                    >
+                      🔗
+                    </span>
+                  )}
                 </div>
 
                 {/* Status Badge */}

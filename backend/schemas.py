@@ -230,6 +230,7 @@ class EvidenceTrackingBase(BaseModel):
     owner: Optional[str] = None
     frequency: Optional[str] = None
     comments: Optional[str] = None
+    maturity_level: Optional[str] = Field(None, pattern=r"^L[0-5]$", description="Evidence collection maturity level (L0-L5)")
 
 
 class EvidenceTrackingCreate(EvidenceTrackingBase):
@@ -244,6 +245,7 @@ class EvidenceTrackingUpdate(BaseModel):
     owner: Optional[str] = None
     frequency: Optional[str] = None
     comments: Optional[str] = None
+    maturity_level: Optional[str] = Field(None, pattern=r"^L[0-5]$", description="Evidence collection maturity level (L0-L5)")
     system_id: Optional[UUID] = Field(None, description="Reference to the System that collects this evidence")
 
 
@@ -256,6 +258,7 @@ class BatchEvidenceTrackingOperation(BaseModel):
     owner: Optional[str] = None
     frequency: Optional[str] = None
     comments: Optional[str] = None
+    maturity_level: Optional[str] = Field(None, pattern=r"^L[0-5]$", description="Evidence collection maturity level (L0-L5)")
     system_id: Optional[UUID] = Field(None, description="Reference to the System that collects this evidence")
 
 
@@ -507,6 +510,10 @@ class SystemBase(BaseModel):
         None,
         description="System catalog template this system was created from (drives recipe resolution)"
     )
+    vendor_id: Optional[UUID] = Field(
+        None,
+        description="FK to the rich TPRM Vendor entity (distinct from the legacy free-text 'vendor' field)"
+    )
 
 
 class SystemCreate(SystemBase):
@@ -524,6 +531,7 @@ class SystemUpdate(BaseModel):
     status: Optional[str] = Field(None, pattern=f"^({SYSTEM_STATUSES})$")
     connection_config: Optional[Dict[str, Any]] = None
     catalog_template_id: Optional[int] = None
+    vendor_id: Optional[UUID] = None
 
 
 class SystemResponse(SystemBase):
@@ -536,6 +544,10 @@ class SystemResponse(SystemBase):
     updated_by_user_id: Optional[UUID] = None
     created_by: Optional[UserSimple] = None
     updated_by: Optional[UserSimple] = None
+    # Nested rich vendor. Named `linked_vendor` (not `vendor`) because the base
+    # already exposes the legacy free-text `vendor` string. Forward ref: the
+    # VendorSimple class is defined below and resolved via model_rebuild().
+    linked_vendor: Optional["VendorSimple"] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -555,6 +567,17 @@ class SystemSimple(BaseModel):
     system_type: str
     vendor: Optional[str] = None
     status: str = "active"
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class VendorSimple(BaseModel):
+    """Simplified vendor info for nested responses (e.g., System.linked_vendor)."""
+    id: UUID
+    name: str
+    website: Optional[str] = None
+    category: Optional[str] = None
+    status: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -3412,6 +3435,7 @@ class ControlAssessmentCompositeListResponse(BaseModel):
     next_cursor: Optional[str] = None
 
 
+SystemResponse.model_rebuild()
 EvidenceTrackingResponse.model_rebuild()
 BatchEvidenceTrackingResponse.model_rebuild()
 FrameworkReadinessRequest.model_rebuild()
