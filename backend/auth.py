@@ -774,7 +774,34 @@ async def require_platform_admin(
     return user
 
 
-async def optional_auth(request: Request) -> Optional[User]:
+async def user_is_platform_admin(user: Optional[User], db: AsyncSession) -> bool:
+    """Non-raising platform-admin check for optionally-authenticated handlers.
+
+    Mirrors the authorization logic of ``require_platform_admin`` (static API key
+    => admin; user-API-key/Google => the DB ``is_platform_admin`` flag) but
+    returns a bool instead of raising, so endpoints using ``optional_auth`` can
+    branch on it (e.g. gating the ``update`` object on ``/api/version``).
+    """
+    if user is None:
+        return False
+    if user.auth_method == "api_key":
+        return True
+    if not user.db_id:
+        return False
+    from uuid import UUID as _UUID
+    result = await db.execute(
+        select(DBUser).where(
+            (DBUser.id == _UUID(user.db_id)) &
+            (DBUser.is_platform_admin == True)  # noqa: E712
+        )
+    )
+    return result.scalar_one_or_none() is not None
+
+
+async def optional_auth(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> Optional[User]:
     """
     Optional authentication dependency that allows unauthenticated access.
 
@@ -796,7 +823,10 @@ async def optional_auth(request: Request) -> Optional[User]:
         from fastapi.security import HTTPAuthorizationCredentials
         creds = HTTPAuthorizationCredentials(scheme=scheme, credentials=credentials)
 
-        return await require_auth(creds)
+        # Pass the resolved db session through — calling require_auth(creds)
+        # bare would leave its `db` parameter as the unresolved Depends sentinel
+        # and crash Google-token validation on the first db.execute.
+        return await require_auth(creds, db)
     except (ValueError, HTTPException):
         return None
 

@@ -57,6 +57,7 @@ celery_app = Celery(
         "tasks_assessment",
         "tasks_window_assessment",
         "tasks_catalog",
+        "tasks_updates",
         "services.composite_service",
     ],
 )
@@ -177,6 +178,21 @@ celery_app.conf.update(
                 }
             }
             if os.getenv("WINDOW_ASSESSMENT_NIGHTLY_ENABLED", "false").lower() == "true"
+            else {}
+        ),
+        # Daily platform update check (upgrade design Part B) — polls the public
+        # GitHub Releases API at 02:00 UTC and caches the result in Redis for the
+        # /api/version endpoint. Gated by SCF_UPDATE_CHECK, but INVERTED relative
+        # to the window-refresh flag: included unless explicitly disabled, so the
+        # opt-out (air-gapped installs) is the only way to switch it off.
+        **(
+            {
+                "update-check-daily": {
+                    "task": "tasks_updates.check_latest_release",
+                    "schedule": crontab(hour=2, minute=0),
+                }
+            }
+            if os.getenv("SCF_UPDATE_CHECK", "true").strip().lower() not in ("false", "0")
             else {}
         ),
     },

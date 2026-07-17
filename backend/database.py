@@ -87,6 +87,15 @@ def run_alembic_migrations():
     # Override the database URL from environment (security best practice)
     alembic_cfg.set_main_option("sqlalchemy.url", DATABASE_URL)
 
+    # Backend-side migration guard (upgrade design Part E): refuse illegal
+    # version jumps / un-acked migrations BEFORE touching the schema, so the
+    # default `compose up --build` fails closed. Runs only here (the lifespan
+    # path); a direct `alembic upgrade head` on the CLI intentionally bypasses
+    # it. run_migration_guard raises SystemExit(1) on refusal.
+    from upgrade_guard import run_migration_guard, record_applied_version
+
+    run_migration_guard(alembic_cfg, DATABASE_URL)
+
     logger.info("Running Alembic migrations...")
     try:
         # Upgrade to the latest revision
@@ -95,6 +104,15 @@ def run_alembic_migrations():
     except Exception as e:
         logger.error(f"Alembic migration failed: {e}")
         raise
+
+    # Record the applied platform version (append-only history) so the guard has
+    # a floor to check on the next startup. Non-fatal on failure — the schema is
+    # already up to date; a missing history row only makes the next guard run
+    # treat this install as legacy.
+    try:
+        record_applied_version(DATABASE_URL)
+    except Exception as e:
+        logger.warning(f"Failed to record platform version in platform_upgrade_state: {e}")
 
 
 async def init_db():

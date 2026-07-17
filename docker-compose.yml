@@ -88,6 +88,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.backend
+      args:
+        BUILD_STAMP: "${BUILD_STAMP:-dev}"
+        MIN_UPGRADABLE_VERSION: "${MIN_UPGRADABLE_VERSION:-0.0.0}"
     container_name: cg-scf-backend
     environment:
       DATABASE_URL: postgresql+asyncpg://cg:${DB_PASSWORD}@postgres:5432/cg_scf
@@ -101,6 +104,11 @@ services:
       # Version info (fallbacks - actual versions read from package.json and git)
       PLATFORM_VERSION: ${PLATFORM_VERSION:-0.0.0}
       CATALOG_VERSION: ${CATALOG_VERSION:-unknown}
+      # Platform upgrade system (see .env.example). SCF_UPDATE_CHECK opts OUT of
+      # the daily GitHub update poll (default ON). SCF_MIGRATE_ACK is the backup
+      # acknowledgement escape hatch for the backend migration guard.
+      SCF_UPDATE_CHECK: ${SCF_UPDATE_CHECK:-true}
+      SCF_MIGRATE_ACK: ${SCF_MIGRATE_ACK:-}
       # Authentication (set these in .env file - REQUIRED)
       API_KEY: ${API_KEY}
       # Self-hosted single-tenant mode: when truthy (see .env.example), grants the
@@ -154,6 +162,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.backend
+      args:
+        BUILD_STAMP: "${BUILD_STAMP:-dev}"
+        MIN_UPGRADABLE_VERSION: "${MIN_UPGRADABLE_VERSION:-0.0.0}"
     container_name: cg-scf-celery-worker
     command: celery -A celery_app worker --loglevel=info --concurrency=2 -Q default,high_priority,low_priority,tprm_research,dpsia,evidence_assessment,evidence_window,evidence_composite,cdm,catalog
     environment:
@@ -166,6 +177,9 @@ services:
       # Self-hosted single-tenant guard for the live catalogue-import task (#660).
       # The catalog.import task refuses to reseed unless this is truthy.
       OSS_SINGLE_TENANT: ${OSS_SINGLE_TENANT:-}
+      # Update poller opt-out (default ON) — the worker runs the beat-scheduled
+      # tasks_updates.check_latest_release task.
+      SCF_UPDATE_CHECK: ${SCF_UPDATE_CHECK:-true}
       # Vendor research API keys (Issue #59)
       HIBP_API_KEY: ${HIBP_API_KEY:-}
       NVD_API_KEY: ${NVD_API_KEY:-}
@@ -214,6 +228,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.backend
+      args:
+        BUILD_STAMP: "${BUILD_STAMP:-dev}"
+        MIN_UPGRADABLE_VERSION: "${MIN_UPGRADABLE_VERSION:-0.0.0}"
     container_name: cg-scf-celery-beat
     command: celery -A celery_app beat --loglevel=info
     environment:
@@ -223,6 +240,9 @@ services:
       CELERY_RESULT_BACKEND: redis://redis:6379/1
       LOG_LEVEL: ${LOG_LEVEL}
       ENVIRONMENT: ${ENVIRONMENT:-production}
+      # Update poller opt-out (default ON). Beat reads this at import time to
+      # decide whether to schedule the daily update-check-daily entry.
+      SCF_UPDATE_CHECK: ${SCF_UPDATE_CHECK:-true}
     volumes:
       - ./backend:/app
     depends_on:

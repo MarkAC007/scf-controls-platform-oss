@@ -52,6 +52,23 @@ COPY webclient/public/data/collection_interfaces.json /app/data/json/
 COPY webclient/public/data/system_collection_recipes.json /app/data/json/
 COPY webclient/public/data/capability_themes.json /app/data/json/
 
+# Bake build metadata into the image (upgrade design C3 / Part E). The running
+# code's identity must not be spoofable by a bind-mounted host file, so the
+# version (COPIED IN from webclient/package.json — NOT read from the ./webclient
+# bind mount), the build stamp, and the min-upgradable floor are written at build
+# time to /build_info.json at the CONTAINER ROOT — deliberately OUTSIDE /app so
+# the ./backend:/app source bind mount (dev/self-host compose) never shadows it.
+# The migration guard reads the floor; /api/version exposes the build stamp to
+# platform admins. Root-owned 0644 is world-readable, so uid 1001 can read it.
+ARG BUILD_STAMP="dev"
+ARG MIN_UPGRADABLE_VERSION="0.0.0"
+COPY webclient/package.json /tmp/package.json
+RUN VERSION="$(python -c "import json; print(json.load(open('/tmp/package.json')).get('version', '0.0.0'))")" && \
+    printf '{"version": "%s", "build_stamp": "%s", "min_upgradable_version": "%s"}\n' \
+      "$VERSION" "$BUILD_STAMP" "$MIN_UPGRADABLE_VERSION" > /build_info.json && \
+    chmod 0644 /build_info.json && \
+    rm -f /tmp/package.json
+
 # Create non-root user and set permissions for app and data directories
 RUN useradd -m -u 1001 apiuser && \
     chown -R apiuser:apiuser /app

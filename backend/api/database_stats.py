@@ -26,6 +26,8 @@ from catalog_models import (
     SCFCatalogEvidence, SCFCatalogAssessmentObjective
 )
 from auth import optional_auth, require_auth, require_admin, require_platform_admin, get_accessible_org_ids, User
+from redis_client import get_redis_client
+from upgrade_guard import compare_versions
 from schemas import DatabaseBackupResponse, DatabaseRestoreRequest, DatabaseRestoreResponse
 # Rate limiting temporarily disabled - see Phase 0 debugging
 # from rate_limiting import limiter, READ_RATE_LIMIT, WRITE_RATE_LIMIT, AUTH_RATE_LIMIT
@@ -939,23 +941,117 @@ def get_catalog_version() -> str:
     return os.getenv("CATALOG_VERSION", "unknown")
 
 
+def get_build_info() -> Optional[Dict[str, Any]]:
+    """
+    Read the image-baked build metadata (Dockerfile.backend writes this at build
+    time). Canonical path is the container root /build_info.json (outside the
+    ./backend:/app bind mount so it is never shadowed); /app/build_info.json is a
+    silent fallback for image-only deployments. Returns None when absent (dev image).
+    """
+    for candidate in ("/build_info.json", "/app/build_info.json"):
+        build_info_path = Path(candidate)
+        if not build_info_path.exists():
+            continue
+        try:
+            with open(build_info_path) as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                return data
+        except Exception as e:
+            logger.warning(f"Failed to read build_info at {candidate}: {e}")
+    return None
+
+
+def _update_check_enabled() -> bool:
+    """Update check is ON unless SCF_UPDATE_CHECK is explicitly 'false'/'0'."""
+    return os.getenv("SCF_UPDATE_CHECK", "").strip().lower() not in ("false", "0")
+
+
+async def _build_update_object(installed_version: str) -> Dict[str, Any]:
+    """
+    Build the admin-only ``update`` object from the Redis key the poller writes
+    (upgrade design Part C). Redis being unreachable must degrade to an unknown
+    state, never error the endpoint.
+    """
+    if not _update_check_enabled():
+        return {"check_enabled": False}
+
+    unknown = {"check_enabled": True, "update_available": None, "last_checked": None}
+    try:
+        redis_client = await get_redis_client()
+        raw = await redis_client.get("scf:update:latest")
+    except Exception as e:
+        logger.warning(f"Update state Redis read failed (degrading to unknown): {e}")
+        return unknown
+
+    if not raw:
+        return unknown
+    try:
+        state = json.loads(raw)
+    except (ValueError, TypeError):
+        return unknown
+
+    if state.get("check_enabled") is False:
+        return {"check_enabled": False}
+
+    status = state.get("status")
+    if status == "manifest_missing":
+        return {
+            "check_enabled": True,
+            "update_available": None,
+            "status": "manifest_missing",
+            "last_checked": state.get("checked_at"),
+        }
+    if status == "ok":
+        latest = state.get("latest_version")
+        min_upgradable = state.get("min_upgradable_version")
+        update_available = bool(latest and compare_versions(latest, installed_version) > 0)
+        skip_blocked = bool(min_upgradable and compare_versions(installed_version, min_upgradable) < 0)
+        return {
+            "check_enabled": True,
+            "installed_version": installed_version,
+            "latest_version": latest,
+            "update_available": update_available,
+            "breaking": bool(state.get("breaking", False)),
+            "release_url": state.get("release_url"),
+            "summary": state.get("summary"),
+            "min_upgradable_version": min_upgradable,
+            "skip_blocked": skip_blocked,
+            "last_checked": state.get("checked_at"),
+        }
+
+    # Unrecognised cached status → treat as unknown.
+    return {"check_enabled": True, "update_available": None, "last_checked": state.get("checked_at")}
+
+
 @router.get("/version")
 # @limiter.limit(READ_RATE_LIMIT)  # Temporarily disabled
 async def get_version_info(
     request: Request,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    user: Optional[User] = Depends(optional_auth),
 ):
     """
     Get version information for the platform and catalog.
 
-    Versions are read dynamically from:
-    - Platform: webclient/package.json (mounted at /version/package.json)
-    - Catalog: Database (seeded from SCF JSON files at startup)
-
-    Falls back to environment variables if sources unavailable.
-    No authentication required - this is public info for troubleshooting.
+    Response is tiered (upgrade design §8.6, red-team M3):
+    - Anonymous / unauthenticated callers get only a coarse liveness signal —
+      the cosmetic API contract version, no precise release version, git commit,
+      catalog counts, or update object. Broadcasting a precise, matchable
+      version to anonymous callers of a compliance product turns a single
+      request into an exploitability beacon, so this tier stays deliberately blind.
+    - Any authenticated user gets the full platform/catalog detail plus the
+      ``update`` object (from the update poller's Redis cache) and the image
+      ``build`` stamp. Update visibility is a feature — it nudges everyone to
+      get a stale/vulnerable deployment patched — and the caller is already
+      inside the tenant, so the fingerprinting concern does not apply.
     """
     logger.info("Version info requested")
+
+    # Gate on authentication, not platform-admin: the sensitive boundary is
+    # authenticated-vs-anonymous (M3 fingerprinting), not admin-vs-member.
+    if user is None:
+        return {"platform": {"api_version": "1.0.0"}, "status": "ok"}
 
     # Read versions dynamically from actual sources
     platform_version = get_platform_version()
@@ -966,6 +1062,8 @@ async def get_version_info(
 
     # Try to get git info for backend (if running in dev with git)
     git_info = get_git_info("/app")
+
+    build_info = get_build_info()
 
     return {
         "platform": {
@@ -978,7 +1076,9 @@ async def get_version_info(
             "controls_count": catalog_counts["controls"],
             "evidence_count": catalog_counts["evidence_items"],
             "interface_count": catalog_counts["collection_interfaces"]
-        }
+        },
+        "update": await _build_update_object(platform_version),
+        "build": {"build_stamp": build_info.get("build_stamp")} if build_info else None,
     }
 
 
