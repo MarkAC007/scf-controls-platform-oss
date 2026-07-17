@@ -14,7 +14,7 @@ import logging
 
 # Import database and models
 from database import get_db
-from services.service_account import get_service_account_id
+from services.service_account import SERVICE_ACCOUNT_EMAIL, get_service_account_id
 from services.single_tenant import is_single_tenant_active, single_tenant_org_id
 from models import (
     User as DBUser,
@@ -385,7 +385,7 @@ async def validate_api_key(token: str) -> User:
 
     user = User(
         user_id="api_user",
-        email="api@odin-scf.local",
+        email=SERVICE_ACCOUNT_EMAIL,
         name="API User",
         auth_method="api_key",
     )
