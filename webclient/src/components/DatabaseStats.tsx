@@ -1,24 +1,106 @@
 import { useState, useEffect, useRef } from 'react'
-import { apiClient } from '../data/apiClient'
+import { apiClient, type VersionInfo, type VersionUpdateInfo } from '../data/apiClient'
+
+// Injected at build time via vite.config.ts — used as a fallback when the
+// coarse (anonymous) /api/version response omits platform.version.
+declare const __APP_VERSION__: string
+const appVersion = __APP_VERSION__
 
 interface DatabaseStatsProps {
   isOpen: boolean
   onClose: () => void
 }
 
-interface VersionInfo {
-  platform: {
-    version: string
-    api_version: string
-    git_commit: string | null
+function formatLastChecked(ts?: string | null): string | null {
+  if (!ts) return null
+  const d = new Date(ts)
+  return isNaN(d.getTime()) ? null : d.toLocaleString()
+}
+
+/**
+ * Renders the update status card for every possible shape of the
+ * `update` object (returned to any authenticated user) without ever throwing:
+ * available, breaking, skip-blocked, up-to-date, disabled, and unknown
+ * (null / absent / manifest_missing / coarse).
+ */
+function UpdateStatus({ update }: { update?: VersionUpdateInfo }) {
+  const lastChecked = formatLastChecked(update?.last_checked)
+
+  if (!update) {
+    return (
+      <div className="update-status update-status--muted">
+        <span className="update-status-title">Update status unknown</span>
+      </div>
+    )
   }
-  catalog: {
-    version: string
-    controls_count: number
-    evidence_count: number
-    interface_count: number
+
+  if (update.check_enabled === false) {
+    return (
+      <div className="update-status update-status--muted">
+        <span className="update-status-title">Update checks disabled (SCF_UPDATE_CHECK=false)</span>
+      </div>
+    )
   }
-  environment: string
+
+  if (update.update_available === true) {
+    if (update.skip_blocked) {
+      return (
+        <div className="update-status update-status--blocked">
+          <span className="update-status-title">
+            ⚠ This release requires upgrading to v{update.min_upgradable_version} first.
+          </span>
+          {update.release_url && (
+            <a className="update-status-link" href={update.release_url} target="_blank" rel="noopener noreferrer">
+              Release notes ↗
+            </a>
+          )}
+        </div>
+      )
+    }
+
+    return (
+      <div className={`update-status ${update.breaking ? 'update-status--breaking' : 'update-status--available'}`}>
+        <span className="update-status-title">
+          You are on {update.installed_version}. Latest is {update.latest_version}.
+        </span>
+        {update.summary && <span className="update-status-summary">{update.summary}</span>}
+        {update.breaking && (
+          <span className="update-status-breaking-note">
+            ⚠ Breaking release — read the release notes and back up before upgrading.
+          </span>
+        )}
+        <span className="update-status-instruction">
+          To upgrade, run{' '}
+          <code className="update-status-cmd">./scripts/upgrade.sh v{update.latest_version}</code>{' '}
+          on the Docker host — see UPGRADING.md.
+        </span>
+        {update.release_url && (
+          <a className="update-status-link" href={update.release_url} target="_blank" rel="noopener noreferrer">
+            Release notes ↗
+          </a>
+        )}
+      </div>
+    )
+  }
+
+  if (update.update_available === false) {
+    return (
+      <div className="update-status update-status--current">
+        <span className="update-status-title">
+          ✓ Up to date{lastChecked ? ` (last checked ${lastChecked})` : ''}
+        </span>
+      </div>
+    )
+  }
+
+  // update_available is null/undefined (unknown, e.g. Redis unreachable or
+  // manifest_missing) — never an error, just an unknown state.
+  return (
+    <div className="update-status update-status--muted">
+      <span className="update-status-title">Update status unknown</span>
+      {lastChecked && <span className="update-status-detail">Last checked {lastChecked}</span>}
+    </div>
+  )
 }
 
 interface BackupMetadata {
@@ -265,7 +347,7 @@ export default function DatabaseStats({ isOpen, onClose }: DatabaseStatsProps) {
                   <div className="version-grid">
                     <div className="version-card">
                       <div className="version-label">Platform</div>
-                      <div className="version-value">v{versionInfo.platform.version}</div>
+                      <div className="version-value">v{versionInfo.platform.version || appVersion}</div>
                       <div className="version-detail">
                         API {versionInfo.platform.api_version}
                         {versionInfo.platform.git_commit && (
@@ -273,29 +355,36 @@ export default function DatabaseStats({ isOpen, onClose }: DatabaseStatsProps) {
                         )}
                       </div>
                     </div>
-                    <div className="version-card">
-                      <div className="version-label">Catalog</div>
-                      <div className="version-value">{versionInfo.catalog.version}</div>
-                      <div className="version-detail">
-                        {versionInfo.catalog.controls_count} controls
-                      </div>
-                    </div>
-                    <div className="version-card">
-                      <div className="version-label">Evidence</div>
-                      <div className="version-value">{versionInfo.catalog.evidence_count}</div>
-                      <div className="version-detail">requirements</div>
-                    </div>
-                    <div className="version-card">
-                      <div className="version-label">Interfaces</div>
-                      <div className="version-value">{versionInfo.catalog.interface_count}</div>
-                      <div className="version-detail">collection methods</div>
-                    </div>
+                    {versionInfo.catalog && (
+                      <>
+                        <div className="version-card">
+                          <div className="version-label">Catalog</div>
+                          <div className="version-value">{versionInfo.catalog.version}</div>
+                          <div className="version-detail">
+                            {versionInfo.catalog.controls_count} controls
+                          </div>
+                        </div>
+                        <div className="version-card">
+                          <div className="version-label">Evidence</div>
+                          <div className="version-value">{versionInfo.catalog.evidence_count}</div>
+                          <div className="version-detail">requirements</div>
+                        </div>
+                        <div className="version-card">
+                          <div className="version-label">Interfaces</div>
+                          <div className="version-value">{versionInfo.catalog.interface_count}</div>
+                          <div className="version-detail">collection methods</div>
+                        </div>
+                      </>
+                    )}
                   </div>
-                  <div className="environment-badge">
-                    <span className={`env-tag env-${versionInfo.environment}`}>
-                      {versionInfo.environment}
-                    </span>
-                  </div>
+                  {versionInfo.environment && (
+                    <div className="environment-badge">
+                      <span className={`env-tag env-${versionInfo.environment}`}>
+                        {versionInfo.environment}
+                      </span>
+                    </div>
+                  )}
+                  <UpdateStatus update={versionInfo.update} />
                 </div>
               )}
 

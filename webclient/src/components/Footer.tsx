@@ -1,3 +1,6 @@
+import { useState, useEffect } from 'react'
+import { apiClient, type VersionInfo, type VersionUpdateInfo } from '../data/apiClient'
+
 // Documentation/Book SVG icon
 const DocsIcon = () => (
   <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
@@ -22,9 +25,40 @@ const appVersion = __APP_VERSION__
 const docsUrl = 'https://docs.scfcontrolsplatform.app/'
 
 export default function Footer() {
+  // The `update` object is returned to any authenticated user; only anonymous/
+  // coarse responses omit it, so the badge simply never appears when logged out.
+  // Any fetch failure degrades silently to no badge.
+  const [update, setUpdate] = useState<VersionUpdateInfo | null>(null)
+
+  useEffect(() => {
+    let active = true
+    apiClient
+      .get<VersionInfo>('/version')
+      .then(data => { if (active) setUpdate(data?.update ?? null) })
+      .catch(() => { if (active) setUpdate(null) })
+    return () => { active = false }
+  }, [])
+
+  const showBadge = update?.update_available === true
+  const amber = Boolean(update?.breaking || update?.skip_blocked)
+
   return (
     <footer className="app-footer">
       <div className="footer-left">
+        <span className="footer-version">v{appVersion}</span>
+        {showBadge && (
+          <a
+            className={`footer-update-badge ${amber ? 'footer-update-badge--breaking' : 'footer-update-badge--available'}`}
+            href={update?.release_url}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            {amber && <span aria-hidden="true">⚠</span>}
+            {update?.skip_blocked
+              ? `Upgrade to v${update?.min_upgradable_version} first`
+              : `Update available → v${update?.latest_version}`}
+          </a>
+        )}
       </div>
 
       <div className="footer-center">

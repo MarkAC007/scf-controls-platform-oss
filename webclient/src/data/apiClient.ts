@@ -1113,6 +1113,51 @@ export const apiClient = {
 }
 
 /**
+ * Version / Update API (GET /api/version)
+ *
+ * The response is tiered by caller:
+ * - Anonymous / non-admin callers get only a coarse liveness signal:
+ *   { platform: { api_version }, status: "ok" } — no precise version, catalog,
+ *   or update object.
+ * - Platform admins additionally get platform.version, catalog.*, the `update`
+ *   object (populated by the update poller) and the image `build` stamp.
+ *
+ * Every admin-only field is optional so the coarse shape still type-checks and
+ * consumers can degrade gracefully instead of rendering "undefined".
+ */
+export interface VersionUpdateInfo {
+  check_enabled: boolean
+  installed_version?: string
+  latest_version?: string
+  update_available?: boolean | null
+  breaking?: boolean
+  release_url?: string
+  summary?: string
+  min_upgradable_version?: string
+  skip_blocked?: boolean
+  last_checked?: string | null
+  status?: string
+}
+
+export interface VersionInfo {
+  platform: {
+    version?: string
+    api_version: string
+    git_commit?: string | null
+  }
+  catalog?: {
+    version: string
+    controls_count: number
+    evidence_count: number
+    interface_count: number
+  }
+  environment?: string
+  update?: VersionUpdateInfo
+  build?: { build_stamp?: string } | null
+  status?: string
+}
+
+/**
  * Consultant Portal API
  *
  * NOTE: Consultant endpoints require Google OAuth authentication.

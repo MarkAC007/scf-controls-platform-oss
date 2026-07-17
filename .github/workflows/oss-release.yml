@@ -37,20 +37,54 @@ jobs:
 
           TAG="v${VERSION}"
 
+          # Idempotent guard: a tag whose release is already PUBLISHED is done.
+          # A tag whose release is missing or still a draft (a previous run died
+          # between the tag push and the undraft) falls through to the repair
+          # path below — otherwise the release would be stranded invisible
+          # forever, with every re-run reporting success.
+          TAG_EXISTS=0
           if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null 2>&1; then
-            echo "release ${TAG} already exists — skipping"
-            exit 0
+            TAG_EXISTS=1
+            IS_DRAFT="$(gh release view "$TAG" --json isDraft --jq '.isDraft' 2>/dev/null || echo "missing")"
+            if [[ "$IS_DRAFT" == "false" ]]; then
+              echo "release ${TAG} already published — skipping"
+              exit 0
+            fi
+            echo "tag ${TAG} exists but its release is ${IS_DRAFT/#missing/absent} (draft=${IS_DRAFT}) — repairing"
           fi
 
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "release ${TAG} already exists — skipping"
-            exit 0
+          if [[ "$TAG_EXISTS" == "0" ]]; then
+            git config user.name "scf-oss-publisher"
+            git config user.email "noreply@compliancegenie.io"
+            git tag -a "$TAG" -m "Release $TAG"
+            git push origin "$TAG"
           fi
 
-          git config user.name "scf-oss-publisher"
-          git config user.email "noreply@compliancegenie.io"
-          git tag -a "$TAG" -m "Release $TAG"
-          git push origin "$TAG"
-          gh release create "$TAG" --title "$TAG" --generate-notes --verify-tag
+          # Release notes: prefer the maintainer-authored RELEASE_NOTES.md (emitted
+          # by the snapshot from RELEASE_META.yml). Fall back to auto-generated
+          # notes when it is absent.
+          NOTES_ARGS=(--generate-notes)
+          if [[ -f RELEASE_NOTES.md ]]; then
+            NOTES_ARGS=(--notes-file RELEASE_NOTES.md)
+          fi
 
-          echo "published release ${TAG}"
+          # Publish atomically: create as a DRAFT, attach the upgrade manifest, then
+          # flip to published. This guarantees a consumer never sees a "latest"
+          # release whose upgrade-manifest.json asset 404s (the manifest is the
+          # machine-readable contract the upgrade tooling reasons about).
+          # Skip creation when repairing an existing draft from a failed run.
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --title "$TAG" --draft --verify-tag "${NOTES_ARGS[@]}"
+          fi
+
+          if [[ ! -f upgrade-manifest.json ]]; then
+            echo "::error::upgrade-manifest.json is missing from the snapshot — refusing to publish a release without it."
+            # Roll back the draft + tag so a corrected re-run can proceed cleanly.
+            gh release delete "$TAG" --yes --cleanup-tag || true
+            exit 1
+          fi
+
+          gh release upload "$TAG" upgrade-manifest.json --clobber
+          gh release edit "$TAG" --draft=false
+
+          echo "published release ${TAG} with upgrade-manifest.json"

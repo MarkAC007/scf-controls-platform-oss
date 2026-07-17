@@ -902,6 +902,39 @@ select:focus, textarea:focus, input:focus {
   color: #475569;
 }
 
+/* Footer "update available" badge — colour encodes urgency (green normal,
+   amber for breaking / skip-blocked). Theming is handled by the semantic
+   tokens, which flip under [data-theme="dark"]. */
+.footer-update-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.4;
+  text-decoration: none;
+  transition: opacity 0.2s ease;
+}
+
+.footer-update-badge:hover {
+  opacity: 0.85;
+}
+
+.footer-update-badge--available {
+  background: var(--success-bg);
+  color: var(--success);
+  border: 1px solid var(--success);
+}
+
+.footer-update-badge--breaking {
+  background: var(--warning-bg);
+  color: var(--warning);
+  border: 1px solid var(--warning);
+}
+
 .footer-credit {
   display: flex;
   align-items: center;
@@ -8068,6 +8101,96 @@ textarea.form-control{
 .env-tag.env-production {
   background: #dcfce7;
   color: #166534;
+}
+
+/* Update status card in the Version Information panel. All colours come from
+   the semantic tokens (--success*, --warning*, --muted*), which already have
+   [data-theme="dark"] overrides, so both themes render correctly. */
+.update-status {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.update-status-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.update-status-summary {
+  color: var(--muted);
+}
+
+.update-status-breaking-note {
+  color: var(--warning);
+  font-weight: 600;
+}
+
+.update-status-instruction {
+  color: var(--text);
+}
+
+.update-status-cmd {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  padding: 1px 6px;
+  background: var(--border);
+  border-radius: 4px;
+  color: var(--text);
+}
+
+.update-status-link {
+  align-self: flex-start;
+  color: var(--info);
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.update-status-link:hover {
+  text-decoration: underline;
+}
+
+.update-status-detail {
+  color: var(--muted);
+}
+
+.update-status--available,
+.update-status--current {
+  background: var(--success-bg);
+  border-color: var(--success);
+}
+
+.update-status--available .update-status-title,
+.update-status--current .update-status-title {
+  color: var(--success);
+}
+
+.update-status--breaking,
+.update-status--blocked {
+  background: var(--warning-bg);
+  border-color: var(--warning);
+}
+
+.update-status--breaking .update-status-title,
+.update-status--blocked .update-status-title {
+  color: var(--warning);
+}
+
+.update-status--muted {
+  background: var(--muted-bg);
+  border-color: var(--border);
+}
+
+.update-status--muted .update-status-title {
+  color: var(--muted);
+  font-weight: 500;
 }
 
 /* ============================================
