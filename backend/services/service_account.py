@@ -12,7 +12,7 @@ from models import User
 
 logger = logging.getLogger(__name__)
 
-SERVICE_ACCOUNT_EMAIL = "api@odin-scf.local"
+SERVICE_ACCOUNT_EMAIL = "machine@scf.local"
 SERVICE_ACCOUNT_GOOGLE_SUB = "static-api-key-service-account"
 SERVICE_ACCOUNT_NAME = "API Service Account"
 
@@ -37,13 +37,19 @@ async def seed_service_account() -> None:
                 email=SERVICE_ACCOUNT_EMAIL,
                 display_name=SERVICE_ACCOUNT_NAME,
             )
-            .on_conflict_do_nothing(index_elements=[User.email])
+            .on_conflict_do_update(
+                index_elements=[User.google_sub],
+                set_={
+                    "email": SERVICE_ACCOUNT_EMAIL,
+                    "display_name": SERVICE_ACCOUNT_NAME,
+                },
+            )
         )
         await session.execute(stmt)
         await session.commit()
 
         result = await session.execute(
-            select(User.id).where(User.email == SERVICE_ACCOUNT_EMAIL)
+            select(User.id).where(User.google_sub == SERVICE_ACCOUNT_GOOGLE_SUB)
         )
         service_account_id = result.scalar_one_or_none()
         if service_account_id is None:
