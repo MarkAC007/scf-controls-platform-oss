@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "version": "0.9.0",
-  "released": "2026-07-17T19:12:22Z",
+  "version": "0.10.0",
+  "released": "2026-07-18T15:38:01Z",
   "min_upgradable_version": "0.0.0",
-  "breaking": true,
+  "breaking": false,
   "required_stops": [],
-  "release_url": "https://github.com/MarkAC007/scf-controls-platform-oss/releases/tag/v0.9.0",
-  "summary": "Adds safe-upgrade tooling \u2014 a fail-closed migration guard, scripts/upgrade.sh with mandatory backups and atomic rollback, and an in-app update checker. Upgrading an existing deployment now requires scripts/upgrade.sh (it backs up first) or SCF_MIGRATE_ACK; a bare 'docker compose up --build' will refuse to auto-migrate.",
+  "release_url": "https://github.com/MarkAC007/scf-controls-platform-oss/releases/tag/v0.10.0",
+  "summary": "Adds optional OIDC single sign-on \u2014 run the bundled Keycloak identity provider (compose profile 'idp') or bring your own IdP (Okta, Entra, Auth0, ...). Entirely opt-in; migration adds users.oidc_issuer (nullable, backfilled, safe). Also bumps Authlib to 1.6.9 for OIDC-related CVE fixes.",
   "migration_range": [
     "20260119_000000_62bdef86f249_initial_schema",
     "20260120_075300_add_implementation_status_values",
@@ -54,7 +54,8 @@
     "20260711_160000_add_system_catalog",
     "20260716_180000_add_system_vendor_link",
     "20260716_210000_add_evidence_tracking_maturity_level",
-    "20260717_170000_add_platform_upgrade_state"
+    "20260717_170000_add_platform_upgrade_state",
+    "20260717_211704_add_oidc_issuer_to_users"
   ],
   "env_added": [],
   "min_compose_action": "rebuild"

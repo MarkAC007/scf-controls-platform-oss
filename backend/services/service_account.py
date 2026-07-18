@@ -38,9 +38,13 @@ async def seed_service_account() -> None:
                 display_name=SERVICE_ACCOUNT_NAME,
             )
             .on_conflict_do_update(
-                index_elements=[User.google_sub],
+                # Issue #699 replaced the single-column google_sub unique
+                # constraint with composite (oidc_issuer, google_sub), so
+                # ON CONFLICT must target email — still UNIQUE NOT NULL, and
+                # the sentinel service-account email never belongs to a human.
+                index_elements=[User.email],
                 set_={
-                    "email": SERVICE_ACCOUNT_EMAIL,
+                    "google_sub": SERVICE_ACCOUNT_GOOGLE_SUB,
                     "display_name": SERVICE_ACCOUNT_NAME,
                 },
             )

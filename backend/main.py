@@ -66,6 +66,7 @@ from api import (
     audit_engagements,
     trust_portal,
     catalog_admin,
+    oidc_auth,
 )
 
 # Configure logging
@@ -178,6 +179,16 @@ async def lifespan(app: FastAPI):
             await evaluate_single_tenant()
         except Exception as e:
             logger.error("Single-tenant setup failed (non-fatal): %s", e, exc_info=True)
+
+    # Seed the initial platform admin from BOOTSTRAP_ADMIN_EMAIL (self-hosted
+    # first-run bootstrap). Idempotent and non-fatal — a failure must not block
+    # startup (mirrors the single-tenant seed handling above).
+    try:
+        from auth import seed_bootstrap_admin
+        await seed_bootstrap_admin()
+    except Exception as e:
+        logger.error("Bootstrap admin seed failed (non-fatal): %s", e, exc_info=True)
+
     if os.getenv("ENVIRONMENT") == "development":
         logger.critical(
             "ENVIRONMENT=development — debug error detail and uvicorn reload are ON. "
@@ -405,6 +416,9 @@ app.include_router(evidence_window_assessment.router, prefix="/api")  # Windowed
 app.include_router(control_composites.router, prefix="/api")  # Control assessment composites read API (M3 PR 2, #575)
 app.include_router(audit_engagements.router, prefix="/api")  # Audit Engagement Workspaces (Issue #370 Phase D)
 app.include_router(trust_portal.router, prefix="/api")  # Public trust portal (unauthenticated)
+# OIDC login / callback endpoints. The router self-prefixes /api/auth, so it is
+# included WITHOUT an extra prefix here (a "/api" prefix would double to /api/api/auth).
+app.include_router(oidc_auth.router)
 
 
 if __name__ == "__main__":

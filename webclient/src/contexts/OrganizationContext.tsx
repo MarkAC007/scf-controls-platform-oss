@@ -13,6 +13,7 @@
  */
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react'
 import { useAuth } from './AuthContext'
+import { getAuthToken } from '../data/authToken'
 
 // Storage keys for localStorage persistence
 const ORG_STORAGE_KEY = 'scf_current_org_id'
@@ -176,7 +177,7 @@ export function OrganizationProvider({ children }: { children: ReactNode }) {
     setError(null)
 
     try {
-      const authToken = token || localStorage.getItem('google_token')
+      const authToken = token || getAuthToken()
       const orgs = await fetchOrganizations(authToken)
       setAvailableOrgs(orgs)
       console.log(`✅ Loaded ${orgs.length} accessible organizations`)
@@ -229,7 +230,7 @@ export function OrganizationProvider({ children }: { children: ReactNode }) {
     if (!org) {
       // Try to fetch it (might be newly accessible)
       try {
-        const authToken = token || localStorage.getItem('google_token')
+        const authToken = token || getAuthToken()
         org = await fetchOrganization(orgId, authToken)
         // Add to available orgs
         setAvailableOrgs(prev => [...prev, org!])
