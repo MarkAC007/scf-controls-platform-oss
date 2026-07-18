@@ -8,9 +8,17 @@
 // In production: Nginx proxies /api/* to backend Cloud Run service
 const API_BASE_URL = '/api'
 
-// Authentication configuration
-const GOOGLE_AUTH_ENABLED = import.meta.env.VITE_GOOGLE_AUTH_ENABLED === 'true'
-const API_KEY = import.meta.env.VITE_API_KEY || ''
+// Authentication configuration — token resolution lives in ./authToken
+import {
+  getAuthToken,
+  getGoogleToken,
+  clearAuthSession,
+  refreshOidcToken,
+  OIDC_ENABLED,
+  GOOGLE_AUTH_ENABLED,
+  API_KEY,
+} from './authToken'
+
 const DEBUG_API = import.meta.env.VITE_DEBUG_API === 'true'
 
 // Validate API key configuration
@@ -41,17 +49,12 @@ async function apiFetch<T>(
 ): Promise<T> {
   const url = `${API_BASE_URL}${endpoint}`
 
-  // Check for Google token only if Google auth is enabled
-  const googleToken = GOOGLE_AUTH_ENABLED ? localStorage.getItem('google_token') : null
-  const token = googleToken || API_KEY
-  const authMethod = googleToken ? 'Google token' : 'API key'
+  const token = getAuthToken()
 
   // Debug logging (only when VITE_DEBUG_API=true)
   if (DEBUG_API) {
     console.debug(`🔐 API call to ${endpoint}`)
-    console.debug(`   Google auth enabled: ${GOOGLE_AUTH_ENABLED}`)
-    console.debug(`   Google token in localStorage: ${googleToken ? 'YES' : 'NO'}`)
-    console.debug(`   Using: ${authMethod}`)
+    console.debug(`   OIDC enabled: ${OIDC_ENABLED} | Google auth enabled: ${GOOGLE_AUTH_ENABLED}`)
     console.debug(`   Token last 4 chars: ...${token?.slice(-4) || '[NONE]'}`)
   }
 
@@ -59,18 +62,25 @@ async function apiFetch<T>(
     console.warn('⚠️  No authentication token available')
   }
 
-  const defaultHeaders: HeadersInit = {
-    'Content-Type': 'application/json',
-    'Authorization': `Bearer ${token}`,
-  }
-
-  const response = await fetch(url, {
+  const buildInit = (bearer: string): RequestInit => ({
     ...options,
     headers: {
-      ...defaultHeaders,
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${bearer}`,
       ...options.headers,
     },
   })
+
+  let response = await fetch(url, buildInit(token))
+
+  // OIDC: a 401 may just mean the id_token expired — attempt one silent refresh
+  // and retry the request once before treating it as a hard auth failure.
+  if (response.status === 401 && OIDC_ENABLED) {
+    const refreshed = await refreshOidcToken()
+    if (refreshed) {
+      response = await fetch(url, buildInit(refreshed))
+    }
+  }
 
   if (!response.ok) {
     const errorText = await response.text()
@@ -101,7 +111,7 @@ async function apiFetch<T>(
         const detail = errorJson.detail || errorJson
         if (detail?.error === 'account_not_provisioned') {
           console.warn('⚠️ Account not provisioned - redirecting to signup')
-          localStorage.removeItem('google_token')
+          clearAuthSession()
           const redirectUrl = detail.redirect || 'https://scfcontrolsplatform.com/signup'
           window.location.href = redirectUrl
           throw new Error('REDIRECT_IN_PROGRESS')
@@ -115,9 +125,28 @@ async function apiFetch<T>(
       }
     }
 
-    // Handle authentication errors
-    if (response.status === 401 || response.status === 403) {
+    // Handle authentication errors.
+    // In OIDC mode a 403 is deliberately NOT treated as an auth failure: the
+    // silent refresh above only runs for 401s, account_not_provisioned was
+    // already handled, so a 403 here is an ordinary RBAC "permission denied"
+    // for a signed-in user. Clearing the session on it would sign out a valid
+    // user and can loop sign-in → load → 403 → sign-out. Let it fall through to
+    // the thrown apiError so the calling component surfaces the permission error.
+    const isAuthError = OIDC_ENABLED
+      ? response.status === 401
+      : response.status === 401 || response.status === 403
+    if (isAuthError) {
+      // OIDC: refresh was already attempted above; a persistent 401 means
+      // the session is dead — clear it and return to the sign-in screen.
+      if (OIDC_ENABLED) {
+        console.warn('⚠️  OIDC session rejected after refresh, clearing session')
+        clearAuthSession()
+        window.location.reload()
+        throw new Error('Session expired. Please sign in again.')
+      }
+
       // If Google token failed and Google auth is enabled, clear it and trigger re-authentication
+      const googleToken = getGoogleToken()
       if (googleToken && GOOGLE_AUTH_ENABLED) {
         // Check if error message indicates token expiration
         const isExpired = errorMessage.toLowerCase().includes('expired') ||
@@ -129,7 +158,7 @@ async function apiFetch<T>(
           console.warn('⚠️  Google token invalid or rejected by backend, clearing session')
         }
 
-        localStorage.removeItem('google_token')
+        clearAuthSession()
         // Trigger page reload to show sign-in screen
         window.location.reload()
         throw new Error('Session expired. Please sign in again.')
@@ -163,6 +192,26 @@ async function apiFetch<T>(
 }
 
 /**
+ * Fire a request and, in OIDC mode, transparently retry once on a 401 after a
+ * silent token refresh. `doFetch` receives the Bearer token to use and must
+ * build and send the request fresh on each call, so FormData/multipart bodies
+ * are re-sent correctly on the retry. Mirrors the 401 → refresh → retry logic
+ * baked into apiFetch, for the raw-fetch/upload paths that bypass apiFetch.
+ */
+async function fetchWithOidcRetry(
+  doFetch: (bearer: string) => Promise<Response>
+): Promise<Response> {
+  let response = await doFetch(getAuthToken())
+  if (response.status === 401 && OIDC_ENABLED) {
+    const refreshed = await refreshOidcToken()
+    if (refreshed) {
+      response = await doFetch(refreshed)
+    }
+  }
+  return response
+}
+
+/**
  * Raw fetch wrapper that returns the Response object without JSON parsing.
  * Used for endpoints that return binary data (PDF, DOCX, etc.).
  */
@@ -172,20 +221,15 @@ async function apiFetchRaw(
 ): Promise<Response> {
   const url = `${API_BASE_URL}${endpoint}`
 
-  const googleToken = GOOGLE_AUTH_ENABLED ? localStorage.getItem('google_token') : null
-  const token = googleToken || API_KEY
-
-  const defaultHeaders: HeadersInit = {
-    'Authorization': `Bearer ${token}`,
-  }
-
-  const response = await fetch(url, {
-    ...options,
-    headers: {
-      ...defaultHeaders,
-      ...options.headers,
-    },
-  })
+  const response = await fetchWithOidcRetry((bearer) =>
+    fetch(url, {
+      ...options,
+      headers: {
+        'Authorization': `Bearer ${bearer}`,
+        ...options.headers,
+      },
+    })
+  )
 
   if (!response.ok) {
     const errorText = await response.text()
@@ -268,11 +312,6 @@ export interface OrganizationLogoResponse {
   content_type: string | null
   size_bytes: number
   updated_at: string | null
-}
-
-function getAuthToken(): string {
-  const googleToken = GOOGLE_AUTH_ENABLED ? localStorage.getItem('google_token') : null
-  return googleToken || API_KEY
 }
 
 /**
@@ -3181,14 +3220,14 @@ export async function uploadCdmDocument(
   formData.append('file', file)
 
   const url = `${API_BASE_URL}/organizations/${orgId}/cdm/upload`
-  const googleToken = GOOGLE_AUTH_ENABLED ? localStorage.getItem('google_token') : null
-  const token = googleToken || API_KEY
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}` },
-    body: formData,
-  })
+  const response = await fetchWithOidcRetry((bearer) =>
+    fetch(url, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${bearer}` },
+      body: formData,
+    })
+  )
 
   if (!response.ok) {
     const errorText = await response.text()
@@ -3235,13 +3274,13 @@ export async function deleteCdmDocument(
   documentId: string,
 ): Promise<void> {
   const url = `${API_BASE_URL}/organizations/${orgId}/cdm/documents/${documentId}`
-  const googleToken = GOOGLE_AUTH_ENABLED ? localStorage.getItem('google_token') : null
-  const token = googleToken || API_KEY
 
-  const response = await fetch(url, {
-    method: 'DELETE',
-    headers: { Authorization: `Bearer ${token}` },
-  })
+  const response = await fetchWithOidcRetry((bearer) =>
+    fetch(url, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${bearer}` },
+    })
+  )
 
   if (!response.ok && response.status !== 204) {
     const errorText = await response.text()
@@ -3511,16 +3550,16 @@ export async function getCatalogStatus(): Promise<CatalogStatus> {
  * multipart boundary the browser must set for a file upload.
  */
 export async function uploadCatalogExcel(file: File): Promise<CatalogImportAccepted> {
-  const googleToken = GOOGLE_AUTH_ENABLED ? localStorage.getItem('google_token') : null
-  const token = googleToken || API_KEY
   const form = new FormData()
   form.append('file', file)
 
-  const response = await fetch(`${API_BASE_URL}/admin/catalog/import`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}` },
-    body: form,
-  })
+  const response = await fetchWithOidcRetry((bearer) =>
+    fetch(`${API_BASE_URL}/admin/catalog/import`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${bearer}` },
+      body: form,
+    })
+  )
   if (!response.ok) {
     let message = `Upload failed: ${response.status} ${response.statusText}`
     try {

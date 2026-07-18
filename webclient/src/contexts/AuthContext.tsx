@@ -1,5 +1,14 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react'
 import { GoogleOAuthProvider } from '@react-oauth/google'
+import {
+  OIDC_ENABLED,
+  OIDC_TOKEN_KEY,
+  OIDC_REFRESH_KEY,
+  storeOidcSession,
+  isOidcTokenExpiring,
+  refreshOidcToken,
+  clearAuthSession,
+} from '../data/authToken'
 
 interface User {
   id: string
@@ -132,7 +141,132 @@ async function fetchUserProfile(token: string): Promise<User | null> {
   }
 }
 
+// Decode the claims of a JWT (the OIDC id_token) as a fallback User when the
+// backend profile call is unavailable. Returns null for non-JWT tokens.
+function decodeJwtClaims(token: string): User | null {
+  if (token.split('.').length !== 3) return null
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1]))
+    return {
+      id: payload.sub,
+      email: payload.email || 'User',
+      name: payload.name || payload.email?.split('@')[0] || 'User',
+    }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * OIDC auth provider (redirect-based flow). Mounted instead of the Google
+ * provider when VITE_OIDC_ENABLED. The app has no router, so the callback
+ * "route" is handled here as a mount-effect path/hash check.
+ */
+function OidcAuthProvider({ children }: { children: ReactNode }) {
+  const [user, setUser] = useState<User | null>(null)
+  const [token, setToken] = useState<string | null>(null)
+  const [authReady, setAuthReady] = useState(false)
+
+  const refreshUserProfile = async () => {
+    const currentToken = token || localStorage.getItem(OIDC_TOKEN_KEY)
+    if (!currentToken) return
+    const profile = await fetchUserProfile(currentToken)
+    if (profile) setUser(profile)
+  }
+
+  useEffect(() => {
+    const initialise = async () => {
+      const hash = window.location.hash
+      const isCallback =
+        window.location.pathname === '/auth/callback' || hash.includes('id_token=')
+
+      let activeToken: string | null = null
+
+      if (isCallback) {
+        // Parse the token fragment the backend appended after IdP auth.
+        const params = new URLSearchParams(hash.startsWith('#') ? hash.slice(1) : hash)
+        const idToken = params.get('id_token')
+        const expiresIn = Number(params.get('expires_in') || 0)
+        const refreshHandle = params.get('refresh_handle') || ''
+        if (idToken) {
+          storeOidcSession(idToken, expiresIn, refreshHandle)
+          activeToken = idToken
+        }
+        // Scrub the token out of the URL/history before the app renders.
+        window.history.replaceState({}, '', '/')
+      } else {
+        activeToken = localStorage.getItem(OIDC_TOKEN_KEY)
+        // Proactively refresh a token that is on the edge of expiry.
+        if (activeToken && isOidcTokenExpiring()) {
+          const refreshed = await refreshOidcToken()
+          if (refreshed) activeToken = refreshed
+        }
+      }
+
+      if (!activeToken) {
+        setAuthReady(true)
+        return
+      }
+
+      setToken(activeToken)
+      setUser({ id: 'loading', email: 'Loading...', name: 'Loading...' })
+
+      try {
+        const profile = await fetchUserProfile(activeToken)
+        setUser(profile || decodeJwtClaims(activeToken) || { id: 'oidc_user', email: 'User', name: 'User' })
+      } catch (e) {
+        // fetchUserProfile redirects on 403 account_not_provisioned; halt here.
+        if (e instanceof Error && e.message === 'REDIRECT_IN_PROGRESS') return
+        console.error('Error during OIDC profile fetch:', e)
+      } finally {
+        setAuthReady(true)
+      }
+    }
+    initialise()
+  }, [])
+
+  // Redirect flow never calls login() from a component, but AuthContextType
+  // requires it; keep it functional for completeness.
+  const login = async (credential: string) => {
+    setToken(credential)
+    const profile = await fetchUserProfile(credential)
+    if (profile) setUser(profile)
+  }
+
+  const logout = () => {
+    const handle = localStorage.getItem(OIDC_REFRESH_KEY)
+    if (handle) {
+      // Best-effort server-side revocation; failures must not block sign-out.
+      fetch('/api/auth/logout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_handle: handle }),
+      }).catch(() => {})
+    }
+    clearAuthSession()
+    setToken(null)
+    setUser(null)
+  }
+
+  const contextValue: AuthContextType = {
+    user,
+    token,
+    isAuthenticated: !!token,
+    authReady,
+    login,
+    logout,
+    refreshUserProfile,
+  }
+
+  return <AuthContext.Provider value={contextValue}>{children}</AuthContext.Provider>
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
+  // OIDC takes precedence over Google and API-key modes.
+  if (OIDC_ENABLED) {
+    return <OidcAuthProvider>{children}</OidcAuthProvider>
+  }
+
   // If Google auth is disabled, bypass all authentication UI
   if (!GOOGLE_AUTH_ENABLED) {
     console.log('ℹ️  Google auth disabled, using API key mode')

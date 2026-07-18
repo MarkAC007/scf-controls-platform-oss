@@ -18,9 +18,8 @@ import type {
 
 const API_BASE_URL = '/api'
 
-// Authentication configuration (same as apiClient.ts)
-const GOOGLE_AUTH_ENABLED = import.meta.env.VITE_GOOGLE_AUTH_ENABLED === 'true'
-const API_KEY = import.meta.env.VITE_API_KEY || ''
+// Token resolution is shared with apiClient.ts via ./authToken
+import { getAuthToken, refreshOidcToken, OIDC_ENABLED } from './authToken'
 
 /**
  * Generic fetch wrapper for catalog API calls
@@ -28,15 +27,23 @@ const API_KEY = import.meta.env.VITE_API_KEY || ''
 async function catalogFetch<T>(endpoint: string): Promise<T> {
   const url = `${API_BASE_URL}${endpoint}`
 
-  const googleToken = GOOGLE_AUTH_ENABLED ? localStorage.getItem('google_token') : null
-  const token = googleToken || API_KEY
+  const doFetch = (bearer: string) =>
+    fetch(url, {
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${bearer}`,
+      },
+    })
 
-  const response = await fetch(url, {
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${token}`,
-    },
-  })
+  let response = await doFetch(getAuthToken())
+
+  // OIDC: retry once with a refreshed token if the id_token expired.
+  if (response.status === 401 && OIDC_ENABLED) {
+    const refreshed = await refreshOidcToken()
+    if (refreshed) {
+      response = await doFetch(refreshed)
+    }
+  }
 
   if (!response.ok) {
     throw new Error(`Catalog API Error: ${response.status} ${response.statusText}`)
