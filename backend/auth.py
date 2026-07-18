@@ -98,6 +98,300 @@ class User:
         return self._subscription is not None
 
 
+async def _persist_oidc_user(
+    db: AsyncSession,
+    *,
+    sub: str,
+    email: Optional[str],
+    display_name: Optional[str],
+    issuer: str,
+    email_verified: bool = False,
+) -> Optional[DBUser]:
+    """Upsert the DB user for a validated OIDC/Google identity.
+
+    Shared by the Google path (``validate_google_token``) and the generic OIDC
+    path (``require_auth``). Identity is the composite ``(oidc_issuer, google_sub)``
+    so the same subject value from two different issuers is two distinct users.
+
+    ``email_verified`` gates every email-based linking path: any lookup keyed on
+    the email *claim* (cross-issuer re-link, pending-link) may only fire when the
+    issuer asserted the email is verified. Callers handling raw OIDC claims MUST
+    pass the real ``email_verified`` value; it defaults to ``False`` (fail-closed)
+    so an unverified BYO-IdP email can never adopt an existing account (F1). The
+    Google path passes ``True`` (Google userinfo email is verified by definition).
+
+    Behaviour:
+      - Returning user: matched by ``(issuer, sub)``, or by a legacy pre-backfill
+        row (``google_sub == sub`` with ``oidc_issuer IS NULL``) which is then
+        adopted onto ``issuer``. Updates email / display_name / last_login_at.
+      - Cross-issuer re-link/migration (F3): if the above miss AND ``email_verified``
+        is True AND email is non-empty, an EXISTING real row with the same email
+        (``google_sub NOT LIKE 'pending:%'``) is adopted onto the new
+        ``(issuer, sub)``. Enables the Google->bundled-KC migration (#699) without
+        tripping the email-unique constraint.
+      - Pending-link: website-provisioned rows have ``google_sub == "pending:{email}"``
+        (issuer-agnostic, NULL issuer); on first login they are relinked to the
+        real ``sub`` AND stamped with ``issuer``. Only fires when ``email_verified``
+        is True (F1): guards the seeded ``is_platform_admin`` bootstrap row against
+        takeover via an unverified email claim.
+      - Auto-provision on a valid pending consultant/org invite (free-tier sub),
+        or under OPEN_REGISTRATION; both stamp ``issuer`` on the new row.
+      - Otherwise raise 403 ``account_not_provisioned`` (website-first).
+      - A non-HTTP DB failure rolls back and returns ``None`` so auth still
+        succeeds with a transient (unpersisted) identity.
+
+    Returns the persisted ``DBUser`` (refreshed) or ``None`` on rollback.
+    """
+    # WEBSITE-FIRST PROVISIONING: Users must sign up via the marketing website first.
+    # The website creates a provisioned user with google_sub = "pending:{email}"
+    # When they first log in, we link their identity to the real subject/issuer.
+    try:
+        # Primary lookup by composite (issuer, sub) identity.
+        result = await db.execute(
+            select(DBUser).where(
+                (DBUser.oidc_issuer == issuer) & (DBUser.google_sub == sub)
+            )
+        )
+        db_user = result.scalar_one_or_none()
+
+        if db_user is None:
+            # Legacy fallback: pre-backfill rows carry oidc_issuer IS NULL. Match
+            # on the bare subject and adopt the row onto this issuer so accounts
+            # created before the composite-identity migration keep authenticating.
+            legacy_result = await db.execute(
+                select(DBUser).where(
+                    (DBUser.google_sub == sub) & (DBUser.oidc_issuer.is_(None))
+                )
+            )
+            db_user = legacy_result.scalar_one_or_none()
+            if db_user is not None:
+                db_user.oidc_issuer = issuer
+                logger.info(f"Adopted legacy user {_mask_email(email)} onto issuer {issuer}")
+
+        if db_user is None and email_verified and email:
+            # Cross-issuer re-link / migration (F3, issue #699): an EXISTING real
+            # user (already linked to some issuer) now arrives from a DIFFERENT
+            # issuer carrying the same VERIFIED email. Adopt that row onto the new
+            # (issuer, sub) so the Google->bundled-Keycloak migration works and no
+            # email-unique IntegrityError is raised. Only a verified email may
+            # drive this. Exclude pending-link placeholders (they carry the real
+            # email but are handled by the pending-link path below); step 1 already
+            # proved no (issuer, sub) row exists so the adoption cannot collide.
+            email_match_result = await db.execute(
+                select(DBUser).where(
+                    (DBUser.email == email) &
+                    (~DBUser.google_sub.like("pending:%"))
+                )
+            )
+            db_user = email_match_result.scalar_one_or_none()
+            if db_user is not None:
+                db_user.google_sub = sub
+                db_user.oidc_issuer = issuer
+                logger.info(f"Re-linked existing user {_mask_email(email)} onto issuer {issuer} via verified email")
+
+        if db_user:
+            # Update existing user (returning user)
+            db_user.email = email
+            db_user.display_name = display_name
+            db_user.last_login_at = datetime.utcnow()
+            logger.debug(f"Updated existing user {db_user.id}")
+        else:
+            # New login - check if this user is provisioned from the website.
+            # Website creates users with google_sub = "pending:{email}" (NULL issuer).
+            # F1: email-based pending-link may ONLY fire for a verified email, else
+            # an unverified BYO-IdP email claim could adopt the seeded platform-admin
+            # bootstrap row (google_sub="pending:{email}"). Unverified => skip and
+            # fall through to invite / OPEN_REGISTRATION / 403 as if no pending row.
+            provisioned_user = None
+            if email_verified and email:
+                provisioned_result = await db.execute(
+                    select(DBUser).where(DBUser.google_sub == f"pending:{email}")
+                )
+                provisioned_user = provisioned_result.scalar_one_or_none()
+
+            if provisioned_user:
+                # WEBSITE-PROVISIONED USER: Link their identity (subject + issuer)
+                provisioned_user.google_sub = sub
+                provisioned_user.oidc_issuer = issuer
+                provisioned_user.email = email
+                provisioned_user.display_name = display_name
+                provisioned_user.last_login_at = datetime.utcnow()
+                db_user = provisioned_user
+                logger.info(f"Linked provisioned user {_mask_email(email)} to identity")
+            else:
+                # NOT PROVISIONED via website — check if they have a pending
+                # invitation (consultant OR org-member).  If so, auto-provision
+                # the account so the invite-acceptance flow can proceed without
+                # requiring the user to sign up through the marketing website.
+                pending_invite_result = await db.execute(
+                    select(ConsultantInvite).where(
+                        (ConsultantInvite.email == email) &
+                        (ConsultantInvite.status == ConsultantInviteStatus.PENDING.value)
+                    )
+                )
+                pending_consultant_invite = pending_invite_result.scalar_one_or_none()
+
+                # Also check for pending org-member invites (e.g. consultant
+                # invited an admin to a client organisation via User Management)
+                pending_org_invite_result = await db.execute(
+                    select(OrganizationInvite).where(
+                        (OrganizationInvite.email == email) &
+                        (OrganizationInvite.status == OrgInviteStatus.PENDING.value)
+                    )
+                )
+                pending_org_invite = pending_org_invite_result.scalar_one_or_none()
+
+                has_valid_invite = (
+                    (pending_consultant_invite and not pending_consultant_invite.is_expired()) or
+                    (pending_org_invite and not pending_org_invite.is_expired())
+                )
+
+                if has_valid_invite:
+                    # Auto-provision: create a minimal user record so they can
+                    # accept the invite.  They get a free-tier subscription by
+                    # default; the consultant-invite acceptance flow will attach
+                    # them to the correct organisation.
+                    invite_type = "consultant" if pending_consultant_invite else "org-member"
+                    logger.info(f"Auto-provisioning user {_mask_email(email)} — has pending {invite_type} invite")
+                    db_user = DBUser(
+                        google_sub=sub,
+                        oidc_issuer=issuer,
+                        email=email,
+                        display_name=display_name,
+                        last_login_at=datetime.utcnow(),
+                    )
+                    db.add(db_user)
+                    await db.flush()
+
+                    # Create a default free-tier subscription
+                    subscription = UserSubscription(
+                        user_id=db_user.id,
+                        tier="free",
+                        is_active=True,
+                    )
+                    db.add(subscription)
+                elif os.getenv("OPEN_REGISTRATION", "false").lower() == "true":
+                    # OPEN_REGISTRATION mode (Azure / test environments only):
+                    # auto-provision user on first login without website signup.
+                    logger.info(f"Open registration: auto-provisioning user {_mask_email(email)}")
+                    db_user = DBUser(
+                        google_sub=sub,
+                        oidc_issuer=issuer,
+                        email=email,
+                        display_name=display_name,
+                        last_login_at=datetime.utcnow(),
+                    )
+                    db.add(db_user)
+                    await db.flush()
+                    subscription = UserSubscription(
+                        user_id=db_user.id,
+                        tier="free",
+                        is_active=True,
+                    )
+                    db.add(subscription)
+                else:
+                    # No pending invite — block signup (website-first provisioning enforced)
+                    logger.warning(f"Direct signup blocked for {_mask_email(email)} - not provisioned via website")
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail={
+                            "error": "account_not_provisioned",
+                            "message": "Your account has not been provisioned. Please sign up at scfcontrolsplatform.com first.",
+                            "redirect": "https://scfcontrolsplatform.com/signup"
+                        }
+                    )
+
+        await db.commit()
+        await db.refresh(db_user)
+
+        logger.debug(f"User persisted to database with ID: {db_user.id}")
+
+        # WEBSITE-FIRST PROVISIONING: Organisation linking is handled by the website
+        # The website sync API creates the user's organisation and membership.
+        # We only need to check for pending consultant invites here for the invite flow.
+
+        # Check for pending consultant invites for this user's email
+        # If they have pending invites, log it so they can use the invite acceptance flow
+        try:
+            pending_invite_result = await db.execute(
+                select(ConsultantInvite).where(
+                    (ConsultantInvite.email == email) &
+                    (ConsultantInvite.status == ConsultantInviteStatus.PENDING.value)
+                )
+            )
+            pending_invite = pending_invite_result.scalar_one_or_none()
+            if pending_invite and not pending_invite.is_expired():
+                logger.info(f"User {_mask_email(email)} has pending consultant invite - they can accept it after login")
+        except Exception as invite_check_error:
+            logger.warning(f"Failed to check for pending invites: {invite_check_error}")
+            # Non-fatal - user can still login
+
+    except HTTPException:
+        # Re-raise HTTPException (e.g., 403 for non-provisioned users)
+        raise
+    except Exception as db_error:
+        logger.error(f"Failed to persist user to database: {db_error}")
+        await db.rollback()
+        # Don't fail authentication if DB persist fails - continue with transient user
+        db_user = None
+
+    return db_user
+
+
+async def seed_bootstrap_admin() -> None:
+    """Seed an initial platform admin from BOOTSTRAP_ADMIN_EMAIL (idempotent).
+
+    Self-hosted deployments need a first platform admin to bootstrap the user
+    directory before anyone can log in. This:
+      - no-ops if BOOTSTRAP_ADMIN_EMAIL is unset;
+      - no-ops if ANY platform admin already exists (first-run only);
+      - promotes an existing user with that email to platform admin; or
+      - inserts a pending-link placeholder (google_sub="pending:{email}",
+        oidc_issuer NULL) that the first-login relink flow adopts onto the real
+        subject/issuer.
+
+    Never logs the email in clear text. Callers should still wrap this so a
+    seeding failure never blocks startup.
+    """
+    email = os.getenv("BOOTSTRAP_ADMIN_EMAIL")
+    if not email:
+        return
+
+    from database import get_db_session
+
+    async with get_db_session() as db:
+        # First-run only: if any platform admin already exists, do nothing.
+        existing_admin = await db.execute(
+            select(DBUser).where(DBUser.is_platform_admin == True)  # noqa: E712
+        )
+        if existing_admin.scalars().first() is not None:
+            logger.info("Bootstrap admin: a platform admin already exists — skipping")
+            return
+
+        # Promote an existing user with this email, if one is present.
+        existing_user = await db.execute(
+            select(DBUser).where(DBUser.email == email)
+        )
+        db_user = existing_user.scalar_one_or_none()
+        if db_user is not None:
+            db_user.is_platform_admin = True
+            await db.commit()
+            logger.info(f"Bootstrap admin: promoted existing user {_mask_email(email)} to platform admin")
+            return
+
+        # Otherwise insert a pending-link placeholder; first login fills in the
+        # real subject and issuer via the pending-link relink path.
+        db_user = DBUser(
+            google_sub=f"pending:{email}",
+            email=email,
+            display_name="Bootstrap Admin",
+            is_platform_admin=True,
+        )
+        db.add(db_user)
+        await db.commit()
+        logger.info(f"Bootstrap admin: seeded pending platform admin {_mask_email(email)}")
+
+
 async def validate_google_token(token: str, db: AsyncSession) -> User:
     """
     Validate Google OAuth2 access token using tokeninfo endpoint.
@@ -195,153 +489,19 @@ async def validate_google_token(token: str, db: AsyncSession) -> User:
 
         logger.info(f"✅ Successfully validated Google token for user: {_mask_email(email)}")
 
-        # Persist user to database (create or update)
-        # WEBSITE-FIRST PROVISIONING: Users must sign up via the marketing website first.
-        # The website creates a provisioned user with google_sub = "pending:{email}"
-        # When they first log into the platform, we link their Google account.
-        try:
-            # Check if user exists by google_sub (already logged in before)
-            result = await db.execute(
-                select(DBUser).where(DBUser.google_sub == google_sub)
-            )
-            db_user = result.scalar_one_or_none()
-
-            if db_user:
-                # Update existing user (returning user)
-                db_user.email = email
-                db_user.display_name = display_name
-                db_user.last_login_at = datetime.utcnow()
-                logger.debug(f"Updated existing user {db_user.id}")
-            else:
-                # New Google login - check if this user is provisioned from the website
-                # Website creates users with google_sub = "pending:{email}"
-                provisioned_result = await db.execute(
-                    select(DBUser).where(DBUser.google_sub == f"pending:{email}")
-                )
-                provisioned_user = provisioned_result.scalar_one_or_none()
-
-                if provisioned_user:
-                    # WEBSITE-PROVISIONED USER: Link their Google account
-                    provisioned_user.google_sub = google_sub
-                    provisioned_user.email = email
-                    provisioned_user.display_name = display_name
-                    provisioned_user.last_login_at = datetime.utcnow()
-                    db_user = provisioned_user
-                    logger.info(f"Linked provisioned user {_mask_email(email)} to Google account")
-                else:
-                    # NOT PROVISIONED via website — check if they have a pending
-                    # invitation (consultant OR org-member).  If so, auto-provision
-                    # the account so the invite-acceptance flow can proceed without
-                    # requiring the user to sign up through the marketing website.
-                    pending_invite_result = await db.execute(
-                        select(ConsultantInvite).where(
-                            (ConsultantInvite.email == email) &
-                            (ConsultantInvite.status == ConsultantInviteStatus.PENDING.value)
-                        )
-                    )
-                    pending_consultant_invite = pending_invite_result.scalar_one_or_none()
-
-                    # Also check for pending org-member invites (e.g. consultant
-                    # invited an admin to a client organisation via User Management)
-                    pending_org_invite_result = await db.execute(
-                        select(OrganizationInvite).where(
-                            (OrganizationInvite.email == email) &
-                            (OrganizationInvite.status == OrgInviteStatus.PENDING.value)
-                        )
-                    )
-                    pending_org_invite = pending_org_invite_result.scalar_one_or_none()
-
-                    has_valid_invite = (
-                        (pending_consultant_invite and not pending_consultant_invite.is_expired()) or
-                        (pending_org_invite and not pending_org_invite.is_expired())
-                    )
-
-                    if has_valid_invite:
-                        # Auto-provision: create a minimal user record so they can
-                        # accept the invite.  They get a free-tier subscription by
-                        # default; the consultant-invite acceptance flow will attach
-                        # them to the correct organisation.
-                        invite_type = "consultant" if pending_consultant_invite else "org-member"
-                        logger.info(f"Auto-provisioning user {_mask_email(email)} — has pending {invite_type} invite")
-                        db_user = DBUser(
-                            google_sub=google_sub,
-                            email=email,
-                            display_name=display_name,
-                            last_login_at=datetime.utcnow(),
-                        )
-                        db.add(db_user)
-                        await db.flush()
-
-                        # Create a default free-tier subscription
-                        subscription = UserSubscription(
-                            user_id=db_user.id,
-                            tier="free",
-                            is_active=True,
-                        )
-                        db.add(subscription)
-                    elif os.getenv("OPEN_REGISTRATION", "false").lower() == "true":
-                        # OPEN_REGISTRATION mode (Azure / test environments only):
-                        # auto-provision user on first Google login without website signup.
-                        logger.info(f"Open registration: auto-provisioning user {_mask_email(email)}")
-                        db_user = DBUser(
-                            google_sub=google_sub,
-                            email=email,
-                            display_name=display_name,
-                            last_login_at=datetime.utcnow(),
-                        )
-                        db.add(db_user)
-                        await db.flush()
-                        subscription = UserSubscription(
-                            user_id=db_user.id,
-                            tier="free",
-                            is_active=True,
-                        )
-                        db.add(subscription)
-                    else:
-                        # No pending invite — block signup (website-first provisioning enforced)
-                        logger.warning(f"Direct signup blocked for {_mask_email(email)} - not provisioned via website")
-                        raise HTTPException(
-                            status_code=status.HTTP_403_FORBIDDEN,
-                            detail={
-                                "error": "account_not_provisioned",
-                                "message": "Your account has not been provisioned. Please sign up at scfcontrolsplatform.com first.",
-                                "redirect": "https://scfcontrolsplatform.com/signup"
-                            }
-                        )
-
-            await db.commit()
-            await db.refresh(db_user)
-
-            logger.debug(f"User persisted to database with ID: {db_user.id}")
-
-            # WEBSITE-FIRST PROVISIONING: Organisation linking is handled by the website
-            # The website sync API creates the user's organisation and membership.
-            # We only need to check for pending consultant invites here for the invite flow.
-
-            # Check for pending consultant invites for this user's email
-            # If they have pending invites, log it so they can use the invite acceptance flow
-            try:
-                pending_invite_result = await db.execute(
-                    select(ConsultantInvite).where(
-                        (ConsultantInvite.email == email) &
-                        (ConsultantInvite.status == ConsultantInviteStatus.PENDING.value)
-                    )
-                )
-                pending_invite = pending_invite_result.scalar_one_or_none()
-                if pending_invite and not pending_invite.is_expired():
-                    logger.info(f"User {_mask_email(email)} has pending consultant invite - they can accept it after login")
-            except Exception as invite_check_error:
-                logger.warning(f"Failed to check for pending invites: {invite_check_error}")
-                # Non-fatal - user can still login
-
-        except HTTPException:
-            # Re-raise HTTPException (e.g., 403 for non-provisioned users)
-            raise
-        except Exception as db_error:
-            logger.error(f"Failed to persist user to database: {db_error}")
-            await db.rollback()
-            # Don't fail authentication if DB persist fails - continue with transient user
-            db_user = None
+        # Persist user to database (create or update). The Google issuer is the
+        # canonical Google Accounts issuer string. All the upsert / pending-link /
+        # invite / open-registration / 403 logic now lives in _persist_oidc_user,
+        # shared with the generic OIDC path.
+        db_user = await _persist_oidc_user(
+            db,
+            sub=google_sub,
+            email=email,
+            display_name=display_name,
+            issuer="https://accounts.google.com",
+            # Google's userinfo email is verified by definition for this app.
+            email_verified=True,
+        )
 
         return User(
             user_id=google_sub,
@@ -506,6 +666,49 @@ async def require_auth(
 
     token = credentials.credentials
     logger.debug(f"🔐 Auth attempt - Token length: {len(token)}, Google Auth: {GOOGLE_AUTH_ENABLED}")
+
+    # Try generic OIDC first if a self-hosted IdP is configured. This is
+    # independent of GOOGLE_AUTH_ENABLED (oidc.py imports nothing from auth, so a
+    # module-level import here is safe against circular imports).
+    from oidc import oidc_enabled, validate_oidc_token
+    if oidc_enabled():
+        logger.debug("Attempting OIDC token validation...")
+        try:
+            claims = await validate_oidc_token(token)
+            db_user = await _persist_oidc_user(
+                db,
+                sub=claims["sub"],
+                email=claims.get("email"),
+                display_name=claims.get("name") or claims.get("preferred_username"),
+                issuer=claims["iss"],
+                # Standard OIDC claim; default False when absent (fail-closed).
+                email_verified=bool(claims.get("email_verified", False)),
+            )
+            user = User(
+                user_id=claims["sub"],
+                email=claims.get("email"),
+                name=claims.get("name") or claims.get("preferred_username"),
+                auth_method="oidc",
+                db_id=str(db_user.id) if db_user else None,
+            )
+            logger.info(f"✅ User authenticated via OIDC: {_mask_email(user.email)}")
+            return user
+        except HTTPException as e:
+            # 403 = account not provisioned — DO NOT fall through; mirror Google.
+            if e.status_code == status.HTTP_403_FORBIDDEN:
+                logger.warning(f"OIDC account not provisioned, returning 403: {e.detail}")
+                raise
+            # Other HTTP errors (401/500) — fall through to the next auth method.
+            logger.warning(f"OIDC auth failed (will try next method): {e.detail}")
+            pass
+        except Exception as e:
+            # F6: ANY non-HTTP error (redis.ConnectionError from the cached
+            # discovery/JWKS reads, KeyError on a missing claim, etc.) must NOT
+            # 500 the request before the Google / API-key fallbacks run — a Redis
+            # blip would otherwise take down the untouched API-key path platform
+            # wide. Swallow and fall through. Never log token contents.
+            logger.warning("OIDC auth attempt failed, falling through: %s", e)
+            pass
 
     # Try Google Auth first if enabled
     if GOOGLE_AUTH_ENABLED:

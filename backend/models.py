@@ -211,7 +211,13 @@ class User(Base):
     __tablename__ = "users"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    google_sub = Column(String(255), unique=True, nullable=False)
+    # Subject identifier from the IdP (Google 'sub', or generic OIDC 'sub').
+    # Uniqueness is scoped per-issuer via the composite constraint below, so the
+    # same subject value from two different IdPs is two distinct users.
+    google_sub = Column(String(255), nullable=False)
+    # Issuer ('iss') of the IdP that owns google_sub. NULL for pending-link
+    # placeholders (pre-first-login) and for pre-backfill legacy rows.
+    oidc_issuer = Column(String(255), nullable=True)
     email = Column(String(255), unique=True, nullable=False)
     display_name = Column(String(255))
     created_at = Column(DateTime(timezone=False), server_default=func.now())
@@ -220,6 +226,10 @@ class User(Base):
     notification_frequency = Column(String(50), default='immediate')
     # Platform-level admin flag (cross-organisation access)
     is_platform_admin = Column(Boolean, default=False, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("oidc_issuer", "google_sub", name="uq_users_oidc_issuer_google_sub"),
+    )
 
     # Relationships
     memberships = relationship("OrganizationMember", back_populates="user", cascade="all, delete-orphan")
