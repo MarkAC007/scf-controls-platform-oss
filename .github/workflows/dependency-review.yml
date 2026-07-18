@@ -1,0 +1,30 @@
+# Dependency vulnerability scan on PRs. Ships in the OSS snapshot (whitelisted
+# in scripts/prepare-oss.sh) because the public repo's main-branch ruleset
+# requires the "Dependency vulnerability scan" check on every PR. Gated to the
+# PUBLIC repo only: dependency-review-action reads the repo's dependency graph
+# via the API, which is free on public repos but needs GHAS on private ones.
+name: Dependency Review
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-review:
+    # Job name must render exactly as the ruleset's required context.
+    name: Dependency vulnerability scan
+    if: github.repository == 'MarkAC007/scf-controls-platform-oss'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Dependency review
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: on-failure

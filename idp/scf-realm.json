@@ -1,0 +1,43 @@
+{
+  "realm": "scf",
+  "enabled": true,
+  "displayName": "SCF Controls Platform",
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "editUsernameAllowed": false,
+  "clients": [
+    {
+      "clientId": "scf-platform",
+      "name": "SCF Controls Platform",
+      "description": "Confidential OIDC client for the SCF backend. Secret here is a placeholder; idp-init.sh sets the real value from OIDC_CLIENT_SECRET. Public deployments: add your origin to redirectUris and webOrigins. Max 255 chars (Keycloak CLIENT.DESCRIPTION).",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "bearerOnly": false,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "secret": "CHANGE_ME_SET_BY_IDP_INIT",
+      "redirectUris": [
+        "http://localhost:5173/*",
+        "http://localhost:8000/api/auth/callback"
+      ],
+      "webOrigins": [
+        "+"
+      ],
+      "defaultClientScopes": [
+        "email",
+        "profile",
+        "roles",
+        "web-origins"
+      ],
+      "optionalClientScopes": [
+        "offline_access"
+      ]
+    }
+  ]
+}

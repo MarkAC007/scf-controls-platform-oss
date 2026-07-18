@@ -116,6 +116,15 @@ services:
       OSS_SINGLE_TENANT: ${OSS_SINGLE_TENANT:-}
       GOOGLE_AUTH_ENABLED: ${GOOGLE_AUTH_ENABLED}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      # OIDC / bundled identity provider (optional — see the "idp" compose profile
+      # and .env.example). Empty by default so the no-profile stack is unchanged;
+      # set OIDC_* to point at the bundled Keycloak or any external OIDC provider.
+      OIDC_ISSUER: ${OIDC_ISSUER:-}
+      OIDC_DISCOVERY_URL: ${OIDC_DISCOVERY_URL:-}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+      OIDC_REDIRECT_URI: ${OIDC_REDIRECT_URI:-}
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
       # Email notifications (optional - set in .env file)
       RESEND_API_KEY: ${RESEND_API_KEY}
       RESEND_FROM_EMAIL: ${RESEND_FROM_EMAIL}
@@ -180,6 +189,13 @@ services:
       # Update poller opt-out (default ON) — the worker runs the beat-scheduled
       # tasks_updates.check_latest_release task.
       SCF_UPDATE_CHECK: ${SCF_UPDATE_CHECK:-true}
+      # OIDC / bundled identity provider (optional — mirrors the backend service).
+      OIDC_ISSUER: ${OIDC_ISSUER:-}
+      OIDC_DISCOVERY_URL: ${OIDC_DISCOVERY_URL:-}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+      OIDC_REDIRECT_URI: ${OIDC_REDIRECT_URI:-}
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
       # Vendor research API keys (Issue #59)
       HIBP_API_KEY: ${HIBP_API_KEY:-}
       NVD_API_KEY: ${NVD_API_KEY:-}
@@ -243,6 +259,13 @@ services:
       # Update poller opt-out (default ON). Beat reads this at import time to
       # decide whether to schedule the daily update-check-daily entry.
       SCF_UPDATE_CHECK: ${SCF_UPDATE_CHECK:-true}
+      # OIDC / bundled identity provider (optional — mirrors the backend service).
+      OIDC_ISSUER: ${OIDC_ISSUER:-}
+      OIDC_DISCOVERY_URL: ${OIDC_DISCOVERY_URL:-}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+      OIDC_REDIRECT_URI: ${OIDC_REDIRECT_URI:-}
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
     volumes:
       - ./backend:/app
     depends_on:
@@ -284,6 +307,123 @@ services:
     networks:
       - cg-network
 
+  # ==========================================================================
+  # BUNDLED IDENTITY PROVIDER (Keycloak) — OPTIONAL, compose profile "idp".
+  # Nothing below starts with a plain `docker compose up`; you must opt in with
+  #   docker compose --profile idp up -d
+  # Bring-your-own external OIDC provider instead? Skip the profile and just set
+  # OIDC_* in .env (the backend reads them regardless of this profile).
+  # ==========================================================================
+
+  # One-shot: Keycloak stores its tables in the EXISTING postgres, but it does
+  # NOT create its own schema. Create it (idempotently) before Keycloak boots.
+  keycloak-schema-init:
+    image: postgres:15-alpine
+    container_name: cg-scf-keycloak-schema-init
+    profiles:
+      - idp
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # PGPASSWORD keeps the secret out of the process argv (vs. embedding it in a URL).
+      PGPASSWORD: ${DB_PASSWORD}
+    entrypoint: >
+      /bin/sh -c "
+      psql -h postgres -U cg -d cg_scf -c 'CREATE SCHEMA IF NOT EXISTS keycloak';
+      echo 'keycloak schema ready';
+      "
+    networks:
+      - cg-network
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.3
+    container_name: cg-scf-keycloak
+    profiles:
+      - idp
+    # Production mode (`start`, not `start-dev`) with HTTP enabled for the internal
+    # docker network. --import-realm loads idp/scf-realm.json on boot.
+    # NOTE: the admin creds are validated at RUNTIME by the entrypoint guard below,
+    # NOT via compose `${VAR:?}` interpolation. Compose interpolates every service
+    # in the file regardless of active profiles, so a `:?` here would break the
+    # DEFAULT `docker compose up` for anyone who hasn't set the idp vars. The bash
+    # `${VAR:?}` in the entrypoint fails loudly only when this service is started.
+    # $$ escapes to a literal $ so bash (not compose) evaluates these guards at
+    # runtime — same $$VAR escaping the minio-init service uses above.
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        : "$${KC_BOOTSTRAP_ADMIN_USERNAME:?KC_ADMIN_USER is required when using --profile idp}"
+        : "$${KC_BOOTSTRAP_ADMIN_PASSWORD:?KC_ADMIN_PASSWORD is required when using --profile idp}"
+        exec /opt/keycloak/bin/kc.sh start --import-realm
+    environment:
+      # Keycloak 26 renamed KEYCLOAK_ADMIN* -> KC_BOOTSTRAP_ADMIN*. Empty defaults
+      # keep the default (no-profile) stack parseable; the entrypoint guard above
+      # enforces they are non-empty when the idp profile actually runs.
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_ADMIN_USER:-}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_ADMIN_PASSWORD:-}
+      # Store realm/user data in the EXISTING postgres, in a dedicated schema.
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/cg_scf
+      KC_DB_USERNAME: cg
+      KC_DB_PASSWORD: ${DB_PASSWORD}
+      KC_DB_SCHEMA: keycloak
+      KC_HTTP_ENABLED: "true"
+      # Hostname v2 config. For MVP we pin a hostname URL + relax strict checks so
+      # the dev stack boots over plain HTTP. PRODUCTION behind a reverse proxy:
+      # set KC_HOSTNAME to the public https URL and add KC_PROXY_HEADERS=xforwarded.
+      KC_HOSTNAME: ${KC_HOSTNAME:-http://localhost:8081}
+      KC_HOSTNAME_STRICT: "false"
+      # Exposes /health/* on the management port (9000) for the healthcheck below.
+      KC_HEALTH_ENABLED: "true"
+    ports:
+      # 8081 because 8000 (backend) and 5173 (frontend) are already taken on host.
+      - "8081:8080"
+    volumes:
+      - ./idp/scf-realm.json:/opt/keycloak/data/import/scf-realm.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      keycloak-schema-init:
+        condition: service_completed_successfully
+    # The KC 26 distroless image has no curl/wget, so probe the management health
+    # port with the shell's built-in /dev/tcp (the image's /bin/sh is bash on ubi9).
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -qs '200 OK' <&3"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    networks:
+      - cg-network
+    restart: unless-stopped
+
+  # One-shot: after Keycloak is healthy, inject the client secret from env (so it
+  # never lives in the realm JSON) and, if BOOTSTRAP_ADMIN_EMAIL is set, create
+  # the first admin user with a random temp password printed once to these logs.
+  idp-init:
+    image: quay.io/keycloak/keycloak:26.3
+    container_name: cg-scf-idp-init
+    profiles:
+      - idp
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    environment:
+      # Empty defaults keep the default (no-profile) stack parseable; idp-init.sh
+      # asserts these are non-empty at runtime and exits loudly if not.
+      KC_ADMIN_USER: ${KC_ADMIN_USER:-}
+      KC_ADMIN_PASSWORD: ${KC_ADMIN_PASSWORD:-}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+      BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
+    entrypoint: ["/bin/bash", "/idp-init.sh"]
+    volumes:
+      - ./idp/idp-init.sh:/idp-init.sh:ro
+    networks:
+      - cg-network
+    restart: "no"
+
   frontend:
     # NOT switched to a published image yet — OPEN DECISION (see PR).
     # This service is the Vite DEV server (Dockerfile.frontend.dev, port 5173, build-time
@@ -297,6 +437,8 @@ services:
       args:
         # No VITE_API_URL needed - uses relative URLs
         VITE_GOOGLE_AUTH_ENABLED: ${VITE_GOOGLE_AUTH_ENABLED}
+        # Issue #699: redirect-based OIDC sign-in (bundled Keycloak or BYO IdP)
+        VITE_OIDC_ENABLED: ${VITE_OIDC_ENABLED:-false}
         VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID}
         VITE_API_KEY: ${VITE_API_KEY}
     container_name: cg-scf-frontend

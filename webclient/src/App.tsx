@@ -46,6 +46,8 @@ import { ThemeProvider } from './contexts/ThemeContext'
 import { OrganizationProvider, useOrganization } from './contexts/OrganizationContext'
 import { RiskProfileProvider } from './contexts/RiskProfileContext'
 import GoogleSignIn from './components/GoogleSignIn'
+import OidcSignIn from './components/OidcSignIn'
+import { OIDC_ENABLED } from './data/authToken'
 import CatalogOnboarding from './components/CatalogOnboarding'
 import { getCatalogStatus } from './data/apiClient'
 import InviteAcceptance from './components/InviteAcceptance'
@@ -382,7 +384,7 @@ function AppContent() {
   }
 
   if (!isAuthenticated) {
-    return <GoogleSignIn />
+    return OIDC_ENABLED ? <OidcSignIn /> : <GoogleSignIn />
   }
 
   // OSS onboarding gate: a fresh self-hosted install has no SCF catalogue

@@ -1,30 +1,34 @@
-# v0.9.0
+# v0.10.0
 
-Adds safe-upgrade tooling — a fail-closed migration guard, scripts/upgrade.sh with mandatory backups and atomic rollback, and an in-app update checker. Upgrading an existing deployment now requires scripts/upgrade.sh (it backs up first) or SCF_MIGRATE_ACK; a bare 'docker compose up --build' will refuse to auto-migrate.
+Adds optional OIDC single sign-on — run the bundled Keycloak identity provider (compose profile 'idp') or bring your own IdP (Okta, Entra, Auth0, ...). Entirely opt-in; migration adds users.oidc_issuer (nullable, backfilled, safe). Also bumps Authlib to 1.6.9 for OIDC-related CVE fixes.
 
 ## What's new
 
-- **Safe, guided upgrades** — `scripts/upgrade.sh vX.Y.Z` quiesces writers,
-  takes a mandatory validated backup of **both** data stores (Postgres +
-  MinIO evidence), migrates as a one-shot, verifies the running code, and
-  performs an **atomic rollback** on any failure. See `UPGRADING.md`.
-- **Fail-closed migration guard** — the backend no longer silently
-  auto-migrates an existing production database on startup. A bare
-  `docker compose up --build` now **refuses** unless you either run
-  `scripts/upgrade.sh` (recommended — it backs up first) or set
-  `SCF_MIGRATE_ACK` to acknowledge you have your own backup.
-- **In-app update checker** — a daily poller surfaces "an update is
-  available" in the footer and the Database Stats panel for any signed-in
-  user. Opt out with `SCF_UPDATE_CHECK=false`.
+- **Optional OIDC single sign-on** — redirect-based OIDC login for the web
+  client, replacing/augmenting API-key and Google sign-in. Two ways to use it:
+  - **Bundled Keycloak** — `docker compose --profile idp up -d` starts a
+    Keycloak identity provider backed by the existing Postgres, auto-imports
+    the `scf` realm, and (optionally) bootstraps an admin user. See the new
+    *Identity Provider* admin guide.
+  - **Bring your own IdP** — point the `OIDC_*` variables at Okta, Entra ID,
+    Auth0, Google, or any standards-compliant OIDC provider; no extra
+    containers needed.
+- Everything is **opt-in**: with `VITE_OIDC_ENABLED=false` (the default)
+  nothing changes — API-key and Google sign-in behave exactly as before.
+- **Dependency security** — Authlib bumped 1.3.2 → 1.6.9 for OIDC-related
+  CVE fixes.
 
-## Action required before upgrading
+## Upgrading
 
-- **Do not** upgrade with `git pull && docker compose up --build`. Use
-  `scripts/upgrade.sh v0.9.0` instead (read `UPGRADING.md` first).
-- `/api/version` no longer returns precise version/build detail to
-  **anonymous** callers — only to authenticated users. Update any tooling
-  that scraped it unauthenticated.
+- Use `scripts/upgrade.sh v0.10.0` (read `UPGRADING.md` first). No breaking
+  changes; no action required if you don't enable OIDC.
+- To enable OIDC, copy the new *Bundled Identity Provider* block from
+  `.env.example` into your `.env` (`VITE_OIDC_ENABLED`, `OIDC_*`, and — for
+  the bundled profile — `KC_ADMIN_*`), then rebuild the frontend so the flag
+  is baked into the bundle.
 
 ## Migrations
 
-- Adds `platform_upgrade_state` (new table; additive, safe).
+- Adds nullable `users.oidc_issuer`, backfills existing Google users, and
+  replaces the single-column `google_sub` unique with a composite
+  `(oidc_issuer, google_sub)` unique (additive, safe).

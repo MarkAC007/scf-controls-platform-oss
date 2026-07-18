@@ -1,0 +1,53 @@
+# CodeQL static analysis. Ships in the OSS snapshot (whitelisted in
+# scripts/prepare-oss.sh) because the public repo's main-branch ruleset requires
+# the "Analyze (python)" and "Analyze (javascript-typescript)" checks on every
+# PR. The jobs are gated to the PUBLIC repo only: CodeQL result upload needs
+# GitHub Advanced Security, which the private repo does not have — running here
+# would fail the upload step and paint private PRs red for no reason.
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "17 4 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    # Job name must render exactly as the ruleset's required contexts:
+    # "Analyze (python)" / "Analyze (javascript-typescript)".
+    name: Analyze (${{ matrix.language }})
+    if: github.repository == 'MarkAC007/scf-controls-platform-oss'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: python
+            build-mode: none
+          - language: javascript-typescript
+            build-mode: none
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"

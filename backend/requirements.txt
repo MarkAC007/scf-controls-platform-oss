@@ -32,6 +32,10 @@ slowapi==0.1.9
 
 # Authentication
 google-auth==2.27.0
+# Issue #699: generic OIDC RP layer (discovery, JWKS, id_token validation, PKCE)
+# 1.6.9 patches CVE-2026-27962 (JWK header injection), CVE-2025-59420 (crit
+# header authz bypass) and GHSA-pq5p-34cr-23v9 (JOSE DoS). See PR #700.
+Authlib==1.6.9
 # Slice 13: bumped from httpx==0.26.0 to satisfy docling-slim[standard] 2.95.0
 # which requires httpx>=0.28,<1.0.0. All CDM tests (incl. test_cdm_lightrag
 # which exercises httpx.Client construction) pass under 0.28.x.
