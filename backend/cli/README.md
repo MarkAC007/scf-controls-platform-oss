@@ -37,6 +37,9 @@ docker compose exec backend python -m cli.admin list-orgs
 # Create Default Organization (required for first login)
 docker compose exec backend python -m cli.admin setup
 
+# One-step bootstrap: create the org AND make yourself a usable admin
+docker compose exec backend python -m cli.admin setup --admin-email you@example.com
+
 # Custom organization name
 docker compose exec backend python -m cli.admin setup --name "My Company"
 
@@ -44,10 +47,19 @@ docker compose exec backend python -m cli.admin setup --name "My Company"
 docker compose exec backend python -m cli.admin setup --dry-run
 ```
 
-After running setup:
-1. Sign in via Google OAuth
-2. Your user will be auto-created and linked to the Default Organization
-3. Run `grant-admin --email your@email.com` to make yourself platform admin
+> **Important (issue #705):** first-login auto-provisioning creates the user but
+> does **not** link them to the Default Organization. Without a membership row the
+> UI loads **0 organizations** and is unusable. Membership is a required step —
+> either use `setup --admin-email` above, or run `add-member` below.
+
+After running `setup` (without `--admin-email`):
+1. Sign in via Google OAuth (this creates your user).
+2. **Required** — link your user to the org (otherwise the UI shows 0 organizations):
+   ```bash
+   docker compose exec backend python -m cli.admin add-member \
+     --email you@example.com --org-slug default --role admin
+   ```
+3. Optional — `grant-admin --email you@example.com` to grant platform admin.
 
 ### User Management
 

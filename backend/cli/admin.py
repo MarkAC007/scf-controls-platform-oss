@@ -610,49 +610,113 @@ async def cmd_revoke_consultant(args: argparse.Namespace) -> int:
 
 
 async def cmd_setup(args: argparse.Namespace) -> int:
-    """Initial platform setup - create Default Organization."""
+    """Initial platform setup - create Default Organization.
+
+    With ``--admin-email`` this is a one-step bootstrap: it also creates (if
+    needed) that user, links them to the Default Organization as a member, and
+    grants platform admin. Without it, membership is NOT automatic on first login
+    (see issue #705) — the operator must run ``add-member`` or a fresh UI shows
+    0 organizations.
+    """
+    admin_email = getattr(args, "admin_email", None)
+    if admin_email:
+        # Normalize exactly like add-member: OAuth login lowercases the email,
+        # so a mixed-case pending row would never be adopted (would re-trigger #705).
+        admin_email = admin_email.strip().lower()
+    admin_role = getattr(args, "admin_role", "admin") or "admin"
+    if admin_email and admin_role not in ("admin", "editor", "viewer"):
+        print(f"Error: Invalid role '{admin_role}'. Must be admin, editor, or viewer.")
+        return 1
+
     async with AsyncSessionLocal() as db:
-        # Check if Default Organization already exists
+        # Get-or-create the Default Organization (do NOT short-circuit — we may
+        # still need to process --admin-email against an existing org).
         result = await db.execute(
             select(Organization).where(Organization.slug == "default")
         )
-        existing_org = result.scalar_one_or_none()
+        org = result.scalar_one_or_none()
+        org_existed = org is not None
 
-        if existing_org:
-            print(f"✅ Default Organization already exists:")
-            print(f"   ID: {existing_org.id}")
-            print(f"   Name: {existing_org.name}")
-            print(f"   Slug: {existing_org.slug}")
-            return 0
-
-        # Dry run check
         if args.dry_run:
-            print(f"[DRY RUN] Would create Default Organization:")
-            print(f"   Name: {args.name}")
-            print(f"   Slug: default")
+            if org_existed:
+                print(f"[DRY RUN] Default Organization already exists: {org.name} ({org.slug})")
+            else:
+                print(f"[DRY RUN] Would create Default Organization:")
+                print(f"   Name: {args.name}")
+                print(f"   Slug: default")
+            if admin_email:
+                print(f"[DRY RUN] Would ensure user {admin_email}, link to 'default' as {admin_role}, grant platform admin")
             return 0
 
-        # Create Default Organization
-        org = Organization(
-            name=args.name,
-            slug="default"
-        )
-        db.add(org)
-        await db.commit()
-        await db.refresh(org)
+        if org is None:
+            org = Organization(name=args.name, slug="default")
+            db.add(org)
+            await db.commit()
+            await db.refresh(org)
+
+        # Optional one-step admin bootstrap: ensure user + membership + admin flag.
+        admin_created_user = False
+        admin_added_member = False
+        admin_granted = False
+        if admin_email:
+            user = await get_user_by_email(db, admin_email)
+            if user is None:
+                # Pending google_sub is adopted on first OAuth login (same pattern
+                # as add-member, the production-proven path).
+                user = User(
+                    google_sub=f"pending:{admin_email}",
+                    email=admin_email,
+                    display_name=admin_email.split('@')[0].replace('.', ' ').title(),
+                )
+                db.add(user)
+                await db.flush()
+                db.add(UserSubscription(user_id=user.id, tier="free", is_active=True))
+                admin_created_user = True
+
+            existing_member = await db.execute(
+                select(OrganizationMember).where(
+                    OrganizationMember.organization_id == org.id,
+                    OrganizationMember.user_id == user.id,
+                )
+            )
+            if existing_member.scalar_one_or_none() is None:
+                db.add(OrganizationMember(
+                    organization_id=org.id,
+                    user_id=user.id,
+                    role=admin_role,
+                ))
+                admin_added_member = True
+
+            if not user.is_platform_admin:
+                user.is_platform_admin = True
+                admin_granted = True
+
+            await db.commit()
 
         print(f"\n{'='*60}")
         print(f"✅ Platform Setup Complete!")
         print(f"{'='*60}")
-        print(f"Default Organization created:")
+        print(f"Default Organization {'already exists' if org_existed else 'created'}:")
         print(f"   ID: {org.id}")
         print(f"   Name: {org.name}")
         print(f"   Slug: {org.slug}")
         print(f"{'='*60}")
-        print(f"\nNext steps:")
-        print(f"1. Sign in via Google OAuth at your frontend URL")
-        print(f"2. Your user will be auto-created and linked to this org")
-        print(f"3. Run 'grant-admin --email your@email.com' to make yourself admin")
+
+        if admin_email:
+            print(f"Admin bootstrap for {admin_email}:")
+            print(f"   User: {'created' if admin_created_user else 'already existed'}")
+            print(f"   Membership in '{org.slug}': {'added as ' + admin_role if admin_added_member else 'already a member'}")
+            print(f"   Platform admin: {'granted' if admin_granted else 'already granted'}")
+            print(f"{'='*60}")
+            print(f"\nNext step:")
+            print(f"1. Sign in via OAuth at your frontend URL — the account is ready to use.")
+        else:
+            print(f"\nNext steps (membership is REQUIRED — without it the UI shows 0 organizations):")
+            print(f"1. Sign in via OAuth at your frontend URL (this creates your user).")
+            print(f"2. REQUIRED: link your user to the org:")
+            print(f"     python -m cli.admin add-member --email you@example.com --org-slug default --role admin")
+            print(f"3. Optional: 'grant-admin --email you@example.com' for platform admin.")
+            print(f"   (Tip: re-run 'setup --admin-email you@example.com' to do steps 2-3 in one command.)")
         print(f"{'='*60}")
 
         return 0
@@ -866,6 +930,8 @@ def create_parser() -> argparse.ArgumentParser:
     # setup command
     setup = subparsers.add_parser("setup", help="Initial platform setup - create Default Organization")
     setup.add_argument("--name", default="Default Organization", help="Name for the default organization")
+    setup.add_argument("--admin-email", help="One-step bootstrap: create+link this user to the default org as a member and grant platform admin (fixes #705 0-orgs)")
+    setup.add_argument("--admin-role", default="admin", choices=["admin", "editor", "viewer"], help="Membership role for --admin-email (default: admin)")
     setup.add_argument("--dry-run", action="store_true", help="Show what would be done without making changes")
 
     # seed-catalog command

@@ -36,8 +36,6 @@ def _mask_email(email: Optional[str]) -> str:
 RESEND_API_KEY = os.getenv("RESEND_API_KEY")
 RESEND_FROM_EMAIL = os.getenv("RESEND_FROM_EMAIL", "notifications@odin-scf.app")
 APP_URL = os.getenv("APP_URL", "http://localhost:5173")
-# Marketing website URL for signup (website-first provisioning)
-MARKETING_WEBSITE_URL = os.getenv("MARKETING_WEBSITE_URL", "https://scfcontrolsplatform.com")
 
 # Check if Resend is configured
 RESEND_ENABLED = bool(RESEND_API_KEY)

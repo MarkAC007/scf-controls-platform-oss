@@ -15,7 +15,7 @@ import logging
 # Import database and models
 from database import get_db
 from services.service_account import SERVICE_ACCOUNT_EMAIL, get_service_account_id
-from services.single_tenant import is_single_tenant_active, single_tenant_org_id
+from services.single_tenant import is_single_tenant_active, single_tenant_org_id, single_tenant_flag_set
 from models import (
     User as DBUser,
     Organization,
@@ -292,13 +292,29 @@ async def _persist_oidc_user(
                 else:
                     # No pending invite — block signup (website-first provisioning enforced)
                     logger.warning(f"Direct signup blocked for {_mask_email(email)} - not provisioned via website")
+                    # Self-hosted deployments have no marketing website to redirect
+                    # to; point the operator at the CLI instead of stranding them
+                    # on scfcontrolsplatform.com (issue #705).
+                    if single_tenant_flag_set():
+                        detail = {
+                            "error": "account_not_provisioned",
+                            "message": (
+                                "Your account is not yet linked to an organisation. An "
+                                "administrator must run: python -m cli.admin add-member "
+                                "--email <you> --org-slug default --role admin "
+                                "(or set OPEN_REGISTRATION=true for first-login provisioning)."
+                            ),
+                        }
+                    else:
+                        signup_url = os.getenv("SIGNUP_URL", "https://scfcontrolsplatform.com/signup")
+                        detail = {
+                            "error": "account_not_provisioned",
+                            "message": f"Your account has not been provisioned. Please sign up at {signup_url} first.",
+                            "redirect": signup_url,
+                        }
                     raise HTTPException(
                         status_code=status.HTTP_403_FORBIDDEN,
-                        detail={
-                            "error": "account_not_provisioned",
-                            "message": "Your account has not been provisioned. Please sign up at scfcontrolsplatform.com first.",
-                            "redirect": "https://scfcontrolsplatform.com/signup"
-                        }
+                        detail=detail,
                     )
 
         await db.commit()

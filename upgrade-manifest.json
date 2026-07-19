@@ -1,11 +1,11 @@
 {
   "schema": 1,
-  "version": "0.10.0",
-  "released": "2026-07-18T16:04:29Z",
+  "version": "0.10.1",
+  "released": "2026-07-19T20:54:11Z",
   "min_upgradable_version": "0.0.0",
   "breaking": false,
   "required_stops": [],
-  "release_url": "https://github.com/MarkAC007/scf-controls-platform-oss/releases/tag/v0.10.0",
+  "release_url": "https://github.com/MarkAC007/scf-controls-platform-oss/releases/tag/v0.10.1",
   "summary": "Adds optional OIDC single sign-on \u2014 run the bundled Keycloak identity provider (compose profile 'idp') or bring your own IdP (Okta, Entra, Auth0, ...). Entirely opt-in; migration adds users.oidc_issuer (nullable, backfilled, safe). Also bumps Authlib to 1.6.9 for OIDC-related CVE fixes.",
   "migration_range": [
     "20260119_000000_62bdef86f249_initial_schema",
