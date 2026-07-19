@@ -11,7 +11,13 @@ services:
       # init-db.sql disabled - using Alembic migrations instead
       # - ./backend/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
     ports:
-      - "5432:5432"
+      # Loopback-only by default: the app talks to postgres over the internal
+      # docker network, so the host publish exists purely for local admin tools.
+      # Publishing 5432 to all interfaces on a shared/remote host is needless
+      # attack surface. POSTGRES_PORT only changes the loopback port; for
+      # remote DB access you must change the bind address via a
+      # docker-compose.override.yml overlay (see UPGRADING.md).
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U cg -d cg_scf"]
       interval: 10s
@@ -46,8 +52,11 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
     ports:
-      - "9000:9000"   # S3 API (presigned upload/download URLs)
-      - "9001:9001"   # web console
+      # Host side is remappable: another service may already own 9000/9001 on
+      # your host. If you remap MINIO_PORT, EVIDENCE_PUBLIC_ENDPOINT follows
+      # automatically for same-machine installs (see backend service).
+      - "${MINIO_PORT:-9000}:9000"           # S3 API (presigned upload/download URLs)
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"   # web console
     volumes:
       - minio_data:/data
     networks:
@@ -97,7 +106,9 @@ services:
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/1
       CELERY_RESULT_BACKEND: redis://redis:6379/1
-      CORS_ORIGINS: http://localhost:3000,http://localhost:5173
+      # Second origin follows a remapped FRONTEND_PORT; override wholesale for
+      # remote-host deploys where the browser origin isn't localhost.
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://localhost:${FRONTEND_PORT:-5173}}
       RATE_LIMITING_ENABLED: "false"  # Temporarily disabled - needs debugging
       LOG_LEVEL: ${LOG_LEVEL}
       ENVIRONMENT: ${ENVIRONMENT:-production}
@@ -139,13 +150,15 @@ services:
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-minioadmin}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-minioadmin}
       AWS_ENDPOINT_URL: ${AWS_ENDPOINT_URL-http://minio:9000}
-      EVIDENCE_PUBLIC_ENDPOINT: ${EVIDENCE_PUBLIC_ENDPOINT-http://localhost:9000}
+      EVIDENCE_PUBLIC_ENDPOINT: ${EVIDENCE_PUBLIC_ENDPOINT-http://localhost:${MINIO_PORT:-9000}}
       # Azure Blob Storage (set these for Azure deployments)
       AZURE_STORAGE_ACCOUNT_NAME: ${AZURE_STORAGE_ACCOUNT_NAME:-}
       AZURE_STORAGE_ACCOUNT_KEY: ${AZURE_STORAGE_ACCOUNT_KEY:-}
       EVIDENCE_CONTAINER: ${EVIDENCE_CONTAINER:-evidence}
     ports:
-      - "8000:8000"
+      # Host side is remappable (BACKEND_PORT) — 8000 is a popular default and
+      # may already be taken on your host.
+      - "${BACKEND_PORT:-8000}:8000"
     volumes:
       - ./backend:/app
       - ./webclient/public/data:/app/data/json:ro
@@ -205,7 +218,7 @@ services:
       # Evidence storage — defaults to the bundled MinIO (see backend service)
       EVIDENCE_BUCKET: ${EVIDENCE_BUCKET:-evidence}
       AWS_ENDPOINT_URL: ${AWS_ENDPOINT_URL-http://minio:9000}
-      EVIDENCE_PUBLIC_ENDPOINT: ${EVIDENCE_PUBLIC_ENDPOINT-http://localhost:9000}
+      EVIDENCE_PUBLIC_ENDPOINT: ${EVIDENCE_PUBLIC_ENDPOINT-http://localhost:${MINIO_PORT:-9000}}
       AZURE_STORAGE_ACCOUNT_NAME: ${AZURE_STORAGE_ACCOUNT_NAME:-}
       AZURE_STORAGE_ACCOUNT_KEY: ${AZURE_STORAGE_ACCOUNT_KEY:-}
       EVIDENCE_CONTAINER: ${EVIDENCE_CONTAINER:-evidence}
@@ -248,7 +261,14 @@ services:
         BUILD_STAMP: "${BUILD_STAMP:-dev}"
         MIN_UPGRADABLE_VERSION: "${MIN_UPGRADABLE_VERSION:-0.0.0}"
     container_name: cg-scf-celery-beat
-    command: celery -A celery_app beat --loglevel=info
+    # Explicit --schedule path: without it, beat writes its schedule shelve into
+    # the working dir /app — but /app is the bind-mounted ./backend, owned by
+    # whoever cloned the repo on the host, while the image runs as apiuser
+    # (uid 1001). On any clone not owned by uid 1001 (the common case) beat
+    # crash-loops with "Permission denied: 'celerybeat-schedule'". /tmp is
+    # always writable in-container; the schedule state is derived timing data
+    # that beat rebuilds safely from celery_app config if lost on recreate.
+    command: celery -A celery_app beat --loglevel=info --schedule /tmp/celerybeat-schedule
     environment:
       DATABASE_URL: postgresql+asyncpg://cg:${DB_PASSWORD}@postgres:5432/cg_scf
       REDIS_URL: redis://redis:6379/0
@@ -373,13 +393,17 @@ services:
       # Hostname v2 config. For MVP we pin a hostname URL + relax strict checks so
       # the dev stack boots over plain HTTP. PRODUCTION behind a reverse proxy:
       # set KC_HOSTNAME to the public https URL and add KC_PROXY_HEADERS=xforwarded.
-      KC_HOSTNAME: ${KC_HOSTNAME:-http://localhost:8081}
+      # Default follows a remapped KEYCLOAK_PORT (same auto-follow pattern as
+      # EVIDENCE_PUBLIC_ENDPOINT/MINIO_PORT). Set KC_HOSTNAME explicitly for
+      # remote hosts / reverse proxies.
+      KC_HOSTNAME: ${KC_HOSTNAME:-http://localhost:${KEYCLOAK_PORT:-8081}}
       KC_HOSTNAME_STRICT: "false"
       # Exposes /health/* on the management port (9000) for the healthcheck below.
       KC_HEALTH_ENABLED: "true"
     ports:
       # 8081 because 8000 (backend) and 5173 (frontend) are already taken on host.
-      - "8081:8080"
+      # Host side is remappable (KEYCLOAK_PORT); KC_HOSTNAME's default follows it.
+      - "${KEYCLOAK_PORT:-8081}:8080"
     volumes:
       - ./idp/scf-realm.json:/opt/keycloak/data/import/scf-realm.json:ro
     depends_on:
@@ -443,7 +467,8 @@ services:
         VITE_API_KEY: ${VITE_API_KEY}
     container_name: cg-scf-frontend
     ports:
-      - "5173:5173"
+      # Host side is remappable (FRONTEND_PORT) if 5173 is taken on your host.
+      - "${FRONTEND_PORT:-5173}:5173"
     depends_on:
       - backend
     networks:

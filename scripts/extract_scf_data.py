@@ -105,21 +105,34 @@ def resolve_sheet(xl: pd.ExcelFile, pattern_or_name: str | re.Pattern[str]) -> s
 
 def resolve_sheet_with_contains_fallback(
     xl: pd.ExcelFile,
-    preferred_name: str,
-    contains_text: str,
+    preferred_names: str | list[str],
+    contains_texts: str | list[str],
 ) -> str:
-    """Resolve a sheet by exact name, then case-insensitive contains fallback."""
-    if preferred_name in xl.sheet_names:
-        return preferred_name
+    """Resolve a sheet by exact name(s), then case-insensitive contains fallback.
 
-    needle = contains_text.lower()
-    for sheet_name in xl.sheet_names:
-        if needle in sheet_name.lower():
-            return sheet_name
+    ``preferred_names`` / ``contains_texts`` accept either a single string or a
+    list of candidates, tried in order. A list lets one logical sheet survive SCF
+    workbook renames (e.g. 'Authoritative Sources' → 'Focal Documents' in 2026.2).
+    """
+    if isinstance(preferred_names, str):
+        preferred_names = [preferred_names]
+    if isinstance(contains_texts, str):
+        contains_texts = [contains_texts]
+
+    for name in preferred_names:
+        if name in xl.sheet_names:
+            return name
+
+    lowered_sheets = [(s, s.lower()) for s in xl.sheet_names]
+    for contains_text in contains_texts:
+        needle = contains_text.lower()
+        for sheet_name, lowered in lowered_sheets:
+            if needle in lowered:
+                return sheet_name
 
     raise ValueError(
-        f"Could not resolve required sheet {preferred_name!r} "
-        f"or a sheet containing {contains_text!r}. "
+        f"Could not resolve required sheet from {preferred_names!r} "
+        f"or a sheet containing any of {contains_texts!r}. "
         f"Available sheets: {format_available_sheets(xl)}"
     )
 
@@ -155,8 +168,12 @@ def resolve_catalog_sheets(xl: pd.ExcelFile) -> dict[str, str]:
             xl, 'SCF Domains & Principles', 'Domains'
         ),
         'assessment_objectives': resolve_sheet(xl, assessment_pattern),
+        # SCF renamed this sheet 'Authoritative Sources' -> 'Focal Documents' in
+        # the 2026.2 catalogue; accept either so old and new workbooks both import.
         'authoritative_sources': resolve_sheet_with_contains_fallback(
-            xl, 'Authoritative Sources', 'Authoritative Sources'
+            xl,
+            ['Authoritative Sources', 'Focal Documents'],
+            ['Authoritative Sources', 'Focal Documents'],
         ),
     }
 
@@ -625,7 +642,8 @@ def extract_framework_names(
     framework_columns: list,
     sheet_name: str,
 ) -> dict:
-    """Extract framework display names from Authoritative Sources."""
+    """Extract framework display names from the Authoritative Sources /
+    Focal Documents sheet (renamed in SCF 2026.2)."""
     print("Reading framework names...")
     df = pd.read_excel(xl, sheet_name)
 

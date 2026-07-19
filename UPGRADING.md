@@ -68,6 +68,18 @@ Add `--yes` to skip the confirmation prompt (for unattended runs).
 - Your backups remain under `./backups/` (write-protected). Keep them until you
   are confident in the new version.
 
+### Version-specific notes
+
+- **Postgres host publish is now loopback-only.** `docker-compose.yml` publishes
+  postgres on `127.0.0.1:5432` instead of all interfaces — the app is unaffected
+  (it uses the internal Docker network), but if you connected to the database
+  **from another machine** (psql/DBeaver/external backup jobs pointed at
+  `<docker-host>:5432`), those connections will now be refused. To restore remote
+  access deliberately, override the bind address in a
+  `docker-compose.override.yml` overlay (see §6). Host-side ports are also now
+  remappable via `.env` (`BACKEND_PORT`, `FRONTEND_PORT`, `MINIO_PORT`,
+  `MINIO_CONSOLE_PORT`, `POSTGRES_PORT`, `KEYCLOAK_PORT`); defaults are unchanged.
+
 ---
 
 ## 4. Rolling back

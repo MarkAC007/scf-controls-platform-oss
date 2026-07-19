@@ -113,6 +113,36 @@ start in this mode if it detects more than one organisation or human member, so 
 
 See `.env.example` for the full, commented list.
 
+### Port conflicts
+
+Every published port is remappable from `.env` — useful when another service on your host
+already owns a default (8000 and 9000 are popular):
+
+```bash
+# .env
+BACKEND_PORT=8080   # instead of 8000
+MINIO_PORT=9010     # instead of 9000 — EVIDENCE_PUBLIC_ENDPOINT follows automatically
+```
+
+Available: `BACKEND_PORT`, `FRONTEND_PORT`, `MINIO_PORT`, `MINIO_CONSOLE_PORT`,
+`POSTGRES_PORT`, `KEYCLOAK_PORT`. Postgres is published on `127.0.0.1` only (the app talks to
+it over the internal Docker network). For anything beyond port remaps, prefer a
+`docker-compose.override.yml` overlay so upgrades keep a clean tree — see
+[UPGRADING.md](UPGRADING.md) for the overlay pattern.
+
+### Deploying on a remote host
+
+If the stack runs on a machine other than the one you browse from:
+
+- Set `EVIDENCE_PUBLIC_ENDPOINT` to an address **your browser** can reach, e.g.
+  `http://<docker-host>:9000` — otherwise evidence upload/download will fail, because the
+  browser uses presigned URLs pointing at that endpoint.
+- Postgres is intentionally not reachable from other machines (loopback-only publish). Use an
+  overlay if you genuinely need remote DB access.
+- Using the bundled Keycloak (`--profile idp`)? Set `KC_HOSTNAME`, `OIDC_ISSUER`, and
+  `OIDC_REDIRECT_URI` to the host's reachable address too — see
+  [Identity Provider → Deploying on a remote host](https://docs.scfcontrolsplatform.app/admin-guide/identity-provider/#deploying-on-a-remote-host).
+
 ---
 
 ## 3. Load the SCF catalogue
@@ -120,6 +150,18 @@ See `.env.example` for the full, commented list.
 The platform needs the SCF control catalogue in its database. Because the SCF content is
 licensed (CC BY-ND 4.0), you provide the workbook and the importer converts it — the project
 ships the **importer code only**, never SCF data.
+
+> **Permissions note:** the generated catalogue JSON is written to `webclient/public/data/`,
+> which is bind-mounted into the containers. The browser upload (Option B) runs inside the
+> worker container as uid `1001`, so that directory must be writable by uid `1001` — on a
+> clone owned by another user (e.g. cloned as `root` on a server) it fails with
+> `Permission denied`. Fix once, up front:
+>
+> ```bash
+> sudo chown -R 1001:1001 webclient/public/data
+> ```
+>
+> The CLI importer (Option A) is not affected.
 
 ### Option A — CLI importer (works everywhere)
 
@@ -217,7 +259,7 @@ All of these are off by default; enable only what you need in `.env`.
 | Component        | Role                                                                    |
 | ---------------- | ----------------------------------------------------------------------- |
 | **backend**      | FastAPI REST API (port 8000), runs migrations and seeds on startup.     |
-| **frontend**     | React + Vite web app (port 5173).                                       |
+| **frontend**     | React + Vite web app (port 5173). Currently served by the Vite **dev server** — fine for internal/evaluation use; put a reverse proxy with TLS in front (or build the production nginx image from `Dockerfile.frontend`) before exposing it beyond a trusted network. |
 | **postgres**     | PostgreSQL 15 — the system of record.                                   |
 | **redis**        | Cache and Celery broker (internal network only).                        |
 | **celery-worker / celery-beat** | Async tasks: catalogue import, evidence assessment, scheduling. |
