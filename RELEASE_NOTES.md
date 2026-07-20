@@ -1,4 +1,4 @@
-# v0.10.1
+# v0.10.2
 
 Adds optional OIDC single sign-on — run the bundled Keycloak identity provider (compose profile 'idp') or bring your own IdP (Okta, Entra, Auth0, ...). Entirely opt-in; migration adds users.oidc_issuer (nullable, backfilled, safe). Also bumps Authlib to 1.6.9 for OIDC-related CVE fixes.
 

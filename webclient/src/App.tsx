@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Toaster, toast } from 'react-hot-toast'
 import { enrichControls, loadAllData } from './data/loaders'
 import { loadScopedControls } from './data/scopingService'
@@ -66,7 +67,44 @@ function AppContent() {
   const [erlData, setErlData] = useState<ERLFile>({})
   const [evidenceTemplates, setEvidenceTemplates] = useState<EvidenceTemplatesFile>({})
   const [frameworkNames, setFrameworkNames] = useState<FrameworkNameMap>({})
-  const [scopingData, setScopingData] = useState<ScopedControlsFile | null>(null)
+  const queryClient = useQueryClient()
+
+  // Scoping data — single source of truth for the whole app.
+  // React Query owns it, so any writer that invalidates ['scoping-data']
+  // (ControlScoping) or updates the cache (EvidenceReview / FrameworkGapDetail
+  // via onScopingDataChange) propagates to every consumer by construction —
+  // no full page reload, no per-tab refetch hack.
+  const { data: scopingDataRaw } = useQuery({
+    queryKey: ['scoping-data', currentOrg?.id],
+    queryFn: async (): Promise<ScopedControlsFile> => {
+      const scoping = await loadScopedControls()
+      if (scoping) return scoping
+      // No scoping data yet — initialise an empty structure from org context.
+      return {
+        organizationId: currentOrg!.id,
+        organization: {
+          name: currentOrg!.name,
+          id: currentOrg!.id,
+          created_at: currentOrg!.created_at,
+          updated_at: currentOrg!.updated_at
+        },
+        scoped_controls: [],
+        evidence_tracking: {},
+        metadata: { version: '1.0', total_selected: 0, total_implemented: 0 }
+      }
+    },
+    enabled: authReady && isAuthenticated && !!currentOrg && !orgLoading,
+    staleTime: 0
+  })
+  const scopingData = scopingDataRaw ?? null
+
+  // Optimistic writer used by evidence/dashboard flows (onScopingDataChange).
+  // Keeps the same call shape as the old setScopingData(value) so prop sites
+  // are unchanged; writes straight into the shared query cache.
+  const setScopingData = useCallback((data: ScopedControlsFile) => {
+    queryClient.setQueryData(['scoping-data', currentOrg?.id], data)
+  }, [queryClient, currentOrg?.id])
+
   const [selectedId, setSelectedId] = useState<string | undefined>(undefined)
   const [activeTab, setActiveTab] = useState<Tab>('dashboard')
   // OSS onboarding: null = not yet checked, false = empty (show upload gate), true = seeded
@@ -268,7 +306,6 @@ function AppContent() {
     // showLoadingIndicator param retained for initial load spinner
     try {
       const { controls, mappings, erl, frameworkNames, collectionInterfaces, evidenceTemplates } = await loadAllData()
-      const scoping = await loadScopedControls()
 
       const enriched = enrichControls(controls, mappings, erl, frameworkNames)
       setControls(enriched)
@@ -277,27 +314,8 @@ function AppContent() {
       setErlData(erl)
       setFrameworkNames(frameworkNames)
 
-      // If no scoping data exists, initialize with empty structure using org from context
-      if (!scoping) {
-        setScopingData({
-          organizationId: currentOrg.id,
-          organization: {
-            name: currentOrg.name,
-            id: currentOrg.id,
-            created_at: currentOrg.created_at,
-            updated_at: currentOrg.updated_at
-          },
-          scoped_controls: [],
-          evidence_tracking: {},
-          metadata: {
-            version: '1.0',
-            total_selected: 0,
-            total_implemented: 0
-          }
-        })
-      } else {
-        setScopingData(scoping)
-      }
+      // Scoping data is loaded by the ['scoping-data'] React Query above,
+      // which is the single source of truth. loadData() no longer owns it.
 
       if (!selectedId && enriched.length > 0) {
         setSelectedId(enriched[0]?.scf_id)
