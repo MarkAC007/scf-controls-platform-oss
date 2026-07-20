@@ -16,6 +16,7 @@ import {
   getEvidenceTracking,
   loadScopedControls
 } from '../data/scopingService'
+import { useQueryClient } from '@tanstack/react-query'
 import { useScopedControlsQuery, useScopedControlsStats, flattenScopedControlPages } from '../hooks/useScopedControlsQuery'
 import { useOrganizationSettings } from '../hooks/useOrganizationSettings'
 import { useCatalogFilters } from '../hooks/useCatalogFilters'
@@ -123,6 +124,7 @@ export default function ControlScoping({
   frameworkNames = {},
   initialSelectedId
 }: ControlScopingProps) {
+  const queryClient = useQueryClient()
   // Internal scoping data — React Query is primary read source for the list,
   // this backs evidence tracking lookups and single-control writes until full
   // migration to per-entity React Query queries.
@@ -136,6 +138,9 @@ export default function ControlScoping({
   const [scopingData, setScopingData] = useState<ScopedControlsFile>(emptyScopingData)
   const onScopingDataChange = (data: ScopedControlsFile | null) => {
     if (data) setScopingData(data)
+    // Propagate to the app-wide ['scoping-data'] source of truth so Evidence,
+    // Dashboard and Mapping Matrix reflect scope changes without a page reload.
+    queryClient.invalidateQueries({ queryKey: ['scoping-data'] })
   }
 
   // Load scoping data on mount and when org changes
