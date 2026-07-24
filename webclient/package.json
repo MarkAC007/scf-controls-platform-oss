@@ -14,7 +14,7 @@
   "dependencies": {
     "@react-oauth/google": "^0.12.2",
     "@tanstack/react-query": "^5.90.16",
-    "dompurify": "^3.4.11",
+    "dompurify": "^3.4.12",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-hot-toast": "^2.4.1",
