@@ -5,8 +5,61 @@ import {
   queryCdm,
   reviewCdmMapping,
   type CDMMapping,
+  type CDMNoResultsReason,
   type CDMQueryHit,
+  type CDMQueryResponse,
 } from '../data/apiClient'
+
+/**
+ * "10 hits" is ambiguous when a limit was applied — it reads as complete
+ * coverage whether there were 10 candidates or 200. Say which.
+ */
+export function formatHitCount(meta: CDMQueryResponse | null, shown: number): string {
+  const total = meta?.candidates_total
+  if (typeof total === 'number' && total > shown) {
+    return `showing top ${shown} of ${total} matches`
+  }
+  return `${shown} hit${shown === 1 ? '' : 's'}`
+}
+
+/**
+ * An empty list is not an answer. These two zero states call for completely
+ * different actions — upload something, versus your documents use different
+ * words than the control does — and v1 rendered both as "No matches."
+ */
+export function NoResultsExplanation({ reason }: { reason: CDMNoResultsReason | null }) {
+  if (reason === 'no_documents_ingested') {
+    return (
+      <>
+        <p>No documents have been ingested for this organisation yet.</p>
+        <p className="cdm-row-meta">
+          Upload a policy or procedure document to start building coverage.
+        </p>
+      </>
+    )
+  }
+  if (reason === 'no_matching_passages') {
+    return (
+      <>
+        <p>Your documents contain no passage matching this control&apos;s language.</p>
+        <p className="cdm-row-meta">
+          This is a terminology gap, not necessarily a coverage gap — the
+          control may be met using different wording. Try searching for the
+          terms your policies actually use.
+        </p>
+      </>
+    )
+  }
+  if (reason === 'control_has_no_query_text') {
+    return (
+      <>
+        <p>This control has no assessment objectives, name, or question to search with.</p>
+        <p className="cdm-row-meta">Enter search terms above to query directly.</p>
+      </>
+    )
+  }
+  return <p>No matches.</p>
+}
 
 interface CDMControlPanelProps {
   organizationId: string
@@ -278,6 +331,7 @@ export default function CDMControlPanel({
   const [querying, setQuerying] = useState(false)
   const [hits, setHits] = useState<CDMQueryHit[] | null>(null)
   const [kbRevision, setKbRevision] = useState<string | null>(null)
+  const [queryMeta, setQueryMeta] = useState<CDMQueryResponse | null>(null)
   const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>({})
 
   const fetchMappings = useCallback(async () => {
@@ -326,6 +380,7 @@ export default function CDMControlPanel({
       })
       setHits(response.hits)
       setKbRevision(response.kb_revision)
+      setQueryMeta(response)
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Query failed'
       toast.error(message)
@@ -434,22 +489,44 @@ export default function CDMControlPanel({
         {hits !== null ? (
           <div className="cdm-query-results">
             <div className="cdm-row-meta">
-              {hits.length} hit{hits.length === 1 ? '' : 's'}
+              {formatHitCount(queryMeta, hits.length)}
               {kbRevision ? ` · KB ${kbRevision}` : ''}
+              {queryMeta?.retrieval_tier ? ` · via ${queryMeta.retrieval_tier}` : ''}
             </div>
+
+            {queryMeta && queryMeta.can_produce_mappings === false ? (
+              <p className="cdm-query-warning">
+                This retrieval tier cannot return verifiable positions in the
+                source document, so these results are exploratory — they cannot
+                become accepted mappings.
+              </p>
+            ) : null}
+
             {hits.length === 0 ? (
               <div className="cdm-empty">
-                <p>No matches.</p>
+                <NoResultsExplanation reason={queryMeta?.no_results_reason ?? null} />
               </div>
             ) : (
               <ul className="cdm-hit-list">
                 {hits.map((hit, idx) => (
                   <li key={hit.chunk_id ?? `${idx}`} className="cdm-hit-row">
+                    {hit.heading ? (
+                      <div className="cdm-hit-heading">{hit.heading}</div>
+                    ) : null}
                     <div className="cdm-hit-content">{hit.content}</div>
                     <div className="cdm-row-meta">
                       {hit.file_source ?? hit.file_path ?? 'unknown source'}
                       {hit.reference_id ? ` · ref ${hit.reference_id}` : ''}
+                      {typeof hit.char_start === 'number' && typeof hit.char_end === 'number'
+                        ? ` · chars ${hit.char_start.toLocaleString()}–${hit.char_end.toLocaleString()}`
+                        : ''}
+                      {typeof hit.ts_rank === 'number' ? ` · rank ${hit.ts_rank.toFixed(3)}` : ''}
                     </div>
+                    {hit.matched_objectives && hit.matched_objectives.length > 0 ? (
+                      <div className="cdm-row-meta cdm-hit-objective">
+                        Answers: {hit.matched_objectives[0]}
+                      </div>
+                    ) : null}
                   </li>
                 ))}
               </ul>

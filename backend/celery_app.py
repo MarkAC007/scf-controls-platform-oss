@@ -129,6 +129,10 @@ celery_app.conf.update(
         Queue("tprm_research", Exchange("tprm_research"), routing_key="tprm_research"),
         Queue("dpsia", Exchange("dpsia"), routing_key="dpsia"),
         Queue("cdm", Exchange("cdm"), routing_key="cdm"),
+        # Separate from "cdm" on purpose: a hosted classification call of tens
+        # of seconds sitting on the cdm queue head-of-line-blocks every ingest
+        # queued behind it.
+        Queue("cdm_intent", Exchange("cdm_intent"), routing_key="cdm_intent"),
         Queue("evidence_assessment", Exchange("evidence_assessment"), routing_key="evidence_assessment"),
         Queue("evidence_window", Exchange("evidence_window"), routing_key="evidence_window"),
         Queue("evidence_composite", Exchange("evidence_composite"), routing_key="evidence_composite"),
@@ -152,6 +156,7 @@ celery_app.conf.update(
         "tasks_assessment.assess_evidence_task": {"queue": "evidence_assessment"},
         "tasks_window_assessment.assess_window_task": {"queue": "evidence_window"},
         "tasks_window_assessment.nightly_window_refresh_task": {"queue": "evidence_window"},
+        "cdm.classify_intent": {"queue": "cdm_intent"},
         "services.composite_service.recompute_control_composite_task": {"queue": "evidence_composite"},
         "services.composite_service.backfill_all_composites_task": {"queue": "evidence_composite"},
     },

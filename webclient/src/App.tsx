@@ -42,6 +42,7 @@ import BackupRestore from './components/BackupRestore'
 import AuditLogPage from './components/AuditLogPage'
 import EngagementsPage from './components/EngagementsPage'
 import CDMWorkspace from './components/CDMWorkspace'
+import DocumentMap from './components/DocumentMap'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { ThemeProvider } from './contexts/ThemeContext'
 import { OrganizationProvider, useOrganization } from './contexts/OrganizationContext'
@@ -55,7 +56,7 @@ import InviteAcceptance from './components/InviteAcceptance'
 import OrgSwitcher from './components/OrgSwitcher'
 import type { ClientSummary, ConsultantInvite } from './types'
 
-type Tab = 'dashboard' | 'capability-posture' | 'library' | 'scoping' | 'evidence' | 'mapping-matrix' | 'tasks' | 'systems' | 'users' | 'consultant-portal' | 'risk-register' | 'vendors' | 'settings' | 'webhooks' | 'audit-log' | 'engagements' | 'cdm'
+type Tab = 'dashboard' | 'capability-posture' | 'library' | 'scoping' | 'evidence' | 'mapping-matrix' | 'tasks' | 'systems' | 'users' | 'consultant-portal' | 'risk-register' | 'vendors' | 'settings' | 'webhooks' | 'audit-log' | 'engagements' | 'cdm' | 'document-map'
 
 function AppContent() {
   const { isAuthenticated, authReady, user } = useAuth()
@@ -597,6 +598,12 @@ function AppContent() {
           )}
           {activeTab === 'cdm' && scopingData && (
             <CDMWorkspace organizationId={scopingData.organizationId!} />
+          )}
+          {activeTab === 'document-map' && scopingData && (
+            <DocumentMap
+              organizationId={scopingData.organizationId!}
+              onOpenDocuments={() => setActiveTab('cdm')}
+            />
           )}
           {activeTab === 'audit-log' && currentOrg && (
             <AuditLogPage organizationId={currentOrg.id} />

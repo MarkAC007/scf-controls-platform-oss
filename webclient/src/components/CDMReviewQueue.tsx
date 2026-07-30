@@ -1,17 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'react-hot-toast'
 import {
-  listCdmMappings,
-  acceptCdmMapping,
-  dismissCdmMapping,
-  bulkAcceptCdmMappings,
-  bulkDismissCdmMappings,
+  listCdmControlProposals,
+  acceptCdmControlProposal,
+  dismissCdmControlProposal,
   triggerCdmComputeMappings,
   getCdmComputeMappingsStatus,
-  fetchScopedControlsPage,
+  type CDMControlProposal,
+  type CDMControlProposalStatus,
   type CDMMapping,
-  type CDMMappingBulkResponse,
-  type CDMMappingStatus,
 } from '../data/apiClient'
 
 interface CDMReviewQueueProps {
@@ -22,31 +19,190 @@ const PAGE_SIZE = 25
 const EXCERPT_PREVIEW_CHARS = 150
 const EXCERPT_FULL_CHARS = 600
 
-const STATUS_OPTIONS: { value: CDMMappingStatus; label: string }[] = [
+const STATUS_OPTIONS: { value: CDMControlProposalStatus; label: string }[] = [
   { value: 'proposed', label: 'Proposed' },
   { value: 'accepted', label: 'Accepted' },
   { value: 'dismissed', label: 'Dismissed' },
   { value: 'stale', label: 'Stale' },
 ]
 
+const STATUS_BADGES: Record<CDMControlProposalStatus, { label: string; className: string }> = {
+  proposed: { label: 'Proposed', className: 'cdm-badge-progress' },
+  accepted: { label: 'Accepted', className: 'cdm-badge-success' },
+  dismissed: { label: 'Dismissed', className: 'cdm-badge-error' },
+  stale: { label: 'Stale', className: 'cdm-badge-warning' },
+}
+
 function formatScore(score: number): string {
   return score.toFixed(2)
 }
 
 function formatRange(start: number, end: number): string {
+  // Characters, not bytes. The column names still say byte_offset_* for
+  // compatibility, but the values have always been character offsets into
+  // the extracted text, and calling them bytes sends anyone verifying a
+  // citation to the wrong position in any document containing non-ASCII.
   const len = end - start
-  return `${start.toLocaleString()}–${end.toLocaleString()} (${len.toLocaleString()} bytes)`
+  return `${start.toLocaleString()}–${end.toLocaleString()} (${len.toLocaleString()} chars)`
 }
 
-interface CatalogEntry {
-  control_name: string
-  control_description: string
+const MATCH_TYPE_LABELS: Record<string, { label: string; hint: string }> = {
+  exact: {
+    label: 'Exact',
+    hint: 'The excerpt appears verbatim at these offsets in the source document.',
+  },
+  whitespace_flexible: {
+    label: 'Whitespace-normalised',
+    hint:
+      'Matched after collapsing runs of whitespace. Offsets are mapped back to the original text, so the citation still resolves.',
+  },
+  fuzzy: {
+    label: 'Partial',
+    hint:
+      'Only part of the passage matched. Read the excerpt against the source before accepting.',
+  },
+}
+
+/**
+ * Shows how a score was arrived at.
+ *
+ * Accepting a mapping is an audit assertion, so the reviewer is entitled to
+ * see the evidence behind the number rather than being asked to trust it.
+ * v1 could not offer this: its score was list position, and there was nothing
+ * underneath to show.
+ */
+export function ScoreBreakdown({ mapping }: { mapping: CDMMapping }) {
+  const weights = mapping.score_weights
+  const components: Array<[string, number | null, number | undefined]> = [
+    ['Text relevance', mapping.ts_rank_component, weights?.ts_rank],
+    ['Objective coverage', mapping.objective_coverage_component, weights?.objective_coverage],
+    ['Term overlap', mapping.term_overlap_component, weights?.term_overlap],
+  ]
+
+  if (components.every(([, value]) => value === null || value === undefined)) {
+    return (
+      <p className="cdm-review-card-notice">
+        Scored before score components were recorded. Re-run mapping to see the
+        breakdown.
+      </p>
+    )
+  }
+
+  return (
+    <table className="cdm-score-breakdown">
+      <tbody>
+        {components.map(([label, value, weight]) =>
+          value === null || value === undefined ? null : (
+            <tr key={label}>
+              <th scope="row">{label}</th>
+              <td className="cdm-mono">{value.toFixed(3)}</td>
+              <td className="cdm-row-meta">
+                {weight === undefined ? '' : `× ${weight.toFixed(2)}`}
+              </td>
+            </tr>
+          ),
+        )}
+        <tr className="cdm-score-breakdown-total">
+          <th scope="row">Score</th>
+          <td className="cdm-mono">{formatScore(mapping.relevance_score)}</td>
+          <td />
+        </tr>
+      </tbody>
+    </table>
+  )
+}
+
+/** HTTP status carried on errors thrown by apiFetch, when there is one. */
+function httpStatus(err: unknown): number | undefined {
+  return (err as { status?: number } | null)?.status
+}
+
+function truncateExcerpt(excerpt: string, expanded: boolean): string {
+  const limit = expanded ? EXCERPT_FULL_CHARS : EXCERPT_PREVIEW_CHARS
+  return excerpt.length > limit ? `${excerpt.slice(0, limit)}…` : excerpt
+}
+
+/**
+ * One citation under a proposal — the passage that put the control and the
+ * document together, with the score components behind it.
+ *
+ * This is provenance, not a decision. The reviewer accepts or dismisses the
+ * proposal; opening a citation is how they satisfy themselves before doing so.
+ */
+function CitationDetail({
+  citation,
+  expanded,
+  onToggleExcerpt,
+}: {
+  citation: CDMMapping
+  expanded: boolean
+  onToggleExcerpt: () => void
+}) {
+  const excerpt = citation.excerpt ?? ''
+  const matchTypeMeta = citation.match_type
+    ? MATCH_TYPE_LABELS[citation.match_type]
+    : undefined
+
+  return (
+    <li className="cdm-citation">
+      <div className="cdm-citation-header">
+        <span className="cdm-mapping-section">{citation.section ?? '—'}</span>
+        <span className="cdm-row-meta cdm-review-card-score">
+          {matchTypeMeta ? (
+            <span
+              className={`cdm-match-badge cdm-match-badge-${citation.match_type}`}
+              title={matchTypeMeta.hint}
+            >
+              {matchTypeMeta.label}
+            </span>
+          ) : null}
+          score {formatScore(citation.relevance_score)}
+        </span>
+      </div>
+
+      <div className="cdm-review-card-meta">
+        <span className="cdm-mono">
+          {formatRange(citation.byte_offset_start, citation.byte_offset_end)}
+        </span>
+        {citation.retrieval_tier ? (
+          <>
+            <span className="cdm-review-card-sep">·</span>
+            <span className="cdm-row-meta">via {citation.retrieval_tier}</span>
+          </>
+        ) : null}
+      </div>
+
+      {citation.matched_objective_text ? (
+        <p className="cdm-matched-objective">
+          <span className="cdm-matched-objective-label">Answers objective:</span>{' '}
+          {citation.matched_objective_text}
+        </p>
+      ) : null}
+
+      {excerpt ? (
+        <>
+          <pre className="cdm-excerpt">{truncateExcerpt(excerpt, expanded)}</pre>
+          {excerpt.length > EXCERPT_PREVIEW_CHARS ? (
+            <button type="button" className="cdm-link-button" onClick={onToggleExcerpt}>
+              {expanded ? 'Show less' : 'Show more'}
+            </button>
+          ) : null}
+        </>
+      ) : (
+        <p className="cdm-review-card-notice">
+          Excerpt unavailable — re-run mapping to populate.
+        </p>
+      )}
+
+      <ScoreBreakdown mapping={citation} />
+    </li>
+  )
 }
 
 export default function CDMReviewQueue({ organizationId }: CDMReviewQueueProps) {
-  const [statusFilter, setStatusFilter] = useState<CDMMappingStatus>('proposed')
+  const [statusFilter, setStatusFilter] = useState<CDMControlProposalStatus>('proposed')
   const [offset, setOffset] = useState(0)
-  const [mappings, setMappings] = useState<CDMMapping[]>([])
+  const [proposals, setProposals] = useState<CDMControlProposal[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [busyId, setBusyId] = useState<string | null>(null)
@@ -55,7 +211,7 @@ export default function CDMReviewQueue({ organizationId }: CDMReviewQueueProps) 
   const [computeTaskId, setComputeTaskId] = useState<string | null>(null)
   const [computeState, setComputeState] = useState<string | null>(null)
   const [computeBusy, setComputeBusy] = useState(false)
-  const [catalog, setCatalog] = useState<Record<string, CatalogEntry>>({})
+  const [expandedProposalIds, setExpandedProposalIds] = useState<Record<string, boolean>>({})
   const [expandedExcerptIds, setExpandedExcerptIds] = useState<Record<string, boolean>>({})
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
   const [bulkBusy, setBulkBusy] = useState(false)
@@ -65,15 +221,15 @@ export default function CDMReviewQueue({ organizationId }: CDMReviewQueueProps) 
   const refresh = useCallback(async () => {
     setLoading(true)
     try {
-      const response = await listCdmMappings(organizationId, {
+      const response = await listCdmControlProposals(organizationId, {
         status: statusFilter,
         limit: PAGE_SIZE,
         offset,
       })
-      setMappings(response.mappings)
+      setProposals(response.proposals)
       setTotal(response.total)
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to load mappings'
+      const message = err instanceof Error ? err.message : 'Failed to load proposals'
       toast.error(message)
     } finally {
       setLoading(false)
@@ -98,46 +254,6 @@ export default function CDMReviewQueue({ organizationId }: CDMReviewQueueProps) 
   useEffect(() => {
     setSelectedIds(new Set())
   }, [statusFilter, offset, organizationId])
-
-  // Catalog map keyed by scf_id, populated once per page of mappings so each
-  // review card can show SCF control language alongside the document excerpt.
-  // Misses (mapping.scf_id not in catalog) render the bare SCF ID — no fatal.
-  useEffect(() => {
-    const wanted = new Set<string>()
-    for (const m of mappings) {
-      if (m.scf_id && !catalog[m.scf_id]) wanted.add(m.scf_id)
-    }
-    if (wanted.size === 0) return
-
-    let cancelled = false
-    const loadCatalog = async () => {
-      try {
-        const resp = await fetchScopedControlsPage(
-          { limit: 500, scope_status: 'all' },
-          organizationId,
-        )
-        if (cancelled) return
-        setCatalog((prev) => {
-          const next = { ...prev }
-          for (const c of resp.controls) {
-            if (!next[c.scf_id]) {
-              next[c.scf_id] = {
-                control_name: c.control_name,
-                control_description: c.control_description,
-              }
-            }
-          }
-          return next
-        })
-      } catch {
-        /* swallow — cards fall back to SCF ID only */
-      }
-    }
-    void loadCatalog()
-    return () => {
-      cancelled = true
-    }
-  }, [mappings, organizationId, catalog])
 
   const handleRunMapping = useCallback(async () => {
     setComputeBusy(true)
@@ -205,15 +321,25 @@ export default function CDMReviewQueue({ organizationId }: CDMReviewQueueProps) 
   }, [computeTaskId, computeState, organizationId])
 
   const handleAccept = useCallback(
-    async (mapping: CDMMapping) => {
-      setBusyId(mapping.id)
+    async (proposal: CDMControlProposal) => {
+      setBusyId(proposal.id)
       try {
-        await acceptCdmMapping(organizationId, mapping.id)
-        toast.success(`Accepted mapping for ${mapping.scf_id ?? 'control'}`)
+        const resp = await acceptCdmControlProposal(organizationId, proposal.id)
+        toast.success(
+          `Accepted ${proposal.scf_id ?? 'control'} — ${resp.citations_accepted} citation${
+            resp.citations_accepted === 1 ? '' : 's'
+          }`,
+        )
         await refresh()
       } catch (err) {
-        const message = err instanceof Error ? err.message : 'Accept failed'
-        toast.error(message)
+        // A 409 means someone (or a mapping run) already moved this proposal
+        // out of 'proposed'. The reviewer's click was fine; their page is old.
+        if (httpStatus(err) === 409) {
+          toast('That proposal had already been actioned — queue reloaded.')
+          await refresh()
+          return
+        }
+        toast.error(err instanceof Error ? err.message : 'Accept failed')
       } finally {
         setBusyId(null)
       }
@@ -222,17 +348,23 @@ export default function CDMReviewQueue({ organizationId }: CDMReviewQueueProps) 
   )
 
   const handleDismissSubmit = useCallback(
-    async (mapping: CDMMapping) => {
-      setBusyId(mapping.id)
+    async (proposal: CDMControlProposal) => {
+      setBusyId(proposal.id)
       try {
-        await dismissCdmMapping(organizationId, mapping.id, dismissReason || null)
-        toast.success(`Dismissed mapping for ${mapping.scf_id ?? 'control'}`)
+        await dismissCdmControlProposal(organizationId, proposal.id, dismissReason || null)
+        toast.success(`Dismissed ${proposal.scf_id ?? 'control'}`)
         setDismissingId(null)
         setDismissReason('')
         await refresh()
       } catch (err) {
-        const message = err instanceof Error ? err.message : 'Dismiss failed'
-        toast.error(message)
+        if (httpStatus(err) === 409) {
+          toast('That proposal had already been actioned — queue reloaded.')
+          setDismissingId(null)
+          setDismissReason('')
+          await refresh()
+          return
+        }
+        toast.error(err instanceof Error ? err.message : 'Dismiss failed')
       } finally {
         setBusyId(null)
       }
@@ -241,18 +373,18 @@ export default function CDMReviewQueue({ organizationId }: CDMReviewQueueProps) 
   )
 
   const visibleProposedIds = useMemo(
-    () => mappings.filter((m) => m.status === 'proposed').map((m) => m.id),
-    [mappings],
+    () => proposals.filter((p) => p.status === 'proposed').map((p) => p.id),
+    [proposals],
   )
   const allVisibleSelected =
     visibleProposedIds.length > 0 &&
     visibleProposedIds.every((id) => selectedIds.has(id))
 
-  const toggleSelected = useCallback((mappingId: string) => {
+  const toggleSelected = useCallback((proposalId: string) => {
     setSelectedIds((prev) => {
       const next = new Set(prev)
-      if (next.has(mappingId)) next.delete(mappingId)
-      else next.add(mappingId)
+      if (next.has(proposalId)) next.delete(proposalId)
+      else next.add(proposalId)
       return next
     })
   }, [])
@@ -270,128 +402,72 @@ export default function CDMReviewQueue({ organizationId }: CDMReviewQueueProps) 
     })
   }, [visibleProposedIds])
 
-  const summariseBulkResult = useCallback(
-    (verb: 'Accepted' | 'Dismissed', resp: CDMMappingBulkResponse) => {
-      const ok = verb === 'Accepted' ? resp.accepted.length : resp.dismissed.length
-      const skipped = resp.skipped.length
-      const missing = resp.not_found.length
-      const tail = []
-      if (skipped) tail.push(`${skipped} skipped (not 'proposed')`)
-      if (missing) tail.push(`${missing} not found`)
-      const suffix = tail.length ? ` — ${tail.join(', ')}` : ''
-      if (ok > 0) toast.success(`${verb} ${ok} mapping${ok === 1 ? '' : 's'}${suffix}`)
-      else toast.error(`No mappings ${verb.toLowerCase()}${suffix || ''}`)
+  /**
+   * Apply a decision to every selected proposal, one request each.
+   *
+   * There is no bulk proposal endpoint and at a page size of 25 there does not
+   * need to be. A 409 inside the loop is an expected outcome rather than a
+   * failure — it means that proposal moved on — so it is counted and the loop
+   * continues; abandoning the rest of the selection would be the worse answer.
+   */
+  const runBulk = useCallback(
+    async (verb: 'Accepted' | 'Dismissed', apply: (id: string) => Promise<unknown>) => {
+      const ids = Array.from(selectedIds)
+      if (ids.length === 0) return
+      setBulkBusy(true)
+      let ok = 0
+      let conflicts = 0
+      let failed = 0
+      try {
+        for (const id of ids) {
+          try {
+            await apply(id)
+            ok += 1
+          } catch (err) {
+            if (httpStatus(err) === 409) conflicts += 1
+            else failed += 1
+          }
+        }
+
+        const tail: string[] = []
+        if (conflicts) tail.push(`${conflicts} already actioned`)
+        if (failed) tail.push(`${failed} failed`)
+        const suffix = tail.length ? ` — ${tail.join(', ')}` : ''
+        if (ok > 0) {
+          toast.success(`${verb} ${ok} proposal${ok === 1 ? '' : 's'}${suffix}`)
+        } else {
+          toast.error(`No proposals ${verb.toLowerCase()}${suffix}`)
+        }
+
+        setSelectedIds(new Set())
+        await refresh()
+      } finally {
+        setBulkBusy(false)
+      }
     },
-    [],
+    [selectedIds, refresh],
   )
 
-  const handleBulkAccept = useCallback(async () => {
-    const ids = Array.from(selectedIds)
-    if (ids.length === 0) return
-    setBulkBusy(true)
-    try {
-      const resp = await bulkAcceptCdmMappings(organizationId, ids)
-      summariseBulkResult('Accepted', resp)
-      setSelectedIds(new Set())
-      await refresh()
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Bulk accept failed')
-    } finally {
-      setBulkBusy(false)
-    }
-  }, [organizationId, selectedIds, summariseBulkResult, refresh])
+  const handleBulkAccept = useCallback(
+    () => runBulk('Accepted', (id) => acceptCdmControlProposal(organizationId, id)),
+    [runBulk, organizationId],
+  )
 
-  const handleBulkDismiss = useCallback(async () => {
-    const ids = Array.from(selectedIds)
-    if (ids.length === 0) return
-    setBulkBusy(true)
-    try {
-      const resp = await bulkDismissCdmMappings(
-        organizationId,
-        ids,
-        bulkDismissReason || null,
+  const handleBulkDismiss = useCallback(
+    async () => {
+      const reason = bulkDismissReason || null
+      await runBulk('Dismissed', (id) =>
+        dismissCdmControlProposal(organizationId, id, reason),
       )
-      summariseBulkResult('Dismissed', resp)
-      setSelectedIds(new Set())
       setBulkDismissReason('')
-      await refresh()
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Bulk dismiss failed')
-    } finally {
-      setBulkBusy(false)
-    }
-  }, [organizationId, selectedIds, bulkDismissReason, summariseBulkResult, refresh])
+    },
+    [runBulk, organizationId, bulkDismissReason],
+  )
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
   const currentPage = Math.floor(offset / PAGE_SIZE) + 1
   const canPrev = offset > 0
   const canNext = offset + PAGE_SIZE < total
-
-  const ActionsCell = useMemo(
-    () =>
-      function ActionsCell({ m }: { m: CDMMapping }) {
-        if (statusFilter !== 'proposed') {
-          return <span className="cdm-row-meta">No actions</span>
-        }
-        if (dismissingId === m.id) {
-          return (
-            <div className="cdm-dismiss-inline">
-              <input
-                type="text"
-                placeholder="Reason (optional)"
-                value={dismissReason}
-                onChange={(e) => setDismissReason(e.target.value)}
-                className="cdm-dismiss-input"
-                disabled={busyId === m.id}
-              />
-              <button
-                type="button"
-                className="btn-secondary"
-                disabled={busyId === m.id}
-                onClick={() => void handleDismissSubmit(m)}
-              >
-                {busyId === m.id ? '…' : 'Confirm'}
-              </button>
-              <button
-                type="button"
-                className="btn-text"
-                disabled={busyId === m.id}
-                onClick={() => {
-                  setDismissingId(null)
-                  setDismissReason('')
-                }}
-              >
-                Cancel
-              </button>
-            </div>
-          )
-        }
-        return (
-          <div className="cdm-row-actions">
-            <button
-              type="button"
-              className="btn-primary"
-              disabled={busyId === m.id}
-              onClick={() => void handleAccept(m)}
-            >
-              {busyId === m.id ? '…' : 'Accept'}
-            </button>
-            <button
-              type="button"
-              className="btn-secondary"
-              disabled={busyId === m.id}
-              onClick={() => {
-                setDismissingId(m.id)
-                setDismissReason('')
-              }}
-            >
-              Dismiss
-            </button>
-          </div>
-        )
-      },
-    [statusFilter, dismissingId, dismissReason, busyId, handleAccept, handleDismissSubmit],
-  )
 
   return (
     <section className="cdm-review-section">
@@ -399,26 +475,13 @@ export default function CDMReviewQueue({ organizationId }: CDMReviewQueueProps) 
         <div>
           <h2>Review queue</h2>
           <p className="cdm-review-sub">
-            Mappings the platform proposed against your scoped controls.
-            Accept the ones that genuinely cover the control; dismiss the
-            false positives.
+            One decision per control and document: the platform proposes a
+            control it believes a document covers, and shows you the passages it
+            is relying on. Accept the proposals that genuinely cover the
+            control; dismiss the false positives.
           </p>
         </div>
         <div className="cdm-review-filters">
-          <label className="cdm-filter-label">
-            Status
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value as CDMMappingStatus)}
-              className="cdm-filter-select"
-            >
-              {STATUS_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-          </label>
           <button
             type="button"
             className="btn-primary"
@@ -434,6 +497,22 @@ export default function CDMReviewQueue({ organizationId }: CDMReviewQueueProps) 
           </button>
         </div>
       </div>
+
+      <div className="cdm-status-tabs" role="tablist" aria-label="Proposal status">
+        {STATUS_OPTIONS.map((opt) => (
+          <button
+            key={opt.value}
+            type="button"
+            role="tab"
+            aria-selected={statusFilter === opt.value}
+            className={`cdm-status-tab${statusFilter === opt.value ? ' cdm-status-tab-active' : ''}`}
+            onClick={() => setStatusFilter(opt.value)}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+
       {computeTaskId ? (
         <div className="cdm-review-task-banner">
           <span className="cdm-mono">Task {computeTaskId.slice(0, 8)}…</span>
@@ -499,119 +578,184 @@ export default function CDMReviewQueue({ organizationId }: CDMReviewQueueProps) 
       ) : null}
 
       {loading ? (
-        <div className="cdm-loading">Loading mappings…</div>
-      ) : mappings.length === 0 ? (
+        <div className="cdm-loading">Loading proposals…</div>
+      ) : proposals.length === 0 ? (
         <div className="cdm-empty">
-          <p>No mappings to review.</p>
-          <p className="cdm-empty-hint">
-            Upload more documents or compute new mappings — the queue will
-            populate as the worker proposes matches.
-          </p>
+          <p>No proposals to review.</p>
+          {statusFilter === 'proposed' ? (
+            <p className="cdm-empty-hint">
+              Mappings may exist that have not been consolidated into proposals
+              yet. Run Mapping to (re)build the review queue.
+            </p>
+          ) : null}
         </div>
       ) : (
         <ul className="cdm-review-card-list">
-          {mappings.map((m) => {
-            const catalogEntry = m.scf_id ? catalog[m.scf_id] : undefined
-            const excerpt = m.excerpt ?? ''
-            const expanded = !!expandedExcerptIds[m.id]
-            const showExpandToggle = excerpt.length > EXCERPT_PREVIEW_CHARS
-            let visibleExcerpt: string
-            if (!excerpt) {
-              visibleExcerpt = ''
-            } else if (expanded) {
-              visibleExcerpt =
-                excerpt.length > EXCERPT_FULL_CHARS
-                  ? `${excerpt.slice(0, EXCERPT_FULL_CHARS)}…`
-                  : excerpt
-            } else {
-              visibleExcerpt =
-                excerpt.length > EXCERPT_PREVIEW_CHARS
-                  ? `${excerpt.slice(0, EXCERPT_PREVIEW_CHARS)}…`
-                  : excerpt
-            }
+          {proposals.map((p) => {
+            const badge = STATUS_BADGES[p.status]
+            const citationsExpanded = !!expandedProposalIds[p.id]
+            const recomputed = p.recompute_provider !== null
 
             return (
-              <li key={m.id} className="cdm-review-card">
+              <li key={p.id} className="cdm-review-card">
                 <div className="cdm-review-card-header">
                   <div className="cdm-review-card-control">
-                    {m.status === 'proposed' && statusFilter === 'proposed' ? (
+                    {p.status === 'proposed' && statusFilter === 'proposed' ? (
                       <input
                         type="checkbox"
                         className="cdm-review-card-checkbox"
-                        checked={selectedIds.has(m.id)}
-                        onChange={() => toggleSelected(m.id)}
+                        checked={selectedIds.has(p.id)}
+                        onChange={() => toggleSelected(p.id)}
                         disabled={bulkBusy}
-                        aria-label={`Select mapping for ${m.scf_id ?? 'control'}`}
+                        aria-label={`Select proposal for ${p.scf_id ?? 'control'}`}
                       />
                     ) : null}
-                    <span className="cdm-review-card-scf-id">{m.scf_id ?? '—'}</span>
-                    {catalogEntry ? (
+                    <span className="cdm-review-card-scf-id">{p.scf_id ?? '—'}</span>
+                    {p.control_name ? (
                       <span className="cdm-review-card-control-name">
-                        {catalogEntry.control_name}
+                        {p.control_name}
                       </span>
                     ) : null}
                   </div>
                   <span className="cdm-row-meta cdm-review-card-score">
-                    score {formatScore(m.relevance_score)}
+                    <span className={`cdm-badge ${badge.className}`}>{badge.label}</span>
+                    score {formatScore(p.consolidated_score)}
                   </span>
                 </div>
 
                 <div className="cdm-review-card-meta">
-                  <span className="cdm-filename">{m.original_filename ?? '—'}</span>
+                  <span className="cdm-filename">{p.original_filename ?? '—'}</span>
                   <span className="cdm-review-card-sep">·</span>
-                  <span className="cdm-mapping-section">{m.section ?? '—'}</span>
-                  <span className="cdm-review-card-sep">·</span>
-                  <span className="cdm-mono">{formatRange(m.byte_offset_start, m.byte_offset_end)}</span>
+                  {recomputed ? (
+                    <span className="cdm-row-meta">
+                      recomputed
+                      {p.recompute_model_id
+                        ? ` · ${p.recompute_provider}/${p.recompute_model_id}`
+                        : ` · ${p.recompute_provider}`}
+                    </span>
+                  ) : (
+                    <span
+                      className="cdm-row-meta"
+                      title="Highest citation score. No model has consolidated this proposal yet."
+                    >
+                      heuristic score
+                    </span>
+                  )}
                 </div>
 
-                <div className="cdm-review-card-body">
-                  <div className="cdm-review-card-excerpt">
-                    <h4 className="cdm-review-card-block-title">Document excerpt</h4>
-                    {excerpt ? (
-                      <>
-                        <pre className="cdm-excerpt">{visibleExcerpt}</pre>
-                        {showExpandToggle ? (
-                          <button
-                            type="button"
-                            className="cdm-link-button"
-                            onClick={() =>
+                {p.status === 'proposed' && p.dismiss_reason ? (
+                  <p className="cdm-review-card-resurrected">
+                    Previously dismissed: {p.dismiss_reason}
+                  </p>
+                ) : null}
+
+                {recomputed && p.rationale ? (
+                  <div className="cdm-proposal-rationale">
+                    <h4 className="cdm-review-card-block-title">
+                      Consolidated judgment
+                    </h4>
+                    <p className="cdm-proposal-rationale-text">{p.rationale}</p>
+                  </div>
+                ) : null}
+
+                <div className="cdm-proposal-citations">
+                  <button
+                    type="button"
+                    className="cdm-link-button"
+                    aria-expanded={citationsExpanded}
+                    onClick={() =>
+                      setExpandedProposalIds((prev) => ({
+                        ...prev,
+                        [p.id]: !prev[p.id],
+                      }))
+                    }
+                  >
+                    {citationsExpanded ? 'Hide' : 'Show'} {p.citation_count} citation
+                    {p.citation_count === 1 ? '' : 's'}
+                  </button>
+
+                  {citationsExpanded ? (
+                    p.citations.length > 0 ? (
+                      <ul className="cdm-citation-list">
+                        {p.citations.map((c) => (
+                          <CitationDetail
+                            key={c.id}
+                            citation={c}
+                            expanded={!!expandedExcerptIds[c.id]}
+                            onToggleExcerpt={() =>
                               setExpandedExcerptIds((prev) => ({
                                 ...prev,
-                                [m.id]: !prev[m.id],
+                                [c.id]: !prev[c.id],
                               }))
                             }
-                          >
-                            {expanded ? 'Show less' : 'Show more'}
-                          </button>
-                        ) : null}
-                      </>
+                          />
+                        ))}
+                      </ul>
                     ) : (
                       <p className="cdm-review-card-notice">
-                        Excerpt unavailable — re-run mapping to populate.
+                        Citations unavailable — re-run mapping to populate.
                       </p>
-                    )}
-                  </div>
+                    )
+                  ) : null}
+                </div>
 
-                  <div className="cdm-review-card-scf">
-                    <h4 className="cdm-review-card-block-title">SCF control</h4>
-                    {catalogEntry ? (
-                      <>
-                        <div className="cdm-scf-name">{catalogEntry.control_name}</div>
-                        <p className="cdm-scf-description">
-                          {catalogEntry.control_description}
-                        </p>
-                      </>
+                {p.status === 'proposed' ? (
+                  <div className="cdm-review-card-actions">
+                    {dismissingId === p.id ? (
+                      <div className="cdm-dismiss-inline">
+                        <input
+                          type="text"
+                          placeholder="Reason (optional)"
+                          value={dismissReason}
+                          onChange={(e) => setDismissReason(e.target.value)}
+                          className="cdm-dismiss-input"
+                          disabled={busyId === p.id}
+                        />
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          disabled={busyId === p.id}
+                          onClick={() => void handleDismissSubmit(p)}
+                        >
+                          {busyId === p.id ? '…' : 'Confirm'}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-text"
+                          disabled={busyId === p.id}
+                          onClick={() => {
+                            setDismissingId(null)
+                            setDismissReason('')
+                          }}
+                        >
+                          Cancel
+                        </button>
+                      </div>
                     ) : (
-                      <p className="cdm-row-meta">
-                        Catalog text unavailable for {m.scf_id ?? 'this control'}.
-                      </p>
+                      <div className="cdm-row-actions">
+                        <button
+                          type="button"
+                          className="btn-primary"
+                          disabled={busyId === p.id}
+                          onClick={() => void handleAccept(p)}
+                        >
+                          {busyId === p.id ? '…' : 'Accept'}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          disabled={busyId === p.id}
+                          onClick={() => {
+                            setDismissingId(p.id)
+                            setDismissReason('')
+                          }}
+                        >
+                          Dismiss
+                        </button>
+                      </div>
                     )}
                   </div>
-                </div>
-
-                <div className="cdm-review-card-actions">
-                  <ActionsCell m={m} />
-                </div>
+                ) : null}
               </li>
             )
           })}

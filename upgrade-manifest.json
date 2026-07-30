@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "version": "0.10.2",
-  "released": "2026-07-20T12:17:33Z",
+  "version": "0.11.0",
+  "released": "2026-07-30T11:31:05Z",
   "min_upgradable_version": "0.0.0",
   "breaking": false,
   "required_stops": [],
-  "release_url": "https://github.com/MarkAC007/scf-controls-platform-oss/releases/tag/v0.10.2",
-  "summary": "Adds optional OIDC single sign-on \u2014 run the bundled Keycloak identity provider (compose profile 'idp') or bring your own IdP (Okta, Entra, Auth0, ...). Entirely opt-in; migration adds users.oidc_issuer (nullable, backfilled, safe). Also bumps Authlib to 1.6.9 for OIDC-related CVE fixes.",
+  "release_url": "https://github.com/MarkAC007/scf-controls-platform-oss/releases/tag/v0.11.0",
+  "summary": "Adds the Document Map \u2014 a per-domain coverage view across all 33 SCF domains, separating what a person confirmed from what was merely suggested \u2014 on a rebuilt Control Documents mapper that runs entirely inside Postgres and quotes only verified character offsets. Migrations are additive (new cdm_document_intents table plus three columns on cdm_documents); nothing is enabled by default.",
   "migration_range": [
     "20260119_000000_62bdef86f249_initial_schema",
     "20260120_075300_add_implementation_status_values",
@@ -55,8 +55,24 @@
     "20260716_180000_add_system_vendor_link",
     "20260716_210000_add_evidence_tracking_maturity_level",
     "20260717_170000_add_platform_upgrade_state",
-    "20260717_211704_add_oidc_issuer_to_users"
+    "20260717_211704_add_oidc_issuer_to_users",
+    "20260728_170000_cdm_v2_chunks_and_score_components",
+    "20260729_120000_cdm_document_intents",
+    "20260730_100000_cdm_control_proposals"
   ],
-  "env_added": [],
+  "env_added": [
+    "CDM_INTENT_PROVIDER",
+    "CDM_INTENT_TIMEOUT_S",
+    "CDM_INTENT_MAX_DOMAINS",
+    "CDM_RETRIEVAL_BACKEND",
+    "ENABLE_CDM_LIGHTRAG",
+    "CDM_EXTRACTION_BACKEND",
+    "CDM_DOCLING_URL",
+    "CDM_SCORE_WEIGHT_TS_RANK",
+    "CDM_SCORE_WEIGHT_OBJECTIVE_COVERAGE",
+    "CDM_SCORE_WEIGHT_TERM_OVERLAP",
+    "CDM_MAPPING_SCORE_THRESHOLD",
+    "CDM_MAPPING_TOP_K"
+  ],
   "min_compose_action": "rebuild"
 }

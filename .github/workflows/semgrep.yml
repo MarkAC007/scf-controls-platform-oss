@@ -1,5 +1,40 @@
 name: Semgrep SAST
 
+# WHY THIS GATE EXISTS AND WHY IT IS DIFF-SCOPED
+#
+# The public mirror (scf-controls-platform-oss) has GitHub Advanced Security.
+# The same `--config auto` scan runs there, its SARIF is ingested, and GHAS
+# posts a `Semgrep OSS` check run that BLOCKS merges on newly-introduced alerts.
+# That check is not one of the public repo's required status contexts — it gates
+# independently — so a snapshot PR can show 7/7 green and still be unmergeable.
+#
+# Until now this job set `continue-on-error: true` on the scan itself, so the
+# private repo reported `Static Analysis` green no matter what it found. Net
+# effect: findings were introduced here silently and only surfaced once the
+# snapshot was already public, blocking the release at the most expensive
+# possible moment. That is what happened to OSS PR #39.
+#
+# The fix is a gate, not a wall. A full `--config auto` scan of this repo
+# currently returns ~175 findings (mostly terraform hardening advisories and
+# mutable action tags). Failing on all of them would block every PR on day one
+# and would be promptly disabled, so the gate fails ONLY on findings sitting on
+# lines the pull request actually ADDED. Pre-existing debt stays visible in the
+# scan output without blocking; anything newly introduced stops here rather than
+# in the public repo. This deliberately mirrors GHAS's "new alerts" semantics,
+# which is the check we are trying to stay ahead of.
+#
+# ADDED LINES, not changed files. Scoping by file was tried and is far too
+# blunt: touching one comment in ci.yml drags in all eleven of its pre-existing
+# mutable-action-tag findings and fails a PR that introduced none of them. That
+# is precisely the "block everything on day one" failure mode this gate exists
+# to avoid, arriving one indirection later.
+#
+# To suppress a verified false positive, add a `# nosemgrep: <check_id>` comment
+# on the finding's line or the line immediately above it, with a justification.
+# Use the FULL check_id from the scan output — registry rules end in a doubled
+# leaf segment (`...avoid-sqlalchemy-text.avoid-sqlalchemy-text`). The short
+# form GitHub displays in the alert UI does NOT match and silently does nothing.
+
 on:
   push:
     branches: [main, dev]
@@ -9,24 +44,153 @@ on:
     - cron: '0 8 * * 1'
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   semgrep:
     name: Static Analysis
     runs-on: ubuntu-latest
     container:
       image: returntocorp/semgrep
-
+    permissions:
+      contents: read
+      security-events: write # upload-sarif; no-op here, required in the public mirror
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        # SHA-pinned rather than @v5: this file ships into the public snapshot,
+        # and semgrep's own github-actions-mutable-action-tag rule fires on
+        # floating tags. A gate that trips over its own workflow is not credible.
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          # Full history so the diff gate can resolve the merge base. The
+          # pull_request checkout is a merge commit, so `base...HEAD` needs both
+          # sides present.
+          fetch-depth: 0
+
+      - name: Mark workspace safe for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Run Semgrep
-        run: semgrep scan --config auto --sarif --output semgrep-results.sarif
+        # Never fails the build directly — a scanner crash or a registry outage
+        # must not block merges. Findings are enforced by the diff gate below,
+        # which fails loudly and specifically.
         continue-on-error: true
+        run: semgrep scan --config auto --sarif --output semgrep-results.sarif
 
       - name: Upload SARIF
         if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@4187e74d05793876e9989daffde9c3e66b4acd07 # v3.37.3
         with:
           sarif_file: semgrep-results.sarif
+        # This repo has no Advanced Security, so ingestion 404s here. The step is
+        # kept because this workflow is one of the six shipped into the public
+        # snapshot (see scripts/prepare-oss.sh keep-list), where it IS the source
+        # of the blocking `Semgrep OSS` check.
         continue-on-error: true
+
+      - name: Fail on findings introduced by this PR
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -euo pipefail
+
+          if [ ! -f semgrep-results.sarif ]; then
+            echo "::error::semgrep produced no SARIF — the scan did not complete."
+            exit 1
+          fi
+
+          git fetch --no-tags origin "$BASE_REF"
+          # -U0 so each hunk header describes exactly the added lines and nothing
+          # else. The three-dot form diffs against the merge base, so unrelated
+          # commits landing on the base branch mid-review do not become "yours".
+          git diff -U0 "origin/${BASE_REF}...HEAD" > pr.diff
+
+          # Python rather than jq: jq is not guaranteed present in the semgrep
+          # container, python3 is. It also keeps every scanner-controlled string
+          # out of the shell, which is the failure mode this repo's own
+          # run-shell-injection findings are about.
+          python3 - <<'PY'
+          import json, os, re, sys
+          from collections import defaultdict
+
+          # Map each file to the set of line numbers this PR added.
+          added = defaultdict(set)
+          path = None
+          hunk = re.compile(r'^@@ -\S+ \+(\d+)(?:,(\d+))? @@')
+          with open("pr.diff", encoding="utf-8", errors="replace") as fh:
+              for line in fh:
+                  if line.startswith("+++ "):
+                      p = line[4:].strip()
+                      # /dev/null is a deletion; b/ prefixes the post-image path.
+                      path = None if p == "/dev/null" else p[2:] if p.startswith("b/") else p
+                  elif path and (m := hunk.match(line)):
+                      start, count = int(m.group(1)), int(m.group(2) or 1)
+                      added[path].update(range(start, start + count))
+
+          with open("semgrep-results.sarif", encoding="utf-8") as fh:
+              sarif = json.load(fh)
+
+          hits = []
+          for run in sarif.get("runs", []):
+              for res in run.get("results", []):
+                  # A `# nosemgrep:` comment does NOT remove the result from the
+                  # SARIF -- semgrep keeps the record and tags it, per SARIF
+                  # 3.27.23, with suppressions: [{"kind": "inSource"}]. Its own
+                  # stdout count and GitHub code scanning both honour that, so
+                  # skipping it here is what makes this gate agree with them --
+                  # and with the instruction it prints below telling you to add
+                  # exactly that comment.
+                  if res.get("suppressions"):
+                      continue
+                  loc = (res.get("locations") or [{}])[0]
+                  phys = loc.get("physicalLocation", {})
+                  p = phys.get("artifactLocation", {}).get("uri", "")
+                  line_no = phys.get("region", {}).get("startLine", 0)
+                  if line_no in added.get(p, ()):
+                      hits.append((
+                          p,
+                          line_no,
+                          res.get("ruleId", "?"),
+                          res.get("level", "warning"),
+                          (res.get("message") or {}).get("text", "").splitlines()[:1],
+                      ))
+
+          n_lines = sum(len(v) for v in added.values())
+          summary = os.environ.get("GITHUB_STEP_SUMMARY")
+          if not hits:
+              print(f"No semgrep findings on the {n_lines} line(s) this PR adds "
+                    f"across {len(added)} file(s).")
+              if summary:
+                  with open(summary, "a", encoding="utf-8") as fh:
+                      fh.write("### Semgrep\n\nNo findings on lines added by this PR.\n")
+              sys.exit(0)
+
+          hits.sort()
+          lines = [
+              "### Semgrep — findings on lines this PR adds",
+              "",
+              "| Level | Location | Rule |",
+              "|-------|----------|------|",
+          ]
+          for path, line, rule, level, msg in hits:
+              print(f"::error file={path},line={line}::[{level}] {rule}")
+              if msg:
+                  print(f"    {msg[0]}")
+              lines.append(f"| {level} | `{path}:{line}` | `{rule}` |")
+
+          lines += [
+              "",
+              "Fix the finding, or — if it is a verified false positive — add",
+              "`# nosemgrep: <full check_id>` on the line above it with a written",
+              "justification. The check_id must be the full dotted id printed above,",
+              "not the short form shown in the GitHub alert UI.",
+          ]
+          if summary:
+              with open(summary, "a", encoding="utf-8") as fh:
+                  fh.write("\n".join(lines) + "\n")
+
+          print(f"\n{len(hits)} semgrep finding(s) on lines this PR adds.")
+          sys.exit(1)
+          PY

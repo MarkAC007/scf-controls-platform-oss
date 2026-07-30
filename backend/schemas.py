@@ -3495,6 +3495,34 @@ class CDMMappingResponse(BaseModel):
     scf_id: Optional[str] = None
     original_filename: Optional[str] = None
 
+    # --- CDM v2 provenance and score interrogability (epic #709) ---
+    # A reviewer accepting a mapping is making an audit assertion. These
+    # fields exist so they can see *why* the system proposed it, rather than
+    # being handed an opaque number. All are Optional because v1 rows predate
+    # them; a null here means "computed before v2", not "zero".
+    ts_rank_component: Optional[float] = Field(
+        None, description="Postgres ts_rank_cd, normalised to [0,1)"
+    )
+    objective_coverage_component: Optional[float] = Field(
+        None, description="Fraction of the control's assessment objectives this passage matched"
+    )
+    term_overlap_component: Optional[float] = Field(
+        None, description="Fraction of distinct control terms present in the passage"
+    )
+    score_weights: Optional[Dict[str, float]] = Field(
+        None, description="Weights in force when this score was computed, so it can be recomputed"
+    )
+    match_type: Optional[str] = Field(
+        None, description="How the excerpt was located: exact | whitespace_flexible | fuzzy"
+    )
+    matched_objective_text: Optional[str] = Field(
+        None, description="The assessment objective this passage most strongly answers"
+    )
+    cdm_document_chunk_id: Optional[UUID] = None
+    retrieval_tier: Optional[str] = Field(
+        None, description="Retrieval backend that produced this mapping, e.g. postgres_fts"
+    )
+
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -3514,6 +3542,48 @@ class CDMMappingDismissRequest(BaseModel):
     reason: str = Field(..., min_length=1)
 
 
+class CDMControlProposalResponse(BaseModel):
+    """One review decision per (control, document) pair (#722).
+
+    ``citations`` carries the underlying mapping rows as provenance —
+    the reviewer decides at this level, the offsets live below it.
+    A null ``recompute_provider`` means the score is the heuristic
+    (max citation score) and the recompute pass hasn't upgraded it yet.
+    """
+
+    id: UUID
+    organization_id: UUID
+    scoped_control_id: UUID
+    cdm_document_id: UUID
+    status: str
+    consolidated_score: float
+    rationale: Optional[str] = None
+    citation_count: int
+    recompute_provider: Optional[str] = None
+    recompute_model_id: Optional[str] = None
+    kb_revision: str
+    accepted_at: Optional[datetime] = None
+    accepted_by_user_id: Optional[UUID] = None
+    dismissed_at: Optional[datetime] = None
+    dismissed_by_user_id: Optional[UUID] = None
+    dismiss_reason: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    scf_id: Optional[str] = None
+    control_name: Optional[str] = None
+    original_filename: Optional[str] = None
+    citations: List[CDMMappingResponse] = Field(default_factory=list)
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CDMControlProposalListResponse(BaseModel):
+    proposals: List[CDMControlProposalResponse]
+    total: int
+    offset: int
+    limit: int
+
+
 class CDMMappingBulkRequest(BaseModel):
     mapping_ids: List[UUID] = Field(..., min_length=1, max_length=200)
     reason: Optional[str] = None  # only used by bulk-dismiss
@@ -3529,6 +3599,11 @@ class CDMMappingBulkResponse(BaseModel):
 class CDMUploadResponse(BaseModel):
     document_id: UUID
     ingest_status: str
+    # Populated when the upload replaced prior versions of the same document
+    # (same filename with different content, or a failed prior attempt with
+    # identical content). Defaults keep the shape backward-compatible.
+    superseded_document_ids: List[UUID] = []
+    superseded_mappings_removed: int = 0
 
 
 class CDMJobStatusResponse(BaseModel):
@@ -3547,6 +3622,39 @@ class CDMQueryRequest(BaseModel):
 class CDMQueryResponse(BaseModel):
     hits: List[Dict[str, Any]]
     kb_revision: Optional[str] = None
+
+    # --- CDM v2 (epic #709) ---
+    retrieval_tier: Optional[str] = Field(
+        None, description="Backend that served this query, e.g. postgres_fts"
+    )
+    can_produce_mappings: Optional[bool] = Field(
+        None,
+        description=(
+            "False when the backend cannot return verifiable offsets. Such hits "
+            "are exploratory only and can never become mappings — the UI must "
+            "say so rather than implying a citation is one click away."
+        ),
+    )
+    candidates_shown: Optional[int] = Field(
+        None, description="Hits in this response after the limit was applied"
+    )
+    candidates_total: Optional[int] = Field(
+        None,
+        description=(
+            "Total matching candidates before truncation. Showing 10 of 200 and "
+            "showing 10 of 10 are different facts about coverage, and v1 "
+            "conflated them."
+        ),
+    )
+    no_results_reason: Optional[str] = Field(
+        None,
+        description=(
+            "Set only when hits is empty. Distinguishes 'no documents ingested' "
+            "from 'documents exist but no passage matched this control's "
+            "language' — the second is a terminology gap the user can act on, "
+            "and rendering both as a blank list hides that."
+        ),
+    )
 
 
 class CDMComputeMappingsResponse(BaseModel):

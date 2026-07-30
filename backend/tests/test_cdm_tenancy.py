@@ -208,8 +208,9 @@ def test_upload_blocked_at_document_cap(cdm_env, auth_override_editor, monkeypat
 
     # Async session whose .execute() returns 3 for the doc-count query.
     # The require_tenant_cdm_enabled dep's tenant lookup must come first,
-    # so we feed scripted responses in order: settings dict → doc count.
-    scripted = [{"cdm_enabled": True}, 3]
+    # so we feed scripted responses in order: settings dict → dedup lookup
+    # (no prior uploads) → doc count.
+    scripted = [{"cdm_enabled": True}, [], 3]
 
     class _Sess:
         async def execute(self, _stmt):
@@ -221,6 +222,13 @@ def test_upload_blocked_at_document_cap(cdm_env, auth_override_editor, monkeypat
 
                 def scalar(self_inner):
                     return value
+
+                def scalars(self_inner):
+                    class _Scalars:
+                        def all(self_scalars):
+                            return list(value or [])
+
+                    return _Scalars()
 
             return _R()
 
@@ -250,9 +258,10 @@ def test_upload_blocked_at_token_cap(cdm_env, auth_override_editor, monkeypatch)
 
     # Order of .execute() calls in upload after the dep chain:
     #   1. require_tenant_cdm_enabled → settings dict
-    #   2. assert_cdm_document_count_cap → current doc count (low)
-    #   3. assert_cdm_token_count_cap → current word total (already at cap)
-    scripted = [{"cdm_enabled": True}, 0, 10]
+    #   2. dedup lookup → no prior uploads
+    #   3. assert_cdm_document_count_cap → current doc count (low)
+    #   4. assert_cdm_token_count_cap → current word total (already at cap)
+    scripted = [{"cdm_enabled": True}, [], 0, 10]
 
     class _Sess:
         async def execute(self, _stmt):
@@ -264,6 +273,13 @@ def test_upload_blocked_at_token_cap(cdm_env, auth_override_editor, monkeypatch)
 
                 def scalar(self_inner):
                     return value
+
+                def scalars(self_inner):
+                    class _Scalars:
+                        def all(self_scalars):
+                            return list(value or [])
+
+                    return _Scalars()
 
             return _R()
 
