@@ -34,8 +34,78 @@ function formatScore(score: number): string {
 }
 
 function formatRange(start: number, end: number): string {
+  // Characters, not bytes. The column names still say byte_offset_* for
+  // compatibility, but the values have always been character offsets into
+  // the extracted text, and calling them bytes sends anyone verifying a
+  // citation to the wrong position in any document containing non-ASCII.
   const len = end - start
-  return `${start.toLocaleString()}–${end.toLocaleString()} (${len.toLocaleString()} bytes)`
+  return `${start.toLocaleString()}–${end.toLocaleString()} (${len.toLocaleString()} chars)`
+}
+
+const MATCH_TYPE_LABELS: Record<string, { label: string; hint: string }> = {
+  exact: {
+    label: 'Exact',
+    hint: 'The excerpt appears verbatim at these offsets in the source document.',
+  },
+  whitespace_flexible: {
+    label: 'Whitespace-normalised',
+    hint:
+      'Matched after collapsing runs of whitespace. Offsets are mapped back to the original text, so the citation still resolves.',
+  },
+  fuzzy: {
+    label: 'Partial',
+    hint:
+      'Only part of the passage matched. Read the excerpt against the source before accepting.',
+  },
+}
+
+/**
+ * Shows how a score was arrived at.
+ *
+ * Accepting a mapping is an audit assertion, so the reviewer is entitled to
+ * see the evidence behind the number rather than being asked to trust it.
+ * v1 could not offer this: its score was list position, and there was nothing
+ * underneath to show.
+ */
+export function ScoreBreakdown({ mapping }: { mapping: CDMMapping }) {
+  const weights = mapping.score_weights
+  const components: Array<[string, number | null, number | undefined]> = [
+    ['Text relevance', mapping.ts_rank_component, weights?.ts_rank],
+    ['Objective coverage', mapping.objective_coverage_component, weights?.objective_coverage],
+    ['Term overlap', mapping.term_overlap_component, weights?.term_overlap],
+  ]
+
+  if (components.every(([, value]) => value === null || value === undefined)) {
+    return (
+      <p className="cdm-review-card-notice">
+        Scored before score components were recorded. Re-run mapping to see the
+        breakdown.
+      </p>
+    )
+  }
+
+  return (
+    <table className="cdm-score-breakdown">
+      <tbody>
+        {components.map(([label, value, weight]) =>
+          value === null || value === undefined ? null : (
+            <tr key={label}>
+              <th scope="row">{label}</th>
+              <td className="cdm-mono">{value.toFixed(3)}</td>
+              <td className="cdm-row-meta">
+                {weight === undefined ? '' : `× ${weight.toFixed(2)}`}
+              </td>
+            </tr>
+          ),
+        )}
+        <tr className="cdm-score-breakdown-total">
+          <th scope="row">Score</th>
+          <td className="cdm-mono">{formatScore(mapping.relevance_score)}</td>
+          <td />
+        </tr>
+      </tbody>
+    </table>
+  )
 }
 
 interface CatalogEntry {
@@ -111,27 +181,40 @@ export default function CDMReviewQueue({ organizationId }: CDMReviewQueueProps) 
 
     let cancelled = false
     const loadCatalog = async () => {
+      // The endpoint caps `limit` at 200 (backend/api/scoped_controls.py) and the
+      // catalog is ~1500 controls, so a single oversized request 422s and every
+      // card falls back to "Catalog text unavailable". Page until the ids this
+      // batch actually needs are resolved, then stop.
+      const PAGE = 200
+      const found: Record<string, CatalogEntry> = {}
+      const outstanding = new Set(wanted)
       try {
-        const resp = await fetchScopedControlsPage(
-          { limit: 500, scope_status: 'all' },
-          organizationId,
-        )
-        if (cancelled) return
-        setCatalog((prev) => {
-          const next = { ...prev }
+        for (let offset = 0; outstanding.size > 0; offset += PAGE) {
+          const resp = await fetchScopedControlsPage(
+            { limit: PAGE, offset, scope_status: 'all' },
+            organizationId,
+          )
+          if (cancelled) return
           for (const c of resp.controls) {
-            if (!next[c.scf_id]) {
-              next[c.scf_id] = {
-                control_name: c.control_name,
-                control_description: c.control_description,
-              }
+            found[c.scf_id] = {
+              control_name: c.control_name,
+              control_description: c.control_description,
             }
+            outstanding.delete(c.scf_id)
           }
-          return next
-        })
+          if (resp.controls.length < PAGE || offset + PAGE >= resp.total) break
+        }
       } catch {
-        /* swallow — cards fall back to SCF ID only */
+        /* swallow — cards fall back to SCF ID only, but keep whatever resolved */
       }
+      if (cancelled) return
+      setCatalog((prev) => {
+        const next = { ...prev }
+        for (const [scfId, entry] of Object.entries(found)) {
+          if (!next[scfId]) next[scfId] = entry
+        }
+        return next
+      })
     }
     void loadCatalog()
     return () => {
@@ -530,6 +613,10 @@ export default function CDMReviewQueue({ organizationId }: CDMReviewQueueProps) 
                   : excerpt
             }
 
+            const matchTypeMeta = m.match_type
+              ? MATCH_TYPE_LABELS[m.match_type]
+              : undefined
+
             return (
               <li key={m.id} className="cdm-review-card">
                 <div className="cdm-review-card-header">
@@ -552,6 +639,14 @@ export default function CDMReviewQueue({ organizationId }: CDMReviewQueueProps) 
                     ) : null}
                   </div>
                   <span className="cdm-row-meta cdm-review-card-score">
+                    {matchTypeMeta ? (
+                      <span
+                        className={`cdm-match-badge cdm-match-badge-${m.match_type}`}
+                        title={matchTypeMeta.hint}
+                      >
+                        {matchTypeMeta.label}
+                      </span>
+                    ) : null}
                     score {formatScore(m.relevance_score)}
                   </span>
                 </div>
@@ -562,7 +657,20 @@ export default function CDMReviewQueue({ organizationId }: CDMReviewQueueProps) 
                   <span className="cdm-mapping-section">{m.section ?? '—'}</span>
                   <span className="cdm-review-card-sep">·</span>
                   <span className="cdm-mono">{formatRange(m.byte_offset_start, m.byte_offset_end)}</span>
+                  {m.retrieval_tier ? (
+                    <>
+                      <span className="cdm-review-card-sep">·</span>
+                      <span className="cdm-row-meta">via {m.retrieval_tier}</span>
+                    </>
+                  ) : null}
                 </div>
+
+                {m.matched_objective_text ? (
+                  <p className="cdm-matched-objective">
+                    <span className="cdm-matched-objective-label">Answers objective:</span>{' '}
+                    {m.matched_objective_text}
+                  </p>
+                ) : null}
 
                 <div className="cdm-review-card-body">
                   <div className="cdm-review-card-excerpt">
@@ -590,6 +698,9 @@ export default function CDMReviewQueue({ organizationId }: CDMReviewQueueProps) 
                         Excerpt unavailable — re-run mapping to populate.
                       </p>
                     )}
+
+                    <h4 className="cdm-review-card-block-title">Why this scored {formatScore(m.relevance_score)}</h4>
+                    <ScoreBreakdown mapping={m} />
                   </div>
 
                   <div className="cdm-review-card-scf">

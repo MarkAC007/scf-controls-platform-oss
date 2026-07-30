@@ -24012,6 +24012,80 @@ textarea.form-control{
 
 .cdm-review-card-score {
   white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* --- CDM v2 provenance surfaces (epic #709) --- */
+
+.cdm-match-badge {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  cursor: help;
+}
+
+/* Only "Partial" is tinted. An exact match is the expected case and does not
+   need to compete for attention; a partial one is the reviewer's cue to read
+   the excerpt against the source before accepting. */
+.cdm-match-badge-fuzzy {
+  border-color: var(--warning, #b7791f);
+  color: var(--warning, #b7791f);
+}
+
+.cdm-matched-objective {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 4px 0 0;
+  line-height: 1.4;
+}
+
+.cdm-matched-objective-label {
+  font-weight: 600;
+}
+
+.cdm-score-breakdown {
+  margin-top: 6px;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.cdm-score-breakdown th,
+.cdm-score-breakdown td {
+  text-align: left;
+  padding: 2px 12px 2px 0;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.cdm-score-breakdown-total th,
+.cdm-score-breakdown-total td {
+  border-top: 1px solid var(--border);
+  padding-top: 4px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.cdm-query-warning {
+  font-size: 12px;
+  color: var(--warning, #b7791f);
+  margin: 4px 0 8px;
+  line-height: 1.4;
+}
+
+.cdm-hit-heading {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+
+.cdm-hit-objective {
+  margin-top: 2px;
+  font-style: italic;
 }
 
 .cdm-review-card-meta {
@@ -24384,7 +24458,19 @@ textarea.form-control{
   --bench-bg: #ffffff;
   --bench-edge: rgba(15, 23, 42, 0.07);
   --bench-shadow: 0 0 0 1px var(--bench-edge), 0 8px 24px -10px rgba(30, 41, 72, 0.16);
+  --bench-shadow-sm: 0 0 0 1px var(--bench-edge), 0 3px 10px -6px rgba(30, 41, 72, 0.22);
   --bench-header-ink: hsl(222, 40%, 12%);
+  /* Ink weights of the semantic fills. --success/--warning/--primary are safe
+     as fills but fail AA as small bold text on a light surface; these are the
+     text-safe equivalents. --oos-ink lets a de-emphasised surface recede by
+     losing chroma rather than by opacity, which would drop clickable elements
+     below AA. */
+  --primary-bg: hsl(210, 90%, 96%);
+  --primary-ink: hsl(210, 85%, 32%);
+  --success-ink: hsl(142, 72%, 26%);
+  --warning-ink: hsl(30, 88%, 29%);
+  --pip-off-ink: hsl(215, 22%, 37%);
+  --oos-ink: hsl(215, 20%, 38%);
   --field-bg: hsl(216, 45%, 98.5%);
   --field-border: hsla(222, 30%, 30%, 0.24);
   --field-border-hover: hsla(210, 80%, 45%, 0.60);
@@ -24400,7 +24486,14 @@ textarea.form-control{
   --bench-bg: #1c2540;
   --bench-edge: rgba(158, 182, 235, 0.16);
   --bench-shadow: 0 1px 0 var(--bench-edge) inset, 0 10px 28px -12px rgba(3, 7, 18, 0.65);
+  --bench-shadow-sm: 0 1px 0 var(--bench-edge) inset, 0 4px 12px -8px rgba(3, 7, 18, 0.7);
   --bench-header-ink: #eaf0ff;
+  --primary-bg: rgba(66, 165, 245, 0.12);
+  --primary-ink: #7dc4fa;
+  --success-ink: #4ade80;
+  --warning-ink: #fbbf24;
+  --pip-off-ink: #bfc7d3;
+  --oos-ink: #9aa5bd;
   --field-bg: #101a35;
   --field-border: rgba(120, 150, 210, 0.28);
   --field-border-hover: rgba(66, 165, 245, 0.55);
@@ -24805,5 +24898,927 @@ textarea.form-control{
   }
   .maturity-stepper-characteristics {
     grid-template-columns: 1fr;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   DOCUMENT MAP
+   Bedrock & Ledger applied to a grid: the tile is the framework (flat,
+   serif, hairline), the organization's record sits inside it as a raised
+   block. A gap tile carries no raised block at all, so the tri-state reads
+   as material before any colour is interpreted.
+
+   Confirmed vs suggested is carried on four redundant channels — the word,
+   the glyph, the block edge, and the state strip — so it survives greyscale
+   and colour-blindness. Colour is never the only signal here.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.dm-container {
+  padding: 32px;
+  max-width: 1600px;
+  margin: 0 auto;
+}
+.dm-header {
+  margin-bottom: 24px;
+}
+.dm-summary {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+  max-width: 74ch;
+}
+.dm-summary strong {
+  color: var(--text);
+  font-weight: 650;
+}
+
+/* ── Day one: the same view, not a separate empty screen ── */
+.dm-dayone {
+  display: flex;
+  gap: 18px;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  background: var(--primary-bg);
+  border: 1px solid var(--primary);
+  border-radius: 12px;
+  padding: 16px 18px;
+  margin-top: 20px;
+}
+.dm-dayone h3 {
+  margin: 0 0 4px;
+  font-size: 15px;
+  color: var(--text);
+}
+.dm-dayone p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+  max-width: 78ch;
+}
+
+.dm-btn-primary {
+  border: 0;
+  background: var(--primary);
+  color: #fff;
+  font-family: inherit;
+  font-weight: 650;
+  font-size: 13px;
+  padding: 10px 16px;
+  border-radius: 9px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+[data-theme="dark"] .dm-btn-primary {
+  color: #05132a;
+}
+.dm-btn-primary:hover {
+  filter: brightness(1.06);
+}
+
+/* ── Four counts: the org's own numbers, so they sit on the bench ── */
+/* The dashboard drops .kpi-row to two columns below 1440px, which is tuned to
+   a layout this page does not share; the four counts are a single sentence and
+   want to stay on one line until the grid itself reflows. */
+.kpi-row.dm-kpi-row {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-top: 22px;
+}
+.dm-kpi {
+  background: var(--bench-bg);
+  box-shadow: var(--bench-shadow-sm);
+  padding: 18px 20px;
+}
+.dm-kpi .kpi-card-header {
+  margin-bottom: 10px;
+}
+.dm-kpi-denominator {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+.dm-kpi-sub {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 6px;
+}
+
+/* ── Legend ── */
+.dm-legend {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 18px;
+  margin-bottom: 24px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px 26px;
+}
+.dm-legend-group {
+  min-width: 0;
+}
+.dm-legend-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 0 0 9px;
+}
+.dm-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 12.5px;
+  color: var(--text);
+  margin: 0 0 7px;
+}
+.dm-legend-item:last-child {
+  margin-bottom: 0;
+}
+.dm-legend-desc {
+  color: var(--muted);
+}
+.dm-legend-glyph {
+  flex: 0 0 auto;
+  width: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+}
+/* Outspecifies .dm-pip's flex:1, which is right on a tile and wrong in a list. */
+.dm-legend-item .dm-legend-pip {
+  flex: 0 0 auto;
+  width: 46px;
+}
+.dm-legend-note {
+  display: block;
+  margin-top: 10px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+.dm-swatch {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 12px;
+  border-radius: 3px;
+}
+.dm-swatch-covered {
+  background: var(--success);
+}
+.dm-swatch-claimed {
+  background: repeating-linear-gradient(90deg, var(--success) 0 5px, transparent 5px 10px);
+}
+.dm-swatch-gap {
+  background: repeating-linear-gradient(45deg, var(--warning) 0 3px, transparent 3px 6px);
+  border: 1px solid var(--warning);
+}
+.dm-swatch-oos {
+  background: transparent;
+  border: 1px dashed var(--border-visible);
+}
+
+/* ── Layout: map plus the unmapped rail ── */
+.dm-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 296px;
+  gap: 24px;
+  align-items: start;
+}
+.dm-section-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--bedrock-rule);
+}
+.dm-section-head h2 {
+  font-family: var(--ref-font);
+  font-size: 17px;
+  font-weight: 600;
+  margin: 0;
+  color: var(--bedrock-ink);
+}
+.dm-section-head-bench {
+  border-bottom-color: var(--border);
+}
+.dm-section-head-bench h2 {
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--bench-header-ink);
+}
+.dm-kicker {
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--bedrock-kicker);
+  margin-right: auto;
+}
+.dm-scf-tag {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ref-tag);
+  border: 1px solid var(--ref-tag);
+  border-radius: 3px;
+  padding: 3px 7px;
+  white-space: nowrap;
+  user-select: none;
+}
+
+/* ── The grid. Catalogue order, always; never sorted by status. ── */
+.dm-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 14px;
+}
+.dm-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+  width: 100%;
+  min-height: 150px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid var(--bedrock-rule);
+  border-radius: 12px;
+  color: var(--bedrock-ink);
+  overflow: hidden;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: inherit;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.dm-tile:hover {
+  border-color: var(--bedrock-kicker);
+}
+.dm-tile:hover .dm-record {
+  box-shadow: var(--bench-shadow);
+}
+.dm-tile:focus-visible {
+  outline: none;
+  box-shadow: var(--field-ring);
+}
+
+/* Channel 4: continuous strip = confirmed, segmented = suggested. */
+.dm-strip {
+  display: block;
+  width: 100%;
+  height: 4px;
+  flex: 0 0 4px;
+}
+.dm-strip-continuous {
+  background: var(--success);
+}
+.dm-strip-segmented {
+  background: repeating-linear-gradient(90deg, var(--success) 0 6px, transparent 6px 12px);
+}
+.dm-tile-gap .dm-strip-flat {
+  background: repeating-linear-gradient(45deg, var(--warning) 0 3px, var(--warning-bg) 3px 6px);
+}
+.dm-tile-oos .dm-strip-flat {
+  background: transparent;
+}
+
+.dm-ref {
+  display: block;
+  padding: 12px 14px 10px;
+}
+.dm-code {
+  display: block;
+  font-family: var(--ref-font);
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  line-height: 1.1;
+  color: var(--ref-tag);
+}
+.dm-name {
+  display: block;
+  margin-top: 4px;
+  font-family: var(--ref-font);
+  font-size: 12.5px;
+  line-height: 1.35;
+  color: var(--bedrock-ink);
+}
+.dm-body {
+  display: block;
+  margin-top: auto;
+  padding: 0 10px 10px;
+}
+
+/* The raised record. Channel 3: solid edge = confirmed, dashed = suggested. */
+.dm-record {
+  display: block;
+  background: var(--bench-bg);
+  border-radius: 9px;
+  box-shadow: var(--bench-shadow-sm);
+  padding: 9px 10px;
+  transition: box-shadow 0.15s;
+}
+.dm-record-dashed {
+  box-shadow: 0 0 0 1px var(--bench-edge);
+  border: 1px dashed var(--border-visible);
+  padding: 8px 9px;
+}
+/* Channel 1 (the word) and channel 2 (the glyph) live on this row. */
+.dm-record-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 7px;
+  font-size: 11.5px;
+  font-weight: 650;
+  color: var(--success-ink);
+}
+.dm-record-dashed .dm-record-status {
+  color: var(--pip-off-ink);
+}
+.dm-glyph {
+  flex: 0 0 auto;
+}
+
+.dm-doc-chips {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 7px;
+}
+.dm-doc-chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  padding: 3px 6px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.dm-doc-chip-confirmed {
+  background: var(--success-bg);
+  color: var(--success-ink);
+  border: 1px solid transparent;
+}
+.dm-doc-chip-suggested {
+  background: transparent;
+  color: var(--pip-off-ink);
+  border: 1px dashed var(--border-visible);
+}
+.dm-doc-chip-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dm-doc-more {
+  padding-left: 2px;
+  font-size: 10.5px;
+  color: var(--muted);
+}
+
+/* Depth ladder. A step with nothing to show is absent, never rendered as 0. */
+.dm-depth {
+  display: flex;
+  gap: 4px;
+}
+.dm-pip {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 4px 2px 3px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  text-align: center;
+  background: var(--secondary);
+  color: var(--pip-off-ink);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.15;
+}
+.dm-pip-key {
+  display: block;
+  margin-top: 1px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+.dm-pip-docs {
+  border-style: dashed;
+  border-color: var(--border-visible);
+  color: var(--text);
+}
+.dm-pip-conf {
+  background: var(--success-bg);
+  border-color: transparent;
+  color: var(--success-ink);
+}
+
+/* Gap and out-of-scope bodies: flat, no raised material. */
+.dm-flat {
+  display: block;
+  padding: 2px 4px 4px;
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+.dm-flat-lead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 3px;
+  font-weight: 650;
+  color: var(--muted);
+}
+.dm-flat-lead-gap {
+  color: var(--warning-ink);
+}
+.dm-flat-sub {
+  display: block;
+  color: var(--muted);
+}
+/* Out of scope recedes by losing chroma and gaining a dashed edge — never by
+   opacity, which would drop these clickable tiles below AA contrast. */
+.dm-tile-oos {
+  border-style: dashed;
+  border-color: var(--border-visible);
+}
+.dm-tile-oos .dm-code {
+  color: var(--oos-ink);
+  font-weight: 600;
+}
+.dm-tile-oos .dm-name,
+.dm-tile-oos .dm-flat-sub,
+.dm-tile-oos .dm-flat-lead {
+  color: var(--oos-ink);
+}
+.dm-tile-oos .dm-flat-lead {
+  font-weight: 600;
+}
+.dm-tile-oos:hover {
+  border-color: var(--bedrock-kicker);
+}
+
+/* ── Loading, error, empty ── */
+.dm-tile-skeleton {
+  gap: 10px;
+  padding: 16px 14px;
+  cursor: default;
+}
+.dm-skeleton-line {
+  display: block;
+  border-radius: 6px;
+  background: var(--secondary);
+  animation: dm-pulse 1.5s ease-in-out infinite;
+}
+.dm-skeleton-code {
+  width: 38%;
+  height: 18px;
+}
+.dm-skeleton-name {
+  width: 80%;
+  height: 11px;
+}
+.dm-skeleton-block {
+  margin-top: auto;
+  width: 100%;
+  height: 52px;
+}
+@keyframes dm-pulse {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+.dm-error,
+.dm-empty {
+  border: 1px dashed var(--border-visible);
+  border-radius: 12px;
+  padding: 32px;
+  text-align: center;
+  color: var(--muted);
+}
+.dm-empty h3 {
+  margin: 0 0 8px;
+  font-size: 16px;
+  color: var(--text);
+}
+.dm-empty p,
+.dm-error p {
+  margin: 0 auto;
+  max-width: 60ch;
+  font-size: 13px;
+}
+
+/* ── Unmapped rail. A rail, never a 34th tile. ── */
+.dm-rail {
+  position: sticky;
+  top: 24px;
+}
+.dm-rail-card {
+  background: var(--bench-bg);
+  box-shadow: var(--bench-shadow-sm);
+  border-radius: 12px;
+  padding: 16px;
+}
+.dm-rail-note {
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.dm-rail-pending {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--warning-bg);
+  color: var(--warning-ink);
+  font-size: 12px;
+  font-weight: 600;
+}
+.dm-orphan-list {
+  display: grid;
+  gap: 9px;
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+}
+.dm-orphan {
+  padding: 10px 11px;
+  border: 1px dashed var(--warning);
+  border-radius: 9px;
+  background: var(--warning-bg);
+  color: var(--text);
+}
+.dm-orphan-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 650;
+  word-break: break-word;
+}
+.dm-orphan-meta {
+  display: block;
+  margin-top: 4px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--warning-ink);
+}
+.dm-rail-empty {
+  margin: 0;
+  padding: 14px;
+  border: 1px dashed var(--border-visible);
+  border-radius: 9px;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.dm-rail-cta {
+  width: 100%;
+  padding: 9px;
+  border: 1px solid var(--border-visible);
+  border-radius: 9px;
+  background: transparent;
+  color: var(--primary-ink);
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.dm-rail-cta:hover {
+  border-color: var(--primary);
+  background: var(--primary-bg);
+}
+
+/* ── Slide-over detail (mirrors .risk-detail-overlay geometry) ── */
+.dm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  pointer-events: none;
+  visibility: hidden;
+}
+.dm-overlay.visible {
+  pointer-events: auto;
+  visibility: visible;
+}
+.dm-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  opacity: 0;
+  transition: opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+[data-theme="dark"] .dm-backdrop {
+  background: rgba(0, 0, 0, 0.6);
+}
+.dm-overlay.visible .dm-backdrop {
+  opacity: 1;
+}
+.dm-panel-container {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 520px;
+  max-width: 92vw;
+  transform: translateX(100%);
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: -4px 0 24px rgba(0, 0, 0, 0.18);
+}
+.dm-overlay.visible .dm-panel-container {
+  transform: translateX(0);
+}
+.dm-panel {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg);
+  border-left: 1px solid var(--border-visible);
+}
+.dm-panel-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 20px 22px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.dm-panel-top .dm-kicker {
+  padding-top: 6px;
+}
+.dm-panel-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  margin-left: auto;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--border-visible);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.dm-panel-close:hover {
+  color: var(--text);
+  border-color: var(--primary);
+}
+.dm-panel-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 22px 24px;
+}
+.dm-panel-ref {
+  margin-bottom: 22px;
+}
+.dm-panel-ref-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 9px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--bedrock-rule);
+}
+.dm-panel-ref h3 {
+  margin: 0 0 6px;
+  font-family: var(--ref-font);
+  font-size: 21px;
+  font-weight: 700;
+  color: var(--bedrock-ink);
+}
+.dm-panel-ref-code {
+  color: var(--ref-tag);
+}
+.dm-panel-scope {
+  margin: 12px 0 0;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.dm-panel-bench {
+  margin-bottom: 18px;
+  padding: var(--card-padding);
+  border-radius: var(--card-radius);
+  background: var(--bench-bg);
+  box-shadow: var(--bench-shadow);
+}
+.dm-bench-header {
+  display: block;
+  margin-bottom: 14px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--bench-header-ink);
+}
+.dm-doc-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 0;
+  border-top: 1px solid var(--border);
+}
+.dm-doc-row:first-of-type {
+  border-top: 0;
+  padding-top: 0;
+}
+.dm-doc-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: var(--secondary);
+  color: var(--muted);
+}
+.dm-doc-main {
+  flex: 1;
+  min-width: 0;
+}
+.dm-doc-name {
+  display: block;
+  font-size: 13.5px;
+  font-weight: 650;
+  color: var(--text);
+  word-break: break-word;
+}
+.dm-doc-meta {
+  display: block;
+  margin-top: 3px;
+  font-size: 12px;
+  color: var(--muted);
+}
+/* Quiet provenance note: a person put this document here during review. */
+.dm-doc-origin {
+  display: inline-block;
+  margin-top: 5px;
+  padding-left: 8px;
+  border-left: 2px solid var(--bedrock-rule);
+  font-size: 11.5px;
+  font-style: italic;
+  color: var(--pip-off-ink);
+}
+.dm-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  padding: 4px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.dm-chip-confirmed {
+  background: var(--success-bg);
+  color: var(--success-ink);
+  border: 1px solid transparent;
+}
+.dm-chip-suggested {
+  background: transparent;
+  color: var(--pip-off-ink);
+  border: 1px dashed var(--border-visible);
+}
+.dm-ladder {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+}
+.dm-ladder-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12.5px;
+}
+.dm-ladder-key {
+  flex: 0 0 150px;
+  font-weight: 600;
+  color: var(--muted);
+}
+/* A count, not a ratio — a bar here would imply a whole that does not exist. */
+.dm-ladder-rule {
+  flex: 1;
+  height: 0;
+  border-top: 1px dashed var(--border-visible);
+}
+.dm-ladder-track {
+  flex: 1;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--secondary);
+  overflow: hidden;
+}
+.dm-ladder-track span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+}
+.dm-ladder-row-conf .dm-ladder-track span {
+  background: var(--success);
+}
+.dm-ladder-row-prop .dm-ladder-track span {
+  background: var(--border-visible);
+}
+.dm-ladder-val {
+  flex: 0 0 auto;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.dm-ladder-of {
+  font-weight: 500;
+  color: var(--muted);
+}
+.dm-panel-empty {
+  padding: 20px;
+  border: 1px dashed var(--border-visible);
+  border-radius: 12px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--muted);
+}
+.dm-panel-empty strong {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 14px;
+  color: var(--text);
+}
+.dm-panel-empty p {
+  margin: 0 0 14px;
+}
+
+/* ── Responsive: 6 / 4 / 2 columns ── */
+@media (max-width: 1360px) {
+  .dm-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+@media (max-width: 1180px) {
+  .dm-legend {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .dm-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .dm-rail {
+    position: static;
+  }
+  .dm-orphan-list {
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  }
+  .kpi-row.dm-kpi-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 900px) {
+  .dm-container {
+    padding: 20px 18px 56px;
+  }
+  .dm-legend {
+    grid-template-columns: 1fr;
+  }
+  .dm-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .dm-dayone {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+@media (max-width: 560px) {
+  .kpi-row.dm-kpi-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .dm-ladder-key {
+    flex: 0 0 118px;
+  }
+  .dm-panel-container {
+    width: 100%;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dm-skeleton-line {
+    animation: none;
+  }
+  .dm-tile,
+  .dm-record,
+  .dm-backdrop,
+  .dm-panel-container {
+    transition: none;
   }
 }

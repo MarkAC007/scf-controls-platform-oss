@@ -3322,7 +3322,20 @@ export interface CDMMapping {
   created_at: string
   scf_id: string | null
   original_filename: string | null
+
+  // CDM v2 provenance (epic #709). Nullable because v1 rows predate these
+  // fields — null means "computed before v2", not zero.
+  ts_rank_component: number | null
+  objective_coverage_component: number | null
+  term_overlap_component: number | null
+  score_weights: Record<string, number> | null
+  match_type: CDMMatchType | null
+  matched_objective_text: string | null
+  cdm_document_chunk_id: string | null
+  retrieval_tier: string | null
 }
+
+export type CDMMatchType = 'exact' | 'whitespace_flexible' | 'fuzzy'
 
 export interface CDMMappingListResponse {
   mappings: CDMMapping[]
@@ -3461,8 +3474,25 @@ export interface CDMQueryHit {
   reference_id?: string
   file_path?: string
   file_source?: string
+
+  // Present on the Postgres FTS tier. Their absence is exactly what makes a
+  // hit exploratory rather than citable.
+  cdm_document_id?: string
+  ordinal?: number
+  heading?: string | null
+  char_start?: number
+  char_end?: number
+  ts_rank?: number
+  matched_objectives?: string[]
+
   [key: string]: unknown
 }
+
+/** Why a query returned nothing. Each calls for a different user action. */
+export type CDMNoResultsReason =
+  | 'no_documents_ingested'
+  | 'no_matching_passages'
+  | 'control_has_no_query_text'
 
 export interface CDMQueryRequest {
   control_id: string
@@ -3473,6 +3503,13 @@ export interface CDMQueryRequest {
 export interface CDMQueryResponse {
   hits: CDMQueryHit[]
   kb_revision: string | null
+  retrieval_tier: string | null
+  /** False means these hits can never become mappings — say so, don't imply otherwise. */
+  can_produce_mappings: boolean | null
+  candidates_shown: number | null
+  /** Pre-truncation total. Null when the tier cannot report one. */
+  candidates_total: number | null
+  no_results_reason: CDMNoResultsReason | null
 }
 
 export async function queryCdm(
@@ -3516,6 +3553,109 @@ export async function getCdmComputeMappingsStatus(
 ): Promise<CDMComputeMappingsStatusResponse> {
   return apiFetch<CDMComputeMappingsStatusResponse>(
     `/organizations/${orgId}/cdm/compute-mappings/${taskId}`,
+  )
+}
+
+/**
+ * Document Map — the whole-catalogue view of where an organisation's control
+ * documents sit against the 33 SCF domains.
+ *
+ * Every correctness-bearing derivation (domain state, whether a placement is
+ * confirmed, all mapping counts) is computed server-side. The client sorts,
+ * colours and lays out; it never re-derives the confirmed/suggested split,
+ * because a second implementation of that rule would eventually disagree with
+ * the first and only one of them is exportable.
+ */
+
+/**
+ * Coverage state of a single domain.
+ *
+ * ``covered`` — at least one mapping in the domain has been accepted by a
+ * person. ``claimed`` — placements exist but nobody has accepted any of them.
+ * ``gap`` — controls are scoped here and nothing has landed. ``out_of_scope``
+ * — no controls scoped, which is a decision rather than an absence.
+ */
+export type CDMDomainState = 'covered' | 'claimed' | 'gap' | 'out_of_scope'
+
+/**
+ * How a document came to sit in a domain. ``confirmed`` means a person
+ * accepted at least one mapping from it here; anything else is a suggestion
+ * awaiting review. Only ever rendered as "Confirmed" / "Suggested".
+ */
+export type CDMIntentSource = 'confirmed' | 'model'
+
+export interface CDMDocumentMapMappingCounts {
+  proposed: number
+  accepted: number
+  dismissed: number
+  stale: number
+}
+
+export interface CDMDocumentMapCoverageSummary {
+  total_domains: number
+  /** Domains with at least one accepted mapping. The record-safe count. */
+  covered: number
+  claimed: number
+  gap: number
+  documents_total: number
+  documents_orphaned: number
+  documents_awaiting_classification: number
+}
+
+export interface CDMDocumentMapDocument {
+  cdm_document_id: string
+  filename: string
+  intent_source: CDMIntentSource
+  claimed_by_model: boolean
+  rank: number | null
+  mapping_counts: CDMDocumentMapMappingCounts
+}
+
+export interface CDMDocumentMapDomainTotals {
+  documents: number
+  confirmed_documents: number
+  controls_with_accepted_mapping: number
+  controls_with_proposed_mapping: number
+}
+
+export interface CDMDocumentMapDomain {
+  /** SCF domain identifier, e.g. GOV. */
+  domain: string
+  name: string
+  /** Canonical catalogue position. The grid never sorts by anything else. */
+  display_order: number
+  scoped_control_counts: { total: number; selected: number }
+  state: CDMDomainState
+  totals: CDMDocumentMapDomainTotals
+  documents: CDMDocumentMapDocument[]
+}
+
+/** A document that reached no in-scope domain. Shown in the rail, never as a tile. */
+export interface CDMDocumentMapOrphan {
+  cdm_document_id: string
+  filename: string
+  ingest_status: CDMIngestStatus
+  intent_state: string
+  mapping_counts: CDMDocumentMapMappingCounts
+}
+
+export interface CDMDocumentMapResponse {
+  generated_at: string
+  coverage_summary: CDMDocumentMapCoverageSummary
+  domains: CDMDocumentMapDomain[]
+  orphan_documents: CDMDocumentMapOrphan[]
+}
+
+/**
+ * Fetch the document map for an organisation.
+ *
+ * Backend route: ``GET /organizations/{org_id}/cdm/document-map``
+ */
+export async function fetchDocumentMap(
+  orgId: string,
+): Promise<CDMDocumentMapResponse> {
+  return apiFetch<CDMDocumentMapResponse>(
+    `/organizations/${orgId}/cdm/document-map`,
   )
 }
 

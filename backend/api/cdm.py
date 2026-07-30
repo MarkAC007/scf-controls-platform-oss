@@ -14,7 +14,7 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth import OrgMembership, require_org_editor, require_org_viewer
-from catalog_models import SCFCatalogControl
+from catalog_models import SCFCatalogAssessmentObjective, SCFCatalogControl
 from database import get_db
 from models import AuditLog, CDMDocument, CDMMapping, ScopedControl
 from schemas import (
@@ -33,7 +33,7 @@ from schemas import (
     CDMQueryResponse,
     CDMUploadResponse,
 )
-from services import cdm_storage
+from services import cdm_mapping, cdm_retrieval, cdm_storage
 from services.cdm_tenancy import (
     assert_cdm_document_count_cap,
     assert_cdm_proposed_mappings_cap,
@@ -901,6 +901,19 @@ async def query_cdm_mappings(
     if control_row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scoped control not found")
 
+    backend = cdm_retrieval.get_retrieval_backend()
+    if backend.name == cdm_retrieval.PostgresFTSBackend.name:
+        return await _query_via_postgres_fts(
+            db,
+            org_id,
+            backend,
+            scf_id=control_row.scf_id,
+            control_name=control_row.control_name,
+            control_question=control_row.control_description,
+            override_text=request.query_text,
+            limit=request.limit,
+        )
+
     query_text = _derive_query_text(
         request.query_text,
         control_row.control_name,
@@ -950,7 +963,114 @@ async def query_cdm_mappings(
             detail="CDM query task payload has invalid 'kb_revision'",
         )
 
-    return CDMQueryResponse(hits=hits, kb_revision=kb_revision)
+    return CDMQueryResponse(
+        hits=hits,
+        kb_revision=kb_revision,
+        retrieval_tier=backend.name,
+        can_produce_mappings=backend.can_produce_mappings,
+        candidates_shown=len(hits),
+        # LightRAG returns no pre-truncation total. Reporting len(hits) as the
+        # total would assert coverage we cannot observe, so this stays null and
+        # the UI omits the "of N" rather than inventing one.
+        candidates_total=None,
+        no_results_reason=(
+            "no_matching_passages" if not hits else None
+        ),
+    )
+
+
+async def _query_via_postgres_fts(
+    db: AsyncSession,
+    org_id: UUID,
+    backend: "cdm_retrieval.PostgresFTSBackend",
+    *,
+    scf_id: Optional[str],
+    control_name: Optional[str],
+    control_question: Optional[str],
+    override_text: Optional[str],
+    limit: int,
+) -> CDMQueryResponse:
+    """Serve /cdm/query from Postgres FTS, synchronously.
+
+    No Celery hop and no 504 path: this is one indexed statement against a
+    table in the request's own database. v1 routed the same user action
+    through a broker to a service the self-hosted stack does not run.
+    """
+    objectives: tuple[str, ...] = ()
+    if override_text:
+        # An explicit search box query is the user's words, not the control's.
+        objectives = (override_text,)
+    elif scf_id:
+        objective_rows = await db.execute(
+            select(SCFCatalogAssessmentObjective.objective_text)
+            .where(SCFCatalogAssessmentObjective.scf_id == scf_id)
+            .order_by(SCFCatalogAssessmentObjective.ao_id)
+        )
+        objectives = tuple(row[0] for row in objective_rows.all() if row[0])
+
+    query = cdm_retrieval.ControlQuery(
+        scf_id=scf_id,
+        control_name=None if override_text else control_name,
+        control_question=None if override_text else control_question,
+        objectives=objectives,
+    )
+
+    built = backend.build_statement(org_id, query, limit=limit)
+    if built is None:
+        return CDMQueryResponse(
+            hits=[],
+            kb_revision=cdm_mapping.get_kb_revision(),
+            retrieval_tier=backend.name,
+            can_produce_mappings=backend.can_produce_mappings,
+            candidates_shown=0,
+            candidates_total=0,
+            no_results_reason="control_has_no_query_text",
+        )
+
+    sql, params = built
+    result = await db.execute(sql, params)
+    chunks, total = backend.rows_to_chunks(result.mappings().all())
+
+    hits = [
+        {
+            "chunk_id": str(chunk.chunk_id),
+            "cdm_document_id": str(chunk.cdm_document_id),
+            "ordinal": chunk.ordinal,
+            "heading": chunk.heading,
+            "content": chunk.body,
+            "char_start": chunk.char_start,
+            "char_end": chunk.char_end,
+            "ts_rank": chunk.ts_rank,
+            "matched_objectives": list(chunk.matched_objectives),
+        }
+        for chunk in chunks
+    ]
+
+    no_results_reason = None
+    if not hits:
+        # Which of the two zero states this is changes what the user should do,
+        # so the distinction is resolved here rather than left to the UI.
+        ingested = await db.execute(
+            select(func.count())
+            .select_from(CDMDocument)
+            .where(
+                CDMDocument.organization_id == org_id,
+                CDMDocument.ingest_status == "parsed",
+            )
+        )
+        no_results_reason = (
+            "no_matching_passages" if (ingested.scalar() or 0) > 0 else "no_documents_ingested"
+        )
+
+    return CDMQueryResponse(
+        hits=hits,
+        kb_revision=cdm_mapping.get_kb_revision(),
+        retrieval_tier=backend.name,
+        can_produce_mappings=backend.can_produce_mappings,
+        candidates_shown=len(hits),
+        candidates_total=total,
+        no_results_reason=no_results_reason,
+    )
 
 
 @router.post(
@@ -1074,6 +1194,74 @@ async def get_cdm_compute_mappings_status(
     return CDMComputeMappingsStatusResponse(
         task_id=task_id,
         state=state,
+        ready=ready,
+        successful=successful,
+        result=result_payload,
+    )
+
+
+@router.post(
+    "/organizations/{org_id}/cdm/backfill-chunks",
+    response_model=CDMComputeMappingsResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def dispatch_cdm_backfill_chunks(
+    org_id: UUID,
+    _: None = Depends(require_tenant_cdm_enabled),
+    membership: OrgMembership = Depends(require_org_editor),
+    db: AsyncSession = Depends(get_db),
+) -> CDMComputeMappingsResponse:
+    """Chunk documents ingested before CDM v2 and clear stale proposals.
+
+    Editor-gated because it discards ``proposed`` mappings. Accepted and
+    dismissed rows are preserved by the task — a human decision outranks a
+    maintenance job.
+    """
+    del membership, db
+
+    try:
+        async_result = tasks_cdm.backfill_chunks.apply_async(
+            args=[str(org_id)],
+            queue="cdm",
+        )
+    except Exception as exc:
+        logger.exception("CDM backfill_chunks dispatch failed for %s", org_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to dispatch CDM backfill_chunks task",
+        ) from exc
+
+    return CDMComputeMappingsResponse(task_id=async_result.id, idempotent_existing=False)
+
+
+@router.get(
+    "/organizations/{org_id}/cdm/backfill-chunks/{task_id}",
+    response_model=CDMComputeMappingsStatusResponse,
+)
+async def get_cdm_backfill_chunks_status(
+    org_id: UUID,
+    task_id: str,
+    _: None = Depends(require_tenant_cdm_enabled),
+    membership: OrgMembership = Depends(require_org_viewer),
+) -> CDMComputeMappingsStatusResponse:
+    del membership, org_id
+
+    async_result = tasks_cdm.backfill_chunks.AsyncResult(task_id)
+    ready = bool(async_result.ready())
+
+    successful: bool | None = None
+    result_payload: dict | None = None
+    if ready:
+        successful = bool(async_result.successful())
+        raw_result = async_result.result
+        if isinstance(raw_result, dict):
+            result_payload = raw_result
+        elif raw_result is not None:
+            result_payload = {"value": str(raw_result)[:1000]}
+
+    return CDMComputeMappingsStatusResponse(
+        task_id=task_id,
+        state=async_result.state or "PENDING",
         ready=ready,
         successful=successful,
         result=result_payload,

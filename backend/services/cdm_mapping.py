@@ -5,8 +5,18 @@ a sync SQLAlchemy ``Session``, a LightRAG query callable, and an extracted-text
 resolver. The Celery task in ``tasks_cdm.py`` is a thin wrapper that wires the
 production session + real ``CDMLightRAGClient`` + real ``cdm_storage`` reader.
 
-D-1: scores are rank-derived (``1.0 - 0.05*rank``) because LightRAG's
-``/query/data`` does not return per-chunk scores.
+CDM v2 (epic #709) adds ``compute_mappings_v2``, which supersedes
+``compute_mappings_for_org`` on the mapping path. The v1 helper is retained
+only so the LightRAG-backed deployment and its tests keep working; new callers
+must use v2. The two differ in the one respect that matters for an audit-grade
+table: v2 refuses any retrieval backend that cannot return character offsets,
+so a mapping cannot exist without provenance that resolves.
+
+D-1 (v1, superseded): scores were rank-derived (``1.0 - 0.05*rank``) because
+LightRAG's ``/query/data`` returns no per-chunk scores. That made the score a
+restatement of list position, and made the default 0.7 threshold unreachable
+for anything past rank 6. v2 composes the score from observable components and
+persists them.
 
 D-5: dedup is over ``(scoped_control_id, cdm_document_id, byte_offset_start)``
 because chunk_id regenerates on re-ingest but byte_offset_start is stable.
@@ -19,14 +29,20 @@ import os
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Callable, Iterable, Optional, Protocol, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Iterable, Optional, Protocol, Sequence
 from uuid import UUID
 
-from sqlalchemy import select, update
+from sqlalchemy import select, text, update
 from sqlalchemy.orm import Session
 
 from catalog_models import SCFCatalogControl
 from models import AuditLog, CDMDocument, CDMMapping, ScopedControl
+
+if TYPE_CHECKING:
+    # Annotation-only: compute_mappings_v2 lazy-imports cdm_retrieval at call
+    # time to avoid a circular import; this guard exists so the string
+    # annotation resolves for type checkers and pyflakes (F821).
+    from services import cdm_retrieval
 
 _QUERY_TEXT_MAX_CHARS = 2000
 
@@ -56,7 +72,19 @@ _FILE_SOURCE_DOC_ID_RE = re.compile(
 
 @dataclass(frozen=True)
 class ComputeMappingsSummary:
-    """Return shape from compute_mappings_for_org."""
+    """Return shape from compute_mappings_for_org / compute_mappings_v2.
+
+    The #712 fields default to 0 so the v1 path (which has no gate, cap, or
+    cutoff) and existing positional constructions keep working unchanged.
+    Reconciliation invariant on the v2 path::
+
+        hits_evaluated == mappings_created
+                        + mappings_skipped_below_threshold
+                        + mappings_skipped_duplicate
+                        + mappings_skipped_unresolved_offset
+                        + mappings_skipped_by_intent_gate
+                        + mappings_skipped_by_cap
+    """
 
     controls_processed: int
     hits_evaluated: int
@@ -64,6 +92,9 @@ class ComputeMappingsSummary:
     mappings_skipped_below_threshold: int
     mappings_skipped_duplicate: int
     mappings_skipped_unresolved_offset: int
+    mappings_skipped_by_intent_gate: int = 0
+    mappings_skipped_by_cap: int = 0
+    documents_excluded_awaiting_intent: int = 0
 
 
 def _rank_derived_score(rank_index: int) -> float:
@@ -267,6 +298,430 @@ def _derive_query_text_for_control(
     if not parts:
         return None
     return ". ".join(parts)[:_QUERY_TEXT_MAX_CHARS]
+
+
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+
+
+def _best_citation_sentence(body: str, control_terms: frozenset[str]) -> str:
+    """Pick the sentence in ``body`` that best answers the control.
+
+    A whole chunk can be 1800 characters; citing all of it makes a reviewer
+    hunt for the relevant line. Narrowing to the highest-overlap sentence
+    produces a citation an auditor can read at a glance, while the chunk
+    remains available as surrounding context.
+
+    Falls back to the whole body when the chunk has no sentence structure —
+    a table or a bullet list — rather than returning a fragment.
+    """
+    sentences = [s.strip() for s in _SENTENCE_SPLIT_RE.split(body) if s.strip()]
+    if len(sentences) <= 1:
+        return body.strip()
+
+    best = body.strip()
+    best_hits = -1
+    for sentence in sentences:
+        if len(sentence) < 20:
+            continue
+        tokens = {t.lower() for t in re.findall(r"[A-Za-z0-9]+", sentence)}
+        hits = sum(
+            1 for term in control_terms
+            if any(tok.startswith(term[:6]) or term.startswith(tok[:6]) for tok in tokens)
+        )
+        if hits > best_hits:
+            best_hits = hits
+            best = sentence
+    return best
+
+
+class DocumentIntentGate:
+    """Narrows a control's candidate documents using model-claimed domains.
+
+    THE INVARIANT on the default (provider-disabled) path:
+
+        A document whose ``intent_status`` is anything other than ``classified``
+        is **allowed**, not excluded. Missing intent yields ``None`` — no
+        filtering at all, exactly v2 behaviour — and never ``set()``.
+
+    A classification outage must degrade to "we propose as much as v2 did",
+    never to "we found nothing", because the second is indistinguishable to the
+    user from "your documents cover nothing". Classification will never arrive
+    when no provider is configured, so fail-closed there would permanently
+    disable mapping for self-hosted/keyless deployments.
+
+    ``require_defined_intent=True`` (#712) inverts that for deployments where a
+    provider IS enabled: there, classification is expected, so a document still
+    ``pending`` or ``failed`` is **excluded from compute** — no proposals,
+    rather than ungated proposals. Fail-open under an enabled provider turned a
+    visible classification failure into 34,704 silently ungated proposals (92%
+    off-domain); the awaiting-classification affordance in the UI is the honest
+    signal, and this mode keeps it that way. Per-document eligibility in this
+    mode:
+
+    * ``pending`` / ``failed`` — excluded (counted, surfaced in the summary)
+    * ``classified`` — participates, filtered by claimed domains (as today)
+    * ``unclassified`` — participates everywhere; the classifier abstaining is
+      a defined outcome, not an undefined one
+    * ``stale`` — participates using its existing (stale) intents: some gate
+      beats no gate; revisit when re-classification-on-update ships
+
+    The org-level "zero classifications → no filtering" branch does not apply
+    in this mode — per-document eligibility covers it, so an all-pending corpus
+    yields zero proposals, not a flood.
+
+    The gate only ever *filters* candidates. It never creates, scores or cites
+    anything, and it makes no model call: one preload query per run, then pure
+    set membership. A model call in the per-control path would be both a latency
+    disaster and a route by which a model output could reach a mapping.
+    """
+
+    def __init__(
+        self,
+        session: Session,
+        org_id: UUID,
+        *,
+        require_defined_intent: bool = False,
+    ):
+        rows = session.execute(
+            text(
+                "SELECT d.id AS document_id, d.intent_status, i.domain "
+                "FROM cdm_documents d "
+                "LEFT JOIN cdm_document_intents i ON i.cdm_document_id = d.id "
+                "WHERE d.organization_id = :org_id"
+            ),
+            {"org_id": str(org_id)},
+        ).fetchall()
+
+        self._require_defined_intent = require_defined_intent
+        self._by_domain: dict[str, set[UUID]] = {}
+        # Documents that pass every domain's gate. On the fail-open path this
+        # is every non-classified status; on the fail-closed path it is the
+        # statuses whose lack of domains is a *defined* outcome.
+        self._always_allowed: set[UUID] = set()
+        # Fail-closed only: documents awaiting a definition that never came.
+        self._excluded_awaiting_intent: set[UUID] = set()
+        self._any_classified = False
+
+        for row in rows:
+            document_id = row.document_id
+            status = row.intent_status
+            if require_defined_intent and status in ("pending", "failed"):
+                self._excluded_awaiting_intent.add(document_id)
+                continue
+            domain_scoped = status == "classified" or (
+                require_defined_intent and status == "stale"
+            )
+            if not domain_scoped:
+                self._always_allowed.add(document_id)
+                continue
+            if not row.domain:
+                # Domain-scoped status with no surviving intent row. The task
+                # cannot produce this state today, but the left join can (a
+                # deleted intent row, a partial restore), and the invariant
+                # does not bend for states we think are unreachable: a document
+                # we cannot place is allowed everywhere, not excluded
+                # everywhere.
+                self._always_allowed.add(document_id)
+                continue
+            if status == "classified":
+                self._any_classified = True
+            self._by_domain.setdefault(row.domain, set()).add(document_id)
+
+    @property
+    def documents_excluded_awaiting_intent(self) -> int:
+        """How many documents fail-closed eligibility excluded (#712)."""
+        return len(self._excluded_awaiting_intent)
+
+    def allowed_documents(self, domain: str | None) -> set[UUID] | None:
+        """Documents permitted for ``domain``, or ``None`` for no filtering."""
+        if self._require_defined_intent:
+            if domain is None:
+                # No domain to match against, but per-document eligibility
+                # still applies: everything except awaiting-intent documents.
+                eligible: set[UUID] = set(self._always_allowed)
+                for members in self._by_domain.values():
+                    eligible |= members
+                return eligible
+            return self._by_domain.get(domain, set()) | self._always_allowed
+        if domain is None:
+            return None
+        if not self._any_classified:
+            # Nothing in this org has been classified: filtering here would be
+            # filtering on an absence.
+            return None
+        return self._by_domain.get(domain, set()) | self._always_allowed
+
+
+def _domain_for_scf_id(scf_id: str | None) -> str | None:
+    """Domain prefix of a control identifier.
+
+    Derived from the identifier rather than read from
+    ``scf_catalog_controls.scf_domain``, which is known-broken.
+    """
+    if not scf_id:
+        return None
+    prefix = scf_id.split("-", 1)[0].strip()
+    return prefix or None
+
+
+def compute_mappings_v2(
+    session: Session,
+    org_id: UUID,
+    *,
+    extracted_text_loader: Callable[[CDMDocument], str | None],
+    backend: "cdm_retrieval.RetrievalBackend | None" = None,
+    score_threshold: Optional[float] = None,
+    top_k: Optional[int] = None,
+    kb_revision: Optional[str] = None,
+    objectives_loader: Optional[Callable[[Sequence[str]], dict[str, list[str]]]] = None,
+    intent_gate: Optional[DocumentIntentGate] = None,
+) -> ComputeMappingsSummary:
+    """CDM v2 mapping computation — Postgres FTS discovery, verified provenance.
+
+    Differences from v1 that matter:
+
+    * Retrieval goes through a typed :class:`~services.cdm_retrieval.RetrievalBackend`
+      whose rows carry character offsets. A backend that cannot supply them
+      cannot satisfy the contract, and one whose ``can_produce_mappings`` is
+      False is refused outright — that is the offset rule, enforced rather
+      than documented.
+    * The score is composed from observable components, and the components and
+      weights are persisted alongside it.
+    * Queries are built per assessment objective, so a mapping records *which*
+      objective the passage answers.
+    """
+    from services import cdm_retrieval, cdm_scoring, cdm_verification
+
+    resolved_backend = backend or cdm_retrieval.get_retrieval_backend()
+    if not getattr(resolved_backend, "can_produce_mappings", False):
+        raise ValueError(
+            f"Retrieval backend {resolved_backend.name!r} cannot return verifiable "
+            "offsets and must not be used on the mapping path (epic #709 HTV-2)"
+        )
+
+    weights = cdm_scoring.ScoreWeights.from_env()
+    max_per_control = cdm_scoring.get_max_proposals_per_control()
+    relative_cutoff = cdm_scoring.get_relative_score_cutoff()
+    weights_json = weights.as_dict()
+    # #712 provenance: the cap/cutoff active for this run ride along in the
+    # persisted score_weights JSON, same rationale as the weights themselves —
+    # a later tuning change must not leave historical rows uninterpretable.
+    weights_json["max_proposals_per_control"] = max_per_control
+    weights_json["relative_score_cutoff"] = relative_cutoff
+    threshold = score_threshold if score_threshold is not None else cdm_scoring.get_score_threshold()
+    limit = top_k if top_k is not None else cdm_scoring.get_top_k()
+    revision = kb_revision if kb_revision is not None else get_kb_revision()
+
+    control_rows = session.execute(
+        select(
+            ScopedControl.id,
+            SCFCatalogControl.scf_id,
+            SCFCatalogControl.control_name,
+            SCFCatalogControl.control_question,
+        )
+        .outerjoin(SCFCatalogControl, ScopedControl.scf_id == SCFCatalogControl.scf_id)
+        .where(
+            ScopedControl.organization_id == org_id,
+            ScopedControl.selected.is_(True),
+        )
+    ).all()
+
+    scf_ids = [row[1] for row in control_rows if row[1] is not None]
+    objectives_by_scf: dict[str, list[str]] = {}
+    if objectives_loader is not None and scf_ids:
+        objectives_by_scf = objectives_loader(scf_ids)
+
+    controls_processed = 0
+    hits_evaluated = 0
+    mappings_created = 0
+    skipped_below_threshold = 0
+    skipped_duplicate = 0
+    skipped_unresolved_offset = 0
+    skipped_by_intent_gate = 0
+    skipped_by_cap = 0
+
+    doc_cache: dict[UUID, CDMDocument | None] = {}
+    text_cache: dict[UUID, str | None] = {}
+
+    for control_id, scf_id, control_name, control_question in control_rows:
+        controls_processed += 1
+        allowed_documents = (
+            intent_gate.allowed_documents(_domain_for_scf_id(scf_id))
+            if intent_gate is not None
+            else None
+        )
+        objectives = tuple(objectives_by_scf.get(scf_id, []) if scf_id else ())
+        query = cdm_retrieval.ControlQuery(
+            scf_id=scf_id,
+            control_name=control_name,
+            control_question=control_question,
+            objectives=objectives,
+        )
+        if not query.query_texts():
+            continue
+
+        try:
+            rows, _total = resolved_backend.search(session, org_id, query, limit=limit)
+        except Exception:
+            logger.exception("CDM retrieval failed for control %s", control_id)
+            continue
+
+        control_terms = query.all_terms()
+
+        # #712: the cap and relative cutoff need the control's full candidate
+        # list before anything is emitted, so score into a buffer first and
+        # flush the survivors after the loop.
+        candidates: list[tuple[Any, Any]] = []
+
+        for row in rows:
+            hits_evaluated += 1
+
+            # Filter before scoring: the gate is set membership, scoring is not.
+            if allowed_documents is not None and row.cdm_document_id not in allowed_documents:
+                skipped_by_intent_gate += 1
+                continue
+
+            coverage = cdm_retrieval.compute_objective_coverage(
+                row.matched_objectives, objectives
+            )
+            overlap = cdm_retrieval.compute_term_overlap(row.body_norm, control_terms)
+            components = cdm_scoring.compose_score(
+                ts_rank=row.ts_rank,
+                objective_coverage=coverage,
+                term_overlap=overlap,
+                weights=weights,
+            )
+            if components.score < threshold:
+                skipped_below_threshold += 1
+                continue
+
+            candidates.append((components, row))
+
+        if not candidates:
+            continue
+
+        # Stable sort by composed score: ties keep retrieval order. The best
+        # hit always survives — the cutoff is a fraction (≤ 1.0) of its own
+        # score and the cap is ≥ 1 by construction.
+        candidates.sort(key=lambda item: item[0].score, reverse=True)
+        cutoff_score = candidates[0][0].score * relative_cutoff
+        kept: list[tuple[Any, Any]] = []
+        for item in candidates:
+            if len(kept) >= max_per_control or item[0].score < cutoff_score:
+                skipped_by_cap += 1
+                continue
+            kept.append(item)
+
+        for components, row in kept:
+            if row.cdm_document_id not in doc_cache:
+                doc_cache[row.cdm_document_id] = session.get(
+                    CDMDocument, row.cdm_document_id
+                )
+            document = doc_cache[row.cdm_document_id]
+            if document is None or document.organization_id != org_id:
+                skipped_unresolved_offset += 1
+                continue
+
+            if row.cdm_document_id not in text_cache:
+                try:
+                    text_cache[row.cdm_document_id] = extracted_text_loader(document)
+                except Exception:
+                    logger.exception(
+                        "Extracted-text loader failed for document %s",
+                        row.cdm_document_id,
+                    )
+                    text_cache[row.cdm_document_id] = None
+            extracted_text = text_cache[row.cdm_document_id]
+            if extracted_text is None:
+                skipped_unresolved_offset += 1
+                continue
+
+            # Tier 2. The chunk arrived from our own table, but its offsets are
+            # only trustworthy if the extracted text still agrees with it —
+            # re-locating proves that, and narrows the citation to the sentence
+            # that actually answers the control.
+            citation = _best_citation_sentence(row.body, control_terms)
+            verified = cdm_verification.locate_phrase_in_document(
+                extracted_text,
+                row.char_start,
+                row.body,
+                citation,
+            )
+            if verified is None:
+                skipped_unresolved_offset += 1
+                continue
+
+            existing = session.execute(
+                select(CDMMapping.id).where(
+                    CDMMapping.scoped_control_id == control_id,
+                    CDMMapping.cdm_document_id == row.cdm_document_id,
+                    CDMMapping.byte_offset_start == verified.char_start,
+                )
+            ).first()
+            if existing is not None:
+                session.execute(
+                    update(CDMMapping)
+                    .where(CDMMapping.id == existing[0])
+                    .values(
+                        excerpt=verified.matched_text,
+                        section=row.heading or derive_section(
+                            extracted_text, verified.char_start
+                        ),
+                    )
+                )
+                skipped_duplicate += 1
+                continue
+
+            session.add(
+                CDMMapping(
+                    organization_id=org_id,
+                    scoped_control_id=control_id,
+                    cdm_document_id=row.cdm_document_id,
+                    byte_offset_start=verified.char_start,
+                    byte_offset_end=verified.char_end,
+                    relevance_score=components.score,
+                    status="proposed",
+                    kb_revision=revision,
+                    excerpt=verified.matched_text,
+                    section=row.heading or derive_section(extracted_text, verified.char_start),
+                    ts_rank_component=components.ts_rank,
+                    objective_coverage_component=components.objective_coverage,
+                    term_overlap_component=components.term_overlap,
+                    score_weights=weights_json,
+                    match_type=verified.match_type.value,
+                    matched_objective_text=(
+                        row.matched_objectives[0] if row.matched_objectives else None
+                    ),
+                    cdm_document_chunk_id=row.chunk_id,
+                    retrieval_tier=resolved_backend.name,
+                )
+            )
+            mappings_created += 1
+
+    if skipped_by_intent_gate:
+        logger.info(
+            "CDM intent gate filtered %d candidate hits for org %s",
+            skipped_by_intent_gate,
+            org_id,
+        )
+
+    session.commit()
+
+    return ComputeMappingsSummary(
+        controls_processed=controls_processed,
+        hits_evaluated=hits_evaluated,
+        mappings_created=mappings_created,
+        mappings_skipped_below_threshold=skipped_below_threshold,
+        mappings_skipped_duplicate=skipped_duplicate,
+        mappings_skipped_unresolved_offset=skipped_unresolved_offset,
+        mappings_skipped_by_intent_gate=skipped_by_intent_gate,
+        mappings_skipped_by_cap=skipped_by_cap,
+        documents_excluded_awaiting_intent=(
+            intent_gate.documents_excluded_awaiting_intent
+            if intent_gate is not None
+            else 0
+        ),
+    )
 
 
 def compute_mappings_for_org(

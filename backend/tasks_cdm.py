@@ -1,17 +1,28 @@
+import hashlib
 import logging
 import os
 from collections import defaultdict
+from datetime import datetime, timezone
 from typing import Any, Sequence
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import httpx
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, delete, select
 from sqlalchemy.orm import sessionmaker
 
 from celery_app import celery_app
 from catalog_models import SCFCatalogAssessmentObjective
-from models import CDMDocument
-from services import cdm_docling_service, cdm_mapping, cdm_storage, text_extraction_service
+from models import CDMDocument, CDMDocumentChunk, CDMDocumentIntent, CDMMapping
+from services import (
+    cdm_chunking,
+    cdm_docling_service,
+    cdm_extraction,
+    cdm_intent,
+    cdm_mapping,
+    cdm_retrieval,
+    cdm_storage,
+    text_extraction_service,
+)
 from services.cdm_docling_service import (
     DoclingExtractionError,
     DoclingResult,
@@ -173,6 +184,38 @@ def _json_dumps_bytes(data: dict) -> bytes:
     return json.dumps(data, ensure_ascii=False, default=str).encode("utf-8")
 
 
+def _persist_document_chunks(session, document: CDMDocument, extracted_text: str) -> int:
+    """Replace a document's chunk set from ``extracted_text``. Returns the count.
+
+    Delete-then-insert inside **one** transaction. Doing it across two commits
+    would leave a window in which a concurrent mapping run sees zero chunks and
+    reports "no coverage" — the one state that must never be faked, because a
+    tenant cannot distinguish it from genuinely having no documentation.
+    """
+    session.execute(
+        delete(CDMDocumentChunk).where(
+            CDMDocumentChunk.cdm_document_id == document.id
+        )
+    )
+
+    chunks = cdm_chunking.chunk_document_text(extracted_text)
+    for chunk in chunks:
+        session.add(
+            CDMDocumentChunk(
+                organization_id=document.organization_id,
+                cdm_document_id=document.id,
+                ordinal=chunk.ordinal,
+                heading=chunk.heading,
+                body=chunk.body,
+                char_start=chunk.char_start,
+                char_end=chunk.char_end,
+                body_norm=chunk.body_norm,
+            )
+        )
+    session.commit()
+    return len(chunks)
+
+
 def _persist_failed_status(session, document_id: UUID, error_message: str) -> None:
     try:
         session.rollback()
@@ -292,20 +335,20 @@ def ingest_cdm_document(self, document_id: str) -> dict:
         )
         payload = cdm_storage.download_cdm_payload(object_key)
 
-        # ─── Slice 13 (Epic #615 D-6): content-type-aware extraction ──────
-        # Binary formats (PDF / DOCX / image-PDF) go through Docling — that
-        # gives us hierarchical sections + markdown + page-level OCR data
-        # for auditor-grade provenance. Plain-text formats stay on the
-        # legacy text_extraction_service (no value-add from Docling, and
-        # Docling refuses them explicitly).
+        # ─── CDM v2 (#709 Part 4): extraction is pluggable, in-process by
+        # default. v1 routed every binary format to a Docling sidecar that
+        # docker-compose.yml does not ship, so PDF ingest failed outright on
+        # the self-hosted stack. Docling stays available for table-structure
+        # fidelity, but only when an operator opts in AND configures its URL.
         normalised_content_type = _normalise_extraction_content_type(document.mime_type)
-        if cdm_docling_service.is_docling_format(normalised_content_type):
+        if cdm_extraction.should_use_docling(normalised_content_type):
             extracted_text, extracted_word_count, extracted_file_source = _run_docling_extraction(
                 payload=payload,
                 content_type=normalised_content_type,
                 document=document,
                 object_key=object_key,
             )
+            extraction_backend = cdm_extraction.BACKEND_DOCLING
         else:
             extracted_text, extracted_word_count, extracted_file_source = _run_text_extraction(
                 payload=payload,
@@ -313,11 +356,37 @@ def ingest_cdm_document(self, document_id: str) -> dict:
                 document=document,
                 object_key=object_key,
             )
+            extraction_backend = cdm_extraction.BACKEND_INPROCESS
 
         document.word_count = extracted_word_count
+        document.extraction_backend = extraction_backend
+        # Offsets index exactly this text; the hash is what lets a later
+        # resolution detect extractor drift instead of citing a moved span.
+        document.extracted_text_sha256 = hashlib.sha256(
+            extracted_text.encode("utf-8")
+        ).hexdigest()
         document.ingest_status = "parsed"
         document.ingest_error = None
         session.commit()
+
+        # ─── CDM v2 (#709): chunking is a stored artefact ─────────────────
+        # Persisted here, in the ingest unit of work, so a parsed document is
+        # never left searchable-but-unchunked. Chunking failure is not fatal
+        # to the ingest — the extracted text is durable and a re-chunk can be
+        # run — but it is recorded rather than swallowed.
+        try:
+            chunks_written = _persist_document_chunks(
+                session, document, extracted_text
+            )
+            logger.info(
+                "CDM: persisted %d chunks for document %s", chunks_written, document_id
+            )
+        except Exception:
+            logger.exception("CDM: chunk persistence failed for %s", document_id)
+            try:
+                session.rollback()
+            except Exception:
+                logger.exception("Rollback after chunk failure failed for %s", document_id)
 
         # ─── Slice 3.5b: LightRAG insert (D-3 partial-success) ──────────
         # Wired here so text-extraction success is durable in DB before any
@@ -389,6 +458,16 @@ def ingest_cdm_document(self, document_id: str) -> dict:
                     document.ingest_error = str(lightrag_exc)[:1000]
                     session.commit()
 
+        # ─── Document map: intent classification ─────────────────────────
+        # Dispatched, not called: document availability must never be hostage
+        # to a hosted API's latency, and a chain would make a classification
+        # failure present as an ingest failure. Every terminal document state
+        # converges here — indexed, indexing_failed, and the LightRAG-disabled
+        # path — and the precondition ("extracted text is durable") holds at
+        # all three. Failure to enqueue is logged and swallowed for the same
+        # reason: intent is an enhancement layered on ingest, never a gate.
+        _dispatch_intent_classification(document_id)
+
         return {
             "document_id": document_id,
             "status": document.ingest_status if document is not None else "failed",
@@ -404,6 +483,166 @@ def ingest_cdm_document(self, document_id: str) -> dict:
             except Exception:
                 logger.exception("Failed to persist CDM ingest failure for %s", document_id)
         return {"document_id": document_id, "status": "failed", "error": error_message}
+    finally:
+        session.close()
+
+
+def _dispatch_intent_classification(document_id: str) -> None:
+    """Enqueue ``cdm.classify_intent`` unless intent classification is off.
+
+    Skipping the dispatch when no provider is configured is the deliberate half
+    of the disabled contract: nothing is queued, and the document's
+    ``intent_status`` stays ``pending``. The task itself is a no-op under the
+    same condition, so a direct invocation (the backfill script) reaches the
+    same resting state.
+    """
+    try:
+        if not cdm_intent.intent_classification_enabled():
+            return
+        classify_cdm_document_intent.delay(document_id)
+    except Exception:
+        logger.exception("CDM: failed to enqueue intent classification for %s", document_id)
+
+
+def _persist_intent_failure(document_uuid: UUID, error_message: str) -> None:
+    """Record a classification failure without touching ``ingest_status``.
+
+    Its own session: the caller's may be poisoned by the failure that got us
+    here, and the one thing this write must not do is fail silently.
+    """
+    session = _get_sync_session()
+    try:
+        document = session.get(CDMDocument, document_uuid)
+        if document is None:
+            return
+        document.intent_status = "failed"
+        document.intent_error = error_message[:1000]
+        session.commit()
+    except Exception:
+        logger.exception("CDM: failed to persist intent failure for %s", document_uuid)
+        try:
+            session.rollback()
+        except Exception:
+            logger.exception("Rollback after intent-failure persistence failed for %s", document_uuid)
+    finally:
+        session.close()
+
+
+@celery_app.task(
+    name="cdm.classify_intent",
+    queue="cdm_intent",
+    bind=True,
+    autoretry_for=(cdm_intent.IntentProviderTransientError,),
+    max_retries=3,
+    retry_backoff=True,
+    retry_jitter=True,
+)
+def classify_cdm_document_intent(self, document_id: str, force: bool = False) -> dict:
+    """Classify one document's authoritative domains.
+
+    A dedicated queue, and a retry policy that deliberately differs from every
+    other CDM task (``max_retries=0``): those fail on deterministic parse
+    problems where retrying reproduces the failure, whereas this one's dominant
+    failure mode is transient network or rate-limit trouble.
+
+    ``ingest_status`` is never read as a precondition and never written. The
+    intent lifecycle is parallel to the ingest lifecycle, and a document that
+    failed to index is still worth classifying — it is searchable, mappable and
+    visible in the map either way.
+    """
+    provider = cdm_intent.get_intent_provider()
+    if provider is None:
+        # Clean no-op: no rows, no status change, intent_status stays 'pending'.
+        return {"document_id": document_id, "status": "disabled"}
+
+    session = _get_sync_session()
+    try:
+        document_uuid = UUID(document_id)
+        document = session.get(CDMDocument, document_uuid)
+        if document is None:
+            return {"document_id": document_id, "status": "failed", "error": "CDM document not found"}
+
+        if document.intent_status == "classified" and not force:
+            return {"document_id": document_id, "status": "skipped"}
+
+        extracted_text = _load_extracted_text_for_document(document)
+        if not extracted_text or not extracted_text.strip():
+            document.intent_status = "failed"
+            document.intent_error = "No extracted text available to classify"
+            session.commit()
+            return {"document_id": document_id, "status": "failed", "error": "no extracted text"}
+
+        domains = cdm_intent.load_catalog_domains(session)
+        if not domains:
+            document.intent_status = "failed"
+            document.intent_error = "SCF domain catalogue is empty"
+            session.commit()
+            return {"document_id": document_id, "status": "failed", "error": "empty domain catalogue"}
+
+        classification = cdm_intent.classify_document_text(
+            extracted_text, domains, provider=provider
+        )
+
+        # Re-classification is one transaction: the previous run's rows go, the
+        # new run's rows land, and the status columns move with them. A partial
+        # apply would leave the gate filtering on a mixture of two runs.
+        session.execute(
+            delete(CDMDocumentIntent).where(
+                CDMDocumentIntent.cdm_document_id == document.id
+            )
+        )
+        classification_id = uuid4()
+        for rank, domain in enumerate(classification.domains, start=1):
+            session.add(
+                CDMDocumentIntent(
+                    organization_id=document.organization_id,
+                    cdm_document_id=document.id,
+                    domain=domain,
+                    rank=rank,
+                    rationale=classification.rationale,
+                    classification_id=classification_id,
+                    prompt_version=classification.prompt_version,
+                    provider=classification.provider,
+                    model_id=classification.model_id,
+                )
+            )
+        # An empty validated set means "authoritative for nothing in the
+        # catalogue", which is not the same claim as "classified into zero
+        # domains" and must not be recorded as one.
+        document.intent_status = "classified" if classification.domains else "unclassified"
+        document.intent_error = None
+        document.intent_classified_at = datetime.now(timezone.utc)
+        session.commit()
+
+        return {
+            "document_id": document_id,
+            "status": document.intent_status,
+            "domains": list(classification.domains),
+        }
+    except cdm_intent.IntentProviderTransientError as exc:
+        try:
+            session.rollback()
+        except Exception:
+            logger.exception("Rollback after transient intent error failed for %s", document_id)
+        if self.request.retries < self.max_retries:
+            # Let autoretry_for apply the configured backoff and jitter.
+            raise
+        logger.warning("CDM: intent classification exhausted retries for %s", document_id)
+        _persist_intent_failure(UUID(document_id), str(exc))
+        return {"document_id": document_id, "status": "failed", "error": str(exc)[:1000]}
+    except Exception as exc:
+        # Deterministic failures are not retried, and nothing here re-raises
+        # into the ingest result — the two lifecycles stay independent.
+        logger.exception("CDM: intent classification failed for %s", document_id)
+        try:
+            session.rollback()
+        except Exception:
+            logger.exception("Rollback after intent failure failed for %s", document_id)
+        try:
+            _persist_intent_failure(UUID(document_id), str(exc))
+        except ValueError:
+            logger.exception("CDM: malformed document id for intent classification: %s", document_id)
+        return {"document_id": document_id, "status": "failed", "error": str(exc)[:1000]}
     finally:
         session.close()
 
@@ -474,23 +713,30 @@ def _get_sync_redis_client():
 
 
 def _load_extracted_text_for_document(document: CDMDocument) -> str | None:
-    """Read the extracted-text artifact persisted by cdm.ingest."""
-    try:
-        object_key = cdm_storage.build_cdm_object_key(
-            document.organization_id,
-            document.id,
-            document.original_filename,
-        )
-        extracted_key = f"{object_key}.extracted.txt"
-        payload = cdm_storage.download_cdm_payload(extracted_key)
+    """Read the extracted-text artifact persisted by cdm.ingest.
+
+    Both suffixes are tried. The in-process path writes ``.extracted.txt``
+    and the Docling path writes ``.extracted.md``; v1 looked only for the
+    former, so every Docling-ingested document failed offset resolution and
+    silently produced no mappings at all.
+    """
+    object_key = cdm_storage.build_cdm_object_key(
+        document.organization_id,
+        document.id,
+        document.original_filename,
+    )
+    for suffix in (".extracted.txt", ".extracted.md"):
+        try:
+            payload = cdm_storage.download_cdm_payload(f"{object_key}{suffix}")
+        except FileNotFoundError:
+            continue
+        except Exception:
+            logger.exception(
+                "Failed to load extracted text for CDM document %s", document.id
+            )
+            return None
         return payload.decode("utf-8", errors="replace")
-    except FileNotFoundError:
-        return None
-    except Exception:
-        logger.exception(
-            "Failed to load extracted text for CDM document %s", document.id
-        )
-        return None
+    return None
 
 
 def _query_lightrag_for_compute(query_text: str, workspace: str, top_k: int) -> dict[str, Any]:
@@ -512,16 +758,121 @@ def _query_lightrag_for_compute(query_text: str, workspace: str, top_k: int) -> 
     }
 
 
+@celery_app.task(name="cdm.backfill_chunks", queue="cdm", bind=True, autoretry_for=(), max_retries=0)
+def backfill_chunks(self, org_id_str: str) -> dict[str, Any]:
+    """Chunk documents ingested before CDM v2 existed.
+
+    Without this, an org that uploaded everything under v1 has parsed
+    documents and zero chunks, so Postgres FTS finds nothing and the review
+    queue looks identical to having no documentation — the failure this epic
+    exists to remove.
+
+    Two deliberate constraints:
+
+    * Accepted and dismissed mappings are never touched. A human decision is
+      the most valuable data in this table and a maintenance job must not
+      overwrite it. Only ``proposed`` rows, which no one has yet relied on,
+      are cleared so the next compute run can rebuild them with components.
+    * A document whose extracted text is gone is reported, not skipped
+      silently. Its old mappings cite offsets into text nobody can produce,
+      and an operator needs to know that rather than read an empty count as
+      success.
+    """
+    del self
+    session = _get_sync_session()
+    summary: dict[str, Any] = {
+        "org_id": org_id_str,
+        "status": "ok",
+        "documents_seen": 0,
+        "documents_chunked": 0,
+        "chunks_written": 0,
+        "documents_missing_text": [],
+        "proposed_mappings_cleared": 0,
+    }
+
+    try:
+        org_id = UUID(org_id_str)
+        documents = (
+            session.execute(
+                select(CDMDocument).where(
+                    CDMDocument.organization_id == org_id,
+                    CDMDocument.ingest_status == "parsed",
+                )
+            )
+            .scalars()
+            .all()
+        )
+        summary["documents_seen"] = len(documents)
+
+        for document in documents:
+            extracted_text = _load_extracted_text_for_document(document)
+            if not extracted_text:
+                summary["documents_missing_text"].append(str(document.id))
+                continue
+            try:
+                written = _persist_document_chunks(session, document, extracted_text)
+            except Exception:
+                logger.exception("CDM backfill: chunking failed for %s", document.id)
+                session.rollback()
+                summary["documents_missing_text"].append(str(document.id))
+                continue
+
+            document.extracted_text_sha256 = hashlib.sha256(
+                extracted_text.encode("utf-8")
+            ).hexdigest()
+            if document.extraction_backend is None:
+                document.extraction_backend = cdm_extraction.BACKEND_INPROCESS
+            session.commit()
+
+            summary["documents_chunked"] += 1
+            summary["chunks_written"] += written
+
+        cleared = session.execute(
+            delete(CDMMapping).where(
+                CDMMapping.organization_id == org_id,
+                CDMMapping.status == "proposed",
+            )
+        )
+        summary["proposed_mappings_cleared"] = cleared.rowcount or 0
+        session.commit()
+
+        if summary["documents_missing_text"]:
+            summary["status"] = "partial"
+    except Exception as exc:
+        logger.exception("cdm.backfill_chunks failed for %s", org_id_str)
+        try:
+            session.rollback()
+        except Exception:
+            logger.exception("Rollback failed after backfill error for %s", org_id_str)
+        summary["status"] = "failed"
+        summary["error"] = str(exc)[:1000]
+    finally:
+        try:
+            session.close()
+        except Exception:
+            logger.exception("Session close failed after backfill for %s", org_id_str)
+
+    return summary
+
+
 @celery_app.task(name="cdm.compute_mappings", queue="cdm", bind=True, autoretry_for=(), max_retries=0)
 def compute_mappings(self, org_id_str: str) -> dict[str, Any]:
     """Batch-compute proposed CDM mappings for one org.
 
     Wire contract:
-    - Calls :func:`services.cdm_mapping.compute_mappings_for_org` with a sync
-      session, a LightRAG query closure, and an extracted-text loader closure.
+    - Resolves a :class:`~services.cdm_retrieval.RetrievalBackend` and calls
+      :func:`services.cdm_mapping.compute_mappings_v2` with a sync session and
+      an extracted-text loader closure.
     - Persists proposed mappings via that helper; helper handles commit.
     - Releases the per-org idempotency lock in ``finally`` so re-dispatch is
       possible immediately after this task settles (success or failure).
+
+    v1 gated the whole task on ``is_lightrag_enabled()``, so on the
+    self-hosted stack — where no LightRAG service exists — mapping silently
+    never ran and the org saw an empty review queue indistinguishable from
+    "your documents cover nothing". v2's default backend is Postgres, which is
+    always present, so there is no configuration under which this task
+    quietly does nothing.
     """
     del self
     session = _get_sync_session()
@@ -533,20 +884,33 @@ def compute_mappings(self, org_id_str: str) -> dict[str, Any]:
     try:
         org_id = UUID(org_id_str)
 
-        if not is_lightrag_enabled():
-            summary_dict["status"] = "skipped"
-            summary_dict["reason"] = "LightRAG disabled"
-            return summary_dict
+        backend = cdm_retrieval.get_retrieval_backend()
+        summary_dict["retrieval_backend"] = backend.name
 
-        summary = cdm_mapping.compute_mappings_for_org(
+        # One preload per run, consulted per control. Attached unconditionally
+        # because the gate's default path fails open: with nothing classified
+        # it returns None for every domain, which is exactly v2 behaviour.
+        # Making attachment conditional would add a second code path that only
+        # runs in the configuration nobody tests.
+        #
+        # #712: when a provider is enabled, classification is expected, so the
+        # gate switches to fail-closed per-document eligibility — documents
+        # still pending/failed produce no proposals rather than ungated ones.
+        # With the provider disabled it will never arrive, so the fail-open
+        # invariant stands there unchanged.
+        intent_gate = cdm_mapping.DocumentIntentGate(
             session,
             org_id,
-            query_callable=_query_lightrag_for_compute,
+            require_defined_intent=cdm_intent.intent_classification_enabled(),
+        )
+
+        summary = cdm_mapping.compute_mappings_v2(
+            session,
+            org_id,
             extracted_text_loader=_load_extracted_text_for_document,
-            score_threshold=cdm_mapping.get_score_threshold(),
-            top_k=cdm_mapping.get_top_k(),
-            kb_revision=cdm_mapping.get_kb_revision(),
+            backend=backend,
             objectives_loader=_load_objectives_for_controls,
+            intent_gate=intent_gate,
         )
         summary_dict.update(
             controls_processed=summary.controls_processed,
@@ -555,6 +919,9 @@ def compute_mappings(self, org_id_str: str) -> dict[str, Any]:
             mappings_skipped_below_threshold=summary.mappings_skipped_below_threshold,
             mappings_skipped_duplicate=summary.mappings_skipped_duplicate,
             mappings_skipped_unresolved_offset=summary.mappings_skipped_unresolved_offset,
+            mappings_skipped_by_intent_gate=summary.mappings_skipped_by_intent_gate,
+            mappings_skipped_by_cap=summary.mappings_skipped_by_cap,
+            documents_excluded_awaiting_intent=summary.documents_excluded_awaiting_intent,
         )
     except Exception as exc:
         logger.exception("cdm.compute_mappings failed for %s", org_id_str)

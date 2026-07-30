@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react'
 
-type Tab = 'dashboard' | 'capability-posture' | 'library' | 'scoping' | 'evidence' | 'mapping-matrix' | 'tasks' | 'systems' | 'users' | 'consultant-portal' | 'risk-register' | 'vendors' | 'settings' | 'webhooks' | 'audit-log' | 'engagements' | 'cdm'
+type Tab = 'dashboard' | 'capability-posture' | 'library' | 'scoping' | 'evidence' | 'mapping-matrix' | 'tasks' | 'systems' | 'users' | 'consultant-portal' | 'risk-register' | 'vendors' | 'settings' | 'webhooks' | 'audit-log' | 'engagements' | 'cdm' | 'document-map'
 
 interface SidebarProps {
   activeTab: Tab
@@ -138,6 +138,13 @@ const Icons = {
       <path d="M8 17h5" />
     </svg>
   ),
+  documentMap: (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2z" />
+      <path d="M9 4v14" />
+      <path d="M15 6v14" />
+    </svg>
+  ),
   users: (
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
@@ -199,6 +206,7 @@ const navSections: NavSection[] = [
     label: 'Knowledge Base',
     items: [
       { id: 'cdm', label: 'Control Documents', icon: Icons.cdm },
+      { id: 'document-map', label: 'Document Map', icon: Icons.documentMap },
     ],
   },
   {

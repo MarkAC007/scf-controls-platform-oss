@@ -13,6 +13,7 @@ webclient/public/data/scoped_controls.json
 
 _archive/*
 
+__pycache__/
 */__pycache__/*
 */*/__pycache__/*
 .env
@@ -56,3 +57,30 @@ backend/alembic/versions/__pycache__/*
 .dev-demo/
 webclient/.env.demo
 webclient/vite.config.local.mts
+
+# ─── Test-system uploads — NEVER commit ──────────────────────────────────────
+# docker-compose bind-mounts ./backend to /app in the backend container, so
+# anything copied into the container for testing (docker cp, CDM ingest
+# fixtures, sample evidence) lands directly in this working tree. Real customer
+# policy and evidence documents are routinely used to exercise the CDM
+# pipeline; none of it may ever reach this repo, which ships open-source.
+backend/policies/
+backend/uploads/
+backend/test-documents/
+backend/sample-evidence/
+backend/fixtures-local/
+# Documents of any kind under the mounted backend dir. Nothing legitimate in
+# backend/ is a .docx/.pdf/.xlsx — real fixtures live in backend/tests/ as code.
+backend/**/*.docx
+backend/**/*.doc
+backend/**/*.pdf
+backend/**/*.pptx
+backend/**/*.xlsx
+backend/**/*.xlsm
+backend/**/*.odt
+backend/**/*.ods
+# Ad-hoc analysis / seeding scripts run inside the container during testing
+backend/cdm_*_proof.py
+backend/cdm_*_seed*.py
+backend/analyse_*.py
+backend/ingest_real_*.py

@@ -9,8 +9,8 @@ as of v4.0.0. The scf_id field replaces the former ccf_id field.
 from datetime import datetime
 from enum import Enum
 from typing import Optional, List, Tuple
-from sqlalchemy import Column, String, Boolean, Text, Date, ForeignKey, DateTime, JSON, Integer, Numeric, UniqueConstraint, Index, BigInteger, Float, LargeBinary
-from sqlalchemy.dialects.postgresql import UUID, JSONB, ARRAY
+from sqlalchemy import Column, String, Boolean, Text, Date, ForeignKey, DateTime, JSON, Integer, Numeric, UniqueConstraint, Index, BigInteger, Float, LargeBinary, CheckConstraint, Computed, SmallInteger
+from sqlalchemy.dialects.postgresql import UUID, JSONB, ARRAY, TSVECTOR
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 import uuid
@@ -2307,6 +2307,20 @@ class CDMDocument(Base):
     kb_revision_at_ingest = Column(String(64), nullable=True)
     ingest_status = Column(String(20), default="pending", server_default="pending", nullable=False)
     ingest_error = Column(Text, nullable=True)
+    # CDM v2 (#709): SHA-256 of the extracted text the chunk set was built from.
+    # Offsets are indices into that text, so a change in extractor version or
+    # settings silently invalidates every stored citation. Persisting the hash
+    # lets offset resolution detect divergence instead of citing the wrong span.
+    extracted_text_sha256 = Column(String(64), nullable=True)
+    # Which extraction backend produced the text ('pymupdf' | 'docling' | ...).
+    extraction_backend = Column(String(32), nullable=True)
+    # Document-intent lifecycle: parallel to, and independent of, ingest_status.
+    # Classification is an enhancement layered on ingest, never a gate on it, so
+    # a failure here leaves the document's terminal ingest state untouched.
+    # 'pending' | 'classified' | 'unclassified' | 'failed' | 'stale'
+    intent_status = Column(String(20), default="pending", server_default="pending", nullable=False)
+    intent_error = Column(Text, nullable=True)
+    intent_classified_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     organization = relationship("Organization")
@@ -2314,6 +2328,101 @@ class CDMDocument(Base):
 
     def __repr__(self):
         return f"<CDMDocument(id={self.id}, filename={self.original_filename}, status={self.ingest_status})>"
+
+
+class CDMDocumentChunk(Base):
+    """CDM v2 (#709) — persisted chunk of a document's extracted text.
+
+    Chunking is a stored artefact, not an ephemeral step: ``ts_rank_cd`` ranks
+    lexeme positions inside a ``tsvector`` and character offsets cannot be
+    recovered from it, so offsets are captured at chunk-creation time. Ranking
+    happens over whole chunks (Tier 1); phrase location happens *within* the
+    winning chunk (Tier 2).
+
+    ``search_vector`` is a **generated** column so it can never drift from
+    ``body``. ``body_norm`` is written by Python rather than generated, because
+    exactly one whitespace-normalisation implementation must exist — a Postgres
+    ``regexp_replace`` and the Python normaliser would have to agree byte-for-byte
+    forever, and phrase verification runs in Python.
+    """
+
+    __tablename__ = "cdm_document_chunks"
+    __table_args__ = (
+        UniqueConstraint('cdm_document_id', 'ordinal', name='uq_cdm_chunks_document_ordinal'),
+        CheckConstraint('char_end > char_start', name='ck_cdm_chunks_offsets_ordered'),
+        CheckConstraint('char_start >= 0', name='ck_cdm_chunks_offset_non_negative'),
+        Index('ix_cdm_chunks_org_document', 'organization_id', 'cdm_document_id'),
+        Index('ix_cdm_chunks_search_vector', 'search_vector', postgresql_using='gin'),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    cdm_document_id = Column(UUID(as_uuid=True), ForeignKey("cdm_documents.id", ondelete="CASCADE"), nullable=False)
+    ordinal = Column(Integer, nullable=False)
+    heading = Column(String(255), nullable=True)
+    body = Column(Text, nullable=False)
+    # Character offsets into the document's extracted text. Character, not byte
+    # — Python str indices and Postgres position() are both character-based,
+    # and real policy documents are full of non-ASCII typography.
+    char_start = Column(Integer, nullable=False)
+    char_end = Column(Integer, nullable=False)
+    body_norm = Column(Text, nullable=False)
+    search_vector = Column(
+        TSVECTOR,
+        Computed("to_tsvector('english', body)", persisted=True),
+        nullable=True,
+    )
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    organization = relationship("Organization")
+    document = relationship("CDMDocument")
+
+    def __repr__(self):
+        return f"<CDMDocumentChunk(doc={self.cdm_document_id}, ordinal={self.ordinal})>"
+
+
+class CDMDocumentIntent(Base):
+    """A model's claim that a document is the authoritative policy for a domain.
+
+    These rows are a **filter hint, never a source of truth**. Nothing downstream
+    of this table consumes a model output: proposals still come from FTS
+    retrieval with verified character offsets, and a human confirms coverage by
+    accepting a mapping. The map renders these as "claimed" precisely so the
+    difference from "confirmed" stays visible.
+
+    ``provider``, ``model_id``, ``prompt_version``, ``classification_id`` and
+    ``rationale`` are operator bookkeeping. They are reachable through SQL and
+    logs and are deliberately absent from every API response model, so no future
+    serialisation can leak them into the webclient.
+    """
+
+    __tablename__ = "cdm_document_intents"
+    __table_args__ = (
+        UniqueConstraint('cdm_document_id', 'domain', name='uq_cdm_document_intents'),
+        CheckConstraint('rank BETWEEN 1 AND 3', name='ck_cdm_document_intents_rank'),
+        Index('ix_cdm_document_intents_org_domain', 'organization_id', 'domain'),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    cdm_document_id = Column(UUID(as_uuid=True), ForeignKey("cdm_documents.id", ondelete="CASCADE"), nullable=False)
+    # scf_catalog_domains.identifier
+    domain = Column(String(16), nullable=False)
+    # 1..3, the classifier's own ordering — not a confidence score
+    rank = Column(SmallInteger, nullable=False)
+    rationale = Column(Text, nullable=True)
+    # Groups the rows a single classification run produced.
+    classification_id = Column(UUID(as_uuid=True), nullable=False)
+    prompt_version = Column(String(16), nullable=False)
+    provider = Column(String(32), nullable=False)
+    model_id = Column(String(128), nullable=False)
+    classified_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    organization = relationship("Organization")
+    document = relationship("CDMDocument")
+
+    def __repr__(self):
+        return f"<CDMDocumentIntent(doc={self.cdm_document_id}, domain={self.domain}, rank={self.rank})>"
 
 
 class CDMMapping(Base):
@@ -2343,6 +2452,30 @@ class CDMMapping(Base):
     review_notes = Column(Text, nullable=True)
     last_reviewed_at = Column(DateTime(timezone=True), nullable=True)
     last_reviewed_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    # ── CDM v2 (#709): score provenance ──────────────────────────────────
+    # v1 stored a single number derived from list position, which nobody could
+    # interrogate. Every component that produced the score is persisted, and
+    # so are the weights: components alone are not enough, because the weights
+    # are env-configurable and a later tuning change would otherwise make every
+    # historical score un-recomputable from its own parts.
+    ts_rank_component = Column(Float, nullable=True)
+    objective_coverage_component = Column(Float, nullable=True)
+    term_overlap_component = Column(Float, nullable=True)
+    score_weights = Column(JSONB, nullable=True)
+    # How Tier 2 located the phrase: 'exact' | 'whitespace_flexible' | 'fuzzy'.
+    match_type = Column(String(24), nullable=True)
+    # Which assessment objective this passage answers — a control is N
+    # objectives, and a reviewer needs to know which one matched.
+    matched_objective_text = Column(Text, nullable=True)
+    cdm_document_chunk_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("cdm_document_chunks.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    # Which retrieval tier produced this mapping ('postgres_fts' | 'lightrag').
+    retrieval_tier = Column(String(24), nullable=True)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     organization = relationship("Organization")

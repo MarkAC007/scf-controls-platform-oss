@@ -11,6 +11,7 @@ to an in-memory dict.
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import sys
 from datetime import datetime
@@ -617,11 +618,18 @@ def _docling_result_fixture(markdown: str = "# Doc\n\n## Section A\n\nbody A her
 
 
 def test_ingest_routes_pdf_to_docling(monkeypatch, storage_stub):
-    """Slice 13 ISC-18, ISC-21, ISC-22, ISC-23, ISC-24, ISC-25: PDF mime routes
-    through Docling; .docling.json + .extracted.md persisted; LightRAG insert
-    receives markdown with the .md file_source."""
+    """PDF routes through Docling *when Docling is explicitly selected*.
+
+    CDM v2 demoted Docling to an opt-in backend, so this now asserts the
+    opt-in path: ``.docling.json`` + ``.extracted.md`` persisted, LightRAG
+    insert receiving markdown with the ``.md`` file_source. The default-path
+    counterpart is ``test_ingest_pdf_uses_inprocess_extraction_by_default``.
+    """
     import tasks_cdm
     from services import cdm_docling_service
+
+    monkeypatch.setenv("CDM_EXTRACTION_BACKEND", "docling")
+    monkeypatch.setenv("CDM_DOCLING_URL", "http://docling.test:5001")
 
     doc_id = uuid4()
     object_key = f"cdm/{ORG_ID}/{doc_id}/policy.pdf"
@@ -682,6 +690,107 @@ def test_ingest_routes_pdf_to_docling(monkeypatch, storage_stub):
     assert "# Doc" in insert_calls[0]["text"]
     # Word count came from the Docling result.
     assert fake_doc.word_count == fixture.word_count
+
+
+def test_ingest_pdf_uses_inprocess_extraction_by_default(monkeypatch, storage_stub):
+    """A PDF must ingest with no Docling service reachable at all.
+
+    This is the defect the epic opens with: ``docker-compose.yml`` ships no
+    Docling sidecar, so on the deployment target the project actually
+    distributes, every PDF upload failed at extraction — before retrieval was
+    ever reached. The sentinel below is the whole point: if routing regresses
+    to Docling-by-default, this test fails rather than the self-hoster.
+    """
+    import fitz  # PyMuPDF — already a hard dependency in requirements.txt
+
+    import tasks_cdm
+    from services import cdm_docling_service
+
+    monkeypatch.delenv("CDM_EXTRACTION_BACKEND", raising=False)
+    monkeypatch.delenv("CDM_DOCLING_URL", raising=False)
+
+    # A genuine PDF, not a stub: the point of the test is that the real
+    # default extractor handles the real format without a sidecar.
+    pdf = fitz.open()
+    pdf.new_page().insert_text((72, 72), "Extracted PDF policy body.")
+    pdf_bytes = pdf.tobytes()
+    pdf.close()
+
+    doc_id = uuid4()
+    object_key = f"cdm/{ORG_ID}/{doc_id}/policy.pdf"
+    storage_stub[object_key] = pdf_bytes
+
+    fake_doc = SimpleNamespace(
+        id=doc_id,
+        organization_id=ORG_ID,
+        original_filename="policy.pdf",
+        mime_type="application/pdf",
+        ingest_status="pending",
+        ingest_error=None,
+        word_count=None,
+        kb_revision_at_ingest=None,
+        extraction_backend=None,
+        extracted_text_sha256=None,
+    )
+
+    class _FakeSyncSession:
+        def get(self, model, pk):
+            return fake_doc if pk == doc_id else None
+
+        def commit(self):
+            pass
+
+        def rollback(self):
+            pass
+
+        def close(self):
+            pass
+
+    docling_sentinel = MagicMock(
+        side_effect=AssertionError(
+            "Docling must not run by default — the sidecar does not exist in "
+            "docker-compose.yml"
+        )
+    )
+    monkeypatch.setattr(cdm_docling_service, "extract", docling_sentinel)
+    monkeypatch.setattr(tasks_cdm, "_get_sync_session", lambda: _FakeSyncSession())
+    monkeypatch.setattr(tasks_cdm, "is_lightrag_enabled", lambda: False)
+
+    result = tasks_cdm.ingest_cdm_document.run(str(doc_id))
+
+    docling_sentinel.assert_not_called()
+    assert result["extraction_method"] == "text"
+    assert fake_doc.ingest_status == "parsed"
+    assert fake_doc.extraction_backend == "inprocess"
+    assert f"{object_key}.extracted.txt" in storage_stub
+    assert f"{object_key}.docling.json" not in storage_stub
+
+    extracted = storage_stub[f"{object_key}.extracted.txt"]
+    assert b"Extracted PDF policy body." in extracted
+    # The hash covers exactly the text chunk offsets index, so a later
+    # extractor change is detectable rather than silently re-pointing citations.
+    assert fake_doc.extracted_text_sha256 == hashlib.sha256(extracted).hexdigest()
+
+
+def test_ingest_docling_selected_without_url_falls_back(monkeypatch, storage_stub):
+    """Selecting Docling without a URL falls back rather than failing ingest.
+
+    A misconfigured optional sidecar must not break the path that works
+    without it; the operator gets a warning, the tenant gets their document.
+    """
+    from services import cdm_extraction
+
+    monkeypatch.setenv("CDM_EXTRACTION_BACKEND", "docling")
+    monkeypatch.delenv("CDM_DOCLING_URL", raising=False)
+
+    assert cdm_extraction.get_extraction_backend() == "inprocess"
+    assert cdm_extraction.should_use_docling("application/pdf") is False
+
+    monkeypatch.setenv("CDM_DOCLING_URL", "http://docling.test:5001")
+    assert cdm_extraction.get_extraction_backend() == "docling"
+    assert cdm_extraction.should_use_docling("application/pdf") is True
+    # Format gate still applies even when Docling is selected.
+    assert cdm_extraction.should_use_docling("text/plain") is False
 
 
 def test_ingest_routes_text_keeps_legacy_extractor(monkeypatch, storage_stub):
@@ -749,11 +858,20 @@ def test_ingest_routes_text_keeps_legacy_extractor(monkeypatch, storage_stub):
 
 
 def test_ingest_docling_failure_marks_failed(monkeypatch, storage_stub):
-    """Slice 13 ISC-27: DoclingExtractionError raised by the service lands the
-    document in ``failed`` status with the error message captured."""
+    """DoclingExtractionError lands the document in ``failed`` with the message.
+
+    Opt-in path only — see ``test_ingest_routes_pdf_to_docling``. An operator
+    who selects Docling has asked for it, so a Docling failure is a real ingest
+    failure rather than something to silently paper over with the in-process
+    extractor: falling back here would hide a broken sidecar behind lower-
+    fidelity output.
+    """
     import tasks_cdm
     from services import cdm_docling_service
     from services.cdm_docling_service import DoclingExtractionError
+
+    monkeypatch.setenv("CDM_EXTRACTION_BACKEND", "docling")
+    monkeypatch.setenv("CDM_DOCLING_URL", "http://docling.test:5001")
 
     doc_id = uuid4()
     object_key = f"cdm/{ORG_ID}/{doc_id}/broken.pdf"
