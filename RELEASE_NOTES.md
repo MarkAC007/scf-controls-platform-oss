@@ -1,4 +1,4 @@
-# v0.11.0
+# v0.12.0
 
 Adds the Document Map — a per-domain coverage view across all 33 SCF domains, separating what a person confirmed from what was merely suggested — on a rebuilt Control Documents mapper that runs entirely inside Postgres and quotes only verified character offsets. Migrations are additive (new cdm_document_intents table plus three columns on cdm_documents); nothing is enabled by default.
 
