@@ -78,6 +78,54 @@ jobs:
         continue-on-error: true
         run: semgrep scan --config auto --sarif --output semgrep-results.sarif
 
+      - name: Drop in-source-suppressed results before upload
+        # GitHub code scanning does NOT honour SARIF `suppressions` -- it owns
+        # alert dismissal as its own state, so a finding carrying a written
+        # `# nosemgrep:` justification still lands as an open alert and the GHAS
+        # `Semgrep OSS` check fails. That check blocks merges through
+        # code-scanning merge protection rather than through required contexts,
+        # so it cannot be waited out.
+        #
+        # Dismissing in the UI is not a fix: release snapshots are pushed to a
+        # NEW release/vX.Y.Z branch each time, so the alerts are re-raised
+        # against a fresh ref on every release.
+        #
+        # Filtering here makes all three consumers agree with semgrep's own
+        # verdict -- its stdout count already excludes these. Unsuppressed
+        # findings are untouched and still reach code scanning.
+        if: always()
+        run: |
+          set -euo pipefail
+          test -f semgrep-results.sarif || { echo "no SARIF to filter"; exit 0; }
+          python3 - <<'PY'
+          import json
+
+          with open("semgrep-results.sarif", encoding="utf-8") as fh:
+              sarif = json.load(fh)
+
+          dropped = []
+          for run in sarif.get("runs", []):
+              kept = []
+              for res in run.get("results", []):
+                  if res.get("suppressions"):
+                      loc = (res.get("locations") or [{}])[0].get("physicalLocation", {})
+                      dropped.append("%s:%s  %s" % (
+                          loc.get("artifactLocation", {}).get("uri", "?"),
+                          loc.get("region", {}).get("startLine", "?"),
+                          res.get("ruleId", "?"),
+                      ))
+                      continue
+                  kept.append(res)
+              run["results"] = kept
+
+          with open("semgrep-results.sarif", "w", encoding="utf-8") as fh:
+              json.dump(sarif, fh)
+
+          print("%d in-source-suppressed result(s) withheld from code scanning:" % len(dropped))
+          for d in dropped:
+              print("  -", d)
+          PY
+
       - name: Upload SARIF
         if: always()
         uses: github/codeql-action/upload-sarif@4187e74d05793876e9989daffde9c3e66b4acd07 # v3.37.3
