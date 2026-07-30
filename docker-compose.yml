@@ -188,7 +188,7 @@ services:
         BUILD_STAMP: "${BUILD_STAMP:-dev}"
         MIN_UPGRADABLE_VERSION: "${MIN_UPGRADABLE_VERSION:-0.0.0}"
     container_name: cg-scf-celery-worker
-    command: celery -A celery_app worker --loglevel=info --concurrency=2 -Q default,high_priority,low_priority,tprm_research,dpsia,evidence_assessment,evidence_window,evidence_composite,cdm,catalog
+    command: celery -A celery_app worker --loglevel=info --concurrency=2 -Q default,high_priority,low_priority,tprm_research,dpsia,evidence_assessment,evidence_window,evidence_composite,cdm,cdm_intent,catalog
     environment:
       DATABASE_URL: postgresql+asyncpg://cg:${DB_PASSWORD}@postgres:5432/cg_scf
       REDIS_URL: redis://redis:6379/0

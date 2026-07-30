@@ -93,8 +93,8 @@ def test_re_ingest_flips_accepted_mappings_on_this_doc():
     mapping_a = uuid4()
     mapping_b = uuid4()
     candidates = [
-        (mapping_a, ORG_ID, OLD_KB),
-        (mapping_b, ORG_ID, OLD_KB),
+        (mapping_a, ORG_ID, OLD_KB, None),
+        (mapping_b, ORG_ID, OLD_KB, None),
     ]
     session = _FakeSyncSession(candidates)
 
@@ -147,8 +147,8 @@ def test_race_loss_skips_audit_row():
     mapping_a = uuid4()
     mapping_b = uuid4()
     candidates = [
-        (mapping_a, ORG_ID, OLD_KB),
-        (mapping_b, ORG_ID, OLD_KB),
+        (mapping_a, ORG_ID, OLD_KB, None),
+        (mapping_b, ORG_ID, OLD_KB, None),
     ]
     # First UPDATE loses race, second wins.
     session = _FakeSyncSession(candidates, update_rowcounts=[0, 1])
@@ -169,7 +169,7 @@ def test_race_loss_skips_audit_row():
 def test_actor_falls_back_to_system_sentinel_when_none():
     """ISC-10: unattended ingest passes actor_user_id=None → sentinel actor."""
     mapping_id = uuid4()
-    session = _FakeSyncSession([(mapping_id, ORG_ID, OLD_KB)])
+    session = _FakeSyncSession([(mapping_id, ORG_ID, OLD_KB, None)])
 
     flipped = cdm_mapping.detect_stale_mappings_for_document(
         session, DOC_ID, NEW_KB, actor_user_id=None
@@ -187,7 +187,7 @@ def test_actor_override_from_env(monkeypatch):
     monkeypatch.setenv("CDM_SYSTEM_ACTOR_USER_ID", str(custom_actor))
 
     mapping_id = uuid4()
-    session = _FakeSyncSession([(mapping_id, ORG_ID, OLD_KB)])
+    session = _FakeSyncSession([(mapping_id, ORG_ID, OLD_KB, None)])
 
     cdm_mapping.detect_stale_mappings_for_document(session, DOC_ID, NEW_KB)
 
@@ -199,7 +199,7 @@ def test_actor_override_used_when_supplied():
     """Explicit actor_user_id parameter wins over env sentinel."""
     explicit_actor = UUID("44444444-4444-4444-4444-444444444444")
     mapping_id = uuid4()
-    session = _FakeSyncSession([(mapping_id, ORG_ID, OLD_KB)])
+    session = _FakeSyncSession([(mapping_id, ORG_ID, OLD_KB, None)])
 
     cdm_mapping.detect_stale_mappings_for_document(
         session, DOC_ID, NEW_KB, actor_user_id=explicit_actor
@@ -227,3 +227,75 @@ def test_candidates_query_excludes_other_docs_and_wrong_status():
     assert "status" in compiled
     assert "accepted" in compiled
     assert "kb_revision" in compiled
+
+
+# ───────────────────────── Parent proposal flip (consolidation, issue 722) ─────────────────────────
+
+
+def test_parent_proposal_flips_once_for_shared_proposal():
+    """Two flipped mappings sharing one parent proposal produce a single
+    proposal UPDATE and a single proposal audit row."""
+    proposal_id = uuid4()
+    candidates = [
+        (uuid4(), ORG_ID, OLD_KB, proposal_id),
+        (uuid4(), ORG_ID, OLD_KB, proposal_id),
+    ]
+    # Two mapping UPDATEs + one proposal UPDATE.
+    session = _FakeSyncSession(candidates, update_rowcounts=[1, 1, 1])
+
+    flipped = cdm_mapping.detect_stale_mappings_for_document(
+        session, DOC_ID, NEW_KB
+    )
+
+    assert flipped == 2
+    assert len(session.executed_statements) == 4  # SELECT + 3 UPDATEs
+
+    rows = _audit_rows(session)
+    mapping_rows = [r for r in rows if r.entity_type == "cdm_mapping"]
+    proposal_rows = [r for r in rows if r.entity_type == "cdm_control_proposal"]
+    assert len(mapping_rows) == 2
+    assert len(proposal_rows) == 1
+    proposal_audit = proposal_rows[0]
+    assert proposal_audit.entity_id == proposal_id
+    assert proposal_audit.action == "stale"
+    assert proposal_audit.old_value == "accepted"
+    assert proposal_audit.organization_id == ORG_ID
+    assert proposal_audit.action_source == "system"
+    body = json.loads(proposal_audit.new_value)
+    assert body["status"] == "stale"
+    assert body["new_kb_revision"] == NEW_KB
+    assert "detected_at" in body
+
+
+def test_parent_proposal_not_accepted_skips_audit():
+    """The proposal UPDATE is guarded on status accepted — rowcount 0 (already
+    proposed/dismissed/stale) writes no proposal audit row."""
+    proposal_id = uuid4()
+    candidates = [(uuid4(), ORG_ID, OLD_KB, proposal_id)]
+    # Mapping UPDATE wins; proposal UPDATE matches nothing.
+    session = _FakeSyncSession(candidates, update_rowcounts=[1, 0])
+
+    flipped = cdm_mapping.detect_stale_mappings_for_document(
+        session, DOC_ID, NEW_KB
+    )
+
+    assert flipped == 1
+    rows = _audit_rows(session)
+    assert [r.entity_type for r in rows] == ["cdm_mapping"]
+
+
+def test_unflipped_mapping_does_not_flip_parent():
+    """A mapping that loses its own optimistic UPDATE must not drag its
+    parent proposal into the flip set."""
+    proposal_id = uuid4()
+    candidates = [(uuid4(), ORG_ID, OLD_KB, proposal_id)]
+    session = _FakeSyncSession(candidates, update_rowcounts=[0])
+
+    flipped = cdm_mapping.detect_stale_mappings_for_document(
+        session, DOC_ID, NEW_KB
+    )
+
+    assert flipped == 0
+    assert _audit_rows(session) == []
+    # SELECT + one losing mapping UPDATE — no proposal UPDATE issued.
+    assert len(session.executed_statements) == 2

@@ -12,6 +12,130 @@ env:
   NODE_VERSION: '20'
 
 jobs:
+  # webclient/package.json `.version` is the SINGLE SOURCE OF TRUTH for the public
+  # product version. prepare-oss.sh reads it to build upgrade-manifest.json, the
+  # public repo's oss-release.yml reads it to compute the vX.Y.Z release tag, and
+  # Dockerfile.backend bakes it into /build_info.json. Three places hand-mirror it
+  # and nothing used to check them, so drift was silent until a release shipped
+  # with a version label that disagreed with its own tag.
+  #
+  # NOTE: this deliberately does not compare against this repo's private v1.x tag
+  # line (currently v1.148.x, driven by auto-release.yml from `git describe`).
+  # Those are two unrelated namespaces. Conflating them is precisely the bug that
+  # was removed from auto-release.yml — see the comment there.
+  version-consistency:
+    name: Version Consistency
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        # SHA-pinned: semgrep's github-actions-mutable-action-tag rule fires on
+        # floating tags, and the new diff-scoped gate would flag this very line.
+        # The rest of this file still uses @v5 — pre-existing, not touched here.
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+
+      - name: Assert every mirrored version matches webclient/package.json
+        run: |
+          set -euo pipefail
+
+          V="$(jq -r '.version' webclient/package.json)"
+          if ! printf '%s' "$V" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error file=webclient/package.json::version '$V' is not a bare X.Y.Z semver"
+            exit 1
+          fi
+          echo "source of truth: webclient/package.json = $V"
+
+          fail=0
+          check() { # <label> <actual> <file> <fix-hint>
+            if [ "$2" != "$V" ]; then
+              echo "::error file=$3::$1 is '$2', expected '$V'"
+              echo "    fix: $4"
+              fail=1
+            else
+              echo "  ok  $1 = $2  ($3)"
+            fi
+          }
+
+          check "PLATFORM_VERSION" \
+            "$(sed -n 's/^PLATFORM_VERSION=//p' .env.example | head -1)" \
+            ".env.example" \
+            "sed -i 's/^PLATFORM_VERSION=.*/PLATFORM_VERSION=$V/' .env.example"
+
+          check "package-lock .version" \
+            "$(jq -r '.version' webclient/package-lock.json)" \
+            "webclient/package-lock.json" \
+            "(cd webclient && npm install --package-lock-only)"
+
+          check "package-lock .packages[''].version" \
+            "$(jq -r '.packages."".version' webclient/package-lock.json)" \
+            "webclient/package-lock.json" \
+            "(cd webclient && npm install --package-lock-only)"
+
+          # This workflow ships INTO the public OSS snapshot (prepare-oss.sh
+          # keep-list), but docs-site/ does NOT — prepare-oss.sh removes it, because
+          # the end-user docs are served by GitHub Pages from this private canonical
+          # repo alone. Checking the docs row unconditionally therefore fails every
+          # release PR on the mirror, which is what broke the first real v0.11.0
+          # publish at the public `Version Consistency` check.
+          #
+          # The test is for the WHOLE TREE being absent, not the file: absent
+          # docs-site/ means "this is the mirror". A missing file or a stale row
+          # inside an existing docs-site/ is still a hard failure here, so the
+          # private repo keeps exactly the enforcement it had.
+          DOCS="docs-site/src/content/docs/admin-guide/configuration.mdx"
+          if [ ! -d docs-site ]; then
+            echo "  --  docs-site/ absent (OSS mirror) — skipping the docs version row check"
+          elif ! grep -qF "| \`PLATFORM_VERSION\` | \`$V\` |" "$DOCS"; then
+            echo "::error file=$DOCS::the PLATFORM_VERSION default row does not show '$V'"
+            echo "    fix: update the \`PLATFORM_VERSION\` row to | \`PLATFORM_VERSION\` | \`$V\` | ..."
+            fail=1
+          else
+            echo "  ok  docs PLATFORM_VERSION row = $V  ($DOCS)"
+          fi
+
+          exit "$fail"
+
+      - name: Require release notes when the version is bumped
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -euo pipefail
+
+          git fetch --no-tags --depth=1 origin "$BASE_REF"
+          if ! git diff --name-only "origin/${BASE_REF}...HEAD" | grep -qx 'webclient/package.json'; then
+            echo "version file untouched — release notes not required."
+            exit 0
+          fi
+
+          # Second half of the same mirror problem as the docs row above, and it
+          # bites in exactly the case that matters: prepare-oss.sh strips
+          # RELEASE_META.yml (and then ASSERTS its absence), while every release PR
+          # on the mirror does change webclient/package.json — so the guard above
+          # passes and this step would then read a file that cannot be there.
+          # The check is maintainer judgement about a release, which only exists on
+          # the private side; the mirror receives the rendered RELEASE_NOTES.md.
+          if [ ! -f RELEASE_META.yml ]; then
+            echo "RELEASE_META.yml absent (OSS mirror — prepare-oss.sh strips it) — release notes already rendered upstream."
+            exit 0
+          fi
+
+          # A version bump is a release. prepare-oss.sh emits RELEASE_NOTES.md from
+          # RELEASE_META.yml, and the public oss-release.yml prefers that file over
+          # --generate-notes. An empty summary therefore ships a release whose notes
+          # are auto-generated commit spam, and leaves the in-app update panel
+          # (backend/tasks_updates.py) with nothing useful to show operators.
+          # Same reasoning as release-oss.yml's preflight: pyyaml is not a
+          # guaranteed part of the runner image, and this step only ever fires on
+          # the PR that bumps the version — i.e. the release PR, the worst
+          # possible place to discover a missing import.
+          python3 -c "import yaml" 2>/dev/null || pip install --quiet --disable-pip-version-check pyyaml
+          SUMMARY="$(python3 -c "import yaml;print((yaml.safe_load(open('RELEASE_META.yml')) or {}).get('summary','') or '')")"
+          if [ -z "${SUMMARY// }" ]; then
+            echo "::error file=RELEASE_META.yml::webclient/package.json changed but RELEASE_META.yml has no summary."
+            exit 1
+          fi
+          echo "release summary present: ${SUMMARY}"
+
   detect:
     name: Detect Stack
     runs-on: ubuntu-latest

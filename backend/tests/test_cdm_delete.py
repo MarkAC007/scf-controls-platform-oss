@@ -41,19 +41,22 @@ class _DeleteFakeSession:
     Execution sequence inside the route:
       1. SELECT CDMDocument by (id, org_id)  → returns `document` or None
       2. SELECT CDMMapping cols by document_id → returns mapping rows
-      3. DELETE CDMDocument by (id, org_id)  → returns _DeleteResult(rowcount=1)
+      3. SELECT CDMControlProposal cols by document_id → returns proposal rows
+      4. DELETE CDMDocument by (id, org_id)  → returns _DeleteResult(rowcount=1)
 
-    Tests configure `document` (or None for 404) and `mappings`
-    (list of (id, status, scoped_control_id) tuples).
+    Tests configure `document` (or None for 404), `mappings` and `proposals`
+    (lists of (id, status, scoped_control_id) tuples).
     """
 
     def __init__(
         self,
         document: CDMDocument | None,
         mappings: List[tuple[UUID, str, UUID]] | None = None,
+        proposals: List[tuple[UUID, str, UUID]] | None = None,
     ):
         self._document = document
         self._mappings = mappings or []
+        self._proposals = proposals or []
         self.added: list[Any] = []
         self.commits = 0
         self._call_index = 0
@@ -69,16 +72,16 @@ class _DeleteFakeSession:
                     return value
 
             return _R()
-        # 2nd call: SELECT mappings (tuple rows)
-        if self._call_index == 2:
-            rows = self._mappings
+        # 2nd/3rd call: SELECT mapping rows, then proposal rows (tuple rows)
+        if self._call_index in (2, 3):
+            rows = self._mappings if self._call_index == 2 else self._proposals
 
             class _R:
                 def all(self_inner):
                     return list(rows)
 
             return _R()
-        # 3rd call: DELETE document
+        # 4th call: DELETE document
         class _DeleteResult:
             rowcount = 1
 
@@ -253,3 +256,38 @@ def test_delete_cross_tenant_returns_404(editor_client):
     )
     assert resp.status_code == 404, resp.text
     assert session.commits == 0
+
+
+# ───────────────────────── Proposal audit parity (issue 722) ─────────────────────────
+
+
+def test_delete_writes_audit_row_per_affected_proposal(editor_client):
+    """Proposal rows removed by the document FK cascade get the same
+    removed_with_document audit convention as their citations."""
+    build, _ = editor_client
+    document = _make_document()
+    proposal_id = uuid4()
+    control_id = uuid4()
+    session = _DeleteFakeSession(
+        document,
+        mappings=[(uuid4(), "accepted", control_id)],
+        proposals=[(proposal_id, "accepted", control_id)],
+    )
+    client = build(session)
+
+    resp = client.delete(f"/api/organizations/{ORG_ID}/cdm/documents/{document.id}")
+
+    assert resp.status_code == 204
+    proposal_rows = [
+        o
+        for o in session.added
+        if isinstance(o, AuditLog) and o.entity_type == "cdm_control_proposal"
+    ]
+    assert len(proposal_rows) == 1
+    row = proposal_rows[0]
+    assert row.entity_id == proposal_id
+    assert row.action == "removed_with_document"
+    assert row.old_value == "accepted"
+    body = json.loads(row.new_value)
+    assert body["cdm_document_id"] == str(document.id)
+    assert body["scoped_control_id"] == str(control_id)

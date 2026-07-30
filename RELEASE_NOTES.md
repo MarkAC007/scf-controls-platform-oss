@@ -1,34 +1,56 @@
-# v0.10.2
+# v0.11.0
 
-Adds optional OIDC single sign-on — run the bundled Keycloak identity provider (compose profile 'idp') or bring your own IdP (Okta, Entra, Auth0, ...). Entirely opt-in; migration adds users.oidc_issuer (nullable, backfilled, safe). Also bumps Authlib to 1.6.9 for OIDC-related CVE fixes.
+Adds the Document Map — a per-domain coverage view across all 33 SCF domains, separating what a person confirmed from what was merely suggested — on a rebuilt Control Documents mapper that runs entirely inside Postgres and quotes only verified character offsets. Migrations are additive (new cdm_document_intents table plus three columns on cdm_documents); nothing is enabled by default.
 
 ## What's new
 
-- **Optional OIDC single sign-on** — redirect-based OIDC login for the web
-  client, replacing/augmenting API-key and Google sign-in. Two ways to use it:
-  - **Bundled Keycloak** — `docker compose --profile idp up -d` starts a
-    Keycloak identity provider backed by the existing Postgres, auto-imports
-    the `scf` realm, and (optionally) bootstraps an admin user. See the new
-    *Identity Provider* admin guide.
-  - **Bring your own IdP** — point the `OIDC_*` variables at Okta, Entra ID,
-    Auth0, Google, or any standards-compliant OIDC provider; no extra
-    containers needed.
-- Everything is **opt-in**: with `VITE_OIDC_ENABLED=false` (the default)
-  nothing changes — API-key and Google sign-in behave exactly as before.
-- **Dependency security** — Authlib bumped 1.3.2 → 1.6.9 for OIDC-related
-  CVE fixes.
+- **Document Map** — a new view under *Knowledge Base* showing all 33 SCF
+  domains as a coverage grid. Each domain reads as one of four states:
+  *Confirmed* (a person accepted a mapping), *Suggested* (documents placed,
+  nothing reviewed), *Gap* (controls scoped, no document), or *Not in scope*
+  (a scoping decision, not an absence). Documents that reach no in-scope
+  domain sit in an *Unmapped* rail rather than disappearing.
+  - Confirmed and suggested are distinguished on four redundant channels —
+    word, glyph, edge and strip — so the map stays readable in greyscale and
+    colour is never the only signal.
+  - The "Domains covered" headline counts **confirmed only**; suggestions
+    never inflate it.
+  - The view is strictly read-only. Every action routes to Control Documents.
+- **Control Documents mapper rebuilt on Postgres** — two-tier full-text
+  search with persisted score components, running entirely inside Postgres
+  with no extra services. Every proposed mapping is anchored to verified
+  character offsets that are re-read against the source text before display,
+  so a quoted excerpt is always traceable to real words in the document.
+  Mapping scores now break down into three stored components (text relevance,
+  objective coverage, term overlap) and stay explainable after the fact.
+- **Document placement (optional, off by default)** — classifies each
+  uploaded document into the domains it appears to cover, so the map can
+  place a document before any mapping is reviewed. It never creates, scores
+  or cites a mapping; verified offsets remain the only mapping source.
 
 ## Upgrading
 
-- Use `scripts/upgrade.sh v0.10.0` (read `UPGRADING.md` first). No breaking
-  changes; no action required if you don't enable OIDC.
-- To enable OIDC, copy the new *Bundled Identity Provider* block from
-  `.env.example` into your `.env` (`VITE_OIDC_ENABLED`, `OIDC_*`, and — for
-  the bundled profile — `KC_ADMIN_*`), then rebuild the frontend so the flag
-  is baked into the bundle.
+- Use `scripts/upgrade.sh v0.11.0` (read `UPGRADING.md` first). No breaking
+  changes and no action required — every new capability is off by default and
+  the stack behaves exactly as before until you enable it.
+- To enable document placement, set `CDM_INTENT_PROVIDER` on **both** the
+  backend and the Celery worker, then backfill existing documents:
+  `docker compose exec backend python scripts/backfill_document_intents.py --dry-run`
+  to preview, then `--apply`.
+- Placement runs on a dedicated `cdm_intent` Celery queue. The bundled
+  `docker-compose.yml` already lists it on the worker; if you run a
+  **customised worker command**, add `cdm_intent` to its `-Q` list or
+  classification tasks will queue unconsumed.
+- Leaving placement disabled is fully supported, with one visible
+  consequence: a document that yields no mappings sits in the Unmapped rail
+  labelled "Awaiting classification", and the interface does not explain that
+  the stage is switched off.
 
 ## Migrations
 
-- Adds nullable `users.oidc_issuer`, backfills existing Google users, and
-  replaces the single-column `google_sub` unique with a composite
-  `(oidc_issuer, google_sub)` unique (additive, safe).
+- `cdm2c709chunk` — adds `cdm_document_chunks` and persisted score components.
+- `cdm3intent001` — adds the `cdm_document_intents` table and an index, plus
+  three columns on `cdm_documents` (`intent_status`, defaulted to `pending`;
+  `intent_error` and `intent_classified_at`, both nullable).
+- Both are purely additive with working downgrades. No column is dropped, no
+  type changed, and no existing row rewritten.

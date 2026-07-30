@@ -1,6 +1,13 @@
-"""Tests for CDM v1 slice 3.5c — POST /cdm/query (Celery-proxied LightRAG query).
+"""Tests for POST /cdm/query on the **opt-in LightRAG path**.
 
-Covers slice 3.5c endpoint ISC-24..ISC-28. Uses the FastAPI TestClient pattern
+CDM v2 made Postgres FTS the default backend and serves it synchronously from
+the request's own database, so the Celery-proxied behaviour these tests cover
+is now reached only when an operator selects LightRAG explicitly — which the
+``cdm_env`` fixture does. The default path is covered by
+``test_cdm_query_postgres.py``; keeping both means a regression that reroutes
+one backend through the other's code path fails a test rather than a tenant.
+
+Uses the FastAPI TestClient pattern
 from test_cdm_ingest.py: a FakeAsyncSession with scripted execute() results, a
 dependency_overrides bag for auth + db, and direct monkeypatching of
 ``tasks_cdm.query_cdm.apply_async`` so no Celery delivery occurs.
@@ -62,6 +69,10 @@ class _FakeAsyncSession:
 @pytest.fixture
 def cdm_env(monkeypatch):
     monkeypatch.setenv("ENABLE_CDM", "true")
+    # Pin the opt-in backend: without both of these the route now takes the
+    # Postgres FTS branch and never reaches Celery at all.
+    monkeypatch.setenv("CDM_RETRIEVAL_BACKEND", "lightrag")
+    monkeypatch.setenv("ENABLE_CDM_LIGHTRAG", "true")
     yield
 
 

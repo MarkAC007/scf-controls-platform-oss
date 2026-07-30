@@ -10,6 +10,16 @@ permissions:
 
 jobs:
   release:
+    # This workflow ships INTO the public snapshot (see scripts/prepare-oss.sh
+    # keep-list) and only makes sense there: it requires upgrade-manifest.json,
+    # a file generated into the snapshot and never present in this private repo.
+    # Ungated it fires on every private-main push, tags v<version> here, creates
+    # a draft release, hits the missing-manifest guard below, and rolls both back
+    # via `gh release delete --cleanup-tag` — churning tags that collide with the
+    # private repo's own v1.x line and racing auto-release.yml/release.yml.
+    # Same self-gate as codeql.yml and dependency-review.yml, the other two
+    # OSS-only workflows in the keep-list.
+    if: github.repository == 'MarkAC007/scf-controls-platform-oss'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository

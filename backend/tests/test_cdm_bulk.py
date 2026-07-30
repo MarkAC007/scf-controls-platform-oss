@@ -33,13 +33,21 @@ from services.cdm_tenancy import require_tenant_cdm_enabled  # noqa: E402
 ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
 
 
-def _mapping(mapping_id: UUID, status: str = "proposed", kb_revision: str = "rev-1"):
+def _mapping(
+    mapping_id: UUID,
+    status: str = "proposed",
+    kb_revision: str = "rev-1",
+    control_proposal_id: UUID | None = None,
+):
     """Lightweight CDMMapping stand-in for SELECT scalars().all()."""
     m = MagicMock(spec=CDMMapping)
     m.id = mapping_id
     m.organization_id = ORG_ID
     m.status = status
     m.kb_revision = kb_revision
+    # Explicit None: a bare MagicMock attribute is truthy and would drag the
+    # parent-proposal rederive step into these scripted sessions.
+    m.control_proposal_id = control_proposal_id
     return m
 
 
@@ -306,3 +314,97 @@ def test_bulk_accept_requires_cdm_enabled(monkeypatch):
         assert "CDM module not enabled" in resp.json()["detail"]
     finally:
         app.dependency_overrides.pop(get_db, None)
+
+
+# ───────────────────────── Parent proposal rederive (issue 722) ─────────────────────────
+
+
+class _RederiveSession(_BulkSession):
+    """Extends the scripted bulk session with select dispatch so the
+    parent-proposal rederive step can run: after the bulk SELECT, further
+    SELECTs are served from ``select_results`` in order (each entry is either
+    a scalar value for ``scalar_one_or_none`` or a list for ``scalars().all``).
+    """
+
+    def __init__(self, loaded_mappings, select_results):
+        super().__init__(loaded_mappings)
+        self.select_results = list(select_results)
+        self.proposal_updates: List[Any] = []
+
+    async def execute(self, stmt):
+        from sqlalchemy import Update as _Update
+
+        if isinstance(stmt, _Update) and stmt.table.name == "cdm_control_proposals":
+            self.proposal_updates.append(stmt)
+
+            class _R:
+                rowcount = 1
+
+            return _R()
+
+        if isinstance(stmt, _Update) or not self._selected:
+            return await super().execute(stmt)
+
+        payload = self.select_results.pop(0)
+
+        class _Result:
+            def scalar_one_or_none(self_inner):
+                return payload
+
+            def scalars(self_inner):
+                class _S:
+                    def all(self_s):
+                        return list(payload)
+
+                return _S()
+
+        return _Result()
+
+
+def test_bulk_accept_rederives_parent_proposal(client_factory):
+    """Accepting the last proposed citation flips the parent to accepted."""
+    build, _ = client_factory
+    proposal_id = uuid4()
+    mapping_id = uuid4()
+    session = _RederiveSession(
+        loaded_mappings=[_mapping(mapping_id, control_proposal_id=proposal_id)],
+        select_results=[
+            "proposed",     # parent's current status
+            ["accepted"],   # child statuses after the transition
+        ],
+    )
+    client = build(session)
+
+    resp = client.post(
+        f"/api/organizations/{ORG_ID}/cdm/mappings/bulk-accept",
+        json={"mapping_ids": [str(mapping_id)]},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["accepted"] == [str(mapping_id)]
+    assert len(session.proposal_updates) == 1
+    compiled = session.proposal_updates[0].compile()
+    assert compiled.params["status"] == "accepted"
+
+
+def test_bulk_accept_skips_rederive_when_parent_unchanged(client_factory):
+    """Derived status equal to current status issues no proposal UPDATE."""
+    build, _ = client_factory
+    proposal_id = uuid4()
+    mapping_id = uuid4()
+    session = _RederiveSession(
+        loaded_mappings=[_mapping(mapping_id, control_proposal_id=proposal_id)],
+        select_results=[
+            "accepted",     # parent already accepted (sibling accepted earlier)
+            ["accepted", "proposed"],
+        ],
+    )
+    client = build(session)
+
+    resp = client.post(
+        f"/api/organizations/{ORG_ID}/cdm/mappings/bulk-accept",
+        json={"mapping_ids": [str(mapping_id)]},
+    )
+
+    assert resp.status_code == 200
+    assert session.proposal_updates == []
