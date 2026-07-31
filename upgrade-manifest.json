@@ -1,11 +1,11 @@
 {
   "schema": 1,
-  "version": "0.12.0",
-  "released": "2026-07-30T12:16:01Z",
+  "version": "0.12.1",
+  "released": "2026-07-31T06:45:47Z",
   "min_upgradable_version": "0.0.0",
   "breaking": false,
   "required_stops": [],
-  "release_url": "https://github.com/MarkAC007/scf-controls-platform-oss/releases/tag/v0.12.0",
+  "release_url": "https://github.com/MarkAC007/scf-controls-platform-oss/releases/tag/v0.12.1",
   "summary": "Adds the Document Map \u2014 a per-domain coverage view across all 33 SCF domains, separating what a person confirmed from what was merely suggested \u2014 on a rebuilt Control Documents mapper that runs entirely inside Postgres and quotes only verified character offsets. Migrations are additive (new cdm_document_intents table plus three columns on cdm_documents); nothing is enabled by default.",
   "migration_range": [
     "20260119_000000_62bdef86f249_initial_schema",
@@ -58,7 +58,9 @@
     "20260717_211704_add_oidc_issuer_to_users",
     "20260728_170000_cdm_v2_chunks_and_score_components",
     "20260729_120000_cdm_document_intents",
-    "20260730_100000_cdm_control_proposals"
+    "20260730_100000_cdm_control_proposals",
+    "20260730_140000_cdm_ingest_started_at",
+    "20260730_223000_audit_log_changed_by_user_id_nullable"
   ],
   "env_added": [
     "CDM_INTENT_PROVIDER",

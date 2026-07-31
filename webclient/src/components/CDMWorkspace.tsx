@@ -5,9 +5,12 @@ import {
   uploadCdmDocument,
   getCdmJobStatus,
   deleteCdmDocument,
+  reingestCdmDocuments,
+  listCdmControlProposals,
   type CDMDocument,
   type CDMIngestStatus,
 } from '../data/apiClient'
+import { useCdmComputeRun } from '../hooks/useCdmComputeRun'
 import CDMReviewQueue from './CDMReviewQueue'
 
 interface CDMWorkspaceProps {
@@ -25,33 +28,46 @@ const ACCEPTED_MIME_TYPES = new Set<string>([
 
 const ACCEPTED_EXTENSIONS = '.txt,.md,.pdf,.docx'
 
-const TERMINAL_STATUSES: ReadonlySet<CDMIngestStatus> = new Set([
+// Statuses that mean a worker is (or should be) actively on the row.
+const IN_FLIGHT_STATUSES: ReadonlySet<CDMIngestStatus> = new Set([
+  'pending',
+  'parsing',
+  'indexing',
+])
+
+// 'parsed' is the terminal state whenever knowledge-base indexing is
+// disabled (the self-hosted default), and a moments-long transient when it
+// is enabled. The chip therefore answers "can I map this yet?" — readiness —
+// and machine activity is a subordinate line, so the chip is truthful under
+// both configurations. 'indexing_failed' is deliberately READY: parsing
+// completed before indexing was attempted, so the document is fully
+// mappable — only knowledge-base search is degraded.
+const READY_STATUSES: ReadonlySet<CDMIngestStatus> = new Set([
   'parsed',
+  'indexing',
   'indexed',
-  'failed',
   'indexing_failed',
 ])
 
-function isInFlight(status: CDMIngestStatus): boolean {
-  return !TERMINAL_STATUSES.has(status)
-}
+// After a poll sees 'parsed', keep watching a few ticks in case indexing is
+// enabled and the row is about to transition; then rest at Ready to map.
+const PARSED_GRACE_TICKS = 5
+// Hard ceiling per poll run — never spin forever. On expiry the UI says
+// "status unknown" and offers a manual re-check instead of silently lying.
+const MAX_POLL_TICKS = 40
+const SLOW_AFTER_TICKS = 10
+const POLL_INTERVAL_MS = 3000
+const SLOW_POLL_INTERVAL_MS = 10000
 
 function statusLabel(status: CDMIngestStatus): string {
+  if (READY_STATUSES.has(status)) return 'Ready to map'
   switch (status) {
     case 'pending':
-      return 'Pending'
+      return 'Queued'
     case 'parsing':
-      return 'Parsing'
-    case 'parsed':
-      return 'Indexing'
-    case 'indexing':
-      return 'Indexing'
-    case 'indexed':
-      return 'Indexed'
+      return 'Not ready'
     case 'failed':
-      return 'Failed'
-    case 'indexing_failed':
-      return 'Indexing failed'
+      return 'Extraction failed'
     default:
       return status
   }
@@ -64,23 +80,41 @@ function statusTitle(status: CDMIngestStatus): string {
     case 'parsing':
       return 'Extracting text from the uploaded file.'
     case 'parsed':
-      return 'Text extracted — indexing into the knowledge base.'
+      return 'Text extracted — included in the next mapping run. Knowledge-base indexing runs only when LightRAG is enabled.'
     case 'indexing':
-      return 'Indexing into the knowledge base.'
+      return 'Ready to map. Knowledge-base indexing is still running.'
     case 'indexed':
-      return 'Ready — the document is part of your knowledge base and eligible for mapping.'
+      return 'Text extracted and indexed into the knowledge base.'
     case 'failed':
-      return 'Text extraction failed. Delete and re-upload after fixing the source file.'
+      return 'Nothing was extracted. Retry, or fix the source file and re-upload.'
     case 'indexing_failed':
-      return 'Knowledge-base indexing failed. Delete and re-upload to retry.'
+      return 'Mapping works — the text was extracted. Only knowledge-base search is affected.'
     default:
       return status
   }
 }
 
+// Machine activity / advisory microcopy rendered under the readiness chip.
+function statusActivity(doc: CDMDocument): { text: string; warning: boolean } | null {
+  if (doc.is_stale) {
+    return { text: 'Status unknown — processing may have stalled', warning: true }
+  }
+  switch (doc.ingest_status) {
+    case 'parsing':
+      return { text: 'Extracting text…', warning: false }
+    case 'indexing':
+      return { text: 'Indexing…', warning: false }
+    case 'indexing_failed':
+      return { text: 'Indexing failed — search may be incomplete', warning: true }
+    default:
+      return null
+  }
+}
+
 function statusBadgeClass(status: CDMIngestStatus): string {
-  if (status === 'indexed') return 'cdm-badge cdm-badge-success'
-  if (status === 'failed' || status === 'indexing_failed') return 'cdm-badge cdm-badge-error'
+  if (READY_STATUSES.has(status)) return 'cdm-badge cdm-badge-success'
+  if (status === 'failed') return 'cdm-badge cdm-badge-error'
+  if (status === 'pending') return 'cdm-badge cdm-badge-neutral'
   return 'cdm-badge cdm-badge-progress'
 }
 
@@ -98,6 +132,12 @@ function formatDate(iso: string): string {
   }
 }
 
+function formatElapsed(from: Date, to: Date): string {
+  const seconds = Math.max(0, Math.floor((to.getTime() - from.getTime()) / 1000))
+  if (seconds < 60) return `${seconds}s`
+  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`
+}
+
 export default function CDMWorkspace({ organizationId }: CDMWorkspaceProps) {
   const [activeTab, setActiveTab] = useState<CDMTab>('documents')
   const [documents, setDocuments] = useState<CDMDocument[]>([])
@@ -106,7 +146,52 @@ export default function CDMWorkspace({ organizationId }: CDMWorkspaceProps) {
   const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number } | null>(null)
   const [dragOver, setDragOver] = useState(false)
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [retryingId, setRetryingId] = useState<string | null>(null)
+  const [pollExhausted, setPollExhausted] = useState<Date | null>(null)
+  // Bumped by "Re-check" (and by retry) to re-arm an exhausted poll run.
+  const [pollEpoch, setPollEpoch] = useState(0)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  // Grace-tick bookkeeping for rows recently seen at 'parsed' — lives in a
+  // ref so it survives poll-effect re-runs when the in-flight set changes.
+  const graceRef = useRef<Map<string, number>>(new Map())
+
+  // ── Mapping run + proposal count: workspace-level, so the action bar and
+  // tab badge are visible from either tab. The journey is upload → ready →
+  // run → review, and the run must be startable where readiness is shown.
+  const [proposedTotal, setProposedTotal] = useState<number | null>(null)
+  const [runRefreshKey, setRunRefreshKey] = useState(0)
+  const [lastRunOutcome, setLastRunOutcome] = useState<'success' | 'failure' | null>(null)
+
+  const fetchProposedCount = useCallback(async () => {
+    try {
+      const response = await listCdmControlProposals(organizationId, {
+        status: 'proposed',
+        limit: 1,
+        offset: 0,
+      })
+      setProposedTotal(response.total)
+    } catch {
+      /* badge is best-effort — leave the previous value */
+    }
+  }, [organizationId])
+
+  useEffect(() => {
+    void fetchProposedCount()
+  }, [fetchProposedCount])
+
+  const computeRun = useCdmComputeRun(organizationId, (successful) => {
+    setLastRunOutcome(successful ? 'success' : 'failure')
+    setRunRefreshKey((k) => k + 1)
+    void fetchProposedCount()
+  })
+
+  // Ticker so the "running for Xs" line moves while a run is active.
+  const [nowTick, setNowTick] = useState(() => new Date())
+  useEffect(() => {
+    if (!computeRun.running) return
+    const handle = window.setInterval(() => setNowTick(new Date()), 1000)
+    return () => window.clearInterval(handle)
+  }, [computeRun.running])
 
   const refresh = useCallback(async () => {
     try {
@@ -125,53 +210,125 @@ export default function CDMWorkspace({ organizationId }: CDMWorkspaceProps) {
     void refresh()
   }, [refresh])
 
-  const inFlightIds = useMemo(
-    () => documents.filter((d) => isInFlight(d.ingest_status)).map((d) => d.id),
+  // Current documents, readable from inside the poll loop without making the
+  // effect depend on (and restart on) every table update.
+  const documentsRef = useRef(documents)
+  useEffect(() => {
+    documentsRef.current = documents
+  }, [documents])
+
+  // Key the poll effect on the SET of in-flight rows, not the array identity:
+  // status updates that keep the same set must not tear down the timer.
+  const pollSetKey = useMemo(
+    () =>
+      documents
+        .filter(
+          (d) =>
+            IN_FLIGHT_STATUSES.has(d.ingest_status) ||
+            (d.ingest_status === 'parsed' && (graceRef.current.get(d.id) ?? 0) > 0),
+        )
+        .map((d) => d.id)
+        .sort()
+        .join(','),
     [documents],
   )
 
-  // Poll only in-flight rows. Stops automatically when nothing is in flight
-  // (D-2). Each tick fans out one GET per pending document and merges
-  // results back into the table.
+  // Poll in-flight rows with a self-scheduling timeout chain: immediate
+  // first tick, 3s cadence backing off to 10s, and a hard ceiling that ends
+  // in an explicit "status unknown — re-check" state rather than an
+  // unbounded spinner. Rows seen at 'parsed' get a few grace ticks in case
+  // knowledge-base indexing is enabled and about to take over.
   useEffect(() => {
-    if (inFlightIds.length === 0) return
+    if (pollSetKey === '') return
 
     let cancelled = false
-    const tick = async () => {
-      try {
-        const updates = await Promise.all(
-          inFlightIds.map(async (id) => {
-            try {
-              return await getCdmJobStatus(organizationId, id)
-            } catch {
-              return null
-            }
-          }),
-        )
-        if (cancelled) return
-        setDocuments((prev) =>
-          prev.map((doc) => {
-            const u = updates.find((x) => x && x.document_id === doc.id)
-            if (!u) return doc
-            return {
-              ...doc,
-              ingest_status: u.ingest_status,
-              ingest_error: u.ingest_error,
-              word_count: u.word_count,
-            }
-          }),
-        )
-      } catch {
-        /* swallow — toast on next manual refresh */
+    let timer: number | undefined
+    let ticks = 0
+
+    const currentPollIds = (): string[] => {
+      const ids: string[] = []
+      for (const d of documentsRef.current) {
+        if (IN_FLIGHT_STATUSES.has(d.ingest_status)) ids.push(d.id)
+        else if (d.ingest_status === 'parsed' && (graceRef.current.get(d.id) ?? 0) > 0) {
+          ids.push(d.id)
+        }
       }
+      return ids
     }
 
-    const handle = window.setInterval(tick, 3000)
+    const tick = async () => {
+      ticks += 1
+      const ids = currentPollIds()
+      if (ids.length === 0) return
+
+      const updates = await Promise.all(
+        ids.map(async (id) => {
+          try {
+            return await getCdmJobStatus(organizationId, id)
+          } catch {
+            return null
+          }
+        }),
+      )
+      if (cancelled) return
+
+      for (const u of updates) {
+        if (!u) continue
+        if (u.ingest_status === 'parsed') {
+          const g = graceRef.current.get(u.document_id)
+          graceRef.current.set(
+            u.document_id,
+            g === undefined ? PARSED_GRACE_TICKS : Math.max(0, g - 1),
+          )
+        } else {
+          graceRef.current.delete(u.document_id)
+        }
+      }
+
+      setDocuments((prev) => {
+        let changed = false
+        const next = prev.map((doc) => {
+          const u = updates.find((x) => x && x.document_id === doc.id)
+          if (!u) return doc
+          if (
+            u.ingest_status === doc.ingest_status &&
+            u.ingest_error === doc.ingest_error &&
+            u.word_count === doc.word_count
+          ) {
+            return doc
+          }
+          changed = true
+          return {
+            ...doc,
+            ingest_status: u.ingest_status,
+            ingest_error: u.ingest_error,
+            word_count: u.word_count,
+          }
+        })
+        return changed ? next : prev
+      })
+      schedule()
+    }
+
+    const schedule = () => {
+      if (cancelled) return
+      if (currentPollIds().length === 0) return
+      if (ticks >= MAX_POLL_TICKS) {
+        setPollExhausted(new Date())
+        return
+      }
+      const delay =
+        ticks === 0 ? 0 : ticks >= SLOW_AFTER_TICKS ? SLOW_POLL_INTERVAL_MS : POLL_INTERVAL_MS
+      timer = window.setTimeout(() => void tick(), delay)
+    }
+
+    setPollExhausted(null)
+    schedule()
     return () => {
       cancelled = true
-      window.clearInterval(handle)
+      if (timer !== undefined) window.clearTimeout(timer)
     }
-  }, [inFlightIds, organizationId])
+  }, [pollSetKey, pollEpoch, organizationId])
 
   const uploadOne = useCallback(
     async (file: File): Promise<boolean> => {
@@ -204,7 +361,8 @@ export default function CDMWorkspace({ organizationId }: CDMWorkspaceProps) {
             upload_user_id: null,
             kb_revision_at_ingest: null,
             created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
+            ingest_started_at: null,
+            is_stale: false,
           },
           ...prev,
         ])
@@ -268,6 +426,32 @@ export default function CDMWorkspace({ organizationId }: CDMWorkspaceProps) {
     [handleFiles],
   )
 
+  const handleRetry = useCallback(
+    async (doc: CDMDocument) => {
+      setRetryingId(doc.id)
+      try {
+        await reingestCdmDocuments(organizationId, [doc.id])
+        toast.success(`Re-processing ${doc.original_filename}`)
+        graceRef.current.delete(doc.id)
+        setDocuments((prev) =>
+          prev.map((d) =>
+            d.id === doc.id
+              ? { ...d, ingest_status: 'pending', ingest_error: null, is_stale: false }
+              : d,
+          ),
+        )
+        // Re-arm the poll with a fresh tick budget for the retried run.
+        setPollEpoch((e) => e + 1)
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Retry failed'
+        toast.error(message)
+      } finally {
+        setRetryingId(null)
+      }
+    },
+    [organizationId],
+  )
+
   const handleDelete = useCallback(
     async (doc: CDMDocument) => {
       const confirmed = window.confirm(
@@ -297,14 +481,27 @@ export default function CDMWorkspace({ organizationId }: CDMWorkspaceProps) {
     [documents, organizationId, refresh],
   )
 
+  const readyCount = documents.filter((d) => READY_STATUSES.has(d.ingest_status)).length
+
+  // One banner state at a time, in priority order: a live run beats a stale
+  // outcome, an unknown run beats a remembered success.
+  const runBarVariant = computeRun.running
+    ? 'is-info'
+    : computeRun.state === 'UNKNOWN'
+      ? 'is-warning'
+      : lastRunOutcome === 'failure'
+        ? 'is-error'
+        : lastRunOutcome === 'success'
+          ? 'is-success'
+          : ''
+
   return (
     <div className="cdm-workspace">
       <header className="cdm-workspace-header">
         <h1>Control Documents</h1>
         <p className="cdm-workspace-sub">
-          Upload policy and procedure documents. We index them into your
-          knowledge base so the platform can propose mappings against your
-          scoped controls.
+          Upload policy and procedure documents. We extract their text so the
+          platform can propose mappings against your scoped controls.
         </p>
       </header>
 
@@ -326,11 +523,105 @@ export default function CDMWorkspace({ organizationId }: CDMWorkspaceProps) {
           onClick={() => setActiveTab('review')}
         >
           Review queue
+          {proposedTotal ? (
+            <span className="cdm-tab-count">{proposedTotal}</span>
+          ) : null}
         </button>
       </div>
 
+      {/* The mapping run is the bridge between the two tabs: upload here,
+          review there. The bar lives outside the tab panels so a running
+          run stays visible wherever the user is. */}
+      <div className={`cdm-action-bar ${runBarVariant}`}>
+        <div className="cdm-action-bar-text">
+          {computeRun.running ? (
+            <>
+              <strong>Mapping run in progress</strong>
+              <span>
+                {computeRun.startedAt
+                  ? `Started ${formatElapsed(computeRun.startedAt, nowTick)} ago. `
+                  : ''}
+                New proposals will appear in the Review queue when it finishes.
+              </span>
+            </>
+          ) : computeRun.state === 'UNKNOWN' ? (
+            <>
+              <strong>Lost track of the last run</strong>
+              <span>
+                It may still be finishing in the background. Running again is
+                safe — existing proposals are kept.
+              </span>
+            </>
+          ) : lastRunOutcome === 'failure' ? (
+            <>
+              <strong>The last mapping run failed</strong>
+              <span>
+                No proposals were produced. Try again, or check the worker
+                logs if it keeps failing.
+              </span>
+            </>
+          ) : lastRunOutcome === 'success' ? (
+            <>
+              <strong>Mapping run complete</strong>
+              <span>
+                {proposedTotal
+                  ? `${proposedTotal} proposal${proposedTotal === 1 ? '' : 's'} waiting for review.`
+                  : 'No new proposals — your documents may already be fully mapped.'}
+              </span>
+            </>
+          ) : readyCount > 0 ? (
+            <>
+              <strong>
+                {readyCount} document{readyCount === 1 ? '' : 's'} ready to map
+              </strong>
+              <span>
+                Run mapping to propose links between your documents and
+                scoped controls
+                {proposedTotal
+                  ? `, or review the ${proposedTotal} pending proposal${proposedTotal === 1 ? '' : 's'}.`
+                  : '.'}
+              </span>
+            </>
+          ) : (
+            <>
+              <strong>No documents ready yet</strong>
+              <span>Upload a document above to get started.</span>
+            </>
+          )}
+        </div>
+        <div className="cdm-action-bar-actions">
+          {activeTab === 'documents' && proposedTotal && !computeRun.running ? (
+            <button
+              type="button"
+              className="btn btn-outline"
+              onClick={() => setActiveTab('review')}
+            >
+              Review proposals →
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="btn btn-primary cdm-run-mapping"
+            onClick={() => void computeRun.start()}
+            disabled={computeRun.busy || computeRun.running || readyCount === 0}
+          >
+            {computeRun.busy
+              ? 'Starting…'
+              : computeRun.running
+                ? 'Running…'
+                : lastRunOutcome || computeRun.state === 'UNKNOWN'
+                  ? 'Run mapping again'
+                  : 'Run mapping'}
+          </button>
+        </div>
+      </div>
+
       {activeTab === 'review' ? (
-        <CDMReviewQueue organizationId={organizationId} />
+        <CDMReviewQueue
+          organizationId={organizationId}
+          runRefreshKey={runRefreshKey}
+          onQueueMutated={() => void fetchProposedCount()}
+        />
       ) : (
         <>
       <section
@@ -386,14 +677,32 @@ export default function CDMWorkspace({ organizationId }: CDMWorkspaceProps) {
           </button>
         </div>
 
+        {pollExhausted ? (
+          <div className="cdm-poll-exhausted" role="status">
+            Status unknown — some documents are still processing. Last checked{' '}
+            {pollExhausted.toLocaleTimeString()}.{' '}
+            <button
+              type="button"
+              className="btn-text"
+              onClick={() => {
+                setPollExhausted(null)
+                setPollEpoch((e) => e + 1)
+              }}
+            >
+              Re-check
+            </button>
+          </div>
+        ) : null}
+
         {loading ? (
           <div className="cdm-loading">Loading documents…</div>
         ) : documents.length === 0 ? (
           <div className="cdm-empty">
             <p>No documents yet.</p>
             <p className="cdm-empty-hint">
-              Upload your first control document above — once it is indexed, the
-              platform will propose mappings against your scoped controls.
+              Upload your first control document above — once its text is
+              extracted, you can run a mapping pass against your scoped
+              controls from the Review queue.
             </p>
           </div>
         ) : (
@@ -425,11 +734,33 @@ export default function CDMWorkspace({ organizationId }: CDMWorkspaceProps) {
                       >
                         {statusLabel(doc.ingest_status)}
                       </span>
+                      {(() => {
+                        const activity = statusActivity(doc)
+                        if (!activity) return null
+                        return (
+                          <div
+                            className={`cdm-status-activity ${activity.warning ? 'cdm-status-activity-warning' : ''}`}
+                          >
+                            {activity.text}
+                          </div>
+                        )
+                      })()}
                     </td>
                     <td>{doc.word_count?.toLocaleString() ?? '—'}</td>
                     <td>{formatBytes(doc.size_bytes)}</td>
                     <td>{formatDate(doc.created_at)}</td>
                     <td>
+                      {doc.ingest_status === 'failed' || doc.is_stale ? (
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          disabled={retryingId === doc.id}
+                          onClick={() => void handleRetry(doc)}
+                          title="Run ingest again against the already-uploaded file"
+                        >
+                          {retryingId === doc.id ? 'Retrying…' : 'Retry'}
+                        </button>
+                      ) : null}{' '}
                       <button
                         type="button"
                         className="btn-secondary"

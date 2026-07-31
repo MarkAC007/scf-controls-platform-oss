@@ -108,6 +108,11 @@ celery_app.conf.update(
     task_reject_on_worker_lost=True,  # Requeue if worker dies
     task_time_limit=600,  # 10 minute hard limit
     task_soft_time_limit=540,  # 9 minute soft limit (raises exception)
+    # Without this, a running task reads as PENDING from AsyncResult — the
+    # status endpoints cannot tell "in progress" from "no such task". With
+    # acks_late a SIGKILLed worker can leave STARTED behind until
+    # result_expires purges it; that is the acceptable trade.
+    task_track_started=True,
 
     # Worker settings
     worker_prefetch_multiplier=1,  # One task at a time per worker

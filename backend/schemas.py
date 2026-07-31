@@ -3456,12 +3456,17 @@ class CDMDocumentBase(BaseModel):
     kb_revision: Optional[str] = Field(None, max_length=128)
     ingest_status: str = Field(..., min_length=1, max_length=20)
     ingest_error: Optional[str] = None
+    word_count: Optional[int] = None
+    ingest_started_at: Optional[datetime] = None
 
 
 class CDMDocumentResponse(CDMDocumentBase):
     id: UUID
     organization_id: UUID
     created_at: datetime
+    # Derived, not stored: an in-flight ingest whose started_at predates the
+    # Celery hard time limit — the worker is gone and a retry is warranted.
+    is_stale: bool = False
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -3469,6 +3474,17 @@ class CDMDocumentResponse(CDMDocumentBase):
 class CDMDocumentListResponse(BaseModel):
     documents: List[CDMDocumentResponse]
     total: int
+
+
+class CDMReingestRequest(BaseModel):
+    # Omitted or null means "everything retryable": failed, indexing_failed,
+    # and stale in-flight documents.
+    document_ids: Optional[List[UUID]] = None
+
+
+class CDMReingestResponse(BaseModel):
+    dispatched_document_ids: List[UUID]
+    skipped_document_ids: List[UUID]
 
 
 class CDMMappingResponse(BaseModel):

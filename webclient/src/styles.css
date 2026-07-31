@@ -899,7 +899,23 @@ select:focus, textarea:focus, input:focus {
   padding: 2px 8px;
   background: var(--border);
   border-radius: 4px;
-  color: #475569;
+  color: var(--muted);
+}
+
+/* The chip is a button now — click runs an on-demand version check. */
+button.footer-version {
+  border: none;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+
+button.footer-version:hover:not(:disabled) {
+  color: var(--text);
+}
+
+button.footer-version:disabled {
+  cursor: wait;
+  opacity: 0.7;
 }
 
 /* Footer "update available" badge — colour encodes urgency (green normal,
@@ -23760,7 +23776,7 @@ textarea.form-control{
 }
 
 .cdm-badge-error {
-  background: rgba(239, 68, 68, 0.12);
+  background: var(--error-bg);
   color: var(--destructive);
 }
 
@@ -23769,11 +23785,119 @@ textarea.form-control{
   color: var(--warning);
 }
 
+/* Neutral chip for queued rows — a 2-second healthy state must not wear
+   warning amber. */
+.cdm-badge-neutral {
+  background: var(--muted-bg);
+  color: var(--muted);
+}
+
+/* Machine-activity / advisory line under the readiness chip. */
+.cdm-status-activity {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.cdm-status-activity-warning {
+  color: var(--warning);
+}
+
+/* Shown when the document poll hits its hard ceiling — explicit unknown
+   state with a manual re-check, never an unbounded spinner. */
+.cdm-poll-exhausted {
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: var(--warning-bg);
+  color: var(--warning);
+  font-size: 13px;
+}
+
 /* ---- CDM tabs (Documents | Review queue) — slice 9 ---- */
 .cdm-tabs {
   display: flex;
   gap: 4px;
   border-bottom: 1px solid var(--border);
+}
+
+/* Pending-proposal count on the Review queue tab. */
+.cdm-tab-count {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--accent);
+  color: var(--card);
+}
+
+/* ---- Mapping action bar — sits under the tabs, visible on both ---- */
+.cdm-action-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin: 16px 0 0 0;
+  padding: 12px 16px;
+  border-radius: var(--card-radius, 10px);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+}
+
+.cdm-action-bar.is-info {
+  border-left-color: var(--accent);
+}
+
+.cdm-action-bar.is-success {
+  border-left-color: var(--success);
+  background: var(--success-bg);
+}
+
+.cdm-action-bar.is-warning {
+  border-left-color: var(--warning);
+  background: var(--warning-bg);
+}
+
+.cdm-action-bar.is-error {
+  border-left-color: var(--destructive);
+  background: var(--error-bg);
+}
+
+.cdm-action-bar-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 240px;
+  flex: 1;
+}
+
+.cdm-action-bar-text strong {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.cdm-action-bar-text span {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.cdm-action-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.cdm-run-mapping:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
 }
 
 .cdm-tab {
@@ -23939,8 +24063,8 @@ textarea.form-control{
   flex-wrap: wrap;
   padding: 10px 14px;
   margin: 8px 0 12px;
-  background: var(--surface-2, #f6f8fa);
-  border: 1px solid var(--border, #d0d7de);
+  background: var(--secondary);
+  border: 1px solid var(--border);
   border-radius: 6px;
 }
 
@@ -23960,12 +24084,41 @@ textarea.form-control{
 }
 
 .cdm-bulk-actions .cdm-dismiss-input {
-  min-width: 220px;
+  /* Basis must fit the placeholder: an inline-flex parent sizes itself from
+     the basis, so flex-grow never widens this input past it. */
+  flex: 1 1 240px;
+  min-width: 210px;
+  max-width: 320px;
+  text-overflow: ellipsis;
+}
+
+/* Accept/Dismiss/Clear travel as one unit — the reason input shrinks first,
+   so Clear can never wrap off on its own. */
+.cdm-bulk-buttons {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.cdm-bulk-actions .btn-primary,
+.cdm-bulk-actions .btn-secondary,
+.cdm-bulk-actions .btn-text,
+.cdm-row-actions .btn-primary,
+.cdm-row-actions .btn-secondary,
+.cdm-dismiss-inline .btn-secondary,
+.cdm-pagination-controls .btn-secondary {
+  flex: 0 0 auto;
 }
 
 .cdm-review-card-checkbox {
   margin-right: 8px;
   vertical-align: middle;
+  accent-color: var(--primary);
+}
+
+.cdm-bulk-select-all input[type='checkbox'] {
+  accent-color: var(--primary);
 }
 
 .cdm-review-card {
@@ -23999,7 +24152,7 @@ textarea.form-control{
   font-size: 12px;
   padding: 2px 8px;
   border-radius: 4px;
-  background: var(--code-bg, rgba(0, 0, 0, 0.06));
+  background: var(--muted-bg);
   color: var(--accent);
   font-weight: 600;
 }
@@ -24032,8 +24185,8 @@ textarea.form-control{
    need to compete for attention; a partial one is the reviewer's cue to read
    the excerpt against the source before accepting. */
 .cdm-match-badge-fuzzy {
-  border-color: var(--warning, #b7791f);
-  color: var(--warning, #b7791f);
+  border-color: var(--warning);
+  color: var(--warning);
 }
 
 .cdm-matched-objective {
@@ -24071,7 +24224,7 @@ textarea.form-control{
 
 .cdm-query-warning {
   font-size: 12px;
-  color: var(--warning, #b7791f);
+  color: var(--warning);
   margin: 4px 0 8px;
   line-height: 1.4;
 }
@@ -24176,7 +24329,7 @@ textarea.form-control{
 }
 
 .cdm-status-tab-active {
-  background: var(--surface-2, #f6f8fa);
+  background: var(--secondary);
   border-color: var(--accent);
   color: var(--accent);
 }
@@ -24186,7 +24339,7 @@ textarea.form-control{
 .cdm-review-card-resurrected {
   margin: 0;
   font-size: 12px;
-  color: var(--warning, #b7791f);
+  color: var(--warning);
 }
 
 .cdm-proposal-rationale {
@@ -24224,7 +24377,7 @@ textarea.form-control{
   gap: 6px;
   padding: 10px 12px;
   border-left: 2px solid var(--border);
-  background: var(--surface-2, #f6f8fa);
+  background: var(--surface-lowest);
   border-radius: 0 6px 6px 0;
   min-width: 0;
 }
@@ -24402,7 +24555,7 @@ textarea.form-control{
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
   color: var(--accent);
-  background: var(--code-bg, rgba(0, 0, 0, 0.04));
+  background: var(--surface-lowest);
   border-radius: 6px;
   white-space: pre-wrap;
   word-break: break-word;

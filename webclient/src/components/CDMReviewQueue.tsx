@@ -4,8 +4,6 @@ import {
   listCdmControlProposals,
   acceptCdmControlProposal,
   dismissCdmControlProposal,
-  triggerCdmComputeMappings,
-  getCdmComputeMappingsStatus,
   type CDMControlProposal,
   type CDMControlProposalStatus,
   type CDMMapping,
@@ -13,6 +11,14 @@ import {
 
 interface CDMReviewQueueProps {
   organizationId: string
+  /**
+   * Bumped by the parent when a mapping run settles — triggers a queue
+   * reload. The run itself (trigger, poll, banner) lives in CDMWorkspace's
+   * action bar so it is visible on both tabs.
+   */
+  runRefreshKey?: number
+  /** Notifies the parent that proposal counts changed (accept/dismiss). */
+  onQueueMutated?: () => void
 }
 
 const PAGE_SIZE = 25
@@ -199,7 +205,11 @@ function CitationDetail({
   )
 }
 
-export default function CDMReviewQueue({ organizationId }: CDMReviewQueueProps) {
+export default function CDMReviewQueue({
+  organizationId,
+  runRefreshKey = 0,
+  onQueueMutated,
+}: CDMReviewQueueProps) {
   const [statusFilter, setStatusFilter] = useState<CDMControlProposalStatus>('proposed')
   const [offset, setOffset] = useState(0)
   const [proposals, setProposals] = useState<CDMControlProposal[]>([])
@@ -208,16 +218,11 @@ export default function CDMReviewQueue({ organizationId }: CDMReviewQueueProps) 
   const [busyId, setBusyId] = useState<string | null>(null)
   const [dismissingId, setDismissingId] = useState<string | null>(null)
   const [dismissReason, setDismissReason] = useState('')
-  const [computeTaskId, setComputeTaskId] = useState<string | null>(null)
-  const [computeState, setComputeState] = useState<string | null>(null)
-  const [computeBusy, setComputeBusy] = useState(false)
   const [expandedProposalIds, setExpandedProposalIds] = useState<Record<string, boolean>>({})
   const [expandedExcerptIds, setExpandedExcerptIds] = useState<Record<string, boolean>>({})
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
   const [bulkBusy, setBulkBusy] = useState(false)
   const [bulkDismissReason, setBulkDismissReason] = useState('')
-  const refreshRef = useRef<() => Promise<void>>()
-
   const refresh = useCallback(async () => {
     setLoading(true)
     try {
@@ -238,11 +243,15 @@ export default function CDMReviewQueue({ organizationId }: CDMReviewQueueProps) 
 
   useEffect(() => {
     void refresh()
-  }, [refresh])
+  }, [refresh, runRefreshKey])
 
-  useEffect(() => {
-    refreshRef.current = refresh
-  }, [refresh])
+  // Reviewer actions change the proposal counts the parent surfaces (the
+  // tab badge and action bar), so each one both reloads this list and
+  // notifies upward.
+  const refreshAndNotify = useCallback(async () => {
+    await refresh()
+    onQueueMutated?.()
+  }, [refresh, onQueueMutated])
 
   // Reset to first page when the filter changes.
   useEffect(() => {
@@ -255,71 +264,6 @@ export default function CDMReviewQueue({ organizationId }: CDMReviewQueueProps) 
     setSelectedIds(new Set())
   }, [statusFilter, offset, organizationId])
 
-  const handleRunMapping = useCallback(async () => {
-    setComputeBusy(true)
-    try {
-      const resp = await triggerCdmComputeMappings(organizationId)
-      setComputeTaskId(resp.task_id)
-      setComputeState('PENDING')
-      toast.success(
-        resp.idempotent_existing
-          ? 'A mapping run is already in progress — tracking it now.'
-          : 'Mapping run started.',
-      )
-    } catch (err) {
-      const raw = err instanceof Error ? err.message : 'Failed to start mapping run'
-      if (raw.includes('proposed-mappings cap reached')) {
-        toast.error(
-          `${raw}. Accept or dismiss enough mappings in the queue to drop below the cap, then try again.`,
-          { duration: 8000 },
-        )
-      } else if (raw.includes('compute lock contention')) {
-        toast.error(
-          'A previous mapping run is still finishing. Wait a minute or two and try again.',
-          { duration: 6000 },
-        )
-      } else {
-        toast.error(raw)
-      }
-    } finally {
-      setComputeBusy(false)
-    }
-  }, [organizationId])
-
-  // Poll the mapping task while it is in flight. Terminal states (SUCCESS,
-  // FAILURE, REVOKED) stop the poll loop and trigger a queue refresh.
-  useEffect(() => {
-    if (!computeTaskId) return
-    if (computeState === 'SUCCESS' || computeState === 'FAILURE' || computeState === 'REVOKED') {
-      return
-    }
-
-    let cancelled = false
-    const tick = async () => {
-      try {
-        const resp = await getCdmComputeMappingsStatus(organizationId, computeTaskId)
-        if (cancelled) return
-        setComputeState(resp.state)
-        if (resp.ready) {
-          if (resp.successful) {
-            toast.success('Mapping run complete — reloading queue.')
-            await refreshRef.current?.()
-          } else {
-            toast.error('Mapping run failed — see worker logs.')
-          }
-        }
-      } catch {
-        /* swallow — next tick retries */
-      }
-    }
-    void tick()
-    const handle = window.setInterval(tick, 3000)
-    return () => {
-      cancelled = true
-      window.clearInterval(handle)
-    }
-  }, [computeTaskId, computeState, organizationId])
-
   const handleAccept = useCallback(
     async (proposal: CDMControlProposal) => {
       setBusyId(proposal.id)
@@ -330,13 +274,13 @@ export default function CDMReviewQueue({ organizationId }: CDMReviewQueueProps) 
             resp.citations_accepted === 1 ? '' : 's'
           }`,
         )
-        await refresh()
+        await refreshAndNotify()
       } catch (err) {
         // A 409 means someone (or a mapping run) already moved this proposal
         // out of 'proposed'. The reviewer's click was fine; their page is old.
         if (httpStatus(err) === 409) {
           toast('That proposal had already been actioned — queue reloaded.')
-          await refresh()
+          await refreshAndNotify()
           return
         }
         toast.error(err instanceof Error ? err.message : 'Accept failed')
@@ -355,13 +299,13 @@ export default function CDMReviewQueue({ organizationId }: CDMReviewQueueProps) 
         toast.success(`Dismissed ${proposal.scf_id ?? 'control'}`)
         setDismissingId(null)
         setDismissReason('')
-        await refresh()
+        await refreshAndNotify()
       } catch (err) {
         if (httpStatus(err) === 409) {
           toast('That proposal had already been actioned — queue reloaded.')
           setDismissingId(null)
           setDismissReason('')
-          await refresh()
+          await refreshAndNotify()
           return
         }
         toast.error(err instanceof Error ? err.message : 'Dismiss failed')
@@ -440,7 +384,7 @@ export default function CDMReviewQueue({ organizationId }: CDMReviewQueueProps) 
         }
 
         setSelectedIds(new Set())
-        await refresh()
+        await refreshAndNotify()
       } finally {
         setBulkBusy(false)
       }
@@ -481,21 +425,6 @@ export default function CDMReviewQueue({ organizationId }: CDMReviewQueueProps) 
             control; dismiss the false positives.
           </p>
         </div>
-        <div className="cdm-review-filters">
-          <button
-            type="button"
-            className="btn-primary"
-            disabled={computeBusy || (computeTaskId !== null && computeState !== 'SUCCESS' && computeState !== 'FAILURE' && computeState !== 'REVOKED')}
-            onClick={() => void handleRunMapping()}
-            title="Re-run the mapper across your indexed documents and scoped controls"
-          >
-            {computeBusy
-              ? 'Starting…'
-              : computeTaskId && computeState && computeState !== 'SUCCESS' && computeState !== 'FAILURE' && computeState !== 'REVOKED'
-                ? `Running… (${computeState})`
-                : 'Run mapping'}
-          </button>
-        </div>
       </div>
 
       <div className="cdm-status-tabs" role="tablist" aria-label="Proposal status">
@@ -512,15 +441,6 @@ export default function CDMReviewQueue({ organizationId }: CDMReviewQueueProps) 
           </button>
         ))}
       </div>
-
-      {computeTaskId ? (
-        <div className="cdm-review-task-banner">
-          <span className="cdm-mono">Task {computeTaskId.slice(0, 8)}…</span>
-          <span> · state: <strong>{computeState ?? '—'}</strong></span>
-          {computeState === 'SUCCESS' ? <span> · queue refreshed.</span> : null}
-          {computeState === 'FAILURE' ? <span> · check worker logs.</span> : null}
-        </div>
-      ) : null}
 
       {statusFilter === 'proposed' && visibleProposedIds.length > 0 ? (
         <div className="cdm-bulk-bar">
@@ -542,36 +462,39 @@ export default function CDMReviewQueue({ organizationId }: CDMReviewQueueProps) 
               <span className="cdm-row-meta">{selectedIds.size} selected</span>
               <input
                 type="text"
-                placeholder="Dismiss reason (optional, applied to all)"
+                placeholder="Dismiss reason (optional)"
+                title="Applied to every dismissed proposal in this bulk action"
                 value={bulkDismissReason}
                 onChange={(e) => setBulkDismissReason(e.target.value)}
                 className="cdm-dismiss-input"
                 disabled={bulkBusy}
               />
-              <button
-                type="button"
-                className="btn-primary"
-                disabled={bulkBusy}
-                onClick={() => void handleBulkAccept()}
-              >
-                {bulkBusy ? '…' : `Accept ${selectedIds.size}`}
-              </button>
-              <button
-                type="button"
-                className="btn-secondary"
-                disabled={bulkBusy}
-                onClick={() => void handleBulkDismiss()}
-              >
-                {bulkBusy ? '…' : `Dismiss ${selectedIds.size}`}
-              </button>
-              <button
-                type="button"
-                className="btn-text"
-                disabled={bulkBusy}
-                onClick={() => setSelectedIds(new Set())}
-              >
-                Clear
-              </button>
+              <span className="cdm-bulk-buttons">
+                <button
+                  type="button"
+                  className="btn-primary"
+                  disabled={bulkBusy}
+                  onClick={() => void handleBulkAccept()}
+                >
+                  {bulkBusy ? '…' : `Accept ${selectedIds.size}`}
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  disabled={bulkBusy}
+                  onClick={() => void handleBulkDismiss()}
+                >
+                  {bulkBusy ? '…' : `Dismiss ${selectedIds.size}`}
+                </button>
+                <button
+                  type="button"
+                  className="btn-text"
+                  disabled={bulkBusy}
+                  onClick={() => setSelectedIds(new Set())}
+                >
+                  Clear
+                </button>
+              </span>
             </div>
           ) : null}
         </div>
