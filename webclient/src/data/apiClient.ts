@@ -3180,7 +3180,10 @@ export interface CDMDocument {
   upload_user_id: string | null
   kb_revision_at_ingest: string | null
   created_at: string
-  updated_at: string
+  /** Set when the current ingest attempt went in-flight; null once reset. */
+  ingest_started_at: string | null
+  /** Derived by the API: in-flight but the worker is gone — retry warranted. */
+  is_stale: boolean
 }
 
 export interface CDMDocumentListResponse {
@@ -3298,6 +3301,29 @@ export async function deleteCdmDocument(
     }
     throw new Error(errorMessage)
   }
+}
+
+export interface CDMReingestResponse {
+  dispatched_document_ids: string[]
+  skipped_document_ids: string[]
+}
+
+/**
+ * Re-dispatch ingest for failed or stalled documents. Omit `documentIds` to
+ * retry everything retryable. Healthy or actively in-flight documents are
+ * skipped server-side, so retry-all is always safe.
+ */
+export async function reingestCdmDocuments(
+  orgId: string,
+  documentIds?: string[],
+): Promise<CDMReingestResponse> {
+  return apiFetch<CDMReingestResponse>(
+    `/organizations/${orgId}/cdm/reingest`,
+    {
+      method: 'POST',
+      body: JSON.stringify(documentIds ? { document_ids: documentIds } : {}),
+    },
+  )
 }
 
 export type CDMMappingStatus = 'proposed' | 'accepted' | 'dismissed' | 'stale'

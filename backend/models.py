@@ -2307,6 +2307,10 @@ class CDMDocument(Base):
     kb_revision_at_ingest = Column(String(64), nullable=True)
     ingest_status = Column(String(20), default="pending", server_default="pending", nullable=False)
     ingest_error = Column(Text, nullable=True)
+    # When the current ingest attempt entered an in-flight state ('parsing').
+    # Lets the API distinguish a live run from one whose worker died: an
+    # in-flight row older than the Celery hard time limit is reported stale.
+    ingest_started_at = Column(DateTime(timezone=True), nullable=True)
     # CDM v2 (#709): SHA-256 of the extracted text the chunk set was built from.
     # Offsets are indices into that text, so a change in extractor version or
     # settings silently invalidates every stored citation. Persisting the hash

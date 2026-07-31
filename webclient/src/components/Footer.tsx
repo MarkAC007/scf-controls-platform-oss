@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
+import { toast } from 'react-hot-toast'
 import { apiClient, type VersionInfo, type VersionUpdateInfo } from '../data/apiClient'
 
 // Documentation/Book SVG icon
@@ -29,15 +30,56 @@ export default function Footer() {
   // coarse responses omit it, so the badge simply never appears when logged out.
   // Any fetch failure degrades silently to no badge.
   const [update, setUpdate] = useState<VersionUpdateInfo | null>(null)
+  const [platformVersion, setPlatformVersion] = useState<string | null>(null)
+  const [checking, setChecking] = useState(false)
 
   useEffect(() => {
     let active = true
     apiClient
       .get<VersionInfo>('/version')
-      .then(data => { if (active) setUpdate(data?.update ?? null) })
+      .then(data => {
+        if (!active) return
+        setUpdate(data?.update ?? null)
+        setPlatformVersion(data?.platform?.version ?? null)
+      })
       .catch(() => { if (active) setUpdate(null) })
     return () => { active = false }
   }, [])
+
+  const displayVersion = platformVersion || appVersion
+
+  // On-demand version check: re-reads /version (which serves the daily
+  // update-check state) and says the answer out loud instead of relying on
+  // the user noticing the badge.
+  const checkVersion = useCallback(async () => {
+    if (checking) return
+    setChecking(true)
+    try {
+      const data = await apiClient.get<VersionInfo>('/version')
+      const upd = data?.update ?? null
+      setUpdate(upd)
+      setPlatformVersion(data?.platform?.version ?? null)
+      const current = data?.platform?.version || appVersion
+      if (upd?.update_available) {
+        toast(
+          upd.skip_blocked
+            ? `Update available, but upgrade to v${upd.min_upgradable_version} first.`
+            : `Update available: v${upd.latest_version} (you are on v${current}).`,
+          { icon: '⬆️', duration: 6000 },
+        )
+      } else if (upd && upd.check_enabled !== false && upd.update_available === false) {
+        toast.success(`You're up to date — v${current}.`)
+      } else if (upd && upd.check_enabled === false) {
+        toast(`Running v${current}. Update checking is disabled on this instance.`)
+      } else {
+        toast(`Running v${current}. No update information available from this server.`)
+      }
+    } catch {
+      toast.error('Version check failed — could not reach the server.')
+    } finally {
+      setChecking(false)
+    }
+  }, [checking])
 
   const showBadge = update?.update_available === true
   const amber = Boolean(update?.breaking || update?.skip_blocked)
@@ -45,7 +87,16 @@ export default function Footer() {
   return (
     <footer className="app-footer">
       <div className="footer-left">
-        <span className="footer-version">v{appVersion}</span>
+        <button
+          type="button"
+          className="footer-version"
+          onClick={() => void checkVersion()}
+          disabled={checking}
+          aria-busy={checking}
+          title="Check for updates"
+        >
+          {checking ? 'Checking…' : `v${displayVersion}`}
+        </button>
         {showBadge && (
           <a
             className={`footer-update-badge ${amber ? 'footer-update-badge--breaking' : 'footer-update-badge--available'}`}

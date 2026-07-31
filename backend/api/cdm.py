@@ -33,6 +33,8 @@ from schemas import (
     CDMMappingReviewRequest,
     CDMQueryRequest,
     CDMQueryResponse,
+    CDMReingestRequest,
+    CDMReingestResponse,
     CDMUploadResponse,
 )
 from services import cdm_consolidation, cdm_mapping, cdm_retrieval, cdm_storage
@@ -49,6 +51,25 @@ from tasks_cdm import CDMQueryTimeoutError, CDMQueryUpstreamError, ingest_cdm_do
 
 _CDM_COMPUTE_LOCK_KEY_PREFIX = "cdm:compute_lock:"
 _CDM_COMPUTE_LOCK_TTL_SECONDS = 900
+
+# An in-flight ingest older than this is dead: the Celery hard time limit is
+# 600s (celery_app.task_time_limit), plus grace for queue wait and clock skew.
+_CDM_INGEST_STALE_AFTER_SECONDS = 700
+
+_CDM_IN_FLIGHT_STATUSES = ("pending", "parsing", "indexing")
+_CDM_RETRYABLE_STATUSES = ("failed", "indexing_failed")
+
+
+def _ingest_is_stale(document: CDMDocument, now: datetime) -> bool:
+    """True when the row claims to be in flight but its worker is gone."""
+    if document.ingest_status not in ("parsing", "indexing"):
+        return False
+    started = document.ingest_started_at
+    if started is None:
+        return False
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=timezone.utc)
+    return (now - started).total_seconds() > _CDM_INGEST_STALE_AFTER_SECONDS
 
 
 logger = logging.getLogger(__name__)
@@ -434,10 +455,14 @@ async def list_cdm_documents(
     result = await db.execute(query)
     documents = result.scalars().all()
 
-    return CDMDocumentListResponse(
-        documents=[CDMDocumentResponse.model_validate(document) for document in documents],
-        total=total,
-    )
+    now = datetime.now(timezone.utc)
+    responses = []
+    for document in documents:
+        response = CDMDocumentResponse.model_validate(document)
+        response.is_stale = _ingest_is_stale(document, now)
+        responses.append(response)
+
+    return CDMDocumentListResponse(documents=responses, total=total)
 
 
 @router.delete(
@@ -1501,16 +1526,94 @@ async def review_cdm_mapping(
     }
 
 
-@router.post("/organizations/{org_id}/cdm/reingest")
+@router.post(
+    "/organizations/{org_id}/cdm/reingest",
+    response_model=CDMReingestResponse,
+)
 async def reingest_cdm_documents(
     org_id: UUID,
+    request: CDMReingestRequest = Body(default=CDMReingestRequest()),
     _: None = Depends(require_tenant_cdm_enabled),
     membership: OrgMembership = Depends(require_org_editor),
     db: AsyncSession = Depends(get_db),
-) -> None:
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Reingest endpoint pending — LightRAG revision workflow in next session",
+) -> CDMReingestResponse:
+    """Re-dispatch ingest for failed or stalled documents.
+
+    Resets the existing row and re-runs ``cdm.ingest`` against the payload
+    already in storage — no re-upload, no second row, so the per-checksum
+    supersede invariant is untouched. Documents that are healthy or actively
+    in flight are skipped, not errored: retry-all must be safe to click.
+    """
+    query = select(CDMDocument).where(CDMDocument.organization_id == org_id)
+    if request.document_ids:
+        query = query.where(CDMDocument.id.in_(request.document_ids))
+    result = await db.execute(query)
+    documents = result.scalars().all()
+
+    found_ids = {document.id for document in documents}
+    missing = [
+        document_id
+        for document_id in (request.document_ids or [])
+        if document_id not in found_ids
+    ]
+    if missing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"CDM document not found: {missing[0]}",
+        )
+
+    now = datetime.now(timezone.utc)
+    actor_user_id = UUID(membership.user.db_id) if membership.user.db_id else None
+    to_dispatch: list[CDMDocument] = []
+    skipped: list[UUID] = []
+
+    for document in documents:
+        retryable = document.ingest_status in _CDM_RETRYABLE_STATUSES or _ingest_is_stale(
+            document, now
+        )
+        if not retryable:
+            skipped.append(document.id)
+            continue
+        db.add(
+            AuditLog(
+                organization_id=org_id,
+                entity_type="cdm_document",
+                entity_id=document.id,
+                action="reingest",
+                field_name="ingest_status",
+                old_value=document.ingest_status,
+                new_value=json.dumps(
+                    {
+                        "reingested_at": now.isoformat(),
+                        "previous_error": (document.ingest_error or "")[:500] or None,
+                    }
+                ),
+                changed_by_user_id=actor_user_id,
+            )
+        )
+        document.ingest_status = "pending"
+        document.ingest_error = None
+        document.ingest_started_at = None
+        to_dispatch.append(document)
+
+    await db.commit()
+
+    dispatched: list[UUID] = []
+    for document in to_dispatch:
+        try:
+            ingest_cdm_document.delay(str(document.id))
+            dispatched.append(document.id)
+        except Exception as exc:
+            document.ingest_status = "failed"
+            document.ingest_error = f"Reingest enqueue failed: {str(exc)[:950]}"
+            skipped.append(document.id)
+            logger.exception("CDM reingest enqueue failed for %s", document.id)
+    if len(dispatched) != len(to_dispatch):
+        await db.commit()
+
+    return CDMReingestResponse(
+        dispatched_document_ids=dispatched,
+        skipped_document_ids=skipped,
     )
 
 
@@ -1698,7 +1801,9 @@ async def _query_via_postgres_fts(
             .select_from(CDMDocument)
             .where(
                 CDMDocument.organization_id == org_id,
-                CDMDocument.ingest_status == "parsed",
+                # 'indexed' is the LightRAG-on terminal state; both mean
+                # "text extracted and searchable".
+                CDMDocument.ingest_status.in_(("parsed", "indexed")),
             )
         )
         no_results_reason = (

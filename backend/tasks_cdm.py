@@ -333,6 +333,7 @@ def ingest_cdm_document(self, document_id: str) -> dict:
 
         document.ingest_status = "parsing"
         document.ingest_error = None
+        document.ingest_started_at = datetime.now(timezone.utc)
         session.commit()
 
         object_key = cdm_storage.build_cdm_object_key(
@@ -804,7 +805,9 @@ def backfill_chunks(self, org_id_str: str) -> dict[str, Any]:
             session.execute(
                 select(CDMDocument).where(
                     CDMDocument.organization_id == org_id,
-                    CDMDocument.ingest_status == "parsed",
+                    # 'indexed' documents carry the same durable extracted
+                    # text as 'parsed' ones — both are chunkable.
+                    CDMDocument.ingest_status.in_(("parsed", "indexed")),
                 )
             )
             .scalars()

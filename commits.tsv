@@ -1,10 +1,5 @@
-3a6fa94645330e6d519588d6f8017603a4cf2ded	fix(semgrep): withhold suppressed results from the code-scanning upload too (#729)
-862ba71a3d8746e486fcccb1752ecb73a7d2bedc	fix(ci): skip docs and RELEASE_META version checks on the OSS mirror (#726)
-60c0ad0fce522c22142d12e615502cd44d4f668b	fix(semgrep): honour SARIF in-source suppressions in the added-lines gate (#727)
-827f33956396b61f000a9d25990e6f22b313e98f	feat(cdm): control-level proposal consolidation with corpus-context recompute pass (#725)
-80f9709f525c35aa0972b686fd0b8b6bc937d696	fix(cdm): exclude unclassified documents from proposal generation (#719)
-9f3a45d085513590724459b5b3d2f3f51e429811	fix(release-oss): build the public commit on top of main, not as an orphan (#723)
-61aee1031644b44d4c27e05b59a9e067b3510e17	ci: single-action release orchestrator; unblock OSS PR #39; retire the racing release paths (#721)
-2b30865639dd361ab98090683073c38aa633182c	feat(cdm): graceful duplicate handling on document upload (#717)
-cd635979eeed7beb1a684c72401026331c41fefb	ci: gate OSS Release to the public repo (#715)
-75a1e90cf61fc3c87cb31a72dad100a9c3c000fe	Update .env.example
+294e1ebf83daa7516d49cefbf8f3d918663a9cab	Merge pull request #732 from MarkAC007/fix/backup-restore-tenant-scoped
+f91938fadd37ea01c4365a1b1319c211dbc0c411	Merge branch 'main' into fix/backup-restore-tenant-scoped
+d60a44b22173cf1cc05b8ca15312aa46362bed18	fix(cdm): truthful document status, bounded polling, and reingest (#728)
+ad24195a809024aa41cbec1836a6ec5de56aed0f	fix(backup): build FK-existence and timeout SQL through the query builder
+12a9b326f29f4fbc20a2a75c941863acf5ad7cec	fix(backup): make database backup/restore work and scope it per tenant

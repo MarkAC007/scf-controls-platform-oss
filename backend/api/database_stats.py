@@ -2,20 +2,26 @@
 Database Statistics API endpoint.
 Provides health check, statistics, backup, restore, and version info for the database.
 """
+import base64
 import logging
 import json
 import os
 import subprocess
-from datetime import datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, and_, delete
-from typing import Dict, Any, List, Optional
+from sqlalchemy import (
+    Date, DateTime, LargeBinary, Uuid,
+    and_, delete, func, select, text, update,
+)
+from sqlalchemy.dialects.postgresql import UUID as PGUUID, insert as pg_insert
+from typing import Any, Dict, Iterator, List, Optional, Sequence, Set, Tuple
 from uuid import UUID
 
 from database import get_db
 from models import (
+    Base,
     Organization, ScopedControl, EvidenceTracking,
     User as UserModel, OrganizationMember, Assignment, Comment,
     CommentHistory, EvidenceCollectionTask, Notification,
@@ -37,8 +43,51 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["database"])
 
 
+# =============================================================================
+# Backup / restore tuning
+# =============================================================================
+
+# database.py configures no statement_timeout and no lock_timeout on the engine,
+# so a large restore can hold row locks for as long as it likes and wedge every
+# other writer. The restore sets both for the duration of its own transaction.
+RESTORE_STATEMENT_TIMEOUT_MS = 300_000
+RESTORE_LOCK_TIMEOUT_MS = 15_000
+
+# asyncpg rejects a statement carrying more than 32767 bind parameters, so both
+# the `IN (...)` reads and the multi-VALUES upserts stay well under that.
+ID_CHUNK_SIZE = 5_000
+UPSERT_CHUNK_SIZE = 500
+
+# Columns a restore must never take from the payload. is_platform_admin would
+# make a hand-edited backup a privilege-escalation vector; oidc_issuer is owned
+# by the first-login relink flow in auth.py, and overwriting it breaks the
+# identity lookup that authenticates every subsequent request.
+USER_PROTECTED_COLUMNS = frozenset({"is_platform_admin", "oidc_issuer"})
+
+# Self-referential foreign key resolved in a second pass once every comment in
+# the payload exists, so it is exempt from the first-pass reference guard.
+DEFERRED_FK_COLUMNS = frozenset({("comments", "parent_comment_id")})
+
+# Tables restored, in parent-before-child order. The delete-absent sweep walks
+# this list in reverse. Neither `users` nor `organizations` appears: users are
+# cross-organisation identity rather than tenant data, and deleting an
+# organisation cascades across ~30 tables.
+RESTORE_DELETE_ORDER = (
+    "comment_history",
+    "notifications",
+    "evidence_collection_tasks",
+    "comments",
+    "assignments",
+    "system_evidence_capabilities",
+    "evidence_tracking",
+    "systems",
+    "scoped_controls",
+    "organization_members",
+)
+
+
 def serialize_row(row) -> Dict[str, Any]:
-    """Serialize a SQLAlchemy model instance to a dictionary."""
+    """Serialize a SQLAlchemy model instance to a JSON-safe dictionary."""
     result = {}
     for column in row.__table__.columns:
         value = getattr(row, column.name)
@@ -46,6 +95,13 @@ def serialize_row(row) -> Dict[str, Any]:
             result[column.name] = None
         elif isinstance(value, UUID):
             result[column.name] = str(value)
+        elif isinstance(value, (bytes, bytearray, memoryview)):
+            # Binary columns (Organization.logo_data) are not JSON encodable:
+            # FastAPI's encoder tries to utf-8 decode bytes and raises on any
+            # real image, which made the whole backup 500 for an organisation
+            # that had uploaded a logo. Base64 is additive — a NULL logo still
+            # serialises as null, so v1.1 files written before this stay valid.
+            result[column.name] = base64.b64encode(bytes(value)).decode("ascii")
         elif isinstance(value, datetime):
             result[column.name] = value.isoformat()
         elif hasattr(value, 'isoformat'):  # date objects
@@ -53,6 +109,415 @@ def serialize_row(row) -> Dict[str, Any]:
         else:
             result[column.name] = value
     return result
+
+
+def chunked(values: Sequence[Any], size: int) -> Iterator[List[Any]]:
+    """Yield successive fixed-size slices of ``values``."""
+    for start in range(0, len(values), size):
+        yield list(values[start:start + size])
+
+
+def coerce_column_value(column, value: Any) -> Any:
+    """
+    Coerce one JSON-decoded backup value to what its column's type expects.
+
+    Driven by the column's declared type rather than by a hand-written mapping,
+    so a column added to a model is carried by the next restore automatically.
+    """
+    if value is None:
+        return None
+
+    column_type = column.type
+
+    if isinstance(column_type, (PGUUID, Uuid)):
+        return UUID(value) if isinstance(value, str) else value
+
+    if isinstance(column_type, DateTime):
+        parsed = value if isinstance(value, datetime) else datetime.fromisoformat(
+            str(value).replace("Z", "+00:00")
+        )
+        # These are `timestamp without time zone` columns and asyncpg refuses an
+        # aware datetime for them, so a Z-suffixed or offset-bearing value is
+        # normalised to naive UTC rather than failing mid-restore.
+        if not column_type.timezone and parsed.tzinfo is not None:
+            parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+        return parsed
+
+    if isinstance(column_type, Date):
+        if isinstance(value, datetime):
+            return value.date()
+        if isinstance(value, date):
+            return value
+        return date.fromisoformat(str(value))
+
+    if isinstance(column_type, LargeBinary):
+        return base64.b64decode(value) if isinstance(value, str) else value
+
+    return value
+
+
+def hydrate_row(
+    model,
+    row: Dict[str, Any],
+    exclude: frozenset = frozenset(),
+) -> Dict[str, Any]:
+    """
+    Map a serialized backup row onto every real column the model declares.
+
+    Replaces the hand-written constructors this endpoint used to carry, which
+    named a subset of each model's columns and so silently discarded roughly
+    fifteen columns on every restore (ScopedControl.control_weighting,
+    EvidenceTracking.maturity_level, Organization.settings, and the rest).
+
+    A key absent from the row is left out of the insert entirely rather than
+    written as NULL, so columns carrying a server_default keep it.
+    """
+    values: Dict[str, Any] = {}
+    for column in model.__table__.columns:
+        if column.name in exclude or column.name not in row:
+            continue
+        values[column.name] = coerce_column_value(column, row[column.name])
+    return values
+
+
+def foreign_key_targets(model) -> List[Tuple[Any, str, str]]:
+    """
+    Return ``(column, target_table, target_column)`` for each foreign key.
+
+    Reads ``fk.target_fullname`` rather than ``fk.column``: the latter resolves
+    the target Table and raises NoReferencedTableError for tables whose model is
+    not imported in this module (systems.catalog_template_id → the catalog
+    tables), which would break restore for every model that has one.
+    """
+    targets: List[Tuple[Any, str, str]] = []
+    for column in model.__table__.columns:
+        for foreign_key in column.foreign_keys:
+            table_name, _, column_name = foreign_key.target_fullname.rpartition(".")
+            targets.append((column, table_name, column_name))
+    return targets
+
+
+async def fetch_existing_ids(
+    db: AsyncSession,
+    table_name: str,
+    column_name: str,
+    values,
+) -> Set[Any]:
+    """Return the subset of ``values`` that currently exist in the target table."""
+    values = list(values)
+    if not values:
+        return set()
+
+    # Resolved through the mapper metadata rather than by interpolating the
+    # identifiers into a SQL string. ``foreign_key_targets`` cannot use
+    # ``fk.column`` because that raises NoReferencedTableError for targets whose
+    # model is not imported in this module, but ``Base.metadata.tables`` carries
+    # every mapped table including those (verified: all 18 distinct FK targets
+    # resolve, catalog tables included). Going through Core also means
+    # SQLAlchemy quotes the identifiers instead of this function trusting them.
+    table = Base.metadata.tables.get(table_name)
+    if table is None or column_name not in table.c:
+        raise ValueError(
+            f"Refusing to query unknown foreign key target {table_name}.{column_name}"
+        )
+    target_column = table.c[column_name]
+
+    return set(await fetch_scalars_in(db, target_column, target_column, values))
+
+
+async def fetch_scalars_in(db: AsyncSession, selected_column, filter_column, values) -> List[Any]:
+    """``SELECT selected_column WHERE filter_column IN values``, chunked."""
+    values = list(values)
+    if not values:
+        return []
+    found: List[Any] = []
+    for chunk in chunked(values, ID_CHUNK_SIZE):
+        result = await db.execute(select(selected_column).where(filter_column.in_(chunk)))
+        found.extend(row[0] for row in result.fetchall())
+    return found
+
+
+async def fetch_rows_in(db: AsyncSession, model, filter_column, values) -> List[Any]:
+    """``SELECT model WHERE filter_column IN values``, chunked."""
+    values = list(values)
+    if not values:
+        return []
+    rows: List[Any] = []
+    for chunk in chunked(values, ID_CHUNK_SIZE):
+        result = await db.execute(select(model).where(filter_column.in_(chunk)))
+        rows.extend(result.scalars().all())
+    return rows
+
+
+async def resolve_dangling_references(
+    db: AsyncSession,
+    model,
+    values_list: List[Dict[str, Any]],
+) -> Tuple[List[Dict[str, Any]], int, int]:
+    """
+    Null or drop references whose target row does not exist.
+
+    Backups written before the user-union fix export zero users while their
+    rows still carry owner_user_id and assigned_user_id values, so restoring one
+    raises a foreign key violation that fails the entire request. A nullable
+    reference is nulled — exactly what the ON DELETE SET NULL every one of these
+    columns already declares would do — and a row whose NOT NULL parent is
+    missing is dropped. Both are counted and returned to the caller so the
+    response reports the degradation instead of hiding it.
+
+    Parents restored earlier in the same transaction are visible here because
+    the upserts run as Core statements, not pending ORM state.
+
+    Returns ``(kept_values, nulled_count, dropped_count)``.
+    """
+    if not values_list:
+        return values_list, 0, 0
+
+    checked = [
+        (column, target_table, target_column)
+        for column, target_table, target_column in foreign_key_targets(model)
+        if (model.__tablename__, column.name) not in DEFERRED_FK_COLUMNS
+    ]
+    if not checked:
+        return values_list, 0, 0
+
+    resolvable: Dict[str, Set[Any]] = {}
+    for column, target_table, target_column in checked:
+        referenced = {
+            values[column.name]
+            for values in values_list
+            if values.get(column.name) is not None
+        }
+        resolvable[column.name] = await fetch_existing_ids(
+            db, target_table, target_column, referenced
+        )
+
+    kept: List[Dict[str, Any]] = []
+    nulled = 0
+    dropped = 0
+    for values in values_list:
+        drop_row = False
+        for column, _, _ in checked:
+            value = values.get(column.name)
+            if value is None or value in resolvable[column.name]:
+                continue
+            if column.nullable:
+                values[column.name] = None
+                nulled += 1
+            else:
+                drop_row = True
+                break
+        if drop_row:
+            dropped += 1
+        else:
+            kept.append(values)
+
+    if nulled or dropped:
+        logger.warning(
+            "Restore of %s: nulled %d unresolvable optional reference(s), "
+            "dropped %d row(s) whose required parent is missing",
+            model.__tablename__, nulled, dropped,
+        )
+    return kept, nulled, dropped
+
+
+def group_by_key_signature(values_list: List[Dict[str, Any]]) -> List[List[Dict[str, Any]]]:
+    """
+    Group rows that name exactly the same columns.
+
+    A multi-VALUES INSERT needs one column list, so rows are grouped instead of
+    being padded with NULLs — padding would overwrite a server_default for any
+    column an older backup omits.
+    """
+    groups: Dict[Tuple[str, ...], List[Dict[str, Any]]] = {}
+    for values in values_list:
+        groups.setdefault(tuple(sorted(values)), []).append(values)
+    return list(groups.values())
+
+
+async def upsert_rows(
+    db: AsyncSession,
+    model,
+    values_list: List[Dict[str, Any]],
+    *,
+    insert_only: bool = False,
+) -> int:
+    """
+    Insert rows, updating on primary key conflict. Returns the row count the
+    database reports, never the length of the payload.
+
+    ``insert_only`` inserts rows that are absent and leaves existing rows
+    untouched. It deliberately declares no conflict target: users carry three
+    unique constraints (id, email, and (oidc_issuer, google_sub)), and targeting
+    only id would let a backup whose user rows were re-keyed raise a duplicate
+    email partway through and fail the restore.
+    """
+    if not values_list:
+        return 0
+
+    affected = 0
+    for group in group_by_key_signature(values_list):
+        for chunk in chunked(group, UPSERT_CHUNK_SIZE):
+            statement = pg_insert(model).values(chunk)
+            if insert_only:
+                statement = statement.on_conflict_do_nothing()
+            else:
+                updatable = {
+                    column.name: statement.excluded[column.name]
+                    for column in model.__table__.columns
+                    if not column.primary_key and column.name in chunk[0]
+                }
+                if updatable:
+                    statement = statement.on_conflict_do_update(
+                        index_elements=["id"], set_=updatable
+                    )
+                else:
+                    # Every column in this group is the primary key, so there is
+                    # nothing an update could change.
+                    statement = statement.on_conflict_do_nothing(index_elements=["id"])
+            result = await db.execute(statement)
+            affected += result.rowcount or 0
+    return affected
+
+
+async def delete_rows_by_id(db: AsyncSession, model, ids) -> int:
+    """Delete the given primary keys. Returns the row count the database reports."""
+    ids = list(ids)
+    if not ids:
+        return 0
+    affected = 0
+    for chunk in chunked(ids, ID_CHUNK_SIZE):
+        result = await db.execute(delete(model).where(model.id.in_(chunk)))
+        affected += result.rowcount or 0
+    return affected
+
+
+def backup_table_rows(data: Dict[str, Any], table: str) -> List[Dict[str, Any]]:
+    """Read one table out of a backup payload, rejecting a malformed shape."""
+    rows = data.get(table) or []
+    if not isinstance(rows, list):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid backup: '{table}' must be a list of rows, got {type(rows).__name__}",
+        )
+    for row in rows:
+        if not isinstance(row, dict):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid backup: '{table}' contains a non-object row",
+            )
+    return rows
+
+
+def backup_row_ids(data: Dict[str, Any], table: str) -> Set[UUID]:
+    """Collect the primary keys a backup carries for one table."""
+    ids: Set[UUID] = set()
+    for row in backup_table_rows(data, table):
+        raw_id = row.get("id")
+        if raw_id is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid backup: a row in '{table}' has no 'id'",
+            )
+        try:
+            ids.add(UUID(raw_id) if isinstance(raw_id, str) else raw_id)
+        except (ValueError, AttributeError, TypeError) as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid backup: '{table}' row has an unparseable id {raw_id!r}: {exc}",
+            )
+    return ids
+
+
+async def admin_scope_org_ids(user: User, db: AsyncSession) -> List[UUID]:
+    """
+    Organisations a caller of these two endpoints may back up or restore.
+
+    ``auth.get_accessible_org_ids`` answers a deliberately different question:
+    which organisations is this user a *member* of, directly or as a consultant.
+    Platform admin is a cross-organisation role that carries no memberships of
+    its own, so for a real platform admin that accessor returns ``[]`` — which
+    would hand the operator HTTP 200 and a backup file containing nothing, and
+    would 403 every restore they attempted. Both endpoints are already gated by
+    ``require_platform_admin``, so membership is the wrong question to ask here.
+
+    API-key principals keep exactly the scope ``get_accessible_org_ids`` gives
+    them. That function refuses to enumerate organisations for a static key
+    outside single-tenant mode as an IDOR guard, and widening it here would
+    reintroduce the hole it was added to close.
+    """
+    if user.auth_method in ("api_key", "user_api_key"):
+        return list(await get_accessible_org_ids(user, db))
+
+    if user.db_id:
+        is_platform_admin = await db.scalar(
+            select(UserModel.is_platform_admin).where(UserModel.id == UUID(user.db_id))
+        )
+        if is_platform_admin:
+            result = await db.execute(select(Organization.id))
+            return [row[0] for row in result.fetchall()]
+
+    return list(await get_accessible_org_ids(user, db))
+
+
+def user_fk_column_names(model) -> List[str]:
+    """Names of the columns on ``model`` that reference ``users.id``."""
+    return [
+        column.name
+        for column in model.__table__.columns
+        if any(fk.target_fullname == "users.id" for fk in column.foreign_keys)
+    ]
+
+
+def collect_referenced_user_ids(model, rows) -> Set[UUID]:
+    """
+    Gather every users.id value the given ORM rows point at.
+
+    A backup that omits a user one of its own rows references cannot satisfy its
+    own foreign keys on restore, which is what made the previous backup export
+    zero users whenever organization_members happened to be empty.
+    """
+    columns = user_fk_column_names(model)
+    if not columns:
+        return set()
+    referenced: Set[UUID] = set()
+    for row in rows:
+        for column_name in columns:
+            value = getattr(row, column_name)
+            if value is not None:
+                referenced.add(value)
+    return referenced
+
+
+async def restore_table(
+    db: AsyncSession,
+    model,
+    rows: List[Dict[str, Any]],
+    *,
+    exclude: frozenset = frozenset(),
+    overrides: Optional[Dict[str, Any]] = None,
+    insert_only: bool = False,
+) -> Tuple[int, int, int]:
+    """
+    Hydrate, reference-check and upsert one table's rows.
+
+    Returns ``(upserted, nulled_references, dropped_rows)``.
+    """
+    values_list = []
+    for row in rows:
+        values = hydrate_row(model, row, exclude)
+        if "id" not in values:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid backup: a row in '{model.__tablename__}' has no 'id'",
+            )
+        if overrides:
+            values.update(overrides)
+        values_list.append(values)
+
+    values_list, nulled, dropped = await resolve_dangling_references(db, model, values_list)
+    upserted = await upsert_rows(db, model, values_list, insert_only=insert_only)
+    return upserted, nulled, dropped
 
 
 @router.get("/database/stats")
@@ -252,6 +717,10 @@ async def get_database_stats(
                 "last_task_update": last_task_update.isoformat() if last_task_update else None
             }
         }
+    except HTTPException:
+        # A status this endpoint chose deliberately; re-raise it unchanged
+        # rather than relabelling it 500 below.
+        raise
     except Exception as e:
         logger.error(f"Failed to retrieve database statistics: {type(e).__name__}: {str(e)}", exc_info=True)
         raise HTTPException(
@@ -285,147 +754,133 @@ async def backup_database(
     logger.info(f"Database backup initiated by: {current_user.email or current_user.user_id}")
 
     try:
-        # Get organisations the user can access (via membership or consultant relationship)
-        accessible_org_ids = await get_accessible_org_ids(current_user, db)
+        # Organisations in scope for this caller. Platform admin is cross-org,
+        # so this is not the same question as "which orgs am I a member of".
+        accessible_org_ids = await admin_scope_org_ids(current_user, db)
 
         if not accessible_org_ids:
-            logger.warning(f"User {current_user.email} has no accessible organisations for backup")
-            return {
-                "metadata": {
-                    "version": "1.1",
-                    "created_at": datetime.utcnow().isoformat(),
-                    "created_by": current_user.email or current_user.user_id,
-                    "note": "No accessible organisations. User has no organisation memberships.",
-                    "accessible_organizations": [],
-                    "table_counts": {}
-                },
-                "data": {}
-            }
+            # Never hand back 200 plus an empty file. A backup the operator
+            # believes they hold and cannot actually restore from is worse than
+            # no backup at all, so this fails loudly instead.
+            logger.warning(
+                "Backup aborted for %s: no organisations in scope",
+                current_user.email or current_user.user_id,
+            )
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Backup aborted: no organisations are in scope for your account, "
+                    "so the file would contain no data. Nothing was exported."
+                ),
+            )
 
         logger.info(f"Backup scoped to {len(accessible_org_ids)} accessible organisation(s)")
 
-        # Export tables in dependency order, filtered by accessible organisations
+        # Export tables in dependency order, filtered by accessible organisations.
+        # Rows are held as ORM objects until the end so the users export can be
+        # derived from the foreign keys they actually carry.
+
         # 1. Root entities - filter by accessible org IDs
-        orgs_result = await db.execute(
-            select(Organization).where(Organization.id.in_(accessible_org_ids))
-        )
-        organizations = [serialize_row(row) for row in orgs_result.scalars().all()]
-
-        # Get user IDs who are members of accessible organisations
-        member_user_ids_result = await db.execute(
-            select(OrganizationMember.user_id).where(
-                OrganizationMember.organization_id.in_(accessible_org_ids)
-            )
-        )
-        accessible_user_ids = [row[0] for row in member_user_ids_result.fetchall()]
-
-        # Users - only those who are members of accessible organisations
-        if accessible_user_ids:
-            users_result = await db.execute(
-                select(UserModel).where(UserModel.id.in_(accessible_user_ids))
-            )
-            users = [serialize_row(row) for row in users_result.scalars().all()]
-        else:
-            users = []
+        org_rows = await fetch_rows_in(db, Organization, Organization.id, accessible_org_ids)
 
         # 2. First-level dependencies - filter by accessible org IDs
-        members_result = await db.execute(
-            select(OrganizationMember).where(
-                OrganizationMember.organization_id.in_(accessible_org_ids)
-            )
+        member_rows = await fetch_rows_in(
+            db, OrganizationMember, OrganizationMember.organization_id, accessible_org_ids
         )
-        organization_members = [serialize_row(row) for row in members_result.scalars().all()]
 
         # Systems (depends on organizations)
-        systems_result = await db.execute(
-            select(System).where(System.organization_id.in_(accessible_org_ids))
-        )
-        systems = [serialize_row(row) for row in systems_result.scalars().all()]
-        system_ids = [s["id"] for s in systems]
+        system_rows = await fetch_rows_in(db, System, System.organization_id, accessible_org_ids)
+        system_ids = [row.id for row in system_rows]
 
         # Scoped controls - filter by accessible org IDs
-        controls_result = await db.execute(
-            select(ScopedControl).where(ScopedControl.organization_id.in_(accessible_org_ids))
+        control_rows = await fetch_rows_in(
+            db, ScopedControl, ScopedControl.organization_id, accessible_org_ids
         )
-        scoped_controls = [serialize_row(row) for row in controls_result.scalars().all()]
-        control_ids = [c["id"] for c in scoped_controls]
+        control_ids = [row.id for row in control_rows]
 
         # Evidence tracking - filter by accessible org IDs
-        evidence_result = await db.execute(
-            select(EvidenceTracking).where(EvidenceTracking.organization_id.in_(accessible_org_ids))
+        evidence_rows = await fetch_rows_in(
+            db, EvidenceTracking, EvidenceTracking.organization_id, accessible_org_ids
         )
-        evidence_tracking = [serialize_row(row) for row in evidence_result.scalars().all()]
-        evidence_ids = [e["id"] for e in evidence_tracking]
+        evidence_ids = [row.id for row in evidence_rows]
 
         # System evidence capabilities - filter by system IDs in accessible orgs
-        if system_ids:
-            # Convert string IDs back to UUIDs for the query
-            system_uuids = [UUID(sid) if isinstance(sid, str) else sid for sid in system_ids]
-            capabilities_result = await db.execute(
-                select(SystemEvidenceCapability).where(
-                    SystemEvidenceCapability.system_id.in_(system_uuids)
-                )
-            )
-            system_evidence_capabilities = [serialize_row(row) for row in capabilities_result.scalars().all()]
-        else:
-            system_evidence_capabilities = []
-
-        # Assignments - filter by assignable_id (controls or evidence in accessible orgs)
-        # Assignments reference either ScopedControl or EvidenceTracking
-        accessible_assignable_ids = control_ids + evidence_ids
-        if accessible_assignable_ids:
-            assignable_uuids = [UUID(aid) if isinstance(aid, str) else aid for aid in accessible_assignable_ids]
-            assignments_result = await db.execute(
-                select(Assignment).where(Assignment.assignable_id.in_(assignable_uuids))
-            )
-            assignments = [serialize_row(row) for row in assignments_result.scalars().all()]
-        else:
-            assignments = []
+        capability_rows = await fetch_rows_in(
+            db, SystemEvidenceCapability, SystemEvidenceCapability.system_id, system_ids
+        )
 
         # 3. Second-level dependencies
-        # Comments - filter by commentable_id (controls or evidence in accessible orgs)
-        if accessible_assignable_ids:
-            commentable_uuids = [UUID(cid) if isinstance(cid, str) else cid for cid in accessible_assignable_ids]
-            comments_result = await db.execute(
-                select(Comment).where(Comment.commentable_id.in_(commentable_uuids))
-            )
-            comments = [serialize_row(row) for row in comments_result.scalars().all()]
-            comment_ids = [c["id"] for c in comments]
-        else:
-            comments = []
-            comment_ids = []
+        # Evidence collection tasks - filter by evidence_tracking_id in accessible orgs.
+        # Fetched before assignments and comments because both can legally point
+        # at a task, and their scope has to include these ids.
+        task_rows = await fetch_rows_in(
+            db, EvidenceCollectionTask, EvidenceCollectionTask.evidence_tracking_id, evidence_ids
+        )
+        task_ids = [row.id for row in task_rows]
 
-        # Evidence collection tasks - filter by evidence_tracking_id in accessible orgs
-        if evidence_ids:
-            evidence_uuids = [UUID(eid) if isinstance(eid, str) else eid for eid in evidence_ids]
-            tasks_result = await db.execute(
-                select(EvidenceCollectionTask).where(
-                    EvidenceCollectionTask.evidence_tracking_id.in_(evidence_uuids)
-                )
-            )
-            evidence_collection_tasks = [serialize_row(row) for row in tasks_result.scalars().all()]
-        else:
-            evidence_collection_tasks = []
+        # assignable_type and commentable_type both hold 'control', 'evidence' or
+        # 'task'. Omitting the task ids meant task assignments and task comments
+        # were never backed up at all, and the restore scope has to agree with
+        # this one or it would treat them as absent and delete them.
+        accessible_assignable_ids = control_ids + evidence_ids + task_ids
 
-        # Notifications - filter by user_id belonging to accessible orgs
-        if accessible_user_ids:
-            notifications_result = await db.execute(
-                select(Notification).where(Notification.user_id.in_(accessible_user_ids))
-            )
-            notifications = [serialize_row(row) for row in notifications_result.scalars().all()]
-        else:
-            notifications = []
+        assignment_rows = await fetch_rows_in(
+            db, Assignment, Assignment.assignable_id, accessible_assignable_ids
+        )
+
+        comment_rows = await fetch_rows_in(
+            db, Comment, Comment.commentable_id, accessible_assignable_ids
+        )
+        comment_ids = [row.id for row in comment_rows]
+
+        # Notifications - scoped by the entity referenced, not by user_id. A
+        # Notification carries only user_id and an untyped reference_id, and a
+        # user who belongs to two tenants would otherwise drag the other
+        # tenant's notifications into this backup.
+        notification_rows = await fetch_rows_in(
+            db, Notification, Notification.reference_id, accessible_assignable_ids + comment_ids
+        )
 
         # 4. Third-level dependencies
         # Comment history - filter by comment_id in accessible comments
-        if comment_ids:
-            comment_uuids = [UUID(cid) if isinstance(cid, str) else cid for cid in comment_ids]
-            history_result = await db.execute(
-                select(CommentHistory).where(CommentHistory.comment_id.in_(comment_uuids))
-            )
-            comment_history = [serialize_row(row) for row in history_result.scalars().all()]
-        else:
-            comment_history = []
+        history_rows = await fetch_rows_in(
+            db, CommentHistory, CommentHistory.comment_id, comment_ids
+        )
+
+        # Users: members of accessible organisations, plus every user referenced
+        # by a foreign key on any exported row. Exporting only the members left a
+        # backup that could not satisfy its own foreign keys, and exported no
+        # users at all whenever organization_members was empty.
+        exported_user_ids: Set[UUID] = {row.user_id for row in member_rows}
+        for model, rows in (
+            (Organization, org_rows),
+            (OrganizationMember, member_rows),
+            (System, system_rows),
+            (ScopedControl, control_rows),
+            (EvidenceTracking, evidence_rows),
+            (SystemEvidenceCapability, capability_rows),
+            (Assignment, assignment_rows),
+            (Comment, comment_rows),
+            (CommentHistory, history_rows),
+            (EvidenceCollectionTask, task_rows),
+            (Notification, notification_rows),
+        ):
+            exported_user_ids |= collect_referenced_user_ids(model, rows)
+
+        user_rows = await fetch_rows_in(db, UserModel, UserModel.id, sorted(exported_user_ids))
+
+        organizations = [serialize_row(row) for row in org_rows]
+        users = [serialize_row(row) for row in user_rows]
+        organization_members = [serialize_row(row) for row in member_rows]
+        systems = [serialize_row(row) for row in system_rows]
+        scoped_controls = [serialize_row(row) for row in control_rows]
+        evidence_tracking = [serialize_row(row) for row in evidence_rows]
+        system_evidence_capabilities = [serialize_row(row) for row in capability_rows]
+        assignments = [serialize_row(row) for row in assignment_rows]
+        comments = [serialize_row(row) for row in comment_rows]
+        comment_history = [serialize_row(row) for row in history_rows]
+        evidence_collection_tasks = [serialize_row(row) for row in task_rows]
+        notifications = [serialize_row(row) for row in notification_rows]
 
         # Build backup structure with tenant scope metadata
         backup = {
@@ -471,6 +926,11 @@ async def backup_database(
 
         return backup
 
+    except HTTPException:
+        # The 409 raised for an empty scope is a deliberate answer, not a
+        # crash. Without this the handler below would relabel it 500 and the
+        # operator would read a precise refusal as a server fault.
+        raise
     except Exception as e:
         logger.error(f"Database backup failed: {type(e).__name__}: {str(e)}", exc_info=True)
         raise HTTPException(
@@ -494,11 +954,28 @@ async def restore_database(
 
     This operation will:
     1. Validate the backup format and version
-    2. Clear existing data (if confirm_clear=true)
-    3. Insert all records in dependency order
-    4. Return a summary of restored records
+    2. Resolve the organisations the backup targets and check the caller may
+       access every one of them
+    3. Upsert all records in dependency order
+    4. Delete in-scope records the backup does not contain
+    5. Return a summary of restored records
 
-    WARNING: This is a destructive operation that replaces all existing data.
+    Scope. The restore only ever touches the organisations named in the payload,
+    intersected with the caller's accessible organisations. It is not a
+    whole-database replace: the previous implementation issued unfiltered
+    DELETE statements, so a single-tenant backup wiped every tenant in the
+    installation and the request body chose which.
+
+    Strategy. Upsert first, then delete what the backup does not carry, in one
+    transaction. Delete-then-insert cannot work here: deleting a scoped_control
+    cascades into cdm_mappings, cdm_control_proposals and
+    engagement_control_scope, all of which hold human-reviewed work product that
+    a backup does not contain. Upserting first means restoring a backup whose id
+    set matches the database performs zero deletes and destroys nothing.
+
+    Users and organisations are never deleted. Users are cross-organisation
+    identity rather than tenant data, and an organisation delete cascades across
+    roughly thirty tables.
     """
     logger.info(f"Database restore initiated by: {current_user.email or current_user.user_id}")
 
@@ -514,6 +991,12 @@ async def restore_database(
     metadata = backup_data["metadata"]
     data = backup_data["data"]
 
+    if not isinstance(metadata, dict) or not isinstance(data, dict):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid backup format: 'metadata' and 'data' must both be objects"
+        )
+
     # Validate version (support both 1.0 and 1.1)
     version = metadata.get("version")
     if version not in ("1.0", "1.1"):
@@ -522,309 +1005,374 @@ async def restore_database(
             detail=f"Unsupported backup version: {version}. Expected: 1.0 or 1.1"
         )
 
-    # Check confirmation flag
-    if not restore_request.confirm_clear:
-        # Return preview of what will be restored
-        return {
-            "status": "preview",
-            "message": "This is a preview. Set confirm_clear=true to proceed with restore.",
-            "backup_metadata": metadata,
-            "records_to_restore": metadata.get("table_counts", {})
-        }
+    # ── Resolve the target organisations, then authorise them ──────────────
+    # The payload decides the scope, so the payload has to be checked against
+    # the caller's own access before anything else happens.
+    target_org_ids: List[UUID] = []
+    seen_org_ids: Set[UUID] = set()
+    raw_org_ids = [row.get("id") for row in backup_table_rows(data, "organizations")]
+    if not raw_org_ids:
+        raw_org_ids = metadata.get("accessible_organizations") or []
+        if not isinstance(raw_org_ids, list):
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid backup: metadata.accessible_organizations must be a list",
+            )
+    for raw_org_id in raw_org_ids:
+        try:
+            org_id = UUID(raw_org_id) if isinstance(raw_org_id, str) else raw_org_id
+        except (ValueError, AttributeError, TypeError) as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid backup: unparseable organisation id {raw_org_id!r}: {exc}",
+            )
+        if not isinstance(org_id, UUID):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid backup: unparseable organisation id {raw_org_id!r}",
+            )
+        if org_id not in seen_org_ids:
+            seen_org_ids.add(org_id)
+            target_org_ids.append(org_id)
+
+    if not target_org_ids:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Invalid backup: no organisations named in data.organizations or "
+                "metadata.accessible_organizations, so there is nothing to restore into"
+            ),
+        )
+
+    accessible_org_ids = set(await admin_scope_org_ids(current_user, db))
+    forbidden_org_ids = [org_id for org_id in target_org_ids if org_id not in accessible_org_ids]
+    if forbidden_org_ids:
+        logger.warning(
+            "Restore denied for %s: backup names inaccessible organisation(s) %s",
+            current_user.email or current_user.user_id,
+            ", ".join(str(org_id) for org_id in forbidden_org_ids),
+        )
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Restore denied: the backup contains organisation(s) you cannot access: "
+                + ", ".join(str(org_id) for org_id in forbidden_org_ids)
+            ),
+        )
+
+    logger.info(
+        "Restore scoped to %d organisation(s): %s",
+        len(target_org_ids), ", ".join(str(org_id) for org_id in target_org_ids),
+    )
 
     try:
-        # Clear existing data in reverse dependency order
-        logger.info("Clearing existing data...")
+        # ── Materialise every in-scope id set before anything mutates ──────
+        # These snapshots decide what the delete sweep may touch, so they have
+        # to be taken from the pre-restore database.
+        db_member_ids = await fetch_scalars_in(
+            db, OrganizationMember.id, OrganizationMember.organization_id, target_org_ids
+        )
+        db_system_ids = await fetch_scalars_in(
+            db, System.id, System.organization_id, target_org_ids
+        )
+        db_control_ids = await fetch_scalars_in(
+            db, ScopedControl.id, ScopedControl.organization_id, target_org_ids
+        )
+        db_evidence_ids = await fetch_scalars_in(
+            db, EvidenceTracking.id, EvidenceTracking.organization_id, target_org_ids
+        )
+        db_capability_ids = await fetch_scalars_in(
+            db, SystemEvidenceCapability.id, SystemEvidenceCapability.system_id, db_system_ids
+        )
+        db_task_ids = await fetch_scalars_in(
+            db, EvidenceCollectionTask.id,
+            EvidenceCollectionTask.evidence_tracking_id, db_evidence_ids
+        )
+        # Assignments and comments are polymorphic over controls, evidence and
+        # tasks, so the task ids belong in this union on both sides.
+        db_assignable_ids = db_control_ids + db_evidence_ids + db_task_ids
+        db_assignment_ids = await fetch_scalars_in(
+            db, Assignment.id, Assignment.assignable_id, db_assignable_ids
+        )
+        db_comment_ids = await fetch_scalars_in(
+            db, Comment.id, Comment.commentable_id, db_assignable_ids
+        )
+        db_comment_history_ids = await fetch_scalars_in(
+            db, CommentHistory.id, CommentHistory.comment_id, db_comment_ids
+        )
+        # Notifications are scoped by the entity referenced, never by user_id:
+        # a user who belongs to two tenants shares one row set, and scoping by
+        # user_id would delete the other tenant's notifications.
+        db_notification_ids = await fetch_scalars_in(
+            db, Notification.id, Notification.reference_id, db_assignable_ids + db_comment_ids
+        )
 
-        await db.execute(delete(CommentHistory))
-        await db.execute(delete(Notification))
-        await db.execute(delete(EvidenceCollectionTask))
-        await db.execute(delete(Comment))
-        await db.execute(delete(Assignment))
-        await db.execute(delete(SystemEvidenceCapability))  # Depends on systems
-        await db.execute(delete(EvidenceTracking))  # References systems
-        await db.execute(delete(System))  # Depends on organizations
-        await db.execute(delete(ScopedControl))
-        await db.execute(delete(OrganizationMember))
-        await db.execute(delete(UserModel))
-        await db.execute(delete(Organization))
+        in_scope_ids: Dict[str, List[Any]] = {
+            "organization_members": db_member_ids,
+            "systems": db_system_ids,
+            "scoped_controls": db_control_ids,
+            "evidence_tracking": db_evidence_ids,
+            "system_evidence_capabilities": db_capability_ids,
+            "evidence_collection_tasks": db_task_ids,
+            "assignments": db_assignment_ids,
+            "comments": db_comment_ids,
+            "comment_history": db_comment_history_ids,
+            "notifications": db_notification_ids,
+        }
 
-        await db.commit()
-        logger.info("Existing data cleared")
+        delete_models = {
+            "organization_members": OrganizationMember,
+            "systems": System,
+            "scoped_controls": ScopedControl,
+            "evidence_tracking": EvidenceTracking,
+            "system_evidence_capabilities": SystemEvidenceCapability,
+            "evidence_collection_tasks": EvidenceCollectionTask,
+            "assignments": Assignment,
+            "comments": Comment,
+            "comment_history": CommentHistory,
+            "notifications": Notification,
+        }
 
-        # Helper to parse dates and UUIDs from backup
-        def parse_datetime(val):
-            if val is None:
-                return None
-            if isinstance(val, str):
-                return datetime.fromisoformat(val.replace('Z', '+00:00'))
-            return val
-
-        def parse_date(val):
-            if val is None:
-                return None
-            if isinstance(val, str):
-                from datetime import date
-                return date.fromisoformat(val)
-            return val
-
-        def parse_uuid(val):
-            if val is None:
-                return None
-            if isinstance(val, str):
-                return UUID(val)
-            return val
-
-        restored_counts = {}
-
-        # 1. Restore organizations
-        for row in data.get("organizations", []):
-            org = Organization(
-                id=parse_uuid(row["id"]),
-                name=row["name"],
-                slug=row["slug"],
-                created_at=parse_datetime(row.get("created_at")),
-                updated_at=parse_datetime(row.get("updated_at"))
+        existing_counts = {table: len(ids) for table, ids in in_scope_ids.items()}
+        records_in_backup = {
+            table: len(backup_table_rows(data, table))
+            for table in (
+                "organizations", "users", "organization_members", "systems",
+                "scoped_controls", "evidence_tracking", "system_evidence_capabilities",
+                "assignments", "comments", "comment_history",
+                "evidence_collection_tasks", "notifications",
             )
-            db.add(org)
-        restored_counts["organizations"] = len(data.get("organizations", []))
+        }
+        would_delete_counts = {
+            table: len(set(ids) - backup_row_ids(data, table))
+            for table, ids in in_scope_ids.items()
+        }
 
-        # 2. Restore users
-        for row in data.get("users", []):
-            user = UserModel(
-                id=parse_uuid(row["id"]),
-                google_sub=row["google_sub"],
-                email=row["email"],
-                display_name=row.get("display_name"),
-                created_at=parse_datetime(row.get("created_at")),
-                last_login_at=parse_datetime(row.get("last_login_at")),
-                email_notifications_enabled=row.get("email_notifications_enabled", True),
-                notification_frequency=row.get("notification_frequency", "immediate")
+        # ── Preview: report, mutate nothing ────────────────────────────────
+        if not restore_request.confirm_clear:
+            # Only reads have run; roll the transaction back explicitly so the
+            # preview cannot leave anything behind.
+            await db.rollback()
+            return {
+                "status": "preview",
+                "message": "This is a preview. Set confirm_clear=true to proceed with restore.",
+                "backup_metadata": metadata,
+                "records_to_restore": metadata.get("table_counts", {}),
+                "target_organizations": [str(org_id) for org_id in target_org_ids],
+                "records_in_backup": records_in_backup,
+                "existing_counts": existing_counts,
+                "would_delete_counts": would_delete_counts,
+            }
+
+        # ── Bound the mutating transaction ─────────────────────────────────
+        # The engine sets neither timeout, so without these one restore can
+        # hold locks indefinitely. set_config(..., is_local => true) is exactly
+        # SET LOCAL: it applies to the transaction the reads above already
+        # opened and expires with it. Used in preference to SET LOCAL because
+        # SET does not accept bind parameters and would force the value to be
+        # interpolated into the statement; set_config takes it as a parameter.
+        await db.execute(
+            text("SELECT set_config('statement_timeout', :timeout, true)"),
+            {"timeout": str(int(RESTORE_STATEMENT_TIMEOUT_MS))},
+        )
+        await db.execute(
+            text("SELECT set_config('lock_timeout', :timeout, true)"),
+            {"timeout": str(int(RESTORE_LOCK_TIMEOUT_MS))},
+        )
+
+        upserted_counts: Dict[str, int] = {}
+        deleted_counts: Dict[str, int] = {}
+        nulled_references: Dict[str, int] = {}
+        skipped_rows: Dict[str, int] = {}
+
+        def record(table: str, result: Tuple[int, int, int]) -> None:
+            upserted, nulled, dropped = result
+            upserted_counts[table] = upserted
+            if nulled:
+                nulled_references[table] = nulled_references.get(table, 0) + nulled
+            if dropped:
+                skipped_rows[table] = dropped
+
+        # Every write below is a Core statement, dispatched as it is executed,
+        # so there is no pending ORM state and nothing for autoflush to miss.
+        # Parents are visible to the child reference checks immediately.
+
+        # ── Upsert, parents before children ────────────────────────────────
+        # 1. Organizations. Never deleted, and written through an explicit
+        # column list so a column added later is carried without code changes.
+        record("organizations", await restore_table(
+            db, Organization, backup_table_rows(data, "organizations"),
+        ))
+
+        # 2. Users: insert-if-absent only, never updated. The payload does not
+        # carry is_platform_admin or oidc_issuer, so updating an existing user
+        # would blank the issuer that auth.py matches on and clear the platform
+        # admin flag — locking every administrator out with the same request
+        # that restored their data. is_platform_admin is forced False rather
+        # than read from the payload so a hand-edited backup cannot grant it.
+        record("users", await restore_table(
+            db, UserModel, backup_table_rows(data, "users"),
+            exclude=USER_PROTECTED_COLUMNS,
+            overrides={"is_platform_admin": False},
+            insert_only=True,
+        ))
+
+        # 3. Organization members
+        record("organization_members", await restore_table(
+            db, OrganizationMember, backup_table_rows(data, "organization_members"),
+        ))
+
+        # 4. Systems (v1.1+ backups only)
+        record("systems", await restore_table(
+            db, System, backup_table_rows(data, "systems"),
+        ))
+
+        # 5. Scoped controls. Backups written before the CCF→SCF rename carry
+        # ccf_id, so it is folded into scf_id before hydration.
+        scoped_control_rows = []
+        for row in backup_table_rows(data, "scoped_controls"):
+            if not row.get("scf_id") and row.get("ccf_id"):
+                row = {**row, "scf_id": row["ccf_id"]}
+            scoped_control_rows.append(row)
+        record("scoped_controls", await restore_table(db, ScopedControl, scoped_control_rows))
+
+        # 6. Evidence tracking
+        record("evidence_tracking", await restore_table(
+            db, EvidenceTracking, backup_table_rows(data, "evidence_tracking"),
+        ))
+
+        # 7. System evidence capabilities (v1.1+ backups only)
+        record("system_evidence_capabilities", await restore_table(
+            db, SystemEvidenceCapability,
+            backup_table_rows(data, "system_evidence_capabilities"),
+        ))
+
+        # 8. Assignments
+        record("assignments", await restore_table(
+            db, Assignment, backup_table_rows(data, "assignments"),
+        ))
+
+        # 9. Comments, first pass. parent_comment_id is self-referential, so it
+        # is held back until every comment in the payload exists.
+        comment_rows = backup_table_rows(data, "comments")
+        record("comments", await restore_table(
+            db, Comment, comment_rows, exclude=frozenset({"parent_comment_id"}),
+        ))
+
+        # Comments, second pass. Written for every row, not only the threaded
+        # ones, so a comment un-threaded since the backup is un-threaded here
+        # too. A parent that no longer resolves is nulled rather than failing
+        # the restore on a foreign key violation.
+        requested_parent_ids: Set[UUID] = set()
+        for row in comment_rows:
+            raw_parent_id = row.get("parent_comment_id")
+            if raw_parent_id is not None:
+                requested_parent_ids.add(
+                    UUID(raw_parent_id) if isinstance(raw_parent_id, str) else raw_parent_id
+                )
+        resolvable_parent_ids = await fetch_existing_ids(
+            db, "comments", "id", requested_parent_ids
+        )
+        parent_updates = []
+        unresolvable_parents = 0
+        for row in comment_rows:
+            raw_parent_id = row.get("parent_comment_id")
+            parent_id = None
+            if raw_parent_id is not None:
+                candidate = UUID(raw_parent_id) if isinstance(raw_parent_id, str) else raw_parent_id
+                if candidate in resolvable_parent_ids:
+                    parent_id = candidate
+                else:
+                    unresolvable_parents += 1
+            # Same class of defect as the old `row["due_date"]`: backup_table_rows
+            # validates that a row is an object, never that it carries an id, so
+            # direct indexing raises mid-restore on a hand-edited file. An id-less
+            # row cannot have been upserted either (the upsert keys on id), so
+            # there is nothing to point a parent at.
+            raw_comment_id = row.get("id")
+            if raw_comment_id is None:
+                continue
+            parent_updates.append({
+                "id": UUID(raw_comment_id) if isinstance(raw_comment_id, str) else raw_comment_id,
+                "parent_comment_id": parent_id,
+            })
+        if parent_updates:
+            # Bulk update by primary key: each mapping names the row's own id
+            # plus the column to set. A row dropped by the reference guard
+            # simply matches nothing.
+            for chunk in chunked(parent_updates, UPSERT_CHUNK_SIZE):
+                await db.execute(update(Comment), chunk)
+        if unresolvable_parents:
+            logger.warning(
+                "Restore of comments: nulled %d parent_comment_id value(s) that do not resolve",
+                unresolvable_parents,
             )
-            db.add(user)
-        restored_counts["users"] = len(data.get("users", []))
-
-        # Flush to ensure FKs are available
-        await db.flush()
-
-        # 3. Restore organization_members
-        for row in data.get("organization_members", []):
-            member = OrganizationMember(
-                id=parse_uuid(row["id"]),
-                organization_id=parse_uuid(row["organization_id"]),
-                user_id=parse_uuid(row["user_id"]),
-                role=row.get("role", "viewer"),
-                joined_at=parse_datetime(row.get("joined_at"))
+            nulled_references["comments"] = (
+                nulled_references.get("comments", 0) + unresolvable_parents
             )
-            db.add(member)
-        restored_counts["organization_members"] = len(data.get("organization_members", []))
 
-        # 3.5. Restore systems (v1.1+ backups only)
-        for row in data.get("systems", []):
-            system = System(
-                id=parse_uuid(row["id"]),
-                organization_id=parse_uuid(row["organization_id"]),
-                name=row["name"],
-                system_type=row["system_type"],
-                category=row.get("category"),
-                description=row.get("description"),
-                vendor=row.get("vendor"),
-                status=row.get("status", "active"),
-                connection_config=row.get("connection_config", {}),
-                created_at=parse_datetime(row.get("created_at")),
-                updated_at=parse_datetime(row.get("updated_at")),
-                created_by_user_id=parse_uuid(row.get("created_by_user_id")),
-                updated_by_user_id=parse_uuid(row.get("updated_by_user_id"))
+        # 10. Evidence collection tasks
+        record("evidence_collection_tasks", await restore_table(
+            db, EvidenceCollectionTask, backup_table_rows(data, "evidence_collection_tasks"),
+        ))
+
+        # 11. Notifications
+        record("notifications", await restore_table(
+            db, Notification, backup_table_rows(data, "notifications"),
+        ))
+
+        # 12. Comment history
+        record("comment_history", await restore_table(
+            db, CommentHistory, backup_table_rows(data, "comment_history"),
+        ))
+
+        # ── Delete in-scope rows the backup does not contain ───────────────
+        # Children before parents, and only ids that were already in scope
+        # before the upserts ran. Restoring a backup whose id set matches the
+        # database deletes nothing at all.
+        for table in RESTORE_DELETE_ORDER:
+            absent_ids = set(in_scope_ids[table]) - backup_row_ids(data, table)
+            deleted_counts[table] = await delete_rows_by_id(
+                db, delete_models[table], absent_ids
             )
-            db.add(system)
-        restored_counts["systems"] = len(data.get("systems", []))
 
-        # 4. Restore scoped_controls
-        for row in data.get("scoped_controls", []):
-            # Support both legacy ccf_id and new scf_id field names for backward compatibility
-            scf_id = row.get("scf_id") or row.get("ccf_id")
-            control = ScopedControl(
-                id=parse_uuid(row["id"]),
-                organization_id=parse_uuid(row["organization_id"]),
-                scf_id=scf_id,
-                selected=row.get("selected", False),
-                selection_reason=row.get("selection_reason"),
-                implementation_status=row.get("implementation_status"),
-                priority=row.get("priority"),
-                owner=row.get("owner"),
-                assigned_to=row.get("assigned_to"),
-                maturity_level=row.get("maturity_level"),
-                target_date=parse_date(row.get("target_date")),
-                completion_date=parse_date(row.get("completion_date")),
-                implementation_notes=row.get("implementation_notes"),
-                related_documentation=row.get("related_documentation"),
-                custom_fields=row.get("custom_fields"),
-                created_at=parse_datetime(row.get("created_at")),
-                updated_at=parse_datetime(row.get("updated_at")),
-                assigned_user_id=parse_uuid(row.get("assigned_user_id")),
-                owner_user_id=parse_uuid(row.get("owner_user_id")),
-                created_by_user_id=parse_uuid(row.get("created_by_user_id")),
-                updated_by_user_id=parse_uuid(row.get("updated_by_user_id"))
-            )
-            db.add(control)
-        restored_counts["scoped_controls"] = len(data.get("scoped_controls", []))
-
-        # 5. Restore evidence_tracking
-        for row in data.get("evidence_tracking", []):
-            evidence = EvidenceTracking(
-                id=parse_uuid(row["id"]),
-                organization_id=parse_uuid(row["organization_id"]),
-                evidence_id=row["evidence_id"],
-                is_tracked=row.get("is_tracked", False),
-                method_of_collection=row.get("method_of_collection"),
-                collecting_system=row.get("collecting_system"),
-                owner=row.get("owner"),
-                frequency=row.get("frequency"),
-                comments=row.get("comments"),
-                created_at=parse_datetime(row.get("created_at")),
-                updated_at=parse_datetime(row.get("updated_at")),
-                assigned_user_id=parse_uuid(row.get("assigned_user_id")),
-                owner_user_id=parse_uuid(row.get("owner_user_id")),
-                created_by_user_id=parse_uuid(row.get("created_by_user_id")),
-                updated_by_user_id=parse_uuid(row.get("updated_by_user_id")),
-                next_collection_date=parse_date(row.get("next_collection_date")),
-                last_collection_date=parse_date(row.get("last_collection_date")),
-                system_id=parse_uuid(row.get("system_id"))  # v1.1+ field
-            )
-            db.add(evidence)
-        restored_counts["evidence_tracking"] = len(data.get("evidence_tracking", []))
-
-        # 5.5. Restore system_evidence_capabilities (v1.1+ backups only)
-        for row in data.get("system_evidence_capabilities", []):
-            capability = SystemEvidenceCapability(
-                id=parse_uuid(row["id"]),
-                system_id=parse_uuid(row["system_id"]),
-                evidence_id=row["evidence_id"],
-                capability_status=row.get("capability_status", "potential"),
-                collection_method=row.get("collection_method"),
-                confidence_level=row.get("confidence_level", "medium"),
-                data_format=row.get("data_format"),
-                notes=row.get("notes"),
-                created_at=parse_datetime(row.get("created_at")),
-                updated_at=parse_datetime(row.get("updated_at")),
-                created_by_user_id=parse_uuid(row.get("created_by_user_id")),
-                updated_by_user_id=parse_uuid(row.get("updated_by_user_id"))
-            )
-            db.add(capability)
-        restored_counts["system_evidence_capabilities"] = len(data.get("system_evidence_capabilities", []))
-
-        await db.flush()
-
-        # 6. Restore assignments
-        for row in data.get("assignments", []):
-            assignment = Assignment(
-                id=parse_uuid(row["id"]),
-                assignable_type=row["assignable_type"],
-                assignable_id=parse_uuid(row["assignable_id"]),
-                user_id=parse_uuid(row["user_id"]),
-                role=row.get("role", "primary"),
-                assigned_at=parse_datetime(row.get("assigned_at")),
-                assigned_by_user_id=parse_uuid(row.get("assigned_by_user_id"))
-            )
-            db.add(assignment)
-        restored_counts["assignments"] = len(data.get("assignments", []))
-
-        # 7. Restore comments (need to handle self-referencing parent_comment_id)
-        # First pass: insert all comments without parent references
-        comment_map = {}
-        for row in data.get("comments", []):
-            comment = Comment(
-                id=parse_uuid(row["id"]),
-                commentable_type=row["commentable_type"],
-                commentable_id=parse_uuid(row["commentable_id"]),
-                user_id=parse_uuid(row["user_id"]),
-                parent_comment_id=None,  # Will update in second pass
-                content=row["content"],
-                mentions=row.get("mentions", []),
-                is_edited=row.get("is_edited", False),
-                edited_at=parse_datetime(row.get("edited_at")),
-                is_deleted=row.get("is_deleted", False),
-                deleted_at=parse_datetime(row.get("deleted_at")),
-                created_at=parse_datetime(row.get("created_at"))
-            )
-            db.add(comment)
-            comment_map[row["id"]] = (comment, row.get("parent_comment_id"))
-
-        await db.flush()
-
-        # Second pass: update parent references
-        for comment_id, (comment, parent_id) in comment_map.items():
-            if parent_id:
-                comment.parent_comment_id = parse_uuid(parent_id)
-
-        restored_counts["comments"] = len(data.get("comments", []))
-
-        # 8. Restore evidence_collection_tasks
-        for row in data.get("evidence_collection_tasks", []):
-            task = EvidenceCollectionTask(
-                id=parse_uuid(row["id"]),
-                evidence_tracking_id=parse_uuid(row["evidence_tracking_id"]),
-                task_type=row.get("task_type", "collection"),
-                title=row.get("title"),
-                description=row.get("description"),
-                priority=row.get("priority", "medium"),
-                due_date=parse_date(row["due_date"]),
-                status=row.get("status", "not_started"),
-                assigned_user_id=parse_uuid(row.get("assigned_user_id")),
-                completed_date=parse_date(row.get("completed_date")),
-                completion_notes=row.get("completion_notes"),
-                dependencies=row.get("dependencies", []),
-                attachments=row.get("attachments", []),
-                auto_generated=row.get("auto_generated", True),
-                created_at=parse_datetime(row.get("created_at"))
-            )
-            db.add(task)
-        restored_counts["evidence_collection_tasks"] = len(data.get("evidence_collection_tasks", []))
-
-        # 9. Restore notifications
-        for row in data.get("notifications", []):
-            notification = Notification(
-                id=parse_uuid(row["id"]),
-                user_id=parse_uuid(row["user_id"]),
-                type=row["type"],
-                reference_type=row["reference_type"],
-                reference_id=parse_uuid(row["reference_id"]),
-                message=row["message"],
-                is_read=row.get("is_read", False),
-                read_at=parse_datetime(row.get("read_at")),
-                created_at=parse_datetime(row.get("created_at"))
-            )
-            db.add(notification)
-        restored_counts["notifications"] = len(data.get("notifications", []))
-
-        # 10. Restore comment_history
-        for row in data.get("comment_history", []):
-            history = CommentHistory(
-                id=parse_uuid(row["id"]),
-                comment_id=parse_uuid(row["comment_id"]),
-                old_content=row["old_content"],
-                edited_by_user_id=parse_uuid(row["edited_by_user_id"]),
-                edited_at=parse_datetime(row.get("edited_at"))
-            )
-            db.add(history)
-        restored_counts["comment_history"] = len(data.get("comment_history", []))
-
-        # Commit all changes
+        # One commit, for the upserts and the deletes together.
         await db.commit()
 
-        total_restored = sum(restored_counts.values())
-        logger.info(f"Database restore completed: {total_restored} total records restored")
+        total_upserted = sum(upserted_counts.values())
+        total_deleted = sum(deleted_counts.values())
+        logger.info(
+            "Database restore completed for %d organisation(s): %d record(s) written, "
+            "%d record(s) removed",
+            len(target_org_ids), total_upserted, total_deleted,
+        )
 
         return {
             "status": "success",
-            "message": f"Database restored successfully. {total_restored} records restored.",
+            "message": (
+                f"Database restored successfully. {total_upserted} records written, "
+                f"{total_deleted} removed across {len(target_org_ids)} organisation(s)."
+            ),
             "restored_by": current_user.email or current_user.user_id,
             "restored_at": datetime.utcnow().isoformat(),
             "original_backup_created_at": metadata.get("created_at"),
             "original_backup_created_by": metadata.get("created_by"),
-            "restored_counts": restored_counts
+            "target_organizations": [str(org_id) for org_id in target_org_ids],
+            # Counted from the row counts the database reported, not from the
+            # length of the payload.
+            "upserted_counts": upserted_counts,
+            "deleted_counts": deleted_counts,
+            # Retained under its original name for existing callers.
+            "restored_counts": upserted_counts,
+            "nulled_references": nulled_references,
+            "skipped_rows": skipped_rows,
         }
 
+    except HTTPException:
+        # A malformed payload is the caller's error; keep its status code
+        # rather than reporting it as a server failure.
+        await db.rollback()
+        raise
     except Exception as e:
         await db.rollback()
         logger.error(f"Database restore failed: {type(e).__name__}: {str(e)}", exc_info=True)
@@ -1142,6 +1690,10 @@ async def get_catalog_stats(
             ),
             "note": "Catalog data is READ-ONLY reference data seeded from SCF JSON files. Not included in backups."
         }
+    except HTTPException:
+        # A status this endpoint chose deliberately; re-raise it unchanged
+        # rather than relabelling it 500 below.
+        raise
     except Exception as e:
         logger.error(f"Failed to retrieve catalog statistics: {type(e).__name__}: {str(e)}", exc_info=True)
         raise HTTPException(
