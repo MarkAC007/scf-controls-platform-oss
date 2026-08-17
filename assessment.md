@@ -2,14 +2,19 @@
 
 | | |
 |---|---|
-| last published release | `0.12.1` |
-| staged in package.json | `0.12.1` |
-| commits assessed | 3 |
-| derived level | **patch** (no features or breaking changes) |
-| target version | **0.12.2** |
+| last published release | `0.12.2` |
+| staged in package.json | `0.12.2` |
+| commits assessed | 5 |
+| derived level | **minor** (new feature) |
+| target version | **0.13.0** |
+
+**Features**
+
+- `feat(cdm): add Gemini provider to the intent-classification seam (#737)`
 
 **Other**
 
-- `Merge pull request #734 from MarkAC007/fix/v0.12.1-merge-heads-and-dep-bumps`
-- `fix(migrations): merge the two v0.12.1 alembic heads + security dep bumps`
-- `Merge pull request #733 from MarkAC007/chore/bump-v0.12.1`
+- `Merge pull request #736 from MarkAC007/docs/openwiki-agent-docs`
+- `chore(oss): strip OpenWiki docs from public OSS snapshot`
+- `docs: add OpenWiki-generated agent + developer documentation`
+- `Merge pull request #735 from MarkAC007/chore/bump-v0.12.2`

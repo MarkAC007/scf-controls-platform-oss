@@ -209,7 +209,9 @@ def test_get_variant_resolves_registered_variants_and_rejects_unknown_names() ->
     assert get_variant("baseline") is VARIANTS["baseline"]
     assert get_variant("smoke") is VARIANTS["smoke"]
 
-    with pytest.raises(KeyError, match="known variants: baseline, intent-claude, intent-gpt, smoke"):
+    with pytest.raises(
+        KeyError, match="known variants: baseline, intent-claude, intent-gemini, intent-gpt, smoke"
+    ):
         get_variant("experimental")
 
 

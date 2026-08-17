@@ -18,6 +18,8 @@ Usage:
         python scripts/backfill_document_intents.py --dry-run
     DATABASE_URL=<...> CDM_INTENT_PROVIDER=claude ANTHROPIC_API_KEY=<...> \\
         python scripts/backfill_document_intents.py --apply --limit 50
+    DATABASE_URL=<...> CDM_INTENT_PROVIDER=gemini GEMINI_API_KEY=<...> \\
+        python scripts/backfill_document_intents.py --apply --limit 50
 """
 import argparse
 import logging
@@ -79,7 +81,7 @@ def main() -> int:
     if cdm_intent.get_intent_provider() is None:
         logger.error(
             "CDM_INTENT_PROVIDER is disabled or unrecognised; nothing to do. "
-            "Set it to 'claude' or 'gpt' along with the provider's API key."
+            "Set it to 'claude', 'gpt', or 'gemini' along with the provider's API key."
         )
         return 1
 

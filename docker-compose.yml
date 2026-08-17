@@ -155,6 +155,15 @@ services:
       AZURE_STORAGE_ACCOUNT_NAME: ${AZURE_STORAGE_ACCOUNT_NAME:-}
       AZURE_STORAGE_ACCOUNT_KEY: ${AZURE_STORAGE_ACCOUNT_KEY:-}
       EVIDENCE_CONTAINER: ${EVIDENCE_CONTAINER:-evidence}
+      # CDM document placement (optional — see .env.example). The API needs the
+      # provider setting to report classification state; the keys are used by
+      # the consolidation recompute path. Off by default.
+      CDM_INTENT_PROVIDER: ${CDM_INTENT_PROVIDER:-disabled}
+      CDM_INTENT_TIMEOUT_S: ${CDM_INTENT_TIMEOUT_S:-}
+      CDM_INTENT_MAX_DOMAINS: ${CDM_INTENT_MAX_DOMAINS:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
     ports:
       # Host side is remappable (BACKEND_PORT) — 8000 is a popular default and
       # may already be taken on your host.
@@ -224,6 +233,14 @@ services:
       EVIDENCE_CONTAINER: ${EVIDENCE_CONTAINER:-evidence}
       # AI Assessment (Anthropic Claude)
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # CDM document placement (optional — see .env.example). The worker runs
+      # the classify/backfill tasks, so it needs the provider setting and the
+      # selected provider's key. Off by default.
+      CDM_INTENT_PROVIDER: ${CDM_INTENT_PROVIDER:-disabled}
+      CDM_INTENT_TIMEOUT_S: ${CDM_INTENT_TIMEOUT_S:-}
+      CDM_INTENT_MAX_DOMAINS: ${CDM_INTENT_MAX_DOMAINS:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       # Application Insights (telemetry)
       APPLICATIONINSIGHTS_CONNECTION_STRING: ${APPLICATIONINSIGHTS_CONNECTION_STRING:-}
     volumes:

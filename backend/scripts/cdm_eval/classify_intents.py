@@ -308,6 +308,7 @@ def _run_claude(prompt: str) -> ProviderResult:
 
 
 GPT_MODEL = "gpt-5.5"
+GEMINI_MODEL = "gemini-3.7-flash"
 
 
 def _run_gpt(prompt: str) -> ProviderResult:
@@ -373,8 +374,97 @@ def _run_gpt(prompt: str) -> ProviderResult:
     return ProviderResult(text=content, model=model_id)
 
 
+def _run_gemini(prompt: str) -> ProviderResult:
+    # Direct API call for parity with the gpt provider: the harness owns the
+    # prompt, timeout, and retry boundary, so the transport stays explicit here.
+    api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY is not set; the gemini provider needs it")
+
+    import urllib.error
+    import urllib.request
+
+    payload = json.dumps(
+        {
+            "contents": [{"parts": [{"text": prompt}]}],
+        }
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent",
+        data=payload,
+        headers={
+            "x-goog-api-key": api_key,
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        # False positive: the URL is built only from the hardcoded Gemini model
+        # id above. The rule cannot prove the generated endpoint is constant.
+        # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
+        with urllib.request.urlopen(request, timeout=PROVIDER_TIMEOUT_SECONDS) as response:
+            raw_body = response.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        detail = _truncate(exc.read().decode("utf-8", errors="replace"))
+        raise RuntimeError(f"gemini API call failed with HTTP {exc.code}: {detail}") from exc
+    except (urllib.error.URLError, TimeoutError) as exc:
+        raise RuntimeError(f"gemini API call failed: {exc}") from exc
+
+    try:
+        raw: object = json.loads(raw_body)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"gemini API returned invalid JSON envelope: {exc}") from exc
+    if not isinstance(raw, dict):
+        raise RuntimeError("gemini API returned a non-object JSON envelope")
+
+    # A blocked prompt comes back as promptFeedback rather than as candidate
+    # content, so it is read before the candidate tree is touched. An absent or
+    # oddly-shaped promptFeedback simply signals no block: a genuine block also
+    # empties candidates, which the next guard catches.
+    prompt_feedback = raw.get("promptFeedback")
+    block_reason = prompt_feedback.get("blockReason") if isinstance(prompt_feedback, dict) else None
+    if block_reason:
+        raise RuntimeError(f"gemini blocked the prompt: {block_reason}")
+
+    candidates = raw.get("candidates")
+    if not isinstance(candidates, list) or not candidates:
+        raise RuntimeError("gemini API envelope has no candidates")
+    candidate = candidates[0]
+    if not isinstance(candidate, dict):
+        raise RuntimeError("gemini API envelope first candidate is not an object")
+
+    # Carried into every failure below: an empty reply is far more often a
+    # finish reason (MAX_TOKENS, SAFETY) than a malformed envelope.
+    finish_reason = candidate.get("finishReason")
+    finish_detail = f" (finishReason={finish_reason})" if finish_reason else ""
+
+    # Mirrors GeminiIntentProvider: a non-STOP finish means the reply was cut
+    # short, and a truncated JSON answer must fail as that rather than as a
+    # downstream parse error.
+    if isinstance(finish_reason, str) and finish_reason not in ("", "STOP"):
+        raise RuntimeError(f"gemini reply did not finish cleanly{finish_detail}")
+
+    content = candidate.get("content")
+    parts = content.get("parts") if isinstance(content, dict) else None
+    if not isinstance(parts, list):
+        raise RuntimeError(f"gemini API envelope first candidate has no content parts{finish_detail}")
+
+    # Gemini may return non-text parts; only string text is model output.
+    text_parts = [
+        part["text"] for part in parts if isinstance(part, dict) and isinstance(part.get("text"), str)
+    ]
+    joined = "".join(text_parts).strip()
+    if not joined:
+        raise RuntimeError(f"gemini API envelope missing non-empty text part{finish_detail}")
+
+    model = raw.get("modelVersion")
+    model_id = model.strip() if isinstance(model, str) and model.strip() else GEMINI_MODEL
+    return ProviderResult(text=joined, model=model_id)
+
+
 _PROVIDERS: dict[str, Callable[[str], ProviderResult]] = {
     "claude": _run_claude,
+    "gemini": _run_gemini,
     "gpt": _run_gpt,
 }
 

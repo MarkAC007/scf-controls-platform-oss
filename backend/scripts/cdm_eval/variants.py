@@ -250,6 +250,7 @@ class CachedIntentGate:
 VARIANTS: dict[str, IntentGate] = {
     "baseline": BaselineGate(),
     "intent-claude": CachedIntentGate("claude"),
+    "intent-gemini": CachedIntentGate("gemini"),
     "intent-gpt": CachedIntentGate("gpt"),
     "smoke": SmokeTitleGate(),
 }
