@@ -17,8 +17,12 @@ the service's contract rather than of anyone's API.
 """
 from __future__ import annotations
 
+import io
+import json
 import os
 import sys
+import urllib.error
+import urllib.request
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
@@ -175,9 +179,18 @@ def test_provider_is_disabled_by_default(monkeypatch):
 
 
 def test_unknown_provider_name_disables_rather_than_crashing(monkeypatch):
-    monkeypatch.setenv("CDM_INTENT_PROVIDER", "gemini")
+    monkeypatch.setenv("CDM_INTENT_PROVIDER", "llama")
 
     assert cdm_intent.get_intent_provider() is None
+
+
+def test_gemini_provider_name_resolves(monkeypatch):
+    monkeypatch.setenv("CDM_INTENT_PROVIDER", "gemini")
+
+    provider = cdm_intent.get_intent_provider()
+
+    assert provider is not None
+    assert provider.name == "gemini"
 
 
 def test_max_domains_is_clamped_to_the_rank_ceiling(monkeypatch):
@@ -185,6 +198,268 @@ def test_max_domains_is_clamped_to_the_rank_ceiling(monkeypatch):
     monkeypatch.setenv("CDM_INTENT_MAX_DOMAINS", "9")
 
     assert cdm_intent.get_max_domains() == cdm_intent.RANK_CEILING
+
+
+# --- Gemini provider transport -------------------------------------------
+
+
+class _FakeHttpResponse:
+    """Context manager shaped like urllib's response object."""
+
+    def __init__(self, payload):
+        if isinstance(payload, bytes):
+            self._body = payload
+        else:
+            self._body = json.dumps(payload).encode("utf-8")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        return False
+
+    def read(self):
+        return self._body
+
+
+class TestGeminiIntentProvider:
+    """Gemini is tested by stubbing urllib, not by contacting the provider.
+
+    The module's contract is that hosted APIs stay behind the provider seam in
+    unit tests. Patching the stdlib HTTP boundary proves our request and
+    response handling without depending on Google's service.
+    """
+
+    def _request(self):
+        return cdm_intent.IntentRequest(prompt="Classify this document.", timeout_s=12.5)
+
+    def _http_error(self, code):
+        return urllib.error.HTTPError(
+            "https://generativelanguage.googleapis.com/test",
+            code,
+            "provider error",
+            {},
+            io.BytesIO(b""),
+        )
+
+    def test_happy_path_joins_text_parts_and_uses_model_version(self, monkeypatch):
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+        calls: list = []
+
+        def _urlopen(http_request, *, timeout):
+            calls.append((http_request, timeout))
+            return _FakeHttpResponse(
+                {
+                    "candidates": [
+                        {
+                            "content": {
+                                "parts": [
+                                    {"text": '{"primary_domains": ['},
+                                    {"text": '"TESTDOMAIN"]}'},
+                                ]
+                            },
+                            "finishReason": "STOP",
+                        }
+                    ],
+                    "modelVersion": "gemini-3.7-flash-20260801",
+                }
+            )
+
+        monkeypatch.setattr(urllib.request, "urlopen", _urlopen)
+
+        response = cdm_intent.GeminiIntentProvider().classify(self._request())
+
+        assert response.text == '{"primary_domains": ["TESTDOMAIN"]}'
+        assert response.model_id == "gemini-3.7-flash-20260801"
+        http_request, timeout = calls[0]
+        assert timeout == 12.5
+        assert http_request.full_url.endswith(
+            f"/{cdm_intent.GEMINI_MODEL}:generateContent"
+        )
+        assert http_request.get_header("X-goog-api-key") == "test-key"
+        payload = json.loads(http_request.data.decode("utf-8"))
+        assert payload == {"contents": [{"parts": [{"text": "Classify this document."}]}]}
+
+    def test_missing_api_key_raises_deterministic_error(self, monkeypatch):
+        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+
+        with pytest.raises(cdm_intent.IntentProviderError, match="GEMINI_API_KEY"):
+            cdm_intent.GeminiIntentProvider().classify(self._request())
+
+    @pytest.mark.parametrize("code", [429, 503])
+    def test_retryable_http_statuses_are_transient(self, monkeypatch, code):
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+
+        def _urlopen(_http_request, *, timeout):
+            raise self._http_error(code)
+
+        monkeypatch.setattr(urllib.request, "urlopen", _urlopen)
+
+        with pytest.raises(cdm_intent.IntentProviderTransientError, match=f"HTTP {code}"):
+            cdm_intent.GeminiIntentProvider().classify(self._request())
+
+    def test_client_http_status_is_deterministic(self, monkeypatch):
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+
+        def _urlopen(_http_request, *, timeout):
+            raise self._http_error(400)
+
+        monkeypatch.setattr(urllib.request, "urlopen", _urlopen)
+
+        with pytest.raises(cdm_intent.IntentProviderError, match="HTTP 400") as raised:
+            cdm_intent.GeminiIntentProvider().classify(self._request())
+        assert not isinstance(raised.value, cdm_intent.IntentProviderTransientError)
+
+    @pytest.mark.parametrize(
+        "error",
+        [urllib.error.URLError("connection reset"), TimeoutError("timed out")],
+    )
+    def test_network_failures_are_transient(self, monkeypatch, error):
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+
+        def _urlopen(_http_request, *, timeout):
+            raise error
+
+        monkeypatch.setattr(urllib.request, "urlopen", _urlopen)
+
+        with pytest.raises(cdm_intent.IntentProviderTransientError, match="gemini API call failed"):
+            cdm_intent.GeminiIntentProvider().classify(self._request())
+
+    def test_prompt_feedback_block_reason_is_deterministic(self, monkeypatch):
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+
+        def _urlopen(_http_request, *, timeout):
+            return _FakeHttpResponse(
+                {
+                    "promptFeedback": {"blockReason": "SAFETY"},
+                    "candidates": [
+                        {"content": {"parts": [{"text": "ignored"}]}, "finishReason": "STOP"}
+                    ],
+                }
+            )
+
+        monkeypatch.setattr(urllib.request, "urlopen", _urlopen)
+
+        with pytest.raises(cdm_intent.IntentProviderError, match="blocked"):
+            cdm_intent.GeminiIntentProvider().classify(self._request())
+
+    def test_invalid_json_envelope_is_deterministic(self, monkeypatch):
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+
+        def _urlopen(_http_request, *, timeout):
+            return _FakeHttpResponse(b"{")
+
+        monkeypatch.setattr(urllib.request, "urlopen", _urlopen)
+
+        with pytest.raises(cdm_intent.IntentProviderError, match="invalid JSON envelope"):
+            cdm_intent.GeminiIntentProvider().classify(self._request())
+
+    @pytest.mark.parametrize(
+        "payload, message",
+        [
+            ([], "non-object JSON envelope"),
+            ({}, "no candidates"),
+            ({"candidates": [None]}, "first candidate is not an object"),
+            ({"candidates": [{}]}, "missing content object"),
+            ({"candidates": [{"content": {}}]}, "content missing parts"),
+        ],
+    )
+    def test_malformed_envelope_hops_are_deterministic(self, monkeypatch, payload, message):
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+
+        def _urlopen(_http_request, *, timeout):
+            return _FakeHttpResponse(payload)
+
+        monkeypatch.setattr(urllib.request, "urlopen", _urlopen)
+
+        with pytest.raises(cdm_intent.IntentProviderError, match=message):
+            cdm_intent.GeminiIntentProvider().classify(self._request())
+
+    def test_empty_parts_raise_deterministic_error(self, monkeypatch):
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+
+        def _urlopen(_http_request, *, timeout):
+            return _FakeHttpResponse(
+                {
+                    "candidates": [
+                        {"content": {"parts": []}, "finishReason": "STOP"}
+                    ]
+                }
+            )
+
+        monkeypatch.setattr(urllib.request, "urlopen", _urlopen)
+
+        with pytest.raises(
+            cdm_intent.IntentProviderError,
+            match=r"no text content \(finishReason='STOP'\)",
+        ):
+            cdm_intent.GeminiIntentProvider().classify(self._request())
+
+    def test_non_stop_finish_reason_fails_as_truncation_not_parse_error(self, monkeypatch):
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+
+        def _urlopen(_http_request, *, timeout):
+            return _FakeHttpResponse(
+                {
+                    "candidates": [
+                        {
+                            # Non-empty but mid-JSON text: without the guard this
+                            # would surface later as a misleading parse failure.
+                            "content": {"parts": [{"text": '{"primary_domains": ["GOV'}]},
+                            "finishReason": "MAX_TOKENS",
+                        }
+                    ]
+                }
+            )
+
+        monkeypatch.setattr(urllib.request, "urlopen", _urlopen)
+
+        with pytest.raises(
+            cdm_intent.IntentProviderError,
+            match=r"did not finish cleanly \(finishReason='MAX_TOKENS'\)",
+        ):
+            cdm_intent.GeminiIntentProvider().classify(self._request())
+
+    def test_unblocked_prompt_feedback_does_not_fail_a_usable_reply(self, monkeypatch):
+        """No blockReason means no block, whatever shape the field arrives in.
+
+        Rejecting a reply whose candidates are perfectly usable because a
+        sibling field was odd would fail a document for nothing; a real block
+        empties candidates and is caught there instead.
+        """
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+
+        def _urlopen(_http_request, *, timeout):
+            return _FakeHttpResponse(
+                {
+                    "promptFeedback": {"blockReason": ""},
+                    "candidates": [
+                        {"content": {"parts": [{"text": "{}"}]}, "finishReason": "STOP"}
+                    ],
+                }
+            )
+
+        monkeypatch.setattr(urllib.request, "urlopen", _urlopen)
+
+        assert cdm_intent.GeminiIntentProvider().classify(self._request()).text == "{}"
+
+    def test_missing_model_version_falls_back_to_configured_model(self, monkeypatch):
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+
+        def _urlopen(_http_request, *, timeout):
+            return _FakeHttpResponse(
+                {
+                    "candidates": [
+                        {"content": {"parts": [{"text": "{}"}]}, "finishReason": "STOP"}
+                    ]
+                }
+            )
+
+        monkeypatch.setattr(urllib.request, "urlopen", _urlopen)
+
+        response = cdm_intent.GeminiIntentProvider().classify(self._request())
+
+        assert response.model_id == cdm_intent.GEMINI_MODEL
 
 
 # --- the fail-open gate ---------------------------------------------------

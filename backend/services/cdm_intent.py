@@ -25,7 +25,7 @@ Three properties are load-bearing:
   :mod:`services.cdm_intent_prompt` for why.
 
 Configuration is environment-driven and defaults to off:
-``CDM_INTENT_PROVIDER`` (``disabled`` | ``claude`` | ``gpt``, default
+``CDM_INTENT_PROVIDER`` (``disabled`` | ``claude`` | ``gpt`` | ``gemini``, default
 ``disabled``), ``CDM_INTENT_TIMEOUT_S``, ``CDM_INTENT_MAX_DOMAINS``.
 """
 from __future__ import annotations
@@ -52,6 +52,10 @@ RANK_CEILING = 3
 
 CLAUDE_MODEL = "claude-fable-5"
 GPT_MODEL = "gpt-5.5"
+# Newest non-preview Gemini in the live ListModels response (2026-08-17); the
+# pro line stops at 3.1-preview, so the current flash is the stable pin. The
+# eval harness's intent-gemini variant is the evidence for keeping or moving it.
+GEMINI_MODEL = "gemini-3.7-flash"
 
 # Claude Fable 5 always reasons; the request must not carry a ``thinking``
 # block, and temperature/top_p/top_k are rejected outright. Only the token
@@ -228,9 +232,109 @@ class GptIntentProvider:
         return IntentResponse(text=content, model_id=model_id)
 
 
+class GeminiIntentProvider:
+    """Google Gemini generateContent over plain HTTP.
+
+    Mirrors ``GptIntentProvider`` rather than introducing an SDK dependency for
+    one endpoint. The provider remains a dumb transport: Gemini's nested
+    envelope is checked so failures are deterministic, but the domain JSON in
+    the returned text is still parsed only once by ``validate_classification``.
+    """
+
+    name = "gemini"
+
+    def classify(self, request: IntentRequest) -> IntentResponse:
+        api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+        if not api_key:
+            raise IntentProviderError("GEMINI_API_KEY is not set; the gemini provider needs it")
+
+        import urllib.error
+        import urllib.request
+
+        payload = json.dumps(
+            {
+                # The shared prompt already demands JSON, and the only retry is
+                # the upstream shape retry in ``classify_document_text``.
+                "contents": [{"parts": [{"text": request.prompt}]}],
+            }
+        ).encode("utf-8")
+        http_request = urllib.request.Request(
+            f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent",
+            data=payload,
+            headers={
+                "x-goog-api-key": api_key,
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            # False positive: the URL is built only from the module constant
+            # GEMINI_MODEL on the Request object above. The rule cannot prove
+            # that this is still effectively a hardcoded destination.
+            # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
+            with urllib.request.urlopen(http_request, timeout=request.timeout_s) as response:
+                raw_body = response.read().decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            if exc.code == 429 or exc.code >= 500:
+                raise IntentProviderTransientError(f"gemini API call failed with HTTP {exc.code}") from exc
+            raise IntentProviderError(f"gemini API call failed with HTTP {exc.code}") from exc
+        except (urllib.error.URLError, TimeoutError) as exc:
+            raise IntentProviderTransientError(f"gemini API call failed: {exc}") from exc
+
+        try:
+            raw: object = json.loads(raw_body)
+        except json.JSONDecodeError as exc:
+            raise IntentProviderError(f"gemini API returned invalid JSON envelope: {exc}") from exc
+        if not isinstance(raw, dict):
+            raise IntentProviderError("gemini API returned a non-object JSON envelope")
+
+        # A prompt block returns as promptFeedback, not as ordinary candidate
+        # content, so this has to be checked before the candidate tree is read —
+        # the analogue of the claude provider's stop_reason check. An absent or
+        # oddly-shaped promptFeedback means no block was signalled; a genuine
+        # block also empties candidates, which the next guard catches.
+        prompt_feedback = raw.get("promptFeedback")
+        block_reason = prompt_feedback.get("blockReason") if isinstance(prompt_feedback, dict) else None
+        if block_reason:
+            raise IntentProviderError(f"gemini blocked the prompt: {block_reason}")
+
+        candidates = raw.get("candidates")
+        if not isinstance(candidates, list) or not candidates:
+            raise IntentProviderError("gemini API envelope has no candidates")
+        candidate = candidates[0]
+        if not isinstance(candidate, dict):
+            raise IntentProviderError("gemini API envelope first candidate is not an object")
+
+        finish_reason = candidate.get("finishReason")
+        # Anything other than a clean STOP (or an absent field) means the reply
+        # was cut short — MAX_TOKENS truncation, SAFETY. A truncated JSON answer
+        # would otherwise surface downstream as a misleading parse error, so the
+        # real cause is named here instead.
+        if isinstance(finish_reason, str) and finish_reason not in ("", "STOP"):
+            raise IntentProviderError(
+                f"gemini reply did not finish cleanly (finishReason={finish_reason!r})"
+            )
+        content = candidate.get("content")
+        if not isinstance(content, dict):
+            raise IntentProviderError("gemini API envelope first candidate missing content object")
+        parts = content.get("parts")
+        if not isinstance(parts, list):
+            raise IntentProviderError("gemini API envelope first candidate content missing parts")
+
+        text_parts = [part.get("text") for part in parts if isinstance(part, dict)]
+        model_text = "".join(part for part in text_parts if isinstance(part, str))
+        if not model_text.strip():
+            raise IntentProviderError(f"gemini returned no text content (finishReason={finish_reason!r})")
+
+        model = raw.get("modelVersion")
+        model_id = model.strip() if isinstance(model, str) and model.strip() else GEMINI_MODEL
+        return IntentResponse(text=model_text, model_id=model_id)
+
+
 _PROVIDERS: dict[str, Callable[[], IntentProvider]] = {
     "claude": ClaudeIntentProvider,
     "gpt": GptIntentProvider,
+    "gemini": GeminiIntentProvider,
 }
 
 

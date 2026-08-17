@@ -1,3 +1,5 @@
-fcc88a4fe287eb8f13936eddd502f93275b41bf2	Merge pull request #734 from MarkAC007/fix/v0.12.1-merge-heads-and-dep-bumps
-0d92e4082391b61d8004701bbdd2db6415f485ee	fix(migrations): merge the two v0.12.1 alembic heads + security dep bumps
-4b99f2befb79079bbe6c328fe01c1d72ec635dba	Merge pull request #733 from MarkAC007/chore/bump-v0.12.1
+dd968e3da9278dbf6dc75382a5a0cb68120244b7	feat(cdm): add Gemini provider to the intent-classification seam (#737)
+c40060838dcb10e91f12926ae57051b7579a6ec4	Merge pull request #736 from MarkAC007/docs/openwiki-agent-docs
+0356fcf899a2ead5ce53f1857907a4a0f60de75c	chore(oss): strip OpenWiki docs from public OSS snapshot
+f0bf8518a98f91292f32d84506144766d3f46b75	docs: add OpenWiki-generated agent + developer documentation
+dd638a8a55a19af45b814abf5c16d84aee43414e	Merge pull request #735 from MarkAC007/chore/bump-v0.12.2
