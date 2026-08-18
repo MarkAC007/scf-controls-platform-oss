@@ -382,7 +382,7 @@ export default function VendorDetail({
           borderBottom: '1px solid var(--border)',
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '1rem', flex: 1, minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '1rem', flex: '1 1 16rem', minWidth: 0 }}>
           <button
             onClick={onBack}
             title="Back to vendors"

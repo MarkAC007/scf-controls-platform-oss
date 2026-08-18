@@ -108,6 +108,7 @@ function AppContent() {
 
   const [selectedId, setSelectedId] = useState<string | undefined>(undefined)
   const [activeTab, setActiveTab] = useState<Tab>('dashboard')
+  const [mobileNavOpen, setMobileNavOpen] = useState(false)
   // OSS onboarding: null = not yet checked, false = empty (show upload gate), true = seeded
   const [catalogSeeded, setCatalogSeeded] = useState<boolean | null>(null)
   // NOTE: isRefreshing state removed in #273 — React Query handles data freshness
@@ -457,6 +458,8 @@ function AppContent() {
         activeTab={activeTab}
         onTabChange={setActiveTab}
         showConsultantPortal={isConsultant === true}
+        mobileOpen={mobileNavOpen}
+        onMobileClose={() => setMobileNavOpen(false)}
       />
       <Header
         activeTab={activeTab}
@@ -467,6 +470,8 @@ function AppContent() {
         onOrgSwitch={(org) => {
           toast.success(`Switched to ${org.name}`)
         }}
+        onMobileNavToggle={() => setMobileNavOpen(open => !open)}
+        mobileNavOpen={mobileNavOpen}
       />
       <main className="app-main">
         <div className="app-content">

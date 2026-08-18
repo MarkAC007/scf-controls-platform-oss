@@ -29,6 +29,54 @@ const THEME_STORAGE_KEY = 'scf-theme-preference'
 const THEME_BASE_STORAGE_KEY = 'scf-theme-base'
 const CUSTOM_THEMES_STORAGE_KEY = 'scf-custom-themes'
 const OVERRIDE_STYLE_ID = 'scf-theme-overrides'
+const DEFAULT_THEME_COLOR = '#1a202c'
+
+function normalizeColorToHex(value: string): string | null {
+  const probe = document.createElement('span')
+  const parent = document.body ?? document.documentElement
+
+  try {
+    probe.style.color = value
+    parent.appendChild(probe)
+
+    const normalized = getComputedStyle(probe).color
+    const match = normalized.match(/^rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*[\d.]+)?\)$/)
+
+    if (!match) {
+      return null
+    }
+
+    const [, red, green, blue] = match
+    const channels = [red, green, blue].map(channel => Number.parseInt(channel, 10))
+
+    if (channels.some(channel => Number.isNaN(channel) || channel < 0 || channel > 255)) {
+      return null
+    }
+
+    return `#${channels.map(channel => channel.toString(16).padStart(2, '0')).join('')}`
+  } finally {
+    probe.remove()
+  }
+}
+
+function resolveThemeColor(root: HTMLElement, theme: ThemeDefinition): string {
+  const computedValue = getComputedStyle(root).getPropertyValue('--bg').trim()
+  const resolvedValue = computedValue || theme.variables['--bg']?.trim() || DEFAULT_THEME_COLOR
+
+  return normalizeColorToHex(resolvedValue) ?? resolvedValue
+}
+
+function applyThemeColorMeta(color: string): void {
+  let meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')
+
+  if (!meta) {
+    meta = document.createElement('meta')
+    meta.name = 'theme-color'
+    document.head.appendChild(meta)
+  }
+
+  meta.content = color
+}
 
 function loadCustomThemes(): ThemeDefinition[] {
   if (typeof window === 'undefined') return []
@@ -90,6 +138,7 @@ function applyTheme(theme: ThemeDefinition) {
   styleEl.textContent = declarations
     ? `:root[data-theme="${theme.base}"] {\n${declarations}\n}`
     : ''
+  applyThemeColorMeta(resolveThemeColor(root, theme))
 }
 
 interface ThemeProviderProps {

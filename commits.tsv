@@ -1,5 +1,3 @@
-dd968e3da9278dbf6dc75382a5a0cb68120244b7	feat(cdm): add Gemini provider to the intent-classification seam (#737)
-c40060838dcb10e91f12926ae57051b7579a6ec4	Merge pull request #736 from MarkAC007/docs/openwiki-agent-docs
-0356fcf899a2ead5ce53f1857907a4a0f60de75c	chore(oss): strip OpenWiki docs from public OSS snapshot
-f0bf8518a98f91292f32d84506144766d3f46b75	docs: add OpenWiki-generated agent + developer documentation
-dd638a8a55a19af45b814abf5c16d84aee43414e	Merge pull request #735 from MarkAC007/chore/bump-v0.12.2
+d419742df11b26946eddfa60f23abe79fcf6d0ed	Merge pull request #739 from MarkAC007/feat/mobile-device-support
+6768d348718becfbe807b21e36a9f08f6c93cd60	docs(mobile): PR evidence screenshots (390px light/dark, 320px sign-in)
+e86429e28a54e729a85c9030492b180cce4829fc	test(mobile): Playwright harness for 320/390/430 + desktop profiles

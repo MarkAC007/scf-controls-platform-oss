@@ -15,6 +15,9 @@ interface HeaderProps {
   isConsultant?: boolean
   clientOrgIds?: string[]
   onOrgSwitch?: (org: Organization) => void
+  /** Mobile: toggle the navigation drawer (button only rendered below the mobile breakpoint via CSS) */
+  onMobileNavToggle?: () => void
+  mobileNavOpen?: boolean
 }
 
 export default function Header({
@@ -23,7 +26,9 @@ export default function Header({
   onNavigateToEvidence,
   isConsultant,
   clientOrgIds,
-  onOrgSwitch
+  onOrgSwitch,
+  onMobileNavToggle,
+  mobileNavOpen = false
 }: HeaderProps) {
   const { user } = useAuth()
   const { currentOrg } = useOrganization()
@@ -41,8 +46,29 @@ export default function Header({
 
   return (
     <div className="header header-streamlined">
-      {/* Left: Brand */}
+      {/* Left: Brand (mobile hamburger first — hidden on desktop via CSS) */}
       <div className="header-left">
+        <button
+          className="mobile-nav-toggle"
+          aria-label={mobileNavOpen ? 'Close navigation' : 'Open navigation'}
+          aria-expanded={mobileNavOpen}
+          onClick={onMobileNavToggle}
+        >
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            {mobileNavOpen ? (
+              <>
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </>
+            ) : (
+              <>
+                <line x1="3" y1="6" x2="21" y2="6" />
+                <line x1="3" y1="12" x2="21" y2="12" />
+                <line x1="3" y1="18" x2="21" y2="18" />
+              </>
+            )}
+          </svg>
+        </button>
         <div className="brand">
           {logoSrc && <img src={logoSrc} alt="Logo" />}
           <div className="brand-title">{appTitle}</div>
