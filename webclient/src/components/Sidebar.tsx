@@ -7,6 +7,10 @@ interface SidebarProps {
   onTabChange: (tab: Tab) => void
   /** Whether to show the consultant portal tab (requires consultant registration) */
   showConsultantPortal?: boolean
+  /** Mobile: drawer open state (hamburger in Header toggles this) */
+  mobileOpen?: boolean
+  /** Mobile: close the drawer (overlay tap / item select) */
+  onMobileClose?: () => void
 }
 
 // SVG Icons as components for clean, consistent styling
@@ -229,7 +233,7 @@ const navSections: NavSection[] = [
   },
 ]
 
-export default function Sidebar({ activeTab, onTabChange, showConsultantPortal = false }: SidebarProps) {
+export default function Sidebar({ activeTab, onTabChange, showConsultantPortal = false, mobileOpen = false, onMobileClose }: SidebarProps) {
   const [isExpanded, setIsExpanded] = useState(false)
 
   const visibleSections = useMemo(() => {
@@ -242,30 +246,45 @@ export default function Sidebar({ activeTab, onTabChange, showConsultantPortal =
     })).filter(section => section.items.length > 0)
   }, [showConsultantPortal])
 
+  const handleSelect = (tab: Tab) => {
+    onTabChange(tab)
+    onMobileClose?.()
+  }
+
   return (
-    <nav
-      className={`sidebar-nav ${isExpanded ? 'expanded' : ''}`}
-      onMouseEnter={() => setIsExpanded(true)}
-      onMouseLeave={() => setIsExpanded(false)}
-    >
-      <div className="sidebar-nav-items">
-        {visibleSections.map((section) => (
-          <div key={section.label} className="sidebar-section">
-            <div className="sidebar-section-label">{section.label}</div>
-            {section.items.map((item) => (
-              <button
-                key={item.id}
-                className={`sidebar-nav-item ${activeTab === item.id ? 'active' : ''}`}
-                onClick={() => onTabChange(item.id)}
-                title={!isExpanded ? item.label : undefined}
-              >
-                <span className="sidebar-nav-icon">{item.icon}</span>
-                <span className="sidebar-nav-label">{item.label}</span>
-              </button>
-            ))}
-          </div>
-        ))}
-      </div>
-    </nav>
+    <>
+      {mobileOpen && (
+        <div
+          className="mobile-nav-overlay"
+          onClick={onMobileClose}
+          aria-hidden="true"
+        />
+      )}
+      <nav
+        className={`sidebar-nav ${isExpanded ? 'expanded' : ''} ${mobileOpen ? 'mobile-open' : ''}`}
+        aria-label="Primary navigation"
+        onMouseEnter={() => setIsExpanded(true)}
+        onMouseLeave={() => setIsExpanded(false)}
+      >
+        <div className="sidebar-nav-items">
+          {visibleSections.map((section) => (
+            <div key={section.label} className="sidebar-section">
+              <div className="sidebar-section-label">{section.label}</div>
+              {section.items.map((item) => (
+                <button
+                  key={item.id}
+                  className={`sidebar-nav-item ${activeTab === item.id ? 'active' : ''}`}
+                  onClick={() => handleSelect(item.id)}
+                  title={!isExpanded ? item.label : undefined}
+                >
+                  <span className="sidebar-nav-icon">{item.icon}</span>
+                  <span className="sidebar-nav-label">{item.label}</span>
+                </button>
+              ))}
+            </div>
+          ))}
+        </div>
+      </nav>
+    </>
   )
 }

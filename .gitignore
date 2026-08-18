@@ -84,3 +84,8 @@ backend/cdm_*_proof.py
 backend/cdm_*_seed*.py
 backend/analyse_*.py
 backend/ingest_real_*.py
+
+# Playwright (mobile e2e harness)
+webclient/test-results/
+webclient/playwright-report/
+webclient/e2e/screenshots/

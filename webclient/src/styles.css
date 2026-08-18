@@ -26064,3 +26064,300 @@ textarea.form-control{
     transition: none;
   }
 }
+
+/* ============================================================
+   MOBILE DEVICE SUPPORT (feat/mobile-device-support)
+   Breakpoint scale: 640 (phone), 900 (tablet/nav), 1200 (wide).
+   Appended last so these rules win the cascade at equal
+   specificity. Desktop (>900px) behaviour is unchanged.
+   ============================================================ */
+
+/* ---- Dynamic viewport heights (mobile URL bar safe) ---- */
+@supports (height: 100dvh) {
+  .sidebar-nav { height: 100dvh; }
+  .app-layout { min-height: 100dvh; }
+  .app-content { height: calc(100dvh - 60px - 36px); }
+  .content { height: calc(100dvh - 58px); }
+  .graph-container { height: calc(100dvh - 180px); }
+  .auth-page { min-height: 100dvh; }
+  .auth-page-container { min-height: calc(100dvh - 36px); }
+  .tasks-page, .systems-page { min-height: 100dvh; }
+  .work-queue-panel { max-height: calc(100dvh - 200px); }
+}
+
+/* ---- Mobile nav toggle (hamburger) — hidden on desktop ---- */
+.mobile-nav-toggle {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 8px;
+  margin-right: 4px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+.mobile-nav-toggle:hover { background: var(--card-hover); }
+
+/* ---- Mobile drawer overlay ---- */
+.mobile-nav-overlay {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  /* Shell: reclaim the sidebar rail space */
+  .app-main { margin-left: 0; }
+  .header-streamlined {
+    padding: 0 12px;
+    padding-left: max(12px, env(safe-area-inset-left));
+    padding-right: max(12px, env(safe-area-inset-right));
+  }
+  .app-footer {
+    left: 0;
+    padding: 0 12px;
+    padding-bottom: env(safe-area-inset-bottom);
+    height: calc(36px + env(safe-area-inset-bottom));
+  }
+  .app-content { height: calc(100vh - 60px - 36px); }
+  @supports (height: 100dvh) {
+    .app-content { height: calc(100dvh - 60px - 36px - env(safe-area-inset-bottom)); }
+  }
+
+  .mobile-nav-toggle { display: flex; }
+
+  /* Sidebar becomes an off-canvas drawer; hover-expansion is irrelevant */
+  .sidebar-nav,
+  .sidebar-nav.expanded {
+    width: min(300px, 85vw);
+    transform: translateX(-105%);
+    transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    z-index: 1100;
+    box-shadow: none;
+    padding-left: env(safe-area-inset-left);
+  }
+  .sidebar-nav.mobile-open {
+    transform: translateX(0);
+    box-shadow: 4px 0 24px rgba(0, 0, 0, 0.25);
+  }
+  /* Drawer always shows labels + section headings */
+  .sidebar-nav .sidebar-nav-label {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  .sidebar-nav .sidebar-section-label {
+    opacity: 1;
+    height: auto;
+    overflow: visible;
+  }
+  .sidebar-nav-items { margin-top: 60px; }
+  .sidebar-nav-item { min-height: 44px; }
+
+  .mobile-nav-overlay {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: var(--overlay, rgba(15, 23, 42, 0.5));
+    z-index: 1050;
+  }
+
+  /* Header: hide the brand title if space is tight is handled at 640 */
+  .brand img { max-height: 32px; }
+
+  /* iOS: form controls under 16px trigger zoom-on-focus */
+  input, select, textarea { font-size: 16px; }
+}
+
+@media (max-width: 640px) {
+  .brand-title { display: none; }
+  .header-center { min-width: 0; }
+}
+
+/* ---- Two-pane list/detail views (Control Library, Scoping,
+        Evidence Review): stack vertically on small screens.
+        Documented in docs/STYLING_GUIDELINES.md §Responsive. ---- */
+@media (max-width: 768px) {
+  .layout {
+    flex-direction: column;
+    overflow: visible;
+  }
+  .layout .sidebar {
+    width: 100%;
+    max-width: 100%;
+    flex: 0 0 auto;
+    max-height: 45dvh;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    border-right: none;
+    border-bottom: 2px solid var(--border);
+  }
+  /* The list area inside a stacked sidebar must keep a usable height even
+     when the summary/search/filter header outgrows the pane — otherwise the
+     flex 1 1 0 list collapses to 0px and its rows become untappable. */
+  .layout .sidebar .list {
+    flex: 1 1 auto;
+    min-height: 240px;
+  }
+  .layout .detail {
+    width: 100%;
+    flex: 1 1 auto;
+    min-height: 40dvh;
+  }
+}
+
+/* ---- Tables: keep wide tables scrollable inside their own box ---- */
+@media (max-width: 900px) {
+  .users-table, .risk-list-table, .api-key-table,
+  .framework-table, .ft-table,
+  .cp-controls-table, .evidence-table,
+  .edt-due-soon-table, .comparison-table {
+    display: block;
+    width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+/* ---- Grids: collapse fixed-floor minmax() grids to one column ---- */
+@media (max-width: 640px) {
+  .artifact-groups, .framework-groups,
+  .dashboard-grid,
+  .evidence-teams,
+  .framework-grid,
+  .collection-methods-grid,
+  .roles-info-grid,
+  .client-grid,
+  .vendor-inputs,
+  .cp-grid,
+  .ehd-grid {
+    grid-template-columns: 1fr;
+  }
+  .evidence-grid { grid-template-columns: 1fr; }
+  .task-modal-grid, .task-modal-grid-2 { grid-template-columns: 1fr; }
+  .systems-table-header, .systems-table-row {
+    grid-template-columns: minmax(120px, 2fr) minmax(90px, 1fr) 90px;
+  }
+  .systems-table-header > :nth-child(n+4),
+  .systems-table-row > :nth-child(n+4) { display: none; }
+}
+
+/* ---- Fixed-width panels/popovers: never exceed the viewport ---- */
+@media (max-width: 900px) {
+  .dm-panel-container,
+  .risk-detail-panel-container,
+  .risk-detail-area,
+  .control-tooltip,
+  .notification-dropdown,
+  .maturity-popover {
+    max-width: calc(100vw - 16px);
+  }
+}
+
+/* ---- Framework mapping matrix: shrink the frozen column ---- */
+@media (max-width: 640px) {
+  .mapping-matrix th.control-header,
+  .mapping-matrix td.control-cell {
+    min-width: 148px;
+    max-width: 148px;
+    word-break: break-word;
+    white-space: normal;
+  }
+  .mapping-matrix th.framework-header { height: 140px; }
+}
+
+/* ---- Modals: fit the viewport on phones ---- */
+@media (max-width: 640px) {
+  .modal-content {
+    width: calc(100vw - 16px);
+    max-width: calc(100vw - 16px);
+    max-height: calc(100dvh - 32px);
+    margin: 8px;
+    overflow-y: auto;
+  }
+  .wizard-modal {
+    width: calc(100vw - 16px);
+    max-width: calc(100vw - 16px);
+  }
+}
+
+/* ---- Flex containment: without min-width:0 a flex item grows to its
+        content's min-width, so one rigid table inflates the whole document
+        (visible as page-level horizontal scroll, mobile AND desktop). ---- */
+.app-main { min-width: 0; }
+.app-content { max-width: 100%; }
+
+/* ---- Per-view mobile fixes (390px sweep findings) ---- */
+@media (max-width: 900px) {
+  /* Framework Mappings: header wraps, stats shrink */
+  .mapping-matrix-header { flex-wrap: wrap; gap: 8px; }
+  .mapping-matrix-header h1 { font-size: 20px; white-space: normal; }
+  .matrix-stats { flex-wrap: wrap; gap: 8px; }
+
+  /* Risk Register: matrix scrolls inside its own section; header wraps */
+  .risk-matrix-section { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .risk-dashboard-header .header-left,
+  .risk-dashboard-header .header-controls { flex-wrap: wrap; min-width: 0; }
+
+  /* Evidence: workspace tab row scrolls instead of forcing width */
+  .evidence-workspace-tabs {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 0 12px;
+  }
+  .evidence-workspace-tab { padding: 12px 14px; white-space: nowrap; }
+
+  /* Generic page headers reused inside views (User Management etc.) */
+  .app-content .header-left,
+  .app-content .header-right { flex-wrap: wrap; min-width: 0; max-width: 100%; }
+
+  /* Settings: cards fit the viewport */
+  .appearance-settings, .settings-group, .risk-profile-settings {
+    max-width: 100%;
+    box-sizing: border-box;
+  }
+}
+
+@media (max-width: 900px) {
+  /* Risk Register: detail area stacks below matrix; summary cards wrap */
+  .risk-dashboard-content { flex-direction: column; }
+  .risk-detail-area { width: 100%; max-width: 100%; max-height: 50dvh; }
+  .risk-summary-row { flex-wrap: wrap; }
+  .risk-matrix-grid { min-width: 340px; }
+
+  /* Evidence health dashboard: filter tab row scrolls */
+  .ehd-filter-tabs { overflow-x: auto; -webkit-overflow-scrolling: touch; flex-wrap: nowrap; }
+}
+
+@media (max-width: 640px) {
+  /* Risk summary cards: 2x2 on phones; allow content to shrink */
+  .risk-summary-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .risk-summary-card { min-width: 0; }
+}
+
+@media (max-width: 400px) {
+  /* Risk appetite slider labels: wrap on very narrow phones */
+  .appetite-slider-labels { flex-wrap: wrap; font-size: 11px; }
+}
+
+@media (max-width: 640px) {
+  /* Footer: 36px bar can't fit three zones on a phone */
+  .footer-center { display: none; }
+  .app-footer { font-size: 11px; gap: 8px; }
+}
+
+@media (max-width: 640px) {
+  /* Control detail: domain/cadence metadata wraps instead of clipping */
+  .cadence-row { flex-wrap: wrap; margin-left: 0; row-gap: 4px; }
+}
+
+@media (max-width: 640px) {
+  /* Matrix: table-cell height is a minimum — clamp the vertical labels
+     themselves so long framework names can't inflate the header row */
+  .mapping-matrix th.framework-header .framework-label {
+    max-height: 132px;
+    overflow: hidden;
+  }
+  .matrix-stats span { white-space: normal; }
+}

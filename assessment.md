@@ -2,19 +2,14 @@
 
 | | |
 |---|---|
-| last published release | `0.12.2` |
-| staged in package.json | `0.12.2` |
-| commits assessed | 5 |
-| derived level | **minor** (new feature) |
-| target version | **0.13.0** |
-
-**Features**
-
-- `feat(cdm): add Gemini provider to the intent-classification seam (#737)`
+| last published release | `0.13.0` |
+| staged in package.json | `0.13.0` |
+| commits assessed | 3 |
+| derived level | **patch** (no features or breaking changes) |
+| target version | **0.13.1** |
 
 **Other**
 
-- `Merge pull request #736 from MarkAC007/docs/openwiki-agent-docs`
-- `chore(oss): strip OpenWiki docs from public OSS snapshot`
-- `docs: add OpenWiki-generated agent + developer documentation`
-- `Merge pull request #735 from MarkAC007/chore/bump-v0.12.2`
+- `Merge pull request #739 from MarkAC007/feat/mobile-device-support`
+- `docs(mobile): PR evidence screenshots (390px light/dark, 320px sign-in)`
+- `test(mobile): Playwright harness for 320/390/430 + desktop profiles`

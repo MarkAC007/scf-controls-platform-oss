@@ -301,7 +301,7 @@ export default function EngagementsPage({ organizationId }: EngagementsPageProps
         <span>This is a future feature currently in early development and is not yet functional.</span>
       </div>
       {/* Page header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 }}>
         <div>
           <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700, color: 'var(--text)' }}>
             Audit Engagements
