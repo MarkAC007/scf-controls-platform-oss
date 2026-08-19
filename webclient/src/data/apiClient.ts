@@ -2908,11 +2908,16 @@ export interface AuditEngagementCreate {
   end_date?: string | null
 }
 
+export type EngagementScopeStatus = 'in_scope' | 'excluded' | 'not_tracked'
+
 export interface EngagementScopeItem {
   id: string
-  scoped_control_id: string
+  scoped_control_id: string | null
   scf_id: string | null
   control_name: string | null
+  scope_status: EngagementScopeStatus
+  out_of_scope_justification: string | null
+  source_frameworks: string[]
   added_at: string
 }
 
@@ -2939,6 +2944,53 @@ export async function getEngagementScope(
   )
 }
 
+// --- Framework-native presentation (Increment 2) ---------------------------
+
+export interface PresentationEvidenceItem {
+  id: string | null
+  filename: string | null
+  uploaded_at: string | null
+  review_status: string | null
+  in_window: boolean
+}
+
+export interface PresentationControl {
+  scf_id: string
+  control_name: string | null
+  scope_status: EngagementScopeStatus
+  out_of_scope_justification: string | null
+  source_frameworks: string[]
+  scoped_control_id: string | null
+  implementation_status: string | null
+  maturity_level: string | null
+  owner: string | null
+  evidence: PresentationEvidenceItem[]
+  evidence_in_window_count: number
+  queries: unknown[]
+}
+
+export interface PresentationClause {
+  clause_id: string
+  controls: PresentationControl[]
+}
+
+export interface FrameworkPresentation {
+  framework: string
+  start_date: string | null
+  end_date: string | null
+  clauses: PresentationClause[]
+}
+
+export async function getEngagementPresentation(
+  orgId: string,
+  engagementId: string,
+  framework: string
+): Promise<FrameworkPresentation> {
+  return apiFetch<FrameworkPresentation>(
+    `/organizations/${orgId}/engagements/${engagementId}/presentation?framework=${encodeURIComponent(framework)}`
+  )
+}
+
 export async function updateEngagement(
   orgId: string,
   engagementId: string,
@@ -2954,6 +3006,143 @@ export async function deleteEngagement(orgId: string, engagementId: string): Pro
   return apiFetch<void>(`/organizations/${orgId}/engagements/${engagementId}`, {
     method: 'DELETE',
   })
+}
+
+// --- Engagement auditor grants (Increment 3) -------------------------------
+
+export type EngagementAuditorStatus = 'invited' | 'active' | 'revoked'
+
+export interface EngagementAuditor {
+  id: string
+  engagement_id: string
+  user_id: string
+  email: string | null
+  status: EngagementAuditorStatus
+  invited_at: string | null
+  accepted_at: string | null
+  revoked_at: string | null
+}
+
+export async function listEngagementAuditors(
+  orgId: string,
+  engagementId: string
+): Promise<EngagementAuditor[]> {
+  return apiFetch<EngagementAuditor[]>(
+    `/organizations/${orgId}/engagements/${engagementId}/auditors`
+  )
+}
+
+export async function grantEngagementAuditor(
+  orgId: string,
+  engagementId: string,
+  userId: string
+): Promise<EngagementAuditor> {
+  return apiFetch<EngagementAuditor>(
+    `/organizations/${orgId}/engagements/${engagementId}/auditors`,
+    { method: 'POST', body: JSON.stringify({ user_id: userId }) }
+  )
+}
+
+export async function revokeEngagementAuditor(
+  orgId: string,
+  engagementId: string,
+  auditorId: string
+): Promise<void> {
+  return apiFetch<void>(
+    `/organizations/${orgId}/engagements/${engagementId}/auditors/${auditorId}`,
+    { method: 'DELETE' }
+  )
+}
+
+export async function listMyEngagements(): Promise<AuditEngagement[]> {
+  return apiFetch<AuditEngagement[]>(`/my-engagements`)
+}
+
+// --- Structured auditor queries (Increment 4) ------------------------------
+
+export type EngagementQueryStatus = 'open' | 'answered' | 'closed'
+
+export interface QueryResponseItem {
+  id: string
+  user_id: string | null
+  email: string | null
+  content: string
+  created_at: string
+}
+
+export interface EngagementQuery {
+  id: string
+  engagement_id: string
+  scf_id: string
+  raised_by_user_id: string | null
+  raised_by_email: string | null
+  title: string
+  body: string
+  status: EngagementQueryStatus
+  created_at: string
+  updated_at: string | null
+  closed_at: string | null
+  response_count: number
+  responses: QueryResponseItem[] | null
+}
+
+export async function listEngagementQueries(
+  orgId: string,
+  engagementId: string,
+  opts?: { scfId?: string; status?: EngagementQueryStatus }
+): Promise<EngagementQuery[]> {
+  const params = new URLSearchParams()
+  if (opts?.scfId) params.set('scf_id', opts.scfId)
+  if (opts?.status) params.set('status', opts.status)
+  const qs = params.toString()
+  return apiFetch<EngagementQuery[]>(
+    `/organizations/${orgId}/engagements/${engagementId}/queries${qs ? `?${qs}` : ''}`
+  )
+}
+
+export async function createEngagementQuery(
+  orgId: string,
+  engagementId: string,
+  data: { scf_id: string; title: string; body: string }
+): Promise<EngagementQuery> {
+  return apiFetch<EngagementQuery>(
+    `/organizations/${orgId}/engagements/${engagementId}/queries`,
+    { method: 'POST', body: JSON.stringify(data) }
+  )
+}
+
+export async function getEngagementQuery(
+  orgId: string,
+  engagementId: string,
+  queryId: string
+): Promise<EngagementQuery> {
+  return apiFetch<EngagementQuery>(
+    `/organizations/${orgId}/engagements/${engagementId}/queries/${queryId}`
+  )
+}
+
+export async function respondToEngagementQuery(
+  orgId: string,
+  engagementId: string,
+  queryId: string,
+  content: string
+): Promise<EngagementQuery> {
+  return apiFetch<EngagementQuery>(
+    `/organizations/${orgId}/engagements/${engagementId}/queries/${queryId}/responses`,
+    { method: 'POST', body: JSON.stringify({ content }) }
+  )
+}
+
+export async function updateEngagementQueryStatus(
+  orgId: string,
+  engagementId: string,
+  queryId: string,
+  status: EngagementQueryStatus
+): Promise<EngagementQuery> {
+  return apiFetch<EngagementQuery>(
+    `/organizations/${orgId}/engagements/${engagementId}/queries/${queryId}`,
+    { method: 'PATCH', body: JSON.stringify({ status }) }
+  )
 }
 
 // ---- AI Evidence Assessment ----

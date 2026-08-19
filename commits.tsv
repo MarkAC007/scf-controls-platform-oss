@@ -1,3 +1,13 @@
-d419742df11b26946eddfa60f23abe79fcf6d0ed	Merge pull request #739 from MarkAC007/feat/mobile-device-support
-6768d348718becfbe807b21e36a9f08f6c93cd60	docs(mobile): PR evidence screenshots (390px light/dark, 320px sign-in)
-e86429e28a54e729a85c9030492b180cce4829fc	test(mobile): Playwright harness for 320/390/430 + desktop profiles
+b1e66307141c145775d2262f22a2c0a2953942b9	Merge pull request #743 from MarkAC007/feat/audit-engagements-design
+56328b940afd91a25277a9b64663271d5940f15d	fix(engagements): address UI feedback — names, search, dark-mode dates, help
+fef25170919087e69292342008b2d4b9ed36710d	docs(engagements): record implementation status in design spec
+2fb5f404d45da6519f465f7a2535918438296fb5	feat(engagements): auditor queries drawer — frontend (increment 4)
+556d4c4fcc150d0d7baf3a06e1bb4ab0d9fb9adf	feat(engagements): structured auditor queries — backend (increment 4)
+e14fdaffd61904b2a20e4d97c2a3996c5bfbc9ae	feat(engagements): auditor management panel — frontend (increment 3)
+0cc5635ba8f301cd4146a61cbad7dd6399151d0e	feat(engagements): engagement-scoped auditor access — backend (increment 3)
+db4cff1aaddc497b55c4ce539389e3e7157284d9	feat(engagements): framework-native presentation view (increment 2)
+a7b92105fe934c601a45f7df2a3d6b2e366e4525	feat(engagements): scope comparison + out-of-scope justification (increment 1)
+e48da0ca74f6bfa40b1a703146b6605cd760eecd	docs(engagements): design spec for framework-native audit workspace
+93d76151ffc0532bb52232be9780c28e2b133ad6	Merge pull request #742 from MarkAC007/fix/upgrade-sh-bash52-and-health-probe
+6c8629aec559d6ebbcac8188859e5621e1644bf0	fix(upgrade): bash 5.2 preflight parse error + host-side health probe rollback (#741)
+ff1d28d6cf6da3159ed04b333b4bf0a376e44beb	Merge pull request #740 from MarkAC007/chore/bump-v0.13.1

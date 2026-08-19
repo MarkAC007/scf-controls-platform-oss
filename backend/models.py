@@ -395,7 +395,8 @@ class ScopedControl(Base):
     organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
     scf_id = Column(String(50), nullable=False)  # References SCF control ID (formerly ccf_id)
     selected = Column(Boolean, default=False)
-    selection_reason = Column(Text)
+    selection_reason = Column(Text)  # Rationale for INCLUSION (selected=True)
+    out_of_scope_justification = Column(Text)  # Rationale for EXCLUSION (selected=False); surfaced to auditors in engagements
     implementation_status = Column(String(50))  # See ImplementationStatus enum for valid values
     priority = Column(String(20))
     owner = Column(String(255))  # Legacy text field
@@ -830,6 +831,28 @@ class AuditEngagementStatus(str, Enum):
         return [status.value for status in cls]
 
 
+class ScopeStatus(str, Enum):
+    """Scope status of a control within an engagement's materialised snapshot.
+
+    The engagement captures the *complete* set of framework-mapped controls so
+    an auditor can see, in one place, which mapped controls the organisation
+    put out of scope and why:
+
+        IN_SCOPE     - a ScopedControl exists with selected=True
+        EXCLUDED     - a ScopedControl exists with selected=False (carries the
+                       org's out_of_scope_justification, frozen at materialisation)
+        NOT_TRACKED  - the org has no ScopedControl row for this mapped control
+    """
+    IN_SCOPE = "in_scope"
+    EXCLUDED = "excluded"
+    NOT_TRACKED = "not_tracked"
+
+    @classmethod
+    def values(cls) -> List[str]:
+        """Return all valid scope status values as strings."""
+        return [status.value for status in cls]
+
+
 # =============================================================================
 # Risk Assessment Enums
 # =============================================================================
@@ -1079,20 +1102,35 @@ class AuditEngagement(Base):
 
 
 class EngagementControlScope(Base):
-    """Materialised snapshot of in-scope controls for an audit engagement.
+    """Materialised snapshot of the framework-mapped control set for an engagement.
 
-    Created at engagement creation time by querying selected scoped controls
-    filtered by the engagement's frameworks. This is an append-only snapshot —
-    controls can be added later but the initial set is fixed at creation.
+    Created at engagement creation time by taking every SCF control that maps to
+    the engagement's frameworks (via the crosswalk) and tagging each with the
+    organisation's scope decision. Unlike the original Phase D behaviour (which
+    captured only selected controls), this holds the *complete* mapped set so an
+    auditor sees excluded controls and their justification inline.
+
+    Frozen at creation: scf_id, scope_status, out_of_scope_justification,
+    source_frameworks (the audit assertion). Read live via scoped_control_id:
+    evidence, implementation status, maturity, owner. Clause ordering is derived
+    on read from the read-only catalog framework_mappings.
+
+    Append-only: controls can be added later but the initial set is fixed.
     """
     __tablename__ = "engagement_control_scope"
     __table_args__ = (
-        UniqueConstraint('engagement_id', 'scoped_control_id', name='uq_engagement_scoped_control'),
+        UniqueConstraint('engagement_id', 'scf_id', name='uq_engagement_scf_id'),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     engagement_id = Column(UUID(as_uuid=True), ForeignKey("audit_engagements.id", ondelete="CASCADE"), nullable=False)
-    scoped_control_id = Column(UUID(as_uuid=True), ForeignKey("scoped_controls.id", ondelete="CASCADE"), nullable=False)
+    # scf_id keys the row so mapped-but-untracked controls (no ScopedControl) can be represented.
+    scf_id = Column(String(50), nullable=False)
+    # Nullable: NULL when the org never tracked this mapped control (scope_status=not_tracked).
+    scoped_control_id = Column(UUID(as_uuid=True), ForeignKey("scoped_controls.id", ondelete="CASCADE"), nullable=True)
+    scope_status = Column(String(20), nullable=False, default=ScopeStatus.IN_SCOPE.value)  # See ScopeStatus enum
+    out_of_scope_justification = Column(Text)  # Frozen copy from ScopedControl at materialisation (for excluded controls)
+    source_frameworks = Column(ARRAY(String), nullable=False, default=[])  # Which engagement frameworks pulled this control in
     added_at = Column(DateTime(timezone=False), server_default=func.now())
 
     # Relationships
@@ -1100,7 +1138,96 @@ class EngagementControlScope(Base):
     scoped_control = relationship("ScopedControl")
 
     def __repr__(self):
-        return f"<EngagementControlScope(engagement={self.engagement_id}, control={self.scoped_control_id})>"
+        return f"<EngagementControlScope(engagement={self.engagement_id}, scf_id={self.scf_id}, status={self.scope_status})>"
+
+
+class EngagementAuditorStatus(str, Enum):
+    """Lifecycle of an external auditor's access grant to an engagement."""
+    INVITED = "invited"    # grant created, auditor has not yet accepted
+    ACTIVE = "active"      # grant is live — the auditor can read this engagement
+    REVOKED = "revoked"    # access withdrawn
+
+    @classmethod
+    def values(cls) -> List[str]:
+        return [s.value for s in cls]
+
+
+class EngagementAuditor(Base):
+    """Engagement-scoped read grant for an external auditor.
+
+    An auditor is a User granted access to ONE engagement (not the whole org).
+    Access is enforced separately from OrganizationMember / consultant paths so
+    an auditor can never reach general org endpoints — only the engagement they
+    hold an active grant to. See api/audit_engagements.require_engagement_read.
+    """
+    __tablename__ = "engagement_auditors"
+    __table_args__ = (
+        UniqueConstraint('engagement_id', 'user_id', name='uq_engagement_auditor'),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    engagement_id = Column(UUID(as_uuid=True), ForeignKey("audit_engagements.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    status = Column(String(20), nullable=False, default=EngagementAuditorStatus.ACTIVE.value)
+    invited_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    invited_at = Column(DateTime(timezone=False), server_default=func.now())
+    accepted_at = Column(DateTime(timezone=False), nullable=True)
+    revoked_at = Column(DateTime(timezone=False), nullable=True)
+
+    # Relationships
+    engagement = relationship("AuditEngagement")
+    user = relationship("User", foreign_keys=[user_id])
+    invited_by = relationship("User", foreign_keys=[invited_by_user_id])
+
+    def __repr__(self):
+        return f"<EngagementAuditor(engagement={self.engagement_id}, user={self.user_id}, status={self.status})>"
+
+
+class EngagementQueryStatus(str, Enum):
+    """Lifecycle of an auditor's query on a control within an engagement.
+
+        OPEN     - auditor has raised a question/request; awaiting a response
+        ANSWERED - someone (typically the control owner) has responded
+        CLOSED   - the auditor is satisfied and has closed the query
+    """
+    OPEN = "open"
+    ANSWERED = "answered"
+    CLOSED = "closed"
+
+    @classmethod
+    def values(cls) -> List[str]:
+        return [s.value for s in cls]
+
+
+class EngagementQuery(Base):
+    """A structured auditor query raised against a control within an engagement.
+
+    Gives an auditable PBC/query-log trail: the header carries the
+    open/answered/closed lifecycle, while the back-and-forth reuses the polymorphic
+    Comment model (commentable_type='engagement_query', commentable_id=query.id).
+    """
+    __tablename__ = "engagement_queries"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    engagement_id = Column(UUID(as_uuid=True), ForeignKey("audit_engagements.id", ondelete="CASCADE"), nullable=False)
+    scf_id = Column(String(50), nullable=False)  # the control the query is about
+    raised_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    title = Column(String(255), nullable=False)
+    body = Column(Text, nullable=False)
+    status = Column(String(20), nullable=False, default=EngagementQueryStatus.OPEN.value)
+    created_at = Column(DateTime(timezone=False), server_default=func.now())
+    updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now())
+    closed_at = Column(DateTime(timezone=False), nullable=True)
+
+    # Relationships
+    engagement = relationship("AuditEngagement")
+    raised_by = relationship("User", foreign_keys=[raised_by_user_id])
+
+    # Query responses reuse the Comment table (commentable_type='engagement_query').
+    COMMENTABLE_TYPE = "engagement_query"
+
+    def __repr__(self):
+        return f"<EngagementQuery(engagement={self.engagement_id}, scf_id={self.scf_id}, status={self.status})>"
 
 
 # =============================================================================
