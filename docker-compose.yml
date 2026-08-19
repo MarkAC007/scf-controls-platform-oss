@@ -158,6 +158,8 @@ services:
       # CDM document placement (optional — see .env.example). The API needs the
       # provider setting to report classification state; the keys are used by
       # the consolidation recompute path. Off by default.
+      # ENABLE_CDM is the module master switch read by cdm_tenancy/cdm APIs.
+      ENABLE_CDM: ${ENABLE_CDM:-false}
       CDM_INTENT_PROVIDER: ${CDM_INTENT_PROVIDER:-disabled}
       CDM_INTENT_TIMEOUT_S: ${CDM_INTENT_TIMEOUT_S:-}
       CDM_INTENT_MAX_DOMAINS: ${CDM_INTENT_MAX_DOMAINS:-}
@@ -236,6 +238,8 @@ services:
       # CDM document placement (optional — see .env.example). The worker runs
       # the classify/backfill tasks, so it needs the provider setting and the
       # selected provider's key. Off by default.
+      # ENABLE_CDM is the module master switch read by the tenancy resolver.
+      ENABLE_CDM: ${ENABLE_CDM:-false}
       CDM_INTENT_PROVIDER: ${CDM_INTENT_PROVIDER:-disabled}
       CDM_INTENT_TIMEOUT_S: ${CDM_INTENT_TIMEOUT_S:-}
       CDM_INTENT_MAX_DOMAINS: ${CDM_INTENT_MAX_DOMAINS:-}

@@ -3361,10 +3361,114 @@ class AuditEngagementResponse(BaseModel):
 
 class EngagementScopeItem(BaseModel):
     id: UUID
-    scoped_control_id: UUID
+    scoped_control_id: Optional[UUID] = None  # NULL when the control is not tracked by the org
     scf_id: Optional[str] = None
     control_name: Optional[str] = None
+    scope_status: str = "in_scope"  # in_scope | excluded | not_tracked (see ScopeStatus)
+    out_of_scope_justification: Optional[str] = None  # populated for excluded controls
+    source_frameworks: list[str] = []  # engagement frameworks that pulled this control in
     added_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# --- Framework-native presentation (Increment 2) ---------------------------
+
+class PresentationEvidenceItem(BaseModel):
+    id: Optional[UUID] = None
+    filename: Optional[str] = None
+    uploaded_at: Optional[datetime] = None
+    review_status: Optional[str] = None
+    in_window: bool = False  # upload date within the engagement window (upload-date proxy)
+
+
+class PresentationControl(BaseModel):
+    scf_id: str
+    control_name: Optional[str] = None
+    scope_status: str = "in_scope"
+    out_of_scope_justification: Optional[str] = None
+    source_frameworks: list[str] = []
+    scoped_control_id: Optional[UUID] = None
+    # Live fields (from the org's current ScopedControl; absent for not_tracked controls)
+    implementation_status: Optional[str] = None
+    maturity_level: Optional[str] = None
+    owner: Optional[str] = None
+    evidence: list[PresentationEvidenceItem] = []
+    evidence_in_window_count: int = 0
+    queries: list = []  # increment 4 placeholder
+
+
+class PresentationClause(BaseModel):
+    clause_id: str
+    controls: list[PresentationControl] = []
+
+
+class FrameworkPresentation(BaseModel):
+    framework: str
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
+    clauses: list[PresentationClause] = []
+
+
+# --- Engagement auditor grants (Increment 3) -------------------------------
+
+class EngagementAuditorCreate(BaseModel):
+    user_id: UUID  # existing user to grant read access to this engagement
+
+
+class EngagementAuditorResponse(BaseModel):
+    id: UUID
+    engagement_id: UUID
+    user_id: UUID
+    email: Optional[str] = None
+    status: str
+    invited_at: Optional[datetime] = None
+    accepted_at: Optional[datetime] = None
+    revoked_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# --- Structured auditor queries (Increment 4) ------------------------------
+
+class EngagementQueryCreate(BaseModel):
+    scf_id: str
+    title: str
+    body: str
+
+
+class EngagementQueryResponseCreate(BaseModel):
+    content: str
+
+
+class EngagementQueryStatusUpdate(BaseModel):
+    status: str  # open | answered | closed (validated against the lifecycle)
+
+
+class QueryResponseItem(BaseModel):
+    id: UUID
+    user_id: Optional[UUID] = None
+    email: Optional[str] = None
+    content: str
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class EngagementQueryItem(BaseModel):
+    id: UUID
+    engagement_id: UUID
+    scf_id: str
+    raised_by_user_id: Optional[UUID] = None
+    raised_by_email: Optional[str] = None
+    title: str
+    body: str
+    status: str
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    closed_at: Optional[datetime] = None
+    response_count: int = 0
+    responses: Optional[list[QueryResponseItem]] = None  # populated on the single-query view
 
     model_config = ConfigDict(from_attributes=True)
 

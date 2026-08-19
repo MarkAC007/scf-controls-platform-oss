@@ -1,6 +1,9 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
 :root {
+  /* Tell the UA which scheme native controls (date pickers, scrollbars,
+     form fields) should render in — light by default. */
+  color-scheme: light;
   /* ComplianceGenie Brand Colors - Light Theme */
   --bg: hsl(0, 0%, 100%);
   --panel: hsl(0, 0%, 100%);
@@ -160,6 +163,8 @@
 
 /* Dark Theme */
 [data-theme="dark"] {
+  /* Native date pickers, scrollbars, and form controls follow dark scheme. */
+  color-scheme: dark;
   /* Obsidian Command — Surface Hierarchy (from Stitch DESIGN.md) */
   --bg: #0b1326;                       /* surface — base layer */
   --panel: #131b2e;                    /* surface-container-low — sidebar, header */

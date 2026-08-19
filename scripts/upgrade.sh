@@ -37,7 +37,7 @@ set -euo pipefail
 
 # --- Constants ---------------------------------------------------------------
 OSS_REPO="MarkAC007/scf-controls-platform-oss"
-HEALTH_URL="http://localhost:8000/health"
+HEALTH_URL="${HEALTH_URL:-http://localhost:8000/health}"
 HEALTH_TIMEOUT=120            # seconds to wait for /health after start
 BACKUPS_DIR="./backups"
 COMPOSE_FILE="docker-compose.yml"
@@ -136,9 +136,12 @@ PY
 # prefixing); fall back to a naive parse, then to the compose-project prefix.
 derive_volume_name() {
   local logical="$1" name=""
+  # NOTE: use `python3 -c` (not a `python3 - <<'PY'` heredoc) here. A heredoc
+  # inside `$(... | ... || true)` triggers a bash 5.2 command-substitution
+  # re-parse error ("syntax error near unexpected token `||'") that `bash -n`
+  # does not catch — it only bites when the substitution runs. See issue #741.
   name="$(compose config --format json 2>/dev/null \
-    | python3 - "$logical" <<'PY' 2>/dev/null || true
-import json, sys
+    | python3 -c 'import json, sys
 try:
     cfg = json.load(sys.stdin)
 except Exception:
@@ -146,8 +149,7 @@ except Exception:
 vols = cfg.get("volumes", {}) or {}
 v = vols.get(sys.argv[1], {}) or {}
 print(v.get("name", ""))
-PY
-)"
+' "$logical" 2>/dev/null || true)"
   if [[ -z "$name" ]]; then
     # Fallback: explicit `name:` under the volume block in the compose file.
     name="$(awk -v key="  $logical:" '
@@ -168,9 +170,10 @@ PY
 # falling back to the known project defaults.
 derive_pg() {
   local kind="$1" val=""
+  # NOTE: `python3 -c` (not a heredoc) — see the derive_volume_name comment and
+  # issue #741 for why a heredoc here breaks under bash 5.2.
   val="$(compose config --format json 2>/dev/null \
-    | python3 - "$kind" <<'PY' 2>/dev/null || true
-import json, sys
+    | python3 -c 'import json, sys
 try:
     cfg = json.load(sys.stdin)
 except Exception:
@@ -181,8 +184,7 @@ if isinstance(env, list):
     env = dict(e.split("=", 1) for e in env if "=" in e)
 key = "POSTGRES_USER" if sys.argv[1] == "user" else "POSTGRES_DB"
 print(env.get(key, "") or "")
-PY
-)"
+' "$kind" 2>/dev/null || true)"
   if [[ -z "$val" ]]; then
     [[ "$kind" == "user" ]] && val="cg" || val="cg_scf"
   fi
@@ -337,11 +339,24 @@ _wait_pg() {
   return 0
 }
 
+# Wait for the backend to become healthy. We accept EITHER signal:
+#   1. a host-side HTTP probe of $HEALTH_URL (works when the backend port is
+#      published), or
+#   2. the container's own Docker healthcheck reporting "healthy" (the same
+#      HTTP probe, but run inside the network namespace).
+# Falling back to (2) matters because UPGRADING.md §6 recommends keeping local
+# hardening in docker-compose.override.yml, and the natural override unpublishes
+# the backend port (`ports: !reset []`, API reached via the frontend /api proxy).
+# Without this fallback a fully healthy upgrade times out and auto-rolls-back —
+# see issue #741. $HEALTH_URL is also overridable via the environment.
 _wait_health() {
-  local i deadline
+  local deadline
   deadline=$(( $(date +%s) + HEALTH_TIMEOUT ))
   while (( $(date +%s) < deadline )); do
     if have curl && curl -fsS "$HEALTH_URL" >/dev/null 2>&1; then
+      return 0
+    fi
+    if [[ "$(compose ps --format '{{.Health}}' backend 2>/dev/null)" == "healthy" ]]; then
       return 0
     fi
     sleep 3
