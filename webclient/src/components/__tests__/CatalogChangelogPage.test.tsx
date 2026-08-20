@@ -75,10 +75,10 @@ describe('CatalogChangelogPage', () => {
     expect(screen.getByTestId('deprecated-badge-explainer')).toBeInTheDocument()
     expect(
       screen.getByRole('link', { name: /organisation catalog reconciliation guide/ })
-    ).toHaveAttribute('href', expect.stringContaining('docs/user/org-catalog-reconciliation.md'))
+    ).toHaveAttribute('href', expect.stringContaining('docs.scfcontrolsplatform.app/user-guide/catalog-updates'))
     expect(
       screen.getByRole('link', { name: /platform catalog upgrade runbook/ })
-    ).toHaveAttribute('href', expect.stringContaining('docs/user/platform-catalog-upgrade.md'))
+    ).toHaveAttribute('href', expect.stringContaining('docs.scfcontrolsplatform.app/admin-guide/platform-catalog-upgrade'))
   })
 
   it('surfaces load errors', async () => {

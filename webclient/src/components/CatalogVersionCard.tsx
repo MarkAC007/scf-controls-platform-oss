@@ -12,7 +12,7 @@ import { getOrgReconciliationStatus } from '../data/catalogUpgradeApi'
 import type { OrgCatalogStatusResponse } from '../types/catalogUpgrade'
 
 export const ORG_RECONCILIATION_DOC_URL =
-  'https://github.com/MarkAC007/scf-controls-platform/blob/main/docs/user/org-catalog-reconciliation.md'
+  'https://docs.scfcontrolsplatform.app/user-guide/catalog-updates/'
 
 /** Numeric segment-wise compare of catalog versions like "2026.2". */
 export function compareCatalogVersions(a: string, b: string): number {
