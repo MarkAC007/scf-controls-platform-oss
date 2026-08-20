@@ -84,7 +84,7 @@ describe('CatalogVersionCard', () => {
 
     await waitFor(() => {
       const link = screen.getByRole('link', { name: /organisation catalog reconciliation guide/ })
-      expect(link).toHaveAttribute('href', expect.stringContaining('docs/user/org-catalog-reconciliation.md'))
+      expect(link).toHaveAttribute('href', expect.stringContaining('docs.scfcontrolsplatform.app/user-guide/catalog-updates'))
     })
   })
 

@@ -13,7 +13,7 @@ import DeprecatedBadge from './DeprecatedBadge'
 import { ORG_RECONCILIATION_DOC_URL } from './CatalogVersionCard'
 
 export const PLATFORM_UPGRADE_DOC_URL =
-  'https://github.com/MarkAC007/scf-controls-platform/blob/main/docs/user/platform-catalog-upgrade.md'
+  'https://docs.scfcontrolsplatform.app/admin-guide/platform-catalog-upgrade/'
 
 const PAGE_SIZE = 50
 
