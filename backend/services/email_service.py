@@ -318,6 +318,74 @@ async def send_mention_notification_email(
         return None
 
 
+def send_event_notification_email_sync(
+    to_email: str,
+    to_name: str,
+    subject: str,
+    body_line: str,
+    event_type: str
+):
+    """Send a generic event notification email (rejections, reviews, queries).
+
+    Sync variant for Celery task contexts where awaiting is not possible.
+    """
+    if not RESEND_ENABLED:
+        logger.debug(f"Email notifications disabled - skipping {event_type} email")
+        return None
+
+    try:
+        email_html = f"""
+        <html>
+        <body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <h2 style="color: #1976d2;">{html.escape(subject)}</h2>
+            <p>Hi {html.escape(to_name)},</p>
+            <p>{html.escape(body_line)}</p>
+            <p style="margin: 20px 0;">
+                <a href="{APP_URL}"
+                   style="background-color: #1976d2; color: white; padding: 12px 24px;
+                          text-decoration: none; border-radius: 4px; display: inline-block;">
+                    View in CG SCF
+                </a>
+            </p>
+            <p style="color: #666; font-size: 14px;">
+                This is an automated notification from CG SCF Explorer.
+            </p>
+        </body>
+        </html>
+        """
+
+        params = {
+            "from": RESEND_FROM_EMAIL,
+            "to": [to_email],
+            "subject": subject,
+            "html": email_html,
+            "tags": [
+                {"name": "type", "value": event_type}
+            ]
+        }
+
+        email = resend.Emails.send(params)
+        logger.info(f"✅ {event_type} email sent to {_mask_email(to_email)}: {email['id']}")
+        return email['id']
+
+    except Exception as e:
+        logger.error(f"❌ Failed to send {event_type} email: {e}")
+        return None
+
+
+async def send_event_notification_email(
+    to_email: str,
+    to_name: str,
+    subject: str,
+    body_line: str,
+    event_type: str
+):
+    """Send a generic event notification email (rejections, reviews, queries)."""
+    return send_event_notification_email_sync(
+        to_email, to_name, subject, body_line, event_type
+    )
+
+
 async def send_daily_digest_email(
     to_email: str,
     to_name: str,

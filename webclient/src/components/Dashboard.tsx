@@ -8,6 +8,7 @@ import CollapsibleSection from './CollapsibleSection'
 import { FRAMEWORK_GROUPS, OTHER_GROUP, getFrameworkGroup } from '../data/frameworkGroups'
 import { FrameworkLogo } from './FrameworkLogo'
 import { FrequencyHealthTile } from './dashboard/FrequencyHealthTile'
+import WorkQueuePanel from './dashboard/WorkQueuePanel'
 
 // M4 (#574) — gate the Frequency Health tile mount on the build-time flag.
 const PER_WINDOW_REVIEW_ENABLED =
@@ -20,9 +21,11 @@ interface DashboardProps {
   scopingData: ScopedControlsFile
   onScopingDataChange: (data: ScopedControlsFile) => void
   onNavigateToScoping?: (framework?: string) => void
+  onNavigateToEvidence?: (evidenceId: string) => void
+  onNavigateToControl?: (scfId: string) => void
 }
 
-export default function Dashboard({ controls, scopingData, onScopingDataChange, onNavigateToScoping }: DashboardProps) {
+export default function Dashboard({ controls, scopingData, onScopingDataChange, onNavigateToScoping, onNavigateToEvidence, onNavigateToControl }: DashboardProps) {
   const stats = useDashboardStats(controls, scopingData)
 
   const [activeTab, setActiveTab] = useState<DashboardTab>('implementation')
@@ -45,6 +48,7 @@ export default function Dashboard({ controls, scopingData, onScopingDataChange, 
   // Evidence gaps
   const [evidenceGaps, setEvidenceGaps] = useState<EvidenceGapsResponse | null>(null)
   const [loadingGaps, setLoadingGaps] = useState(false)
+  const [showAllGaps, setShowAllGaps] = useState(false)
 
   useEffect(() => {
     const fetchGaps = async () => {
@@ -246,6 +250,13 @@ export default function Dashboard({ controls, scopingData, onScopingDataChange, 
       <div className="dashboard-tab-content">
 
         {/* === IMPLEMENTATION TAB === */}
+        {activeTab === 'implementation' && scopingData.organizationId && (
+          <WorkQueuePanel
+            orgId={scopingData.organizationId}
+            onNavigateToEvidence={onNavigateToEvidence}
+            onNavigateToControl={onNavigateToControl}
+          />
+        )}
         {activeTab === 'implementation' && (
           <div className="dashboard-two-col">
             <div className="dashboard-col-left">
@@ -497,7 +508,7 @@ export default function Dashboard({ controls, scopingData, onScopingDataChange, 
                         <span className="gaps-list-count">{evidenceGaps.gaps.length} total</span>
                       </div>
                       <div className="gaps-list">
-                        {evidenceGaps.gaps.slice(0, 5).map((gap) => (
+                        {(showAllGaps ? evidenceGaps.gaps : evidenceGaps.gaps.slice(0, 5)).map((gap) => (
                           <div key={gap.evidence_id} className="gap-item">
                             <div className="gap-item-main">
                               <div className="gap-item-id">{gap.evidence_id}</div>
@@ -529,9 +540,15 @@ export default function Dashboard({ controls, scopingData, onScopingDataChange, 
                       </div>
                       {evidenceGaps.gaps.length > 5 && (
                         <div className="gaps-list-footer">
-                          <a href="#evidence" className="gaps-view-all">
-                            View all {evidenceGaps.gaps.length} gaps &rarr;
-                          </a>
+                          <button
+                            type="button"
+                            className="gaps-view-all"
+                            onClick={() => setShowAllGaps(prev => !prev)}
+                          >
+                            {showAllGaps
+                              ? <>Show top 5 gaps &larr;</>
+                              : <>View all {evidenceGaps.gaps.length} gaps &rarr;</>}
+                          </button>
                         </div>
                       )}
                     </div>

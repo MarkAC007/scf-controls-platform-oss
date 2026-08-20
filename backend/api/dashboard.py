@@ -10,10 +10,10 @@ from datetime import date as DateType
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, or_
 
 from database import get_db
-from auth import require_org_role, OrgMembership
+from auth import require_org_viewer, OrgMembership
 from models import EvidenceCollectionTask, ScopedControl, EvidenceTracking
 
 logger = logging.getLogger(__name__)
@@ -63,7 +63,8 @@ class WorkQueueResponse(BaseModel):
 )
 async def get_work_queue(
     org_id: UUID,
-    membership: OrgMembership = Depends(require_org_role("viewer")),
+    assigned_to_me: bool = False,
+    membership: OrgMembership = Depends(require_org_viewer),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -73,8 +74,18 @@ async def get_work_queue(
     1. Overdue evidence collection tasks
     2. Blocking (not_started / at_risk) scoped controls
     3. Stale evidence collection schedules past their next collection date
+
+    With ``assigned_to_me=true``, tasks are limited to those assigned to the
+    calling user and controls to those where the caller is the owner or
+    assignee.
     """
     today = date.today()
+
+    caller_id: Optional[UUID] = (
+        UUID(membership.user.db_id)
+        if assigned_to_me and membership.user.db_id
+        else None
+    )
 
     # ------------------------------------------------------------------
     # 1. Overdue evidence collection tasks
@@ -101,6 +112,10 @@ async def get_work_queue(
         .order_by(EvidenceCollectionTask.due_date.asc())
         .limit(20)
     )
+    if caller_id is not None:
+        overdue_query = overdue_query.where(
+            EvidenceCollectionTask.assigned_user_id == caller_id
+        )
 
     overdue_result = await db.execute(overdue_query)
     overdue_rows = overdue_result.all()
@@ -136,6 +151,13 @@ async def get_work_queue(
         .order_by(ScopedControl.updated_at.asc())
         .limit(20)
     )
+    if caller_id is not None:
+        blocking_query = blocking_query.where(
+            or_(
+                ScopedControl.owner_user_id == caller_id,
+                ScopedControl.assigned_user_id == caller_id,
+            )
+        )
 
     blocking_result = await db.execute(blocking_query)
     blocking_rows = blocking_result.all()

@@ -50,6 +50,7 @@ from services.audit_service import (
 )
 from services.validation_service import run_validation
 from services.download_token import generate_download_token, verify_download_token
+from services.notifications import create_evidence_rejected_notifications
 
 logger = logging.getLogger(__name__)
 
@@ -559,6 +560,14 @@ async def review_evidence_file(
 
     await db.commit()
     await db.refresh(evidence_file, attribute_names=["uploaded_by", "reviewed_by"])
+
+    if body.review_status == "rejected":
+        await create_evidence_rejected_notifications(
+            db,
+            organization_id=org_id,
+            evidence_id=evidence_id,
+            rejected_by_user_id=UUID(membership.user.db_id),
+        )
 
     download_url = _proxy_download_url(org_id, evidence_id, file_id)
     return _to_response(evidence_file, download_url=download_url)

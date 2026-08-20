@@ -81,6 +81,7 @@ export const TaskEditModal: React.FC<TaskEditModalProps> = ({
         description: description.trim() || null,
         priority: priority,
         status: status,
+        due_date: dueDate,
         assigned_user_id: assignedUserId || null
       });
 

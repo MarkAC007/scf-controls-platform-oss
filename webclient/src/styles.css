@@ -7834,6 +7834,11 @@ textarea.form-control{
   font-weight: 500;
   color: #3b82f6;
   text-decoration: none;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-family: inherit;
 }
 
 .gaps-view-all:hover {
@@ -19676,6 +19681,9 @@ textarea.form-control{
 }
 
 /* Work Queue Panel (#262) */
+.dashboard-tab-content > .work-queue-panel {
+  margin-bottom: 24px;
+}
 .work-queue-panel {
   background: var(--card);
   border: 1px solid var(--border);
@@ -19697,6 +19705,19 @@ textarea.form-control{
   margin: 0;
   font-size: 16px;
   font-weight: 600;
+}
+.wq-header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.wq-toggle {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  flex-shrink: 0;
 }
 .wq-badge {
   padding: 4px 10px;

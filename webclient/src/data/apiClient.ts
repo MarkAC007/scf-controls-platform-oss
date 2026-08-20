@@ -2446,12 +2446,13 @@ export interface WorkQueueResponse {
   total_items: number
 }
 
-export async function getWorkQueue(orgId?: string): Promise<WorkQueueResponse> {
+export async function getWorkQueue(orgId?: string, assignedToMe?: boolean): Promise<WorkQueueResponse> {
   if (!orgId) {
     const org = await getCurrentOrganization()
     orgId = org.id
   }
-  return apiFetch<WorkQueueResponse>(`/organizations/${orgId}/dashboard/work-queue`)
+  const suffix = assignedToMe ? '?assigned_to_me=true' : ''
+  return apiFetch<WorkQueueResponse>(`/organizations/${orgId}/dashboard/work-queue${suffix}`)
 }
 
 // ── Capability Themes (KSI Posture) ──

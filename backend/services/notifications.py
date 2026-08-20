@@ -6,24 +6,69 @@ This service provides helper functions to create notifications for various event
 - @mentions in comments
 - Tasks due soon
 - Tasks overdue
+- Evidence review rejections
+- Controls marked ready for review
+- Composite assessments transitioning to insufficient
+- Auditor queries raised on engagements
 
 Also sends email notifications via Resend when enabled.
 """
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 from sqlalchemy import select
 from uuid import UUID
 from datetime import date, timedelta
 import logging
 
-from models import Notification, User, Assignment, Comment, EvidenceCollectionTask
+from models import (
+    Notification,
+    User,
+    Assignment,
+    Comment,
+    EvidenceCollectionTask,
+    EvidenceTracking,
+    OrganizationMember,
+    ScopedControl,
+)
 from services.email_service import (
     send_assignment_notification_email,
     send_task_due_notification_email,
     send_task_overdue_notification_email,
-    send_mention_notification_email
+    send_mention_notification_email,
+    send_event_notification_email,
+    send_event_notification_email_sync
 )
 
 logger = logging.getLogger(__name__)
+
+
+async def _get_org_admin_user_ids(
+    db: AsyncSession,
+    organization_id: UUID,
+    exclude_user_id: UUID = None
+) -> list[UUID]:
+    """Return deduplicated org admin user ids, excluding the acting user."""
+    result = await db.execute(
+        select(OrganizationMember.user_id).where(
+            OrganizationMember.organization_id == organization_id,
+            OrganizationMember.role == 'admin'
+        )
+    )
+    admin_ids = set(result.scalars().all())
+    if exclude_user_id is not None:
+        admin_ids.discard(exclude_user_id)
+    return list(admin_ids)
+
+
+async def _get_user_name(db: AsyncSession, user_id: UUID) -> str:
+    """Return a user's display name (or email), defaulting to 'Someone'."""
+    if not user_id:
+        return "Someone"
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        return "Someone"
+    return user.display_name or user.email
 
 
 async def create_assignment_notification(
@@ -377,6 +422,253 @@ async def check_and_notify_overdue_tasks(db: AsyncSession):
 
     except Exception as e:
         logger.error(f"Failed to check and notify overdue tasks: {e}")
+        return 0
+
+
+async def create_evidence_rejected_notifications(
+    db: AsyncSession,
+    organization_id: UUID,
+    evidence_id: str,
+    rejected_by_user_id: UUID = None
+):
+    """Create notification when an evidence review is rejected.
+
+    Recipient is the evidence item's assigned user, falling back to the
+    owner. The reviewer is never notified about their own action.
+    """
+    try:
+        result = await db.execute(
+            select(EvidenceTracking).where(
+                EvidenceTracking.organization_id == organization_id,
+                EvidenceTracking.evidence_id == evidence_id
+            ).limit(1)
+        )
+        tracking = result.scalars().first()
+        if not tracking:
+            logger.info(f"No evidence tracking row for {evidence_id} - skipping rejection notification")
+            return None
+
+        recipient_id = tracking.assigned_user_id or tracking.owner_user_id
+        if not recipient_id or recipient_id == rejected_by_user_id:
+            return None
+
+        user_result = await db.execute(select(User).where(User.id == recipient_id))
+        user = user_result.scalar_one_or_none()
+        if not user:
+            logger.warning(f"User {recipient_id} not found for evidence rejected notification")
+            return None
+
+        reviewer_name = await _get_user_name(db, rejected_by_user_id)
+        message = f"{reviewer_name} rejected evidence {evidence_id}"
+
+        notification = Notification(
+            user_id=recipient_id,
+            type='evidence_rejected',
+            reference_type='evidence',
+            reference_id=tracking.id,
+            message=message
+        )
+        db.add(notification)
+        await db.commit()
+
+        logger.info(f"Created evidence rejected notification for user {recipient_id}")
+
+        if user.email_notifications_enabled and user.notification_frequency == 'immediate':
+            await send_event_notification_email(
+                to_email=user.email,
+                to_name=user.display_name or user.email,
+                subject=f"Evidence {evidence_id} was rejected",
+                body_line=message,
+                event_type='evidence_rejected'
+            )
+
+        return notification
+
+    except Exception as e:
+        logger.error(f"Failed to create evidence rejected notification: {e}")
+        await db.rollback()
+        return None
+
+
+async def create_control_ready_for_review_notifications(
+    db: AsyncSession,
+    organization_id: UUID,
+    scoped_control_id: UUID,
+    scf_id: str,
+    actor_user_id: UUID = None
+):
+    """Create notifications for org admins when a control becomes ready for review."""
+    notifications_created = 0
+
+    try:
+        admin_ids = await _get_org_admin_user_ids(db, organization_id, exclude_user_id=actor_user_id)
+        if not admin_ids:
+            return 0
+
+        actor_name = await _get_user_name(db, actor_user_id)
+        message = f"{actor_name} marked control {scf_id} as ready for review"
+
+        for user_id in admin_ids:
+            user_result = await db.execute(select(User).where(User.id == user_id))
+            user = user_result.scalar_one_or_none()
+            if not user:
+                continue
+
+            notification = Notification(
+                user_id=user_id,
+                type='control_ready_for_review',
+                reference_type='control',
+                reference_id=scoped_control_id,
+                message=message
+            )
+            db.add(notification)
+            notifications_created += 1
+
+            if user.email_notifications_enabled and user.notification_frequency == 'immediate':
+                await send_event_notification_email(
+                    to_email=user.email,
+                    to_name=user.display_name or user.email,
+                    subject=f"Control {scf_id} is ready for review",
+                    body_line=message,
+                    event_type='control_ready_for_review'
+                )
+
+        await db.commit()
+        logger.info(f"Created {notifications_created} control ready for review notifications")
+        return notifications_created
+
+    except Exception as e:
+        logger.error(f"Failed to create control ready for review notifications: {e}")
+        await db.rollback()
+        return 0
+
+
+async def create_engagement_query_raised_notifications(
+    db: AsyncSession,
+    organization_id: UUID,
+    query_id: UUID,
+    scf_id: str,
+    raised_by_user_id: UUID = None
+):
+    """Create notifications for org admins when an auditor query is raised."""
+    notifications_created = 0
+
+    try:
+        admin_ids = await _get_org_admin_user_ids(db, organization_id, exclude_user_id=raised_by_user_id)
+        if not admin_ids:
+            return 0
+
+        raiser_name = await _get_user_name(db, raised_by_user_id)
+        message = f"{raiser_name} raised a query on control {scf_id}"
+
+        for user_id in admin_ids:
+            user_result = await db.execute(select(User).where(User.id == user_id))
+            user = user_result.scalar_one_or_none()
+            if not user:
+                continue
+
+            notification = Notification(
+                user_id=user_id,
+                type='engagement_query_raised',
+                reference_type='engagement_query',
+                reference_id=query_id,
+                message=message
+            )
+            db.add(notification)
+            notifications_created += 1
+
+            if user.email_notifications_enabled and user.notification_frequency == 'immediate':
+                await send_event_notification_email(
+                    to_email=user.email,
+                    to_name=user.display_name or user.email,
+                    subject=f"New query raised on control {scf_id}",
+                    body_line=message,
+                    event_type='engagement_query_raised'
+                )
+
+        await db.commit()
+        logger.info(f"Created {notifications_created} engagement query raised notifications")
+        return notifications_created
+
+    except Exception as e:
+        logger.error(f"Failed to create engagement query raised notifications: {e}")
+        await db.rollback()
+        return 0
+
+
+def create_composite_insufficient_notifications_sync(
+    session: Session,
+    organization_id: UUID,
+    scf_id: str
+):
+    """Create notifications when a control's composite transitions to insufficient.
+
+    Sync variant for Celery task contexts (composite_service uses a
+    synchronous session). Recipients are the scoped control's owner and
+    assigned users when set, falling back to org admins. The caller is
+    responsible for only invoking this on a genuine status transition.
+    """
+    notifications_created = 0
+
+    try:
+        control = session.execute(
+            select(ScopedControl).where(
+                ScopedControl.organization_id == organization_id,
+                ScopedControl.scf_id == scf_id
+            ).limit(1)
+        ).scalars().first()
+        if not control:
+            logger.info(f"No scoped control for {scf_id} - skipping composite insufficient notification")
+            return 0
+
+        recipient_ids = {uid for uid in (control.owner_user_id, control.assigned_user_id) if uid}
+        if not recipient_ids:
+            recipient_ids = set(
+                session.execute(
+                    select(OrganizationMember.user_id).where(
+                        OrganizationMember.organization_id == organization_id,
+                        OrganizationMember.role == 'admin'
+                    )
+                ).scalars().all()
+            )
+        if not recipient_ids:
+            return 0
+
+        message = f"Composite evidence assessment for control {scf_id} is now insufficient"
+
+        for user_id in recipient_ids:
+            user = session.execute(
+                select(User).where(User.id == user_id)
+            ).scalar_one_or_none()
+            if not user:
+                continue
+
+            notification = Notification(
+                user_id=user_id,
+                type='composite_insufficient',
+                reference_type='control',
+                reference_id=control.id,
+                message=message
+            )
+            session.add(notification)
+            notifications_created += 1
+
+            if user.email_notifications_enabled and user.notification_frequency == 'immediate':
+                send_event_notification_email_sync(
+                    to_email=user.email,
+                    to_name=user.display_name or user.email,
+                    subject=f"Control {scf_id} evidence is insufficient",
+                    body_line=message,
+                    event_type='composite_insufficient'
+                )
+
+        session.commit()
+        logger.info(f"Created {notifications_created} composite insufficient notifications")
+        return notifications_created
+
+    except Exception as e:
+        logger.error(f"Failed to create composite insufficient notifications: {e}")
+        session.rollback()
         return 0
 
 

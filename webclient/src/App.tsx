@@ -480,6 +480,12 @@ function AppContent() {
               controls={controls}
               scopingData={scopingData}
               onScopingDataChange={setScopingData}
+              onNavigateToEvidence={handleNavigateToEvidence}
+              onNavigateToControl={(scfId) => {
+                setSelectedId(scfId)
+                setActiveTab('scoping')
+              }}
+              onNavigateToScoping={() => setActiveTab('scoping')}
             />
           )}
           {activeTab === 'capability-posture' && scopingData && (

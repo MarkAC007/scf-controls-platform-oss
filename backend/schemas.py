@@ -434,6 +434,7 @@ class EvidenceCollectionTaskCreate(EvidenceCollectionTaskBase):
 
 
 class EvidenceCollectionTaskUpdate(BaseModel):
+    due_date: Optional[date] = None
     status: Optional[str] = Field(None, pattern="^(not_started|in_progress|completed)$")
     task_type: Optional[str] = Field(None, pattern="^(feasibility|setup|collection|review|documentation|issue)$")
     priority: Optional[str] = Field(None, pattern="^(low|medium|high|critical)$")

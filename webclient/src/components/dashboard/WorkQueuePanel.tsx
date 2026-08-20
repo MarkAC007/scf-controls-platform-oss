@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useWorkQueue } from '../../hooks/useWorkQueue'
 import type {
   OverdueEvidenceItem,
@@ -16,15 +17,34 @@ export default function WorkQueuePanel({
   onNavigateToEvidence,
   onNavigateToControl,
 }: WorkQueuePanelProps) {
-  const { data, isLoading } = useWorkQueue(orgId)
+  const [assignedToMe, setAssignedToMe] = useState(false)
+  const { data, isLoading } = useWorkQueue(orgId, assignedToMe)
 
   const totalItems = data?.total_items ?? 0
+
+  const scopeToggle = (
+    <div className="wq-toggle">
+      <button
+        className={`scope-toggle-btn${!assignedToMe ? ' active' : ''}`}
+        onClick={() => setAssignedToMe(false)}
+      >
+        All
+      </button>
+      <button
+        className={`scope-toggle-btn${assignedToMe ? ' active' : ''}`}
+        onClick={() => setAssignedToMe(true)}
+      >
+        My work
+      </button>
+    </div>
+  )
 
   if (isLoading) {
     return (
       <div className="work-queue-panel">
         <div className="wq-header">
           <h3>Work Queue</h3>
+          {scopeToggle}
         </div>
         <div className="wq-loading">Loading work queue...</div>
       </div>
@@ -39,10 +59,13 @@ export default function WorkQueuePanel({
   return (
     <div className="work-queue-panel">
       <div className="wq-header">
-        <h3>Work Queue</h3>
-        <span className={`wq-badge${totalItems === 0 ? ' wq-badge-zero' : ''}`}>
-          {totalItems}
-        </span>
+        <div className="wq-header-left">
+          <h3>Work Queue</h3>
+          <span className={`wq-badge${totalItems === 0 ? ' wq-badge-zero' : ''}`}>
+            {totalItems}
+          </span>
+        </div>
+        {scopeToggle}
       </div>
       <div className="wq-body">
         {!hasItems ? (

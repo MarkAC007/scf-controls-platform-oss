@@ -41,6 +41,7 @@ from services.audit_service import (
     detect_action_source,
     WINDOW_ASSESSMENT_TRACKED_FIELDS,
 )
+from services.notifications import create_evidence_rejected_notifications
 
 
 # Valid review statuses per ISC-11. ``not_reviewed`` permitted to allow
@@ -522,5 +523,13 @@ async def review_window_assessment(
                 ewa.id,
                 exc,
             )
+
+    if body.review_status == "rejected":
+        await create_evidence_rejected_notifications(
+            db,
+            organization_id=org_id,
+            evidence_id=ewa.evidence_id,
+            rejected_by_user_id=UUID(membership.user.db_id),
+        )
 
     return ewa

@@ -623,8 +623,10 @@ class Notification(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    type = Column(String(50), nullable=False)  # 'assignment', 'mention', 'task_due', 'task_overdue'
-    reference_type = Column(String(50), nullable=False)  # 'control', 'evidence', 'comment', 'task'
+    # 'assignment', 'mention', 'task_due', 'task_overdue', 'evidence_rejected',
+    # 'control_ready_for_review', 'composite_insufficient', 'engagement_query_raised'
+    type = Column(String(50), nullable=False)
+    reference_type = Column(String(50), nullable=False)  # 'control', 'evidence', 'comment', 'task', 'engagement_query'
     reference_id = Column(UUID(as_uuid=True), nullable=False)
     message = Column(Text, nullable=False)
     is_read = Column(Boolean, default=False)
