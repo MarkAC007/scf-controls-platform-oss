@@ -1601,9 +1601,13 @@ async def get_version_info(
     if user is None:
         return {"platform": {"api_version": "1.0.0"}, "status": "ok"}
 
-    # Read versions dynamically from actual sources
+    # Read versions dynamically from actual sources. The catalog version
+    # authority is the import-run ledger (plan §4.2.5); the git-describe path
+    # is consulted only while no upgrade run has ever been applied.
+    from services.catalog_apply import get_current_catalog_version
+
     platform_version = get_platform_version()
-    catalog_version = get_catalog_version()
+    catalog_version = await get_current_catalog_version(db) or get_catalog_version()
 
     # Get catalog counts from database
     catalog_counts = await get_catalog_counts(db)
@@ -1667,11 +1671,16 @@ async def get_catalog_stats(
             select(func.count()).select_from(SCFCatalogAssessmentObjective)
         )
 
-        # Get catalog version from first control (all should have same version)
-        version_result = await db.execute(
-            select(SCFCatalogControl.catalog_version).limit(1)
-        )
-        catalog_version = version_result.scalar() or "unknown"
+        # Catalog version authority is the import-run ledger (plan §4.2.5);
+        # row-sampling remains only as the pre-first-upgrade fallback.
+        from services.catalog_apply import get_current_catalog_version
+
+        catalog_version = await get_current_catalog_version(db)
+        if catalog_version is None:
+            version_result = await db.execute(
+                select(SCFCatalogControl.catalog_version).limit(1)
+            )
+            catalog_version = version_result.scalar() or "unknown"
 
         return {
             "status": "healthy",

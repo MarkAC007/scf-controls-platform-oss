@@ -32,7 +32,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Optional, Protocol, Sequence
 from uuid import UUID
 
-from sqlalchemy import select, text, update
+from sqlalchemy import or_, select, text, update
 from sqlalchemy.orm import Session
 
 from catalog_models import SCFCatalogControl
@@ -533,6 +533,9 @@ def compute_mappings_v2(
     limit = top_k if top_k is not None else cdm_scoring.get_top_k()
     revision = kb_revision if kb_revision is not None else get_kb_revision()
 
+    # Suggestions are active-catalog-only (plan §4.4 consumer 8): no new
+    # proposals against deprecated controls. The IS NULL arm keeps the
+    # pre-existing outerjoin behavior for scoped rows with no catalog match.
     control_rows = session.execute(
         select(
             ScopedControl.id,
@@ -544,6 +547,10 @@ def compute_mappings_v2(
         .where(
             ScopedControl.organization_id == org_id,
             ScopedControl.selected.is_(True),
+            or_(
+                SCFCatalogControl.status.is_(None),
+                SCFCatalogControl.status == "active",
+            ),
         )
     ).all()
 
@@ -796,6 +803,8 @@ def compute_mappings_for_org(
     """
     # 1. Load every selected scoped control for the org, with catalog metadata
     #    for query-text derivation.
+    # Same active-catalog-only rule as compute_mappings_v2 (plan §4.4
+    # consumer 8): deprecated controls receive no new suggestions.
     control_rows = session.execute(
         select(
             ScopedControl.id,
@@ -809,6 +818,10 @@ def compute_mappings_for_org(
         .where(
             ScopedControl.organization_id == org_id,
             ScopedControl.selected.is_(True),
+            or_(
+                SCFCatalogControl.status.is_(None),
+                SCFCatalogControl.status == "active",
+            ),
         )
     ).all()
 

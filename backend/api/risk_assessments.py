@@ -566,9 +566,16 @@ async def get_risks_for_control(
 
     The control-to-risk mapping comes from SCFCatalogControl.risk_codes.
     """
-    # Look up the SCF catalog control to get its risk_codes
+    # Look up the SCF catalog control to get its risk_codes. Deprecated
+    # controls still resolve (existing org data renders) but carry the
+    # lifecycle badge (plan §4.4 consumer 9).
     catalog_result = await db.execute(
-        select(SCFCatalogControl.risk_codes).where(
+        select(
+            SCFCatalogControl.risk_codes,
+            SCFCatalogControl.status,
+            SCFCatalogControl.retired_in_version,
+            SCFCatalogControl.superseded_by,
+        ).where(
             SCFCatalogControl.scf_id == scf_id.upper()
         )
     )
@@ -581,13 +588,19 @@ async def get_risks_for_control(
         )
 
     risk_codes = catalog_row[0] or []
+    badge = {
+        "catalog_status": catalog_row[1],
+        "retired_in_version": catalog_row[2],
+        "superseded_by": catalog_row[3],
+    }
 
     # If no risk codes mapped, return early
     if not risk_codes:
         return {
             "scf_id": scf_id.upper(),
             "catalog_risk_codes": [],
-            "assessments": []
+            "assessments": [],
+            **badge,
         }
 
     # Get org-specific risk assessments for these risk codes
@@ -609,7 +622,8 @@ async def get_risks_for_control(
     return {
         "scf_id": scf_id.upper(),
         "catalog_risk_codes": risk_codes,
-        "assessments": [enrich_risk_response(a, low_max, medium_max, high_max) for a in assessments]
+        "assessments": [enrich_risk_response(a, low_max, medium_max, high_max) for a in assessments],
+        **badge,
     }
 
 
@@ -655,17 +669,32 @@ async def get_controls_for_risk(
                 "scoped_controls": []
             }
 
-        # Look up control names from catalog
+        # Look up control names + lifecycle columns from the catalog. Existing
+        # custom-risk mappings always resolve — deprecated controls included —
+        # and render badged (plan §4.4 consumer 9).
         catalog_result = await db.execute(
-            select(SCFCatalogControl.scf_id, SCFCatalogControl.control_name).where(
+            select(
+                SCFCatalogControl.scf_id,
+                SCFCatalogControl.control_name,
+                SCFCatalogControl.status,
+                SCFCatalogControl.retired_in_version,
+                SCFCatalogControl.superseded_by,
+            ).where(
                 SCFCatalogControl.scf_id.in_(mapped_scf_ids)
             )
         )
-        catalog_lookup = {row.scf_id: row.control_name for row in catalog_result.all()}
+        catalog_lookup = {row.scf_id: row for row in catalog_result.all()}
+        candidate_scf_ids = mapped_scf_ids
         catalog_control_ids = mapped_scf_ids
     else:
         # SCF risk: get controls from catalog JSONB containment
-        catalog_query = select(SCFCatalogControl.scf_id, SCFCatalogControl.control_name).where(
+        catalog_query = select(
+            SCFCatalogControl.scf_id,
+            SCFCatalogControl.control_name,
+            SCFCatalogControl.status,
+            SCFCatalogControl.retired_in_version,
+            SCFCatalogControl.superseded_by,
+        ).where(
             SCFCatalogControl.risk_codes.contains([normalised_risk_code])
         ).order_by(SCFCatalogControl.scf_id)
 
@@ -680,14 +709,15 @@ async def get_controls_for_risk(
                 "scoped_controls": []
             }
 
-        catalog_control_ids = [c.scf_id for c in catalog_controls]
-        catalog_lookup = {c.scf_id: c.control_name for c in catalog_controls}
+        candidate_scf_ids = [c.scf_id for c in catalog_controls]
+        catalog_lookup = {c.scf_id: c for c in catalog_controls}
 
-    # Get scoped controls for this org
+    # Get scoped controls for this org — queried over ALL candidates so a
+    # deprecated control the org still has data on is not lost.
     scoped_query = select(ScopedControl).where(
         and_(
             ScopedControl.organization_id == org_id,
-            ScopedControl.scf_id.in_(catalog_control_ids),
+            ScopedControl.scf_id.in_(candidate_scf_ids),
             ScopedControl.selected == True
         )
     ).order_by(ScopedControl.scf_id)
@@ -695,14 +725,28 @@ async def get_controls_for_risk(
     scoped_result = await db.execute(scoped_query)
     scoped_controls = scoped_result.scalars().all()
 
+    if not normalised_risk_code.startswith('R-ORG-'):
+        # Catalog-derived picker list is active-only (plan §4.4 consumer 9):
+        # a deprecated control appears only when this org has scoped it —
+        # existing org data resolves (badged below), pure catalog rows drop.
+        scoped_ids = {sc.scf_id for sc in scoped_controls}
+        catalog_control_ids = [
+            scf for scf in candidate_scf_ids
+            if catalog_lookup[scf].status != "deprecated" or scf in scoped_ids
+        ]
+
     scoped_response = []
     for sc in scoped_controls:
+        cat = catalog_lookup.get(sc.scf_id)
         scoped_response.append({
             "scf_id": sc.scf_id,
-            "control_name": catalog_lookup.get(sc.scf_id, "Unknown"),
+            "control_name": cat.control_name if cat is not None else "Unknown",
             "implementation_status": sc.implementation_status,
             "priority": sc.priority,
             "target_date": sc.target_date.isoformat() if sc.target_date else None,
+            "catalog_status": cat.status if cat is not None else None,
+            "retired_in_version": cat.retired_in_version if cat is not None else None,
+            "superseded_by": cat.superseded_by if cat is not None else None,
         })
 
     return {

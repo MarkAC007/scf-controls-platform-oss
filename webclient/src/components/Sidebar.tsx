@@ -1,12 +1,14 @@
 import { useState, useMemo } from 'react'
 
-type Tab = 'dashboard' | 'capability-posture' | 'library' | 'scoping' | 'evidence' | 'mapping-matrix' | 'tasks' | 'systems' | 'users' | 'consultant-portal' | 'risk-register' | 'vendors' | 'settings' | 'webhooks' | 'audit-log' | 'engagements' | 'cdm' | 'document-map'
+type Tab = 'dashboard' | 'capability-posture' | 'library' | 'scoping' | 'evidence' | 'mapping-matrix' | 'tasks' | 'systems' | 'users' | 'consultant-portal' | 'risk-register' | 'vendors' | 'settings' | 'webhooks' | 'audit-log' | 'engagements' | 'cdm' | 'document-map' | 'platform-catalog' | 'platform-tenants' | 'catalog-changelog'
 
 interface SidebarProps {
   activeTab: Tab
   onTabChange: (tab: Tab) => void
   /** Whether to show the consultant portal tab (requires consultant registration) */
   showConsultantPortal?: boolean
+  /** Whether to show the Platform section (platform admins only) */
+  isPlatformAdmin?: boolean
   /** Mobile: drawer open state (hamburger in Header toggles this) */
   mobileOpen?: boolean
   /** Mobile: close the drawer (overlay tap / item select) */
@@ -164,6 +166,28 @@ const Icons = {
       <line x1="6" y1="20" x2="6" y2="14" />
     </svg>
   ),
+  platformCatalog: (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 2L2 7l10 5 10-5-10-5z" />
+      <path d="M2 17l10 5 10-5" />
+      <path d="M2 12l10 5 10-5" />
+      <path d="M12 22V12" />
+    </svg>
+  ),
+  tenants: (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="3" width="8" height="8" rx="1" />
+      <rect x="13" y="3" width="8" height="8" rx="1" />
+      <rect x="3" y="13" width="8" height="8" rx="1" />
+      <rect x="13" y="13" width="8" height="8" rx="1" />
+    </svg>
+  ),
+  changelog: (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="10" />
+      <polyline points="12 6 12 12 16 14" />
+    </svg>
+  ),
 }
 
 interface NavItem {
@@ -227,13 +251,25 @@ const navSections: NavSection[] = [
       { id: 'engagements', label: 'Engagements', icon: Icons.engagements },
       { id: 'webhooks', label: 'Webhooks', icon: Icons.webhook },
       { id: 'audit-log', label: 'Audit Log', icon: Icons.auditLog },
+      { id: 'catalog-changelog', label: 'Catalog Changelog', icon: Icons.changelog },
       { id: 'consultant-portal', label: 'Consultant Portal', icon: Icons.consultant },
       { id: 'settings', label: 'Org Settings', icon: Icons.settings },
     ],
   },
+  {
+    label: 'Platform',
+    items: [
+      { id: 'platform-catalog', label: 'Catalog', icon: Icons.platformCatalog },
+      { id: 'platform-tenants', label: 'Tenants', icon: Icons.tenants },
+    ],
+  },
 ]
 
-export default function Sidebar({ activeTab, onTabChange, showConsultantPortal = false, mobileOpen = false, onMobileClose }: SidebarProps) {
+// Tabs only platform admins may see — the whole Platform section is filtered
+// out for everyone else.
+const PLATFORM_TABS: Tab[] = ['platform-catalog', 'platform-tenants']
+
+export default function Sidebar({ activeTab, onTabChange, showConsultantPortal = false, isPlatformAdmin = false, mobileOpen = false, onMobileClose }: SidebarProps) {
   const [isExpanded, setIsExpanded] = useState(false)
 
   const visibleSections = useMemo(() => {
@@ -241,10 +277,11 @@ export default function Sidebar({ activeTab, onTabChange, showConsultantPortal =
       ...section,
       items: section.items.filter(item => {
         if (item.id === 'consultant-portal' && !showConsultantPortal) return false
+        if (PLATFORM_TABS.includes(item.id) && !isPlatformAdmin) return false
         return true
       }),
     })).filter(section => section.items.length > 0)
-  }, [showConsultantPortal])
+  }, [showConsultantPortal, isPlatformAdmin])
 
   const handleSelect = (tab: Tab) => {
     onTabChange(tab)

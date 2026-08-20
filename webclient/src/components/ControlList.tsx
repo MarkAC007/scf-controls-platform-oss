@@ -6,6 +6,7 @@ import { useCatalogFilters } from '../hooks/useCatalogFilters'
 import { useDebounce } from '../hooks/useDebounce'
 import { enrichControl } from '../data/loaders'
 import { SidebarControlCard } from './SidebarControlCard'
+import { getCatalogLifecycle } from './DeprecatedBadge'
 
 interface Props {
   selectedId?: string
@@ -137,6 +138,7 @@ export default function ControlList({
         controlName={control.control_name}
         isSelected={control.scf_id === selectedId}
         onSelect={() => onSelect(control.scf_id)}
+        lifecycle={getCatalogLifecycle(control)}
       />
     )
   }, [controls, selectedId, onSelect])

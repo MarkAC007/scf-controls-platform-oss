@@ -31,12 +31,26 @@ from schemas import (
     FrequencyHealthResponse,
 )
 from rate_limiting import rate_limit_read
+from schemas_catalog_upgrade import CatalogLifecycleBadge
 from services.validation_service import STALENESS_THRESHOLDS
 from services import frequency_health_service
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["evidence-health"])
+
+
+class EvidenceHealthItemBadged(EvidenceHealthItem, CatalogLifecycleBadge):
+    """Health item + catalog lifecycle badge (plan §4.4 consumer 5).
+
+    Tracked rows referencing a deprecated ERL entry still render (org data
+    always resolves) but are excluded from the summary denominators — a
+    retired evidence request is not a gap.
+    """
+
+
+class EvidenceHealthResponseBadged(EvidenceHealthResponse):
+    items: List[EvidenceHealthItemBadged]
 
 # Default staleness thresholds (days) when no per-org config exists
 DEFAULT_WARNING_DAYS = 30
@@ -65,7 +79,7 @@ def _calculate_status(
 
 @router.get(
     "/organizations/{org_id}/evidence-health",
-    response_model=EvidenceHealthResponse,
+    response_model=EvidenceHealthResponseBadged,
     summary="Get evidence health dashboard data",
     description="""
     Returns aggregated evidence freshness data for the organisation.
@@ -103,7 +117,7 @@ async def get_evidence_health(
     tracked_items = tracking_result.scalars().all()
 
     if not tracked_items:
-        return EvidenceHealthResponse(
+        return EvidenceHealthResponseBadged(
             summary=EvidenceHealthSummaryStats(
                 total_tracked=0, green_count=0, amber_count=0, red_count=0, unknown_count=0,
             ),
@@ -170,20 +184,26 @@ async def get_evidence_health(
     assessment_result = await db.execute(select(latest_assessments))
     assessment_data = {row.evidence_id: row for row in assessment_result.all()}
 
-    # 3c. Bulk fetch control_mappings from the SCF Evidence catalog for every
-    # tracked evidence_id (needed by consumers that filter by control scope,
-    # e.g. capability-theme evidence cards).
+    # 3c. Bulk fetch control_mappings + lifecycle columns from the SCF Evidence
+    # catalog for every tracked evidence_id (mappings are needed by consumers
+    # that filter by control scope, e.g. capability-theme evidence cards;
+    # lifecycle columns drive the deprecation badge).
     catalog_result = await db.execute(
         select(
             SCFCatalogEvidence.evidence_id,
             SCFCatalogEvidence.control_mappings,
+            SCFCatalogEvidence.status,
+            SCFCatalogEvidence.retired_in_version,
+            SCFCatalogEvidence.superseded_by,
         ).where(
             SCFCatalogEvidence.evidence_id.in_([t.evidence_id for t in tracked_items])
         )
     )
+    catalog_rows = catalog_result.all()
     control_mappings_by_eid: Dict[str, List[str]] = {
-        row.evidence_id: list(row.control_mappings or []) for row in catalog_result.all()
+        row.evidence_id: list(row.control_mappings or []) for row in catalog_rows
     }
+    catalog_meta_by_eid = {row.evidence_id: row for row in catalog_rows}
 
     # 4. Build health items
     items = []
@@ -213,10 +233,18 @@ async def get_evidence_health(
                 days_since = (now - last_upload).days
 
         status = _calculate_status(days_since, threshold_days)
-        counts[status] = counts.get(status, 0) + 1
+
+        catalog_meta = catalog_meta_by_eid.get(eid)
+        catalog_status = catalog_meta.status if catalog_meta is not None else None
+        is_deprecated = catalog_status == "deprecated"
+        # Deprecated ERL entries render (org data resolves, badged) but do not
+        # count toward the traffic-light denominators — a retired evidence
+        # request is not a gap (plan §4.4 consumer 5).
+        if not is_deprecated:
+            counts[status] = counts.get(status, 0) + 1
 
         assessment_info = assessment_data.get(eid)
-        items.append(EvidenceHealthItem(
+        items.append(EvidenceHealthItemBadged(
             evidence_id=eid,
             collecting_system=tracking.collecting_system,
             frequency=tracking.frequency,
@@ -228,9 +256,12 @@ async def get_evidence_health(
             latest_assessment_status=assessment_info.assessment_status if assessment_info else None,
             latest_assessment_score=float(assessment_info.assessment_score) if assessment_info and assessment_info.assessment_score is not None else None,
             control_mappings=control_mappings_by_eid.get(eid, []),
+            catalog_status=catalog_status,
+            retired_in_version=catalog_meta.retired_in_version if catalog_meta is not None else None,
+            superseded_by=catalog_meta.superseded_by if catalog_meta is not None else None,
         ))
 
-    total = len(items)
+    total = sum(counts.values())
     summary = EvidenceHealthSummaryStats(
         total_tracked=total,
         green_count=counts["green"],
@@ -242,7 +273,7 @@ async def get_evidence_health(
         red_pct=round(counts["red"] / total * 100, 1) if total else 0,
     )
 
-    return EvidenceHealthResponse(summary=summary, items=items)
+    return EvidenceHealthResponseBadged(summary=summary, items=items)
 
 
 @router.get(
@@ -291,9 +322,27 @@ async def get_upcoming_evidence(
     files_result = await db.execute(select(latest_files_subq))
     file_data = {row.evidence_id: row for row in files_result.all()}
 
+    # Deprecated ERL entries never surface as upcoming deadlines: a retired
+    # evidence request is not a gap (plan §4.4 consumer 5).
+    deprecated_eids: set = set()
+    if tracked_items:
+        deprecated_result = await db.execute(
+            select(SCFCatalogEvidence.evidence_id).where(
+                and_(
+                    SCFCatalogEvidence.evidence_id.in_(
+                        [t.evidence_id for t in tracked_items]
+                    ),
+                    SCFCatalogEvidence.status == "deprecated",
+                )
+            )
+        )
+        deprecated_eids = {row.evidence_id for row in deprecated_result.all()}
+
     upcoming: List[dict] = []
     for tracking in tracked_items:
         eid = tracking.evidence_id
+        if eid in deprecated_eids:
+            continue
         file_info = file_data.get(eid)
         threshold_days = STALENESS_THRESHOLDS.get(
             (tracking.frequency or "").lower().strip()

@@ -5,12 +5,15 @@ interface NotificationBellProps {
   onNavigateToEvidence?: (evidenceId: string) => void;
   onNavigateToControl?: (controlId: string) => void;
   onNavigateToTask?: () => void;
+  /** Catalog reconciliation notifications navigate to the catalog changelog */
+  onNavigateToChangelog?: () => void;
 }
 
 export const NotificationBell: React.FC<NotificationBellProps> = ({
   onNavigateToEvidence,
   onNavigateToControl,
-  onNavigateToTask
+  onNavigateToTask,
+  onNavigateToChangelog
 }) => {
   const [unreadCount, setUnreadCount] = useState(0);
   const [notifications, setNotifications] = useState<any[]>([]);
@@ -88,6 +91,11 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
       } else if (notification.reference_type === 'control' && notification.reference_id) {
         // Navigate to control scoping
         onNavigateToControl?.(notification.reference_id);
+        setShowDropdown(false);
+
+      } else if (notification.reference_type === 'catalog') {
+        // Catalog reconciliation applied/rolled back — show what changed
+        onNavigateToChangelog?.();
         setShowDropdown(false);
       }
     } catch (error) {

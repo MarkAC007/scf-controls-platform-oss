@@ -1,4 +1,6 @@
 import React, { memo } from 'react'
+import DeprecatedBadge from './DeprecatedBadge'
+import type { CatalogLifecycleFields } from '../types/catalogUpgrade'
 
 interface SidebarControlCardProps {
   scfId: string
@@ -17,6 +19,8 @@ interface SidebarControlCardProps {
   }
   /** Optional implementation status badge */
   statusBadge?: string | null
+  /** Optional catalog lifecycle fields — renders a deprecated badge when retired */
+  lifecycle?: CatalogLifecycleFields
 }
 
 function SidebarControlCardComponent({
@@ -28,6 +32,7 @@ function SidebarControlCardComponent({
   checkbox,
   scopeBadge,
   statusBadge,
+  lifecycle,
 }: SidebarControlCardProps) {
   return (
     <div style={style}>
@@ -54,6 +59,7 @@ function SidebarControlCardComponent({
         <div className="sidebar-card-content">
           <div className="sidebar-card-header">
             <span className="badge-modern">{scfId}</span>
+            {lifecycle && <DeprecatedBadge compact {...lifecycle} />}
             {scopeBadge && (
               <span className={`scope-badge-compact${scopeBadge.inScope ? '' : ' out'}`}>
                 {scopeBadge.inScope ? 'IN SCOPE' : 'OUT'}
@@ -80,7 +86,8 @@ export const SidebarControlCard = memo(SidebarControlCardComponent, (prev, next)
     prev.style?.top === next.style?.top &&
     prev.checkbox?.checked === next.checkbox?.checked &&
     prev.scopeBadge?.inScope === next.scopeBadge?.inScope &&
-    prev.statusBadge === next.statusBadge
+    prev.statusBadge === next.statusBadge &&
+    prev.lifecycle?.catalog_status === next.lifecycle?.catalog_status
   )
 })
 

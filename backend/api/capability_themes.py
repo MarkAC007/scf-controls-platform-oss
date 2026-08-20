@@ -11,9 +11,9 @@ import os
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, func, case, literal_column, text
+from sqlalchemy import select, and_, or_, func, case, literal_column, text
 from uuid import UUID
-from typing import Optional
+from typing import List, Optional
 import logging
 
 from database import get_db
@@ -48,6 +48,20 @@ router = APIRouter(tags=["capability_themes"])
 MATURITY_SCORES = {"L0": 0, "L1": 1, "L2": 2, "L3": 3, "L4": 4, "L5": 5}
 
 
+# Module-local extensions of the shared schemas: the theme drill-down renders
+# org data, so deprecated catalog rows stay visible and carry lifecycle badge
+# fields (catalog upgrade §4.4.4). Kept out of schemas.py — only this
+# endpoint returns them.
+class CapabilityThemeControlItemWithLifecycle(CapabilityThemeControlItem):
+    catalog_status: str = "active"
+    retired_in_version: Optional[str] = None
+    superseded_by: Optional[str] = None
+
+
+class CapabilityThemeControlsResponseWithLifecycle(CapabilityThemeControlsResponse):
+    controls: List[CapabilityThemeControlItemWithLifecycle]
+
+
 def _compute_posture_percentage(posture: CapabilityThemePosture, scoped: int) -> float:
     """Compute posture percentage: (monitored + implemented) / (scoped - not_applicable) * 100.
 
@@ -69,7 +83,8 @@ _EVIDENCE_METRICS_SQL = text("""
             ce.evidence_id,
             jsonb_array_elements_text(ce.control_mappings) AS scf_id
         FROM scf_catalog_evidence ce
-        WHERE jsonb_array_length(COALESCE(ce.control_mappings, '[]'::jsonb)) > 0
+        WHERE ce.status = 'active'
+          AND jsonb_array_length(COALESCE(ce.control_mappings, '[]'::jsonb)) > 0
     ),
     evidence_theme_map AS (
         SELECT DISTINCT
@@ -77,6 +92,7 @@ _EVIDENCE_METRICS_SQL = text("""
             ecm.scf_id,
             ct.theme_code
         FROM evidence_control_map ecm
+        JOIN scf_catalog_controls c ON ecm.scf_id = c.scf_id AND c.status = 'active'
         JOIN capability_theme_mappings ctm ON ecm.scf_id = ctm.scf_id
         JOIN capability_themes ct ON ctm.theme_id = ct.id
     ),
@@ -127,7 +143,8 @@ _EVIDENCE_METRICS_WINDOW_AWARE_SQL = text("""
             ce.evidence_id,
             jsonb_array_elements_text(ce.control_mappings) AS scf_id
         FROM scf_catalog_evidence ce
-        WHERE jsonb_array_length(COALESCE(ce.control_mappings, '[]'::jsonb)) > 0
+        WHERE ce.status = 'active'
+          AND jsonb_array_length(COALESCE(ce.control_mappings, '[]'::jsonb)) > 0
     ),
     evidence_theme_map AS (
         SELECT DISTINCT
@@ -135,6 +152,7 @@ _EVIDENCE_METRICS_WINDOW_AWARE_SQL = text("""
             ecm.scf_id,
             ct.theme_code
         FROM evidence_control_map ecm
+        JOIN scf_catalog_controls c ON ecm.scf_id = c.scf_id AND c.status = 'active'
         JOIN capability_theme_mappings ctm ON ecm.scf_id = ctm.scf_id
         JOIN capability_themes ct ON ctm.theme_id = ct.id
     ),
@@ -331,7 +349,8 @@ def _build_composite_aware_sql(window_enabled: bool) -> "text":
                 ce.evidence_id,
                 jsonb_array_elements_text(ce.control_mappings) AS scf_id
             FROM scf_catalog_evidence ce
-            WHERE jsonb_array_length(COALESCE(ce.control_mappings, '[]'::jsonb)) > 0
+            WHERE ce.status = 'active'
+              AND jsonb_array_length(COALESCE(ce.control_mappings, '[]'::jsonb)) > 0
         ),
         evidence_theme_map AS (
             SELECT DISTINCT
@@ -339,6 +358,7 @@ def _build_composite_aware_sql(window_enabled: bool) -> "text":
                 ecm.scf_id,
                 ct.theme_code
             FROM evidence_control_map ecm
+            JOIN scf_catalog_controls c ON ecm.scf_id = c.scf_id AND c.status = 'active'
             JOIN capability_theme_mappings ctm ON ecm.scf_id = ctm.scf_id
             JOIN capability_themes ct ON ctm.theme_id = ct.id
         ),
@@ -363,6 +383,7 @@ def _build_composite_aware_sql(window_enabled: bool) -> "text":
                 cs.assessment_status,
                 cs.relevance_score
             FROM composite_status cs
+            JOIN scf_catalog_controls c ON c.scf_id = cs.scf_id AND c.status = 'active'
             JOIN capability_theme_mappings ctm ON ctm.scf_id = cs.scf_id
             JOIN capability_themes ct ON ct.id = ctm.theme_id
         ),
@@ -602,6 +623,15 @@ async def list_capability_themes(
         )
         .select_from(CapabilityTheme)
         .join(CapabilityThemeMapping, CapabilityTheme.id == CapabilityThemeMapping.theme_id)
+        # Aggregates count active catalog controls only — deprecated controls
+        # drop out of theme totals and posture denominators.
+        .join(
+            SCFCatalogControl,
+            and_(
+                CapabilityThemeMapping.scf_id == SCFCatalogControl.scf_id,
+                SCFCatalogControl.status == 'active',
+            ),
+        )
         .outerjoin(
             ScopedControl,
             and_(
@@ -727,6 +757,15 @@ async def get_evidence_posture(
         )
         .select_from(CapabilityTheme)
         .join(CapabilityThemeMapping, CapabilityTheme.id == CapabilityThemeMapping.theme_id)
+        # Aggregates count active catalog controls only — deprecated controls
+        # drop out of theme totals and posture denominators.
+        .join(
+            SCFCatalogControl,
+            and_(
+                CapabilityThemeMapping.scf_id == SCFCatalogControl.scf_id,
+                SCFCatalogControl.status == 'active',
+            ),
+        )
         .outerjoin(
             ScopedControl,
             and_(
@@ -857,6 +896,15 @@ async def get_capability_themes_scorecard(
         )
         .select_from(CapabilityTheme)
         .join(CapabilityThemeMapping, CapabilityTheme.id == CapabilityThemeMapping.theme_id)
+        # Aggregates count active catalog controls only — deprecated controls
+        # drop out of theme totals and posture denominators.
+        .join(
+            SCFCatalogControl,
+            and_(
+                CapabilityThemeMapping.scf_id == SCFCatalogControl.scf_id,
+                SCFCatalogControl.status == 'active',
+            ),
+        )
         .outerjoin(
             ScopedControl,
             and_(
@@ -968,6 +1016,14 @@ async def get_capability_theme(
             ).label("maturity_score"),
         )
         .select_from(CapabilityThemeMapping)
+        # Aggregates count active catalog controls only (see list endpoint).
+        .join(
+            SCFCatalogControl,
+            and_(
+                CapabilityThemeMapping.scf_id == SCFCatalogControl.scf_id,
+                SCFCatalogControl.status == 'active',
+            ),
+        )
         .outerjoin(
             ScopedControl,
             and_(
@@ -1015,7 +1071,7 @@ async def get_capability_theme(
 
 @router.get(
     "/organizations/{org_id}/capability-themes/{theme_code}/controls",
-    response_model=CapabilityThemeControlsResponse,
+    response_model=CapabilityThemeControlsResponseWithLifecycle,
 )
 async def list_capability_theme_controls(
     org_id: UUID,
@@ -1045,6 +1101,9 @@ async def list_capability_theme_controls(
             CapabilityThemeMapping.relevance,
             SCFCatalogControl.control_name,
             SCFCatalogControl.scf_domain,
+            SCFCatalogControl.status,
+            SCFCatalogControl.retired_in_version,
+            SCFCatalogControl.superseded_by,
             ScopedControl.selected,
             ScopedControl.implementation_status,
             ScopedControl.maturity_level,
@@ -1059,6 +1118,14 @@ async def list_capability_theme_controls(
             ),
         )
         .where(CapabilityThemeMapping.theme_id == theme.id)
+        # Drill-down renders org data: deprecated catalog rows stay visible
+        # (badged) where the org has a scoped row, and drop out otherwise.
+        .where(
+            or_(
+                SCFCatalogControl.status == 'active',
+                ScopedControl.id.isnot(None),
+            )
+        )
     )
 
     # Apply scope filter
@@ -1079,7 +1146,7 @@ async def list_capability_theme_controls(
     rows = result.all()
 
     controls = [
-        CapabilityThemeControlItem(
+        CapabilityThemeControlItemWithLifecycle(
             scf_id=row.scf_id,
             control_name=row.control_name,
             scf_domain=row.scf_domain,
@@ -1087,11 +1154,14 @@ async def list_capability_theme_controls(
             implementation_status=row.implementation_status,
             maturity_level=row.maturity_level,
             relevance=row.relevance,
+            catalog_status=row.status,
+            retired_in_version=row.retired_in_version,
+            superseded_by=row.superseded_by,
         )
         for row in rows
     ]
 
-    return CapabilityThemeControlsResponse(
+    return CapabilityThemeControlsResponseWithLifecycle(
         theme_code=theme.theme_code,
         theme_name=theme.name,
         controls=controls,

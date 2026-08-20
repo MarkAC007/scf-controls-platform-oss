@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, text, func, or_, literal
 from sqlalchemy.orm import aliased
-from typing import List, Set, Optional, Literal
+from typing import List, Optional, Literal
 from uuid import UUID
 
 from database import get_db
@@ -31,6 +31,7 @@ from schemas import (
 from auth import require_org_role, OrgMembership
 from services.audit_service import log_entity_changes, get_request_id, detect_action_source, SCOPED_CONTROL_TRACKED_FIELDS
 from services.notifications import create_control_ready_for_review_notifications
+from services.scoping_service import bulk_scope_frameworks, bulk_unscope_frameworks
 
 logger = logging.getLogger(__name__)
 
@@ -76,9 +77,12 @@ async def get_scoped_control_stats(
     - in_scope: Controls with selected=True
     - Per-status breakdowns (implemented, not_started, etc.)
     """
-    # Total catalog controls
+    # Total catalog controls (aggregates count active only — a retired
+    # control is not part of the addressable catalog)
     total_controls = await db.scalar(
-        select(func.count()).select_from(SCFCatalogControl)
+        select(func.count())
+        .select_from(SCFCatalogControl)
+        .where(SCFCatalogControl.status == 'active')
     )
 
     # Aggregate scoped control counts using a single query with CASE WHEN
@@ -172,6 +176,15 @@ async def list_scoped_controls_paginated(
                 ScopedControl.organization_id == org_id
             )
         )
+        # Deprecated catalog rows stay visible ONLY where the org has data on
+        # them (retirement must never silently hide an org's compliance work);
+        # deprecated rows without org data drop out of the listing.
+        .where(
+            or_(
+                SCFCatalogControl.status == 'active',
+                ScopedControl.id.isnot(None),
+            )
+        )
     )
 
     # Apply scope_status filter
@@ -244,6 +257,10 @@ async def list_scoped_controls_paginated(
             "nist_csf_function": catalog.nist_csf_function,
             "evidence_requests": catalog.evidence_requests or [],
             "framework_mappings": catalog.framework_mappings or {},
+            # Catalog lifecycle badge (deprecated rows render badged, never hidden)
+            "catalog_status": catalog.status,
+            "retired_in_version": catalog.retired_in_version,
+            "superseded_by": catalog.superseded_by,
             # Scoping status
             "is_scoped": selected is not None,
             "selected": selected or False,
@@ -337,6 +354,35 @@ def flatten_pptdf(data: dict) -> dict:
     return result
 
 
+async def _deprecated_catalog_refusal(db: AsyncSession, scf_id: str) -> Optional[dict]:
+    """Return a 409 detail dict when scf_id names a deprecated catalog control.
+
+    Scoping writes may not create NEW org rows against deprecated controls;
+    updates to rows the org already holds stay allowed (handled by callers).
+    """
+    row = (
+        await db.execute(
+            select(
+                SCFCatalogControl.status,
+                SCFCatalogControl.retired_in_version,
+                SCFCatalogControl.superseded_by,
+            ).where(SCFCatalogControl.scf_id == scf_id)
+        )
+    ).first()
+    if row is None or row.status != 'deprecated':
+        return None
+    message = f"Control {scf_id} is deprecated and cannot be newly scoped"
+    if row.superseded_by:
+        message += f"; it is superseded by {row.superseded_by}"
+    return {
+        "message": message,
+        "scf_id": scf_id,
+        "catalog_status": "deprecated",
+        "retired_in_version": row.retired_in_version,
+        "superseded_by": row.superseded_by,
+    }
+
+
 @router.post(
     "/organizations/{org_id}/scoped-controls",
     response_model=ScopedControlResponse,
@@ -405,6 +451,12 @@ async def create_or_update_scoped_control(
         await db.refresh(existing_control)
         return existing_control
     else:
+        # New scoped rows are refused for deprecated catalog controls (409);
+        # updating an existing row for a deprecated control stays allowed above.
+        refusal = await _deprecated_catalog_refusal(db, control_data.scf_id)
+        if refusal is not None:
+            raise HTTPException(status_code=409, detail=refusal)
+
         # Create new control - need full dict for creation
         full_dict = flatten_pptdf(control_data.model_dump())
         new_control = ScopedControl(
@@ -587,116 +639,22 @@ async def bulk_scope_by_framework(
         }
     """
     # Organization existence verified by require_org_role
-
-    # Get controls mapped to the requested frameworks
-    # The framework_mappings column is JSONB with framework IDs as keys
-    # We use jsonb_object_keys to find controls that have any of the requested frameworks
-    framework_conditions = " OR ".join(
-        f"framework_mappings ? :fw_{i}" for i in range(len(request.frameworks))
+    result = await bulk_scope_frameworks(
+        db=db,
+        org_id=org_id,
+        framework_ids=request.frameworks,
+        user_id=UUID(membership.user.db_id),
+        selection_reason=request.selection_reason,
     )
-    params = {f"fw_{i}": fw for i, fw in enumerate(request.frameworks)}
-
-    catalog_query = text(f"""
-        SELECT scf_id
-        FROM scf_catalog_controls
-        WHERE {framework_conditions}
-    """)
-
-    catalog_result = await db.execute(catalog_query, params)
-    framework_control_ids: Set[str] = {row[0] for row in catalog_result.fetchall()}
-
-    if not framework_control_ids:
-        return BulkScopeFrameworkResponse(
-            success=True,
-            added=0,
-            skipped=0,
-            total=0,
-            frameworks_processed=request.frameworks,
-            message=f"No controls found for frameworks: {', '.join(request.frameworks)}"
-        )
-
-    # Get existing scoped controls for this org WITH their selected status
-    existing_query = await db.execute(
-        select(ScopedControl.scf_id, ScopedControl.selected)
-        .where(ScopedControl.organization_id == org_id)
-    )
-    existing_controls = {row[0]: row[1] for row in existing_query.fetchall()}
-
-    # Partition framework controls into three buckets
-    new_control_ids: Set[str] = set()
-    needs_update_ids: Set[str] = set()
-    already_scoped_ids: Set[str] = set()
-
-    for scf_id in framework_control_ids:
-        if scf_id not in existing_controls:
-            new_control_ids.add(scf_id)
-        elif not existing_controls[scf_id]:
-            needs_update_ids.add(scf_id)
-        else:
-            already_scoped_ids.add(scf_id)
-
-    reason = request.selection_reason or f"Bulk scoped from: {', '.join(request.frameworks)}"
-
-    # Batch insert new controls
-    added_count = 0
-    for scf_id in new_control_ids:
-        new_control = ScopedControl(
-            organization_id=org_id,
-            scf_id=scf_id,
-            selected=True,
-            implementation_status="not_started",
-            selection_reason=reason,
-        )
-        db.add(new_control)
-        added_count += 1
-
-    # Update existing controls that have selected=False → True
-    updated_count = 0
-    if needs_update_ids:
-        await db.execute(
-            ScopedControl.__table__.update()
-            .where(
-                and_(
-                    ScopedControl.organization_id == org_id,
-                    ScopedControl.scf_id.in_(needs_update_ids)
-                )
-            )
-            .values(selected=True, selection_reason=reason)
-        )
-        updated_count = len(needs_update_ids)
-
-    if added_count > 0 or updated_count > 0:
-        await db.commit()
-
-    skipped_count = len(already_scoped_ids)
-
-    logger.info(
-        f"Bulk scope by framework: org={org_id}, frameworks={request.frameworks}, "
-        f"added={added_count}, updated={updated_count}, skipped={skipped_count}"
-    )
-
-    # Build response message
-    framework_names = ", ".join(request.frameworks)
-    parts = []
-    if added_count > 0:
-        parts.append(f"Added {added_count} new controls")
-    if updated_count > 0:
-        parts.append(f"updated {updated_count} existing controls")
-    if parts:
-        message = f"{' and '.join(parts)} from {framework_names}"
-        if skipped_count > 0:
-            message += f" ({skipped_count} already in scope)"
-    else:
-        message = f"All {len(framework_control_ids)} controls from {framework_names} already in scope"
 
     return BulkScopeFrameworkResponse(
         success=True,
-        added=added_count,
-        updated=updated_count,
-        skipped=skipped_count,
-        total=len(framework_control_ids),
-        frameworks_processed=request.frameworks,
-        message=message
+        added=result.added,
+        updated=result.updated,
+        skipped=result.skipped,
+        total=result.total,
+        frameworks_processed=result.frameworks_processed,
+        message=result.message
     )
 
 
@@ -726,153 +684,22 @@ async def bulk_unscope_by_framework(
             "removal_reason": "No longer pursuing ISO 27017 certification"
         }
     """
-    removing_frameworks = set(request.frameworks)
-
-    # 1. Find all catalog controls mapped to the frameworks being removed
-    framework_conditions = " OR ".join(
-        f"framework_mappings ? :fw_{i}" for i in range(len(request.frameworks))
+    result = await bulk_unscope_frameworks(
+        db=db,
+        org_id=org_id,
+        framework_ids=request.frameworks,
+        removal_reason=request.removal_reason,
     )
-    params = {f"fw_{i}": fw for i, fw in enumerate(request.frameworks)}
-
-    catalog_query = text(f"""
-        SELECT scf_id, framework_mappings
-        FROM scf_catalog_controls
-        WHERE {framework_conditions}
-    """)
-
-    catalog_result = await db.execute(catalog_query, params)
-    catalog_rows = catalog_result.fetchall()
-
-    if not catalog_rows:
-        return BulkUnscopeFrameworkResponse(
-            success=True,
-            removed=0,
-            protected=0,
-            already_out_of_scope=0,
-            total=0,
-            frameworks_processed=request.frameworks,
-            message=f"No controls found for frameworks: {', '.join(request.frameworks)}"
-        )
-
-    # Build map: scf_id → set of framework keys
-    control_frameworks: dict[str, set] = {}
-    for row in catalog_rows:
-        scf_id = row[0]
-        fw_mappings = row[1] or {}
-        control_frameworks[scf_id] = set(fw_mappings.keys())
-
-    framework_control_ids = set(control_frameworks.keys())
-
-    # 2. Get all in-scope controls for this org
-    in_scope_query = await db.execute(
-        select(ScopedControl.scf_id)
-        .where(
-            and_(
-                ScopedControl.organization_id == org_id,
-                ScopedControl.selected == True,
-            )
-        )
-    )
-    in_scope_ids: Set[str] = {row[0] for row in in_scope_query.fetchall()}
-
-    # 3. Determine which frameworks were EXPLICITLY scoped by the user.
-    # We parse selection_reason ("Bulk scoped from: iso_27001_2022, ...") to find
-    # frameworks the user intentionally added. This avoids the bug where checking
-    # ALL framework_mappings of in-scope controls produces a huge set (each SCF
-    # control maps to 10-50+ frameworks), causing every control to appear
-    # "protected" by frameworks the user never explicitly scoped.
-    explicit_fw_query = await db.execute(
-        select(ScopedControl.selection_reason)
-        .where(
-            and_(
-                ScopedControl.organization_id == org_id,
-                ScopedControl.selected == True,
-                ScopedControl.selection_reason.like("Bulk scoped from:%")
-            )
-        )
-        .distinct()
-    )
-    explicitly_scoped_frameworks: Set[str] = set()
-    for row in explicit_fw_query.fetchall():
-        if row[0]:
-            fw_part = row[0].replace("Bulk scoped from:", "").strip()
-            for fw in fw_part.split(", "):
-                fw = fw.strip()
-                if fw:
-                    explicitly_scoped_frameworks.add(fw)
-
-    active_frameworks: Set[str] = explicitly_scoped_frameworks - removing_frameworks
-
-    # 4. For each candidate control, check overlap with explicitly-scoped frameworks
-    to_remove: Set[str] = set()
-    protected_controls: Set[str] = set()
-    already_out: Set[str] = set()
-    protected_by_count: dict[str, int] = {}
-
-    for scf_id in framework_control_ids:
-        if scf_id not in in_scope_ids:
-            already_out.add(scf_id)
-            continue
-
-        # Check if this control maps to any other explicitly-scoped framework
-        other_active_fws = control_frameworks[scf_id] & active_frameworks
-        if other_active_fws:
-            # Protected — overlaps with other in-scope frameworks
-            protected_controls.add(scf_id)
-            for fw in other_active_fws:
-                protected_by_count[fw] = protected_by_count.get(fw, 0) + 1
-        else:
-            # Safe to remove — no overlap
-            to_remove.add(scf_id)
-
-    # 5. Bulk update: set selected=False for removable controls
-    removed_count = 0
-    if to_remove:
-        reason = request.removal_reason or f"Bulk un-scoped from: {', '.join(request.frameworks)}"
-        await db.execute(
-            ScopedControl.__table__.update()
-            .where(
-                and_(
-                    ScopedControl.organization_id == org_id,
-                    ScopedControl.scf_id.in_(to_remove)
-                )
-            )
-            .values(selected=False, selection_reason=reason)
-        )
-        removed_count = len(to_remove)
-        await db.commit()
-
-    logger.info(
-        f"Bulk unscope by framework: org={org_id}, frameworks={request.frameworks}, "
-        f"removed={removed_count}, protected={len(protected_controls)}, "
-        f"already_out={len(already_out)}, "
-        f"explicitly_scoped={explicitly_scoped_frameworks}, "
-        f"active_after_removal={active_frameworks}"
-    )
-
-    # Build response message
-    framework_names = ", ".join(request.frameworks)
-    if removed_count > 0:
-        message = f"Removed {removed_count} controls from {framework_names}"
-        if protected_controls:
-            message += f". {len(protected_controls)} controls protected by overlap with other in-scope frameworks"
-    elif protected_controls:
-        message = (
-            f"No controls removed from {framework_names} — all {len(protected_controls)} "
-            f"are shared with other in-scope frameworks"
-        )
-    else:
-        message = f"No in-scope controls found for {framework_names}"
 
     return BulkUnscopeFrameworkResponse(
         success=True,
-        removed=removed_count,
-        protected=len(protected_controls),
-        already_out_of_scope=len(already_out),
-        total=len(framework_control_ids),
-        protected_by=protected_by_count,
-        frameworks_processed=request.frameworks,
-        message=message
+        removed=result.removed,
+        protected=result.protected,
+        already_out_of_scope=result.already_out_of_scope,
+        total=result.total,
+        protected_by=result.protected_by,
+        frameworks_processed=result.frameworks_processed,
+        message=result.message
     )
 
 
@@ -1004,6 +831,14 @@ async def batch_update_scoped_controls(
                 result_controls.append(existing)
                 updated_count += 1
             else:
+                # New scoped rows are refused for deprecated catalog controls;
+                # recorded as a per-op error so the rest of the batch proceeds.
+                refusal = await _deprecated_catalog_refusal(db, op.scf_id)
+                if refusal is not None:
+                    failed_count += 1
+                    errors.append(f"{op.scf_id}: {refusal['message']}")
+                    continue
+
                 # Create new control with all provided fields
                 create_data = op.model_dump(exclude={'scf_id'}, exclude_unset=True)
                 new_control = ScopedControl(

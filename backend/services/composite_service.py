@@ -320,6 +320,10 @@ def _evidence_ids_for_control(
     Mirrors the ISC-24 acceptance query: ``sce.control_mappings ? sc.scf_id``.
     Returns a deterministic-ordered list (ascending evidence_id) so test
     expectations stay stable.
+
+    Deprecated ERL rows are excluded (catalog-upgrade plan §4.4 consumer 5):
+    a retired evidence request is not a gap, so it must not appear in the
+    composite denominator as a missing window.
     """
     rows = session.execute(
         text(
@@ -327,6 +331,7 @@ def _evidence_ids_for_control(
             SELECT evidence_id
               FROM scf_catalog_evidence
              WHERE control_mappings ? :scf_id
+               AND status = 'active'
              ORDER BY evidence_id ASC
             """
         ),

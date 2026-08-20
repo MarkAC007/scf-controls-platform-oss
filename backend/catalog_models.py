@@ -11,7 +11,7 @@ Catalog Tables:
 - capability_themes: KSI-aligned capability theme definitions
 - capability_theme_mappings: SCF control to capability theme mappings
 """
-from sqlalchemy import Column, String, Boolean, Text, Integer, DateTime, ForeignKey, UniqueConstraint
+from sqlalchemy import CheckConstraint, Column, String, Boolean, Text, Integer, DateTime, ForeignKey, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -26,6 +26,9 @@ class SCFCatalogControl(Base):
     business size guidance, SCRM focus, and risk/threat mappings.
     """
     __tablename__ = "scf_catalog_controls"
+    __table_args__ = (
+        CheckConstraint("status IN ('active', 'deprecated')", name='ck_scf_catalog_controls_status'),
+    )
 
     # Primary key (natural key)
     scf_id = Column(String(20), primary_key=True)
@@ -83,6 +86,12 @@ class SCFCatalogControl(Base):
     required_artifact_types = Column(JSONB, default=list, server_default="[]", nullable=False)
     required_artifact_types_extracted_at = Column(DateTime(timezone=False))
 
+    # Lifecycle (catalog upgrade): deprecations are status flips, never deletes.
+    # superseded_by is a natural-key reference (scf_id) with no FK by design.
+    status = Column(String(16), nullable=False, default='active', server_default='active', index=True)
+    retired_in_version = Column(String(20), nullable=True)
+    superseded_by = Column(String(30), nullable=True)
+
     # Catalog metadata
     catalog_version = Column(String(20), default='2025.4')
     created_at = Column(DateTime(timezone=False), server_default=func.now())
@@ -95,6 +104,9 @@ class SCFCatalogControl(Base):
 class SCFCatalogDomain(Base):
     """SCF Domain catalog entry."""
     __tablename__ = "scf_catalog_domains"
+    __table_args__ = (
+        CheckConstraint("status IN ('active', 'deprecated')", name='ck_scf_catalog_domains_status'),
+    )
 
     # Primary key (natural key)
     identifier = Column(String(10), primary_key=True)
@@ -104,6 +116,11 @@ class SCFCatalogDomain(Base):
     name = Column(String(200), nullable=False)
     principle = Column(Text, nullable=False)
     principle_intent = Column(Text)
+
+    # Lifecycle (catalog upgrade); superseded_by is a natural-key reference (identifier), no FK.
+    status = Column(String(16), nullable=False, default='active', server_default='active', index=True)
+    retired_in_version = Column(String(20), nullable=True)
+    superseded_by = Column(String(30), nullable=True)
 
     # Catalog metadata
     catalog_version = Column(String(20), default='2025.4')
@@ -117,6 +134,9 @@ class SCFCatalogDomain(Base):
 class SCFCatalogEvidence(Base):
     """SCF Evidence Request List (ERL) catalog entry."""
     __tablename__ = "scf_catalog_evidence"
+    __table_args__ = (
+        CheckConstraint("status IN ('active', 'deprecated')", name='ck_scf_catalog_evidence_status'),
+    )
 
     # Primary key (natural key)
     evidence_id = Column(String(20), primary_key=True)
@@ -128,6 +148,11 @@ class SCFCatalogEvidence(Base):
 
     # Control mappings
     control_mappings = Column(JSONB, default=[])
+
+    # Lifecycle (catalog upgrade); superseded_by is a natural-key reference (evidence_id), no FK.
+    status = Column(String(16), nullable=False, default='active', server_default='active', index=True)
+    retired_in_version = Column(String(20), nullable=True)
+    superseded_by = Column(String(30), nullable=True)
 
     # Catalog metadata
     catalog_version = Column(String(20), default='2025.4')
@@ -141,6 +166,9 @@ class SCFCatalogEvidence(Base):
 class SCFCatalogAssessmentObjective(Base):
     """SCF Assessment Objective catalog entry."""
     __tablename__ = "scf_catalog_assessment_objectives"
+    __table_args__ = (
+        CheckConstraint("status IN ('active', 'deprecated')", name='ck_scf_catalog_assessment_objectives_status'),
+    )
 
     # Primary key (natural key)
     ao_id = Column(String(30), primary_key=True)
@@ -179,6 +207,11 @@ class SCFCatalogAssessmentObjective(Base):
     asset_type = Column(String(100))
     assessment_procedure = Column(Text)
     expected_results = Column(Text)
+
+    # Lifecycle (catalog upgrade); superseded_by is a natural-key reference (ao_id), no FK.
+    status = Column(String(16), nullable=False, default='active', server_default='active', index=True)
+    retired_in_version = Column(String(20), nullable=True)
+    superseded_by = Column(String(30), nullable=True)
 
     # Catalog metadata
     catalog_version = Column(String(20), default='2025.4')

@@ -37,6 +37,7 @@ from schemas import (
     CDMReingestResponse,
     CDMUploadResponse,
 )
+from schemas_catalog_upgrade import CatalogLifecycleBadge
 from services import cdm_consolidation, cdm_mapping, cdm_retrieval, cdm_storage
 from services.cdm_tenancy import (
     assert_cdm_document_count_cap,
@@ -58,6 +59,18 @@ _CDM_INGEST_STALE_AFTER_SECONDS = 700
 
 _CDM_IN_FLIGHT_STATUSES = ("pending", "parsing", "indexing")
 _CDM_RETRYABLE_STATUSES = ("failed", "indexing_failed")
+
+
+class CDMMappingBadgedResponse(CDMMappingResponse, CatalogLifecycleBadge):
+    """Historical mapping + catalog lifecycle badge (plan §4.4 consumer 8).
+
+    Mappings against deprecated controls keep resolving — an accepted
+    citation is audit history — but render badged.
+    """
+
+
+class CDMMappingBadgedListResponse(CDMMappingListResponse):
+    mappings: list[CDMMappingBadgedResponse]
 
 
 def _ingest_is_stale(document: CDMDocument, now: datetime) -> bool:
@@ -611,7 +624,7 @@ async def delete_cdm_document(
 
 @router.get(
     "/organizations/{org_id}/cdm/mappings",
-    response_model=CDMMappingListResponse,
+    response_model=CDMMappingBadgedListResponse,
 )
 async def list_cdm_mappings(
     org_id: UUID,
@@ -622,11 +635,19 @@ async def list_cdm_mappings(
     status: str | None = Query(None),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
-) -> CDMMappingListResponse:
+) -> CDMMappingBadgedListResponse:
     query = (
-        select(CDMMapping, ScopedControl.scf_id, CDMDocument.original_filename)
+        select(
+            CDMMapping,
+            ScopedControl.scf_id,
+            CDMDocument.original_filename,
+            SCFCatalogControl.status,
+            SCFCatalogControl.retired_in_version,
+            SCFCatalogControl.superseded_by,
+        )
         .join(ScopedControl, CDMMapping.scoped_control_id == ScopedControl.id)
         .join(CDMDocument, CDMMapping.cdm_document_id == CDMDocument.id)
+        .outerjoin(SCFCatalogControl, ScopedControl.scf_id == SCFCatalogControl.scf_id)
         .where(CDMMapping.organization_id == org_id)
     )
     count_query = select(func.count(CDMMapping.id)).where(CDMMapping.organization_id == org_id)
@@ -645,13 +666,16 @@ async def list_cdm_mappings(
     result = await db.execute(query)
 
     mappings = []
-    for mapping, scf_id, original_filename in result.all():
-        mapping_response = CDMMappingResponse.model_validate(mapping)
+    for mapping, scf_id, original_filename, catalog_status, retired_in_version, superseded_by in result.all():
+        mapping_response = CDMMappingBadgedResponse.model_validate(mapping)
         mapping_response.scf_id = scf_id
         mapping_response.original_filename = original_filename
+        mapping_response.catalog_status = catalog_status
+        mapping_response.retired_in_version = retired_in_version
+        mapping_response.superseded_by = superseded_by
         mappings.append(mapping_response)
 
-    return CDMMappingListResponse(
+    return CDMMappingBadgedListResponse(
         mappings=mappings,
         total=total,
         offset=offset,

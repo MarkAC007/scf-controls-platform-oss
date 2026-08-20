@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from sqlalchemy import select, and_, func, case, text
+from sqlalchemy import select, and_, func, case, or_, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
@@ -50,6 +50,85 @@ router = APIRouter(prefix="/public/trust", tags=["trust_portal"])
 
 # Cache TTL for trust portal data (15 minutes)
 TRUST_PORTAL_CACHE_TTL = 900
+
+
+# The public portal is active-catalog-only (plan §4.4 consumer 7): deprecated
+# controls drop out of every aggregate, with no badges — retired controls are
+# neither gaps nor claims on a public surface. Query builders are module-level
+# so the active-only predicate is unit-testable without a database.
+
+def _build_theme_stats_query(org_id: UUID):
+    """Per-theme posture aggregate, restricted to active catalog controls.
+
+    The outer join keeps mapping rows whose scf_id has no catalog row (the
+    orphan case); only rows positively marked deprecated are excluded.
+    """
+    return (
+        select(
+            CapabilityTheme.theme_code,
+            func.count(func.distinct(CapabilityThemeMapping.scf_id)).filter(
+                ScopedControl.selected == True
+            ).label("scoped_controls"),
+            func.count(func.distinct(CapabilityThemeMapping.scf_id)).filter(
+                and_(ScopedControl.selected == True, ScopedControl.implementation_status == "monitored")
+            ).label("monitored"),
+            func.count(func.distinct(CapabilityThemeMapping.scf_id)).filter(
+                and_(ScopedControl.selected == True, ScopedControl.implementation_status == "implemented")
+            ).label("implemented"),
+            func.count(func.distinct(CapabilityThemeMapping.scf_id)).filter(
+                and_(ScopedControl.selected == True, ScopedControl.implementation_status == "not_applicable")
+            ).label("not_applicable"),
+            # Maturity: weighted average numeric level (L0=0..L5=5) across scoped controls
+            # that have a maturity_level set. Matches the pattern used in
+            # api/capability_themes.py so the public and private endpoints agree.
+            func.avg(
+                case(
+                    (ScopedControl.maturity_level == "L0", 0),
+                    (ScopedControl.maturity_level == "L1", 1),
+                    (ScopedControl.maturity_level == "L2", 2),
+                    (ScopedControl.maturity_level == "L3", 3),
+                    (ScopedControl.maturity_level == "L4", 4),
+                    (ScopedControl.maturity_level == "L5", 5),
+                )
+            ).filter(
+                and_(ScopedControl.selected == True, ScopedControl.maturity_level.isnot(None))
+            ).label("maturity_score"),
+        )
+        .select_from(CapabilityTheme)
+        .join(CapabilityThemeMapping, CapabilityTheme.id == CapabilityThemeMapping.theme_id)
+        .outerjoin(
+            ScopedControl,
+            and_(
+                CapabilityThemeMapping.scf_id == ScopedControl.scf_id,
+                ScopedControl.organization_id == org_id,
+            ),
+        )
+        .outerjoin(SCFCatalogControl, CapabilityThemeMapping.scf_id == SCFCatalogControl.scf_id)
+        .where(
+            or_(
+                SCFCatalogControl.scf_id.is_(None),
+                SCFCatalogControl.status == "active",
+            )
+        )
+        .group_by(CapabilityTheme.theme_code, CapabilityTheme.display_order)
+        .order_by(CapabilityTheme.display_order)
+    )
+
+
+# Scoped-framework rollup — active catalog controls only (see above).
+_FRAMEWORK_QUERY = text("""
+    SELECT
+        fw_key,
+        COUNT(DISTINCT sc.scf_id) AS control_count
+    FROM scoped_controls sc
+    JOIN scf_catalog_controls cat ON sc.scf_id = cat.scf_id,
+         jsonb_object_keys(cat.framework_mappings) AS fw_key
+    WHERE sc.organization_id = :org_id
+      AND sc.selected = true
+      AND cat.status = 'active'
+    GROUP BY fw_key
+    ORDER BY control_count DESC
+""")
 
 
 def _posture_to_band(pct: float) -> str:
@@ -122,51 +201,7 @@ async def get_trust_portal(
     )
     themes = themes_result.scalars().all()
 
-    theme_stats_query = (
-        select(
-            CapabilityTheme.theme_code,
-            func.count(func.distinct(CapabilityThemeMapping.scf_id)).filter(
-                ScopedControl.selected == True
-            ).label("scoped_controls"),
-            func.count(func.distinct(CapabilityThemeMapping.scf_id)).filter(
-                and_(ScopedControl.selected == True, ScopedControl.implementation_status == "monitored")
-            ).label("monitored"),
-            func.count(func.distinct(CapabilityThemeMapping.scf_id)).filter(
-                and_(ScopedControl.selected == True, ScopedControl.implementation_status == "implemented")
-            ).label("implemented"),
-            func.count(func.distinct(CapabilityThemeMapping.scf_id)).filter(
-                and_(ScopedControl.selected == True, ScopedControl.implementation_status == "not_applicable")
-            ).label("not_applicable"),
-            # Maturity: weighted average numeric level (L0=0..L5=5) across scoped controls
-            # that have a maturity_level set. Matches the pattern used in
-            # api/capability_themes.py so the public and private endpoints agree.
-            func.avg(
-                case(
-                    (ScopedControl.maturity_level == "L0", 0),
-                    (ScopedControl.maturity_level == "L1", 1),
-                    (ScopedControl.maturity_level == "L2", 2),
-                    (ScopedControl.maturity_level == "L3", 3),
-                    (ScopedControl.maturity_level == "L4", 4),
-                    (ScopedControl.maturity_level == "L5", 5),
-                )
-            ).filter(
-                and_(ScopedControl.selected == True, ScopedControl.maturity_level.isnot(None))
-            ).label("maturity_score"),
-        )
-        .select_from(CapabilityTheme)
-        .join(CapabilityThemeMapping, CapabilityTheme.id == CapabilityThemeMapping.theme_id)
-        .outerjoin(
-            ScopedControl,
-            and_(
-                CapabilityThemeMapping.scf_id == ScopedControl.scf_id,
-                ScopedControl.organization_id == org_id,
-            ),
-        )
-        .group_by(CapabilityTheme.theme_code, CapabilityTheme.display_order)
-        .order_by(CapabilityTheme.display_order)
-    )
-
-    stats_result = await db.execute(theme_stats_query)
+    stats_result = await db.execute(_build_theme_stats_query(org_id))
     stats_by_theme = {row.theme_code: row for row in stats_result.all()}
 
     # ------------------------------------------------------------------
@@ -233,20 +268,7 @@ async def get_trust_portal(
     # ------------------------------------------------------------------
     # 7. Query scoped frameworks
     # ------------------------------------------------------------------
-    framework_query = text("""
-        SELECT
-            fw_key,
-            COUNT(DISTINCT sc.scf_id) AS control_count
-        FROM scoped_controls sc
-        JOIN scf_catalog_controls cat ON sc.scf_id = cat.scf_id,
-             jsonb_object_keys(cat.framework_mappings) AS fw_key
-        WHERE sc.organization_id = :org_id
-          AND sc.selected = true
-        GROUP BY fw_key
-        ORDER BY control_count DESC
-    """)
-
-    fw_result = await db.execute(framework_query, {"org_id": str(org_id)})
+    fw_result = await db.execute(_FRAMEWORK_QUERY, {"org_id": str(org_id)})
     frameworks = []
     for row in fw_result.all():
         if row.fw_key.startswith(INTERNAL_MAPPING_PREFIXES):

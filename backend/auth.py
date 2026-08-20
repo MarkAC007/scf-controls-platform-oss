@@ -993,6 +993,31 @@ async def require_platform_admin(
     return user
 
 
+async def require_platform_admin_user_session(
+    user: User = Depends(require_platform_admin),
+) -> User:
+    """Platform admin via an accountable principal — refuses the static API key.
+
+    The static API key is auto-granted platform admin for automation/CI, but
+    destructive catalog operations (upgrade apply/revert, superseded pairings)
+    must be attributable to a real person (plan §4.5, §4.8). Google/OIDC
+    sessions and per-user API keys (which resolve to a DB user whose
+    is_platform_admin flag was checked) pass; the anonymous static key does not.
+    """
+    if user.auth_method == "api_key":
+        logger.warning(
+            "Destructive catalog operation refused for the static API key principal"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "This operation requires a real platform-admin user session; "
+                "the static API key may not drive destructive catalog operations"
+            ),
+        )
+    return user
+
+
 async def user_is_platform_admin(user: Optional[User], db: AsyncSession) -> bool:
     """Non-raising platform-admin check for optionally-authenticated handlers.
 
@@ -1385,3 +1410,52 @@ def require_org_role(min_role: Literal["viewer", "editor", "admin"] = "viewer"):
 require_org_viewer = require_org_role("viewer")
 require_org_editor = require_org_role("editor")
 require_org_admin = require_org_role("admin")
+
+
+async def require_org_admin_or_platform_admin(
+    org_id: UUID,
+    credentials: HTTPAuthorizationCredentials = Security(security),
+    db: AsyncSession = Depends(get_db),
+) -> OrgMembership:
+    """Org admin (member or consultant) OR platform admin, for the org-level
+    catalog reconciliation routes (plan §4.5).
+
+    Membership is checked first, exactly as ``require_org_role("admin")``
+    would. On a 403 only, a platform administrator with a REAL user identity
+    (Google session or user API key with the DB ``is_platform_admin`` flag)
+    is granted admin-level access to the org — this is what lets the platform
+    console operate tenant-by-tenant. The static API key never takes the
+    platform-admin fallback: it is auto-granted platform admin for CI
+    convenience, and letting it through here would reopen the multi-tenant
+    IDOR that ``verify_org_membership`` explicitly closes.
+    """
+    user = await require_auth(credentials, db)
+    try:
+        return await verify_org_membership(org_id, user, db, "admin")
+    except HTTPException as exc:
+        if exc.status_code != status.HTTP_403_FORBIDDEN:
+            raise
+        if user.auth_method != "api_key" and user.db_id:
+            pa_check = await db.execute(
+                select(DBUser).where(
+                    (DBUser.id == UUID(user.db_id)) &
+                    (DBUser.is_platform_admin == True)  # noqa: E712
+                )
+            )
+            if pa_check.scalar_one_or_none() is not None:
+                org_check = await db.execute(
+                    select(Organization).where(Organization.id == org_id)
+                )
+                if org_check.scalar_one_or_none() is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="Organization not found",
+                    )
+                logger.info(
+                    f"Org admin access granted via platform admin for "
+                    f"{_mask_email(user.email)} on org {org_id}"
+                )
+                return OrgMembership(
+                    user=user, organization_id=org_id, role="admin", is_consultant=False
+                )
+        raise

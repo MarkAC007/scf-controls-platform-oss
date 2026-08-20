@@ -37,8 +37,26 @@ class _FakeAsyncRedis:
         return self._value
 
 
+class _EmptyResult:
+    """Empty-ledger answer for the catalog version-authority query (WP1c)."""
+
+    def scalars(self):
+        return self
+
+    def first(self):
+        return None
+
+
+class _FakeEmptyDb:
+    async def execute(self, _stmt):
+        return _EmptyResult()
+
+
 async def _fake_get_db():
-    yield object()  # never actually queried — counts helper is monkeypatched
+    # The counts helper is monkeypatched; the only live query is the
+    # catalog-version ledger lookup, which reports "no applied run" so the
+    # handler falls back to the (also monkeypatched) git-describe path.
+    yield _FakeEmptyDb()
 
 
 @pytest.fixture(autouse=True)
