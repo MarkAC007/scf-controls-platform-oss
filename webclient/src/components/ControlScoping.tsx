@@ -31,6 +31,7 @@ import SCRMFocusBadges from './SCRMFocusBadges'
 import RiskThreatContext from './RiskThreatContext'
 import { SidebarControlCard } from './SidebarControlCard'
 import CDMControlPanel from './CDMControlPanel'
+import DeprecatedBadge, { getCatalogLifecycle } from './DeprecatedBadge'
 import type { BulkScopeFrameworkResponse, BulkUnscopeFrameworkResponse, ResetScopeResponse, ScopedControlWithCatalog } from '../data/apiClient'
 
 interface ControlScopingProps {
@@ -509,6 +510,7 @@ export default function ControlScoping({
         }}
         scopeBadge={{ inScope: control.selected }}
         statusBadge={control.implementation_status}
+        lifecycle={getCatalogLifecycle(control)}
       />
     )
   }, [controls, selectedId, toggleSelection])
@@ -715,6 +717,7 @@ export default function ControlScoping({
               <span className="scf-source-tag">SCF Catalog</span>
               <div className="detail-header-badges">
                 <span className="scf-id-pill">{selectedControl.scf_id}</span>
+                <DeprecatedBadge {...getCatalogLifecycle(selectedControl)} />
                 {selectedControl.implementation_status && (
                   <span className={`status-badge-compact status-${selectedControl.implementation_status}`}>
                     {selectedControl.implementation_status.replace('_', ' ')}

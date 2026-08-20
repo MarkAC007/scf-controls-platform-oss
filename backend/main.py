@@ -67,6 +67,8 @@ from api import (
     audit_engagements,
     trust_portal,
     catalog_admin,
+    catalog_upgrade_admin,
+    catalog_reconciliation,
     oidc_auth,
 )
 
@@ -387,6 +389,8 @@ app.include_router(capabilities.router, prefix="/api")
 app.include_router(database_stats.router, prefix="/api")
 app.include_router(catalog.router, prefix="/api")  # SCF catalog reference data
 app.include_router(catalog_admin.router, prefix="/api")  # OSS live SCF Excel upload + reseed
+app.include_router(catalog_upgrade_admin.router, prefix="/api")  # Catalog upgrade platform admin (WP-C contract stubs)
+app.include_router(catalog_reconciliation.router, prefix="/api")  # Per-org catalog reconciliation (WP-C contract stubs)
 app.include_router(cdm.router, prefix="/api")
 app.include_router(cdm_document_map.router, prefix="/api")  # Per-domain CDM coverage aggregate
 app.include_router(tasks_api.router, prefix="/api")  # Background tasks and cache management

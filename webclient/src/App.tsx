@@ -43,6 +43,10 @@ import AuditLogPage from './components/AuditLogPage'
 import EngagementsPage from './components/EngagementsPage'
 import CDMWorkspace from './components/CDMWorkspace'
 import DocumentMap from './components/DocumentMap'
+import CatalogUpgradePage from './components/platform/CatalogUpgradePage'
+import TenantReconciliationBoard from './components/platform/TenantReconciliationBoard'
+import CatalogChangelogPage from './components/CatalogChangelogPage'
+import CatalogVersionCard from './components/CatalogVersionCard'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { ThemeProvider } from './contexts/ThemeContext'
 import { OrganizationProvider, useOrganization } from './contexts/OrganizationContext'
@@ -56,10 +60,10 @@ import InviteAcceptance from './components/InviteAcceptance'
 import OrgSwitcher from './components/OrgSwitcher'
 import type { ClientSummary, ConsultantInvite } from './types'
 
-type Tab = 'dashboard' | 'capability-posture' | 'library' | 'scoping' | 'evidence' | 'mapping-matrix' | 'tasks' | 'systems' | 'users' | 'consultant-portal' | 'risk-register' | 'vendors' | 'settings' | 'webhooks' | 'audit-log' | 'engagements' | 'cdm' | 'document-map'
+type Tab = 'dashboard' | 'capability-posture' | 'library' | 'scoping' | 'evidence' | 'mapping-matrix' | 'tasks' | 'systems' | 'users' | 'consultant-portal' | 'risk-register' | 'vendors' | 'settings' | 'webhooks' | 'audit-log' | 'engagements' | 'cdm' | 'document-map' | 'platform-catalog' | 'platform-tenants' | 'catalog-changelog'
 
 function AppContent() {
-  const { isAuthenticated, authReady, user } = useAuth()
+  const { isAuthenticated, authReady, user, isPlatformAdmin } = useAuth()
   const { currentOrg, isLoading: orgLoading, switchOrganization } = useOrganization()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -458,6 +462,7 @@ function AppContent() {
         activeTab={activeTab}
         onTabChange={setActiveTab}
         showConsultantPortal={isConsultant === true}
+        isPlatformAdmin={isPlatformAdmin}
         mobileOpen={mobileNavOpen}
         onMobileClose={() => setMobileNavOpen(false)}
       />
@@ -619,8 +624,20 @@ function AppContent() {
           {activeTab === 'audit-log' && currentOrg && (
             <AuditLogPage organizationId={currentOrg.id} />
           )}
+          {activeTab === 'platform-catalog' && (
+            <CatalogUpgradePage />
+          )}
+          {activeTab === 'platform-tenants' && (
+            <TenantReconciliationBoard />
+          )}
+          {activeTab === 'catalog-changelog' && scopingData && (
+            <CatalogChangelogPage organizationId={scopingData.organizationId!} />
+          )}
           {activeTab === 'settings' && scopingData && (
             <>
+              <CatalogVersionCard
+                organizationId={scopingData.organizationId!}
+              />
               <AppearanceSettings
                 organizationId={scopingData.organizationId!}
               />

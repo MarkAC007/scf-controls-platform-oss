@@ -672,6 +672,80 @@ def create_composite_insufficient_notifications_sync(
         return 0
 
 
+async def create_catalog_reconciliation_notifications(
+    db: AsyncSession,
+    organization_id: UUID,
+    run_id: UUID,
+    event: str,
+    from_version: str = None,
+    to_version: str = None,
+    actor_user_id: UUID = None,
+) -> int:
+    """Notify org admins that a catalog reconciliation was applied or rolled
+    back (WP2c, plan §4.3). ``event`` is 'applied' or 'rolled_back';
+    reference_type='catalog' points the NotificationBell at the org
+    reconciliation run.
+    """
+    notifications_created = 0
+
+    try:
+        admin_ids = await _get_org_admin_user_ids(
+            db, organization_id, exclude_user_id=actor_user_id
+        )
+        if not admin_ids:
+            return 0
+
+        if event == "rolled_back":
+            message = (
+                f"Catalog reconciliation rolled back — your organisation is back "
+                f"on catalog {from_version}"
+            )
+            subject = f"Catalog reconciliation rolled back to {from_version}"
+        else:
+            message = (
+                f"Catalog reconciliation applied — your organisation is now on "
+                f"catalog {to_version}"
+            )
+            subject = f"Catalog reconciled to {to_version}"
+
+        for user_id in admin_ids:
+            user_result = await db.execute(select(User).where(User.id == user_id))
+            user = user_result.scalar_one_or_none()
+            if not user:
+                continue
+
+            notification = Notification(
+                user_id=user_id,
+                type=f'catalog_reconciliation_{event}',
+                reference_type='catalog',
+                reference_id=run_id,
+                message=message
+            )
+            db.add(notification)
+            notifications_created += 1
+
+            if user.email_notifications_enabled and user.notification_frequency == 'immediate':
+                await send_event_notification_email(
+                    to_email=user.email,
+                    to_name=user.display_name or user.email,
+                    subject=subject,
+                    body_line=message,
+                    event_type=f'catalog_reconciliation_{event}'
+                )
+
+        await db.commit()
+        logger.info(
+            f"Created {notifications_created} catalog reconciliation "
+            f"notifications ({event}) for org {organization_id}"
+        )
+        return notifications_created
+
+    except Exception as e:
+        logger.error(f"Failed to create catalog reconciliation notifications: {e}")
+        await db.rollback()
+        return 0
+
+
 if __name__ == "__main__":
     """
     Run this script as a cron job:

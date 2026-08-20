@@ -62,6 +62,7 @@ celery_app = Celery(
         "tasks_assessment",
         "tasks_window_assessment",
         "tasks_catalog",
+        "tasks_reconciliation",
         "tasks_updates",
         "tasks_automation",
         "services.composite_service",
@@ -147,6 +148,10 @@ celery_app.conf.update(
         Queue("evidence_assessment", Exchange("evidence_assessment"), routing_key="evidence_assessment"),
         Queue("evidence_window", Exchange("evidence_window"), routing_key="evidence_window"),
         Queue("evidence_composite", Exchange("evidence_composite"), routing_key="evidence_composite"),
+        # Catalog imports + the staged upgrade flow (tasks_catalog.py). Its own
+        # queue so a long apply cannot head-of-line-block default work; already
+        # in the compose worker's -Q list (docker-compose.yml:206).
+        Queue("catalog", Exchange("catalog"), routing_key="catalog"),
     ),
     task_default_queue="default",
     task_default_exchange="default",
@@ -175,6 +180,16 @@ celery_app.conf.update(
         "tasks_automation.notify_due_tasks_task": {"queue": "default"},
         "tasks_automation.notify_overdue_tasks_task": {"queue": "default"},
         "cdm.classify_intent": {"queue": "cdm_intent"},
+        # Catalog upgrade flow (WP1b). catalog.import routes itself via its
+        # task decorator (queue="catalog"); the upgrade tasks route here.
+        "catalog.upgrade_stage": {"queue": "catalog"},
+        "catalog.upgrade_apply": {"queue": "catalog"},
+        "catalog.upgrade_revert": {"queue": "catalog"},
+        "catalog.cleanup_workbooks": {"queue": "catalog"},
+        # Per-org reconciliation (WP2c, tasks_reconciliation.py): same queue —
+        # org applies serialise behind platform catalog work by design.
+        "org.reconcile_apply": {"queue": "catalog"},
+        "org.reconcile_rollback": {"queue": "catalog"},
         "services.composite_service.recompute_control_composite_task": {"queue": "evidence_composite"},
         "services.composite_service.backfill_all_composites_task": {"queue": "evidence_composite"},
     },
@@ -223,6 +238,13 @@ celery_app.conf.update(
             if _flag_enabled("TASK_AUTOMATION_ENABLED", "true")
             else {}
         ),
+        # Catalog upgrade workbook retention (plan §4.2.7): keep the last 5
+        # runs' stashed workbooks, delete older ones nightly. Diff details are
+        # never cleaned up — they are the platform revert anchor.
+        "catalog-workbook-cleanup-daily": {
+            "task": "catalog.cleanup_workbooks",
+            "schedule": crontab(hour=3, minute=30),
+        },
         # Daily platform update check (upgrade design Part B) — polls the public
         # GitHub Releases API at 02:00 UTC and caches the result in Redis for the
         # /api/version endpoint. Gated by SCF_UPDATE_CHECK, but INVERTED relative

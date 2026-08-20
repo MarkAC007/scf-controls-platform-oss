@@ -10,6 +10,7 @@ import RiskThreatContext from './RiskThreatContext'
 import AssessmentObjectivesList from './AssessmentObjectivesList'
 import CDMControlPanel from './CDMControlPanel'
 import { WorkspaceRecord } from './provenance/WorkspaceRecord'
+import DeprecatedBadge, { getCatalogLifecycle } from './DeprecatedBadge'
 
 interface Props {
   control?: EnrichedControl
@@ -83,6 +84,7 @@ export default function ControlDetail({ control, scopingData, organizationId, on
         <span className="scf-source-tag">SCF Catalog</span>
         <div className="detail-header-badges">
           <span className="scf-id-pill">{control.scf_id}</span>
+          <DeprecatedBadge {...getCatalogLifecycle(control)} />
           <button
             className={`btn-graph-toggle ${showGraph ? 'active' : ''}`}
             onClick={() => setShowGraph(v => !v)}

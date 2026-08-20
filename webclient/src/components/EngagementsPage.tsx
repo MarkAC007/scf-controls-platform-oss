@@ -23,6 +23,7 @@ import {
   type EngagementQueryStatus,
 } from '../data/apiClient'
 import { fetchFrameworks, type FrameworkInfo } from '../data/catalogApi'
+import DeprecatedBadge, { getCatalogLifecycle } from './DeprecatedBadge'
 
 interface EngagementsPageProps {
   organizationId: string
@@ -402,6 +403,7 @@ function ScopeDrawer({ organizationId, engagement, frameworkName, onClose }: Sco
                       <div key={it.id} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: '10px 14px', background: 'var(--panel)' }}>
                         <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap' }}>
                           <strong style={{ fontSize: 13, color: 'var(--text)' }}>{it.scf_id}</strong>
+                          <DeprecatedBadge compact {...getCatalogLifecycle(it)} />
                           {it.control_name && <span style={{ fontSize: 13, color: 'var(--muted)' }}>{it.control_name}</span>}
                         </div>
                         {status === 'excluded' && (
@@ -506,6 +508,7 @@ function PresentationDrawer({ organizationId, engagement, frameworkName, onClose
                       <div key={`${clause.clause_id}-${ctrl.scf_id}`} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: '10px 14px', background: 'var(--panel)' }}>
                         <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
                           <strong style={{ fontSize: 13, color: 'var(--text)' }}>{ctrl.scf_id}</strong>
+                          <DeprecatedBadge compact {...getCatalogLifecycle(ctrl)} />
                           {ctrl.control_name && <span style={{ fontSize: 13, color: 'var(--muted)', flex: 1, minWidth: 0 }}>{ctrl.control_name}</span>}
                           <span style={{ padding: '1px 8px', borderRadius: 10, fontSize: 11, fontWeight: 600, background: meta.bg, color: meta.color }}>{meta.label}</span>
                         </div>

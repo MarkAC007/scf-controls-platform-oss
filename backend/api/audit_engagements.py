@@ -44,6 +44,7 @@ from schemas import (
     QueryResponseItem,
     FrameworkPresentation,
 )
+from schemas_catalog_upgrade import CatalogLifecycleBadge
 from auth import (
     require_org_role,
     OrgMembership,
@@ -149,6 +150,21 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["audit_engagements"])
 
 ENGAGEMENT_TRACKED_FIELDS = ['name', 'frameworks', 'status', 'start_date', 'end_date']
+
+
+class AuditEngagementVersionedResponse(AuditEngagementResponse):
+    """Engagement response + the catalog version it was assessed under.
+
+    Plan §4.4 consumer 6: engagement views always resolve (including
+    deprecated catalog rows — frozen scope renders forever) and expose the
+    engagement's own catalog_version so "assessed under SCF {v}" can render.
+    """
+    catalog_version: Optional[str] = None
+
+
+class EngagementScopeItemBadged(EngagementScopeItem, CatalogLifecycleBadge):
+    """Scope item + catalog lifecycle badge — the frozen scope keeps
+    rendering after a control is retired, marked as deprecated."""
 
 
 # =============================================================================
@@ -265,7 +281,7 @@ async def _materialise_scope(
 
 @router.get(
     "/organizations/{org_id}/engagements",
-    response_model=List[AuditEngagementResponse],
+    response_model=List[AuditEngagementVersionedResponse],
 )
 async def list_engagements(
     org_id: UUID,
@@ -296,7 +312,7 @@ async def list_engagements(
             )
         )
         scope_count = count_result.scalar_one()
-        resp = AuditEngagementResponse.model_validate(eng)
+        resp = AuditEngagementVersionedResponse.model_validate(eng)
         resp.scope_count = scope_count
         responses.append(resp)
 
@@ -309,7 +325,7 @@ async def list_engagements(
 
 @router.post(
     "/organizations/{org_id}/engagements",
-    response_model=AuditEngagementResponse,
+    response_model=AuditEngagementVersionedResponse,
     status_code=201,
 )
 async def create_engagement(
@@ -367,7 +383,7 @@ async def create_engagement(
     await db.commit()
     await db.refresh(new_engagement)
 
-    resp = AuditEngagementResponse.model_validate(new_engagement)
+    resp = AuditEngagementVersionedResponse.model_validate(new_engagement)
     resp.scope_count = scope_count
     return resp
 
@@ -378,7 +394,7 @@ async def create_engagement(
 
 @router.get(
     "/organizations/{org_id}/engagements/{engagement_id}",
-    response_model=AuditEngagementResponse,
+    response_model=AuditEngagementVersionedResponse,
 )
 async def get_engagement(
     org_id: UUID,
@@ -411,7 +427,7 @@ async def get_engagement(
     )
     scope_count = count_result.scalar_one()
 
-    resp = AuditEngagementResponse.model_validate(engagement)
+    resp = AuditEngagementVersionedResponse.model_validate(engagement)
     resp.scope_count = scope_count
     return resp
 
@@ -422,7 +438,7 @@ async def get_engagement(
 
 @router.patch(
     "/organizations/{org_id}/engagements/{engagement_id}",
-    response_model=AuditEngagementResponse,
+    response_model=AuditEngagementVersionedResponse,
 )
 async def update_engagement(
     org_id: UUID,
@@ -480,7 +496,7 @@ async def update_engagement(
     )
     scope_count = count_result.scalar_one()
 
-    resp = AuditEngagementResponse.model_validate(engagement)
+    resp = AuditEngagementVersionedResponse.model_validate(engagement)
     resp.scope_count = scope_count
     return resp
 
@@ -548,7 +564,7 @@ async def delete_engagement(
 
 @router.get(
     "/organizations/{org_id}/engagements/{engagement_id}/scope",
-    response_model=List[EngagementScopeItem],
+    response_model=List[EngagementScopeItemBadged],
 )
 async def get_engagement_scope(
     org_id: UUID,
@@ -587,6 +603,9 @@ async def get_engagement_scope(
             EngagementControlScope.out_of_scope_justification,
             EngagementControlScope.source_frameworks,
             SCFCatalogControl.control_name,
+            SCFCatalogControl.status,
+            SCFCatalogControl.retired_in_version,
+            SCFCatalogControl.superseded_by,
         )
         .outerjoin(SCFCatalogControl, EngagementControlScope.scf_id == SCFCatalogControl.scf_id)
         .where(EngagementControlScope.engagement_id == engagement_id)
@@ -595,7 +614,7 @@ async def get_engagement_scope(
     rows = scope_result.fetchall()
 
     return [
-        EngagementScopeItem(
+        EngagementScopeItemBadged(
             id=row[0],
             scoped_control_id=row[1],
             added_at=row[2],
@@ -604,6 +623,9 @@ async def get_engagement_scope(
             out_of_scope_justification=row[5],
             source_frameworks=row[6] or [],
             control_name=row[7],
+            catalog_status=row[8],
+            retired_in_version=row[9],
+            superseded_by=row[10],
         )
         for row in rows
     ]
@@ -930,7 +952,7 @@ async def revoke_engagement_auditor(
     logger.info("Auditor revoked: engagement=%s grant=%s", engagement_id, auditor_id)
 
 
-@router.get("/my-engagements", response_model=List[AuditEngagementResponse])
+@router.get("/my-engagements", response_model=List[AuditEngagementVersionedResponse])
 async def list_my_auditor_engagements(
     credentials: HTTPAuthorizationCredentials = Security(security),
     db: AsyncSession = Depends(get_db),
@@ -955,7 +977,7 @@ async def list_my_auditor_engagements(
         )
         .order_by(AuditEngagement.created_at.desc())
     )
-    return [AuditEngagementResponse.model_validate(eng) for eng in result.scalars().all()]
+    return [AuditEngagementVersionedResponse.model_validate(eng) for eng in result.scalars().all()]
 
 
 # =============================================================================

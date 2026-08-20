@@ -6,7 +6,7 @@ import OrgSwitcher from './OrgSwitcher'
 import { Organization, useOrganization } from '../contexts/OrganizationContext'
 import { useOrgLogo } from '../hooks/useOrgLogo'
 
-type Tab = 'dashboard' | 'capability-posture' | 'library' | 'scoping' | 'evidence' | 'mapping-matrix' | 'tasks' | 'systems' | 'users' | 'consultant-portal' | 'risk-register' | 'vendors' | 'settings' | 'webhooks' | 'audit-log' | 'engagements' | 'cdm' | 'document-map'
+type Tab = 'dashboard' | 'capability-posture' | 'library' | 'scoping' | 'evidence' | 'mapping-matrix' | 'tasks' | 'systems' | 'users' | 'consultant-portal' | 'risk-register' | 'vendors' | 'settings' | 'webhooks' | 'audit-log' | 'engagements' | 'cdm' | 'document-map' | 'platform-catalog' | 'platform-tenants' | 'catalog-changelog'
 
 interface HeaderProps {
   activeTab: Tab
@@ -98,6 +98,7 @@ export default function Header({
                 onTabChange('scoping');
               }}
               onNavigateToTask={() => onTabChange('tasks')}
+              onNavigateToChangelog={() => onTabChange('catalog-changelog')}
             />
             <UserProfileDropdown
               onNavigateToUsers={() => onTabChange('users')}

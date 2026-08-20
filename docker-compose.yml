@@ -172,6 +172,10 @@ services:
       - "${BACKEND_PORT:-8000}:8000"
     volumes:
       - ./backend:/app
+      # Extractor script lives at repo-root scripts/; prod bakes exactly this file
+      # into /app/scripts (Dockerfile.backend). Mount the single file — a whole-dir
+      # mount would shadow backend/scripts (cdm_eval etc.)
+      - ./scripts/extract_scf_data.py:/app/scripts/extract_scf_data.py:ro
       - ./webclient/public/data:/app/data/json:ro
       # Platform version read dynamically from package.json (mounted outside /app
       # to avoid conflicts). Catalogue version comes from the CATALOG_VERSION env

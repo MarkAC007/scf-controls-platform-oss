@@ -18,7 +18,9 @@ from auth import require_platform_admin, User
 from catalog_models import SCFCatalogControl
 from celery_app import celery_app
 from database import get_db
+from schemas_catalog_upgrade import CatalogStatusExtended
 from services import s3_service
+from services.catalog_apply import get_current_catalog_version
 from services.single_tenant import is_single_tenant_active, single_tenant_org_id
 
 logger = logging.getLogger(__name__)
@@ -31,11 +33,6 @@ _ALLOWED_XLSX_TYPES = {
     _XLSX_CONTENT_TYPE,
     "application/octet-stream",  # some browsers send this for .xlsx
 }
-
-
-class CatalogStatus(BaseModel):
-    seeded: bool
-    controls: int
 
 
 class CatalogImportAccepted(BaseModel):
@@ -59,17 +56,33 @@ def _require_single_tenant() -> None:
         )
 
 
-@router.get("/catalog/status", response_model=CatalogStatus)
-async def catalog_status(db: AsyncSession = Depends(get_db)) -> CatalogStatus:
+@router.get("/catalog/status", response_model=CatalogStatusExtended)
+async def catalog_status(db: AsyncSession = Depends(get_db)) -> CatalogStatusExtended:
     """Is the SCF catalogue seeded yet? Drives the frontend onboarding gate.
 
-    Unauthenticated by design — leaks only a control count, and the onboarding
-    screen must render before any login on a fresh deploy.
+    Unauthenticated by design — leaks only a control count and the SCF content
+    version, and the onboarding screen must render before any login on a fresh
+    deploy.
+
+    catalog_version is the ledger authority (latest applied import run's
+    to_version, plan §4.2.5). Row-sampling is consulted ONLY when the ledger is
+    empty (fresh installs pre-first-upgrade); git-describe never is.
     """
     count = (
         await db.execute(select(func.count()).select_from(SCFCatalogControl))
     ).scalar() or 0
-    return CatalogStatus(seeded=count > 0, controls=count)
+
+    catalog_version = await get_current_catalog_version(db)
+    if catalog_version is None:
+        # Pre-first-upgrade bootstrap: the seeder stamps every row with the
+        # seed version, so the max stamped value is a faithful fallback.
+        catalog_version = (
+            await db.execute(select(func.max(SCFCatalogControl.catalog_version)))
+        ).scalar()
+
+    return CatalogStatusExtended(
+        seeded=count > 0, controls=count, catalog_version=catalog_version
+    )
 
 
 @router.post(

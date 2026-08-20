@@ -42,17 +42,45 @@ COL_SCRM_STRATEGIC = 'SCRM Focus TIER 1 STRATEGIC'
 COL_SCRM_OPERATIONAL = 'SCRM Focus TIER 2 OPERATIONAL'
 COL_SCRM_TACTICAL = 'SCRM Focus TIER 3 TACTICAL'
 
-# C|P-CMM Maturity columns
-COL_CMM_0 = 'C|P-CMM 0 Not Performed'
-COL_CMM_1 = 'C|P-CMM 1 Performed Informally'
-COL_CMM_2 = 'C|P-CMM 2 Planned & Tracked'
-COL_CMM_3 = 'C|P-CMM 3 Well Defined'
-COL_CMM_4 = 'C|P-CMM 4 Quantitatively Controlled'
-COL_CMM_5 = 'C|P-CMM 5 Continuously Improving'
+# CMM Maturity columns. SCF renamed these in the 2026.2 catalogue:
+# 'C|P-CMM N <name>' -> 'SCR-CMM Level N <name>'. Candidates tried in order.
+_CMM_LEVEL_NAMES = [
+    'Not Performed',
+    'Performed Informally',
+    'Planned & Tracked',
+    'Well Defined',
+    'Quantitatively Controlled',
+    'Continuously Improving',
+]
+COL_CMM_CANDIDATES = [
+    [f'C|P-CMM {level} {name}', f'SCR-CMM Level {level} {name}']
+    for level, name in enumerate(_CMM_LEVEL_NAMES)
+]
 
 # Risk/Threat Mapping columns
 COL_RISK_SUMMARY = 'Risk Threat Summary'
 COL_THREAT_SUMMARY = 'Control Threat Summary'
+
+# Framework display-name columns. SCF renamed both the sheet ('Authoritative
+# Sources' -> 'Focal Documents') and its columns in the 2026.2 catalogue:
+# 'Mapping Column Header' -> 'SCF Column Header' and
+# 'Authoritative Source - Law, Regulation or Framework (LRF)' ->
+# 'Focal Document Name (FDN)'. Candidates are tried in order.
+COL_FW_HEADER_CANDIDATES = [
+    'Mapping Column Header',
+    'SCF Column Header',
+]
+COL_FW_NAME_CANDIDATES = [
+    'Authoritative Source - Law, Regulation or Framework (LRF)',
+    'Focal Document Name (FDN)',
+]
+
+# Domains principle column, renamed in the 2026.2 catalogue. Candidates tried
+# in order.
+COL_DOMAIN_PRINCIPLE_CANDIDATES = [
+    'Cybersecurity & Data Privacy by Design (C|P) Principles',
+    'Security, Compliance & Resilience (SCR) Principles',
+]
 
 # Assessment Objectives columns
 COL_AO_SCF_ID = 'SCF #'
@@ -279,17 +307,12 @@ def parse_cmm_maturity(row: pd.Series, col_map: dict) -> dict | None:
     result = {}
     has_data = False
 
-    level_cols = [
-        (COL_CMM_0, 'level_0'),
-        (COL_CMM_1, 'level_1'),
-        (COL_CMM_2, 'level_2'),
-        (COL_CMM_3, 'level_3'),
-        (COL_CMM_4, 'level_4'),
-        (COL_CMM_5, 'level_5'),
-    ]
-
-    for col_name, key in level_cols:
-        clean_col = col_map.get(col_name)
+    for level, candidates in enumerate(COL_CMM_CANDIDATES):
+        key = f'level_{level}'
+        # Resolve the era-specific column name (2025.x vs 2026.2 layouts)
+        clean_col = next(
+            (col_map[c] for c in candidates if c in col_map), None
+        )
         if clean_col and clean_col in row.index:
             value = row.get(clean_col)
             if not pd.isna(value) and str(value).strip():
@@ -545,6 +568,16 @@ def extract_domains(xl: pd.ExcelFile, sheet_name: str) -> list:
     # Clean column names
     df.columns = [clean_column_name(c) for c in df.columns]
 
+    # Resolve the era-specific principle column name (2025.x vs 2026.2 layouts)
+    principle_col = next(
+        (c for c in COL_DOMAIN_PRINCIPLE_CANDIDATES if c in df.columns), None
+    )
+    if principle_col is None:
+        print(
+            f"Warning: sheet {sheet_name!r} has no recognised principles column "
+            f"(looked for {COL_DOMAIN_PRINCIPLE_CANDIDATES}); principle will be empty"
+        )
+
     domains = []
     for _, row in df.iterrows():
         domain_name = str(row.get('SCF Domain', '')).strip()
@@ -565,7 +598,7 @@ def extract_domains(xl: pd.ExcelFile, sheet_name: str) -> list:
             'order': order,
             'name': domain_name,
             'identifier': str(row.get('SCF Identifier', '')).strip(),
-            'principle': str(row.get('Cybersecurity & Data Privacy by Design (C|P) Principles', '')).strip() if not pd.isna(row.iloc[3]) else '',
+            'principle': str(row.get(principle_col, '')).strip() if principle_col and not pd.isna(row.get(principle_col)) else '',
             'principle_intent': str(row.get('Principle Intent', '')).strip() if not pd.isna(row.iloc[4]) else ''
         })
 
@@ -650,22 +683,35 @@ def extract_framework_names(
     # Clean column names
     df.columns = [clean_column_name(c) for c in df.columns]
 
+    # Resolve era-specific column names (2025.x vs 2026.2 layouts)
+    header_col = next((c for c in COL_FW_HEADER_CANDIDATES if c in df.columns), None)
+    name_col = next((c for c in COL_FW_NAME_CANDIDATES if c in df.columns), None)
+    if header_col is None or name_col is None:
+        print(
+            f"Warning: sheet {sheet_name!r} has no recognised framework-name "
+            f"columns (looked for {COL_FW_HEADER_CANDIDATES} / "
+            f"{COL_FW_NAME_CANDIDATES}); falling back to column headers"
+        )
+
     # Create mapping from column header to friendly name
     framework_names = {}
 
-    for _, row in df.iterrows():
-        col_header = str(row.get('Mapping Column Header', '')).strip()
-        if not col_header or pd.isna(row.get('Mapping Column Header')):
-            continue
+    if header_col is not None:
+        for _, row in df.iterrows():
+            col_header = str(row.get(header_col, '')).strip()
+            if not col_header or pd.isna(row.get(header_col)):
+                continue
 
-        # Get the full authoritative source name
-        source_name = str(row.get('Authoritative Source - Law, Regulation or Framework (LRF)', '')).strip()
-        if pd.isna(row.get('Authoritative Source - Law, Regulation or Framework (LRF)')):
-            source_name = col_header
+            # Get the full authoritative source / focal document name
+            source_name = ''
+            if name_col is not None and not pd.isna(row.get(name_col)):
+                source_name = str(row.get(name_col, '')).strip()
+            if not source_name:
+                source_name = clean_column_name(col_header)
 
-        # Normalize the column header to match our framework IDs
-        fw_id = normalize_framework_id(col_header)
-        framework_names[fw_id] = source_name if source_name else col_header
+            # Normalize the column header to match our framework IDs
+            fw_id = normalize_framework_id(col_header)
+            framework_names[fw_id] = source_name
 
     # Also add entries for the framework columns we found
     for col in framework_columns:

@@ -9,6 +9,7 @@ import AxisCard from './AxisCard'
 import MaturityHistogram from './MaturityHistogram'
 import ThemeEvidenceCards from './ThemeEvidenceCards'
 import { bandToClass, formatAxisPercent } from './axisHelpers'
+import DeprecatedBadge, { getCatalogLifecycle } from '../DeprecatedBadge'
 
 // Raised from 50 to 200 so the maturity histogram has the full picture for
 // typical themes (issue #549 Phase 2). Server caps the upper bound.
@@ -379,7 +380,10 @@ function ControlsTable({
         <tbody>
           {controls.map((ctrl) => (
             <tr key={ctrl.scf_id}>
-              <td className="cp-controls-id">{ctrl.scf_id}</td>
+              <td className="cp-controls-id">
+                {ctrl.scf_id}{' '}
+                <DeprecatedBadge compact {...getCatalogLifecycle(ctrl)} />
+              </td>
               <td>{ctrl.control_name || '--'}</td>
               <td>{ctrl.scf_domain || '--'}</td>
               {showSelectedColumn && (

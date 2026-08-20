@@ -25,6 +25,8 @@ interface AuthContextType {
   token: string | null
   isAuthenticated: boolean
   authReady: boolean
+  /** True when the backend profile carries is_platform_admin — gates the Platform nav/pages */
+  isPlatformAdmin: boolean
   login: (credential: string) => void
   logout: () => void
   refreshUserProfile: () => Promise<void>
@@ -253,6 +255,7 @@ function OidcAuthProvider({ children }: { children: ReactNode }) {
     token,
     isAuthenticated: !!token,
     authReady,
+    isPlatformAdmin: user?.is_platform_admin === true,
     login,
     logout,
     refreshUserProfile,
@@ -275,6 +278,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       token: API_KEY || null, // Provide API key so OrganizationContext and other callers can auth
       isAuthenticated: true, // Allow immediate access
       authReady: true,
+      // No user profile in API-key mode; destructive catalog ops require a real
+      // session anyway, so the platform UI stays hidden here.
+      isPlatformAdmin: false,
       login: () => {},
       logout: () => {},
       refreshUserProfile: async () => {}
@@ -449,6 +455,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     token,
     isAuthenticated: !!token,
     authReady,
+    isPlatformAdmin: user?.is_platform_admin === true,
     login,
     logout,
     refreshUserProfile

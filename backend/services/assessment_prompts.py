@@ -63,6 +63,50 @@ ASSESSMENT_OUTPUT_SCHEMA = {
 }
 
 
+def _control_entry(ctrl) -> Dict[str, str]:
+    """Serialize one catalog control for the prompt context.
+
+    Deprecation keys are added ONLY for deprecated controls (plan §4.4
+    consumer 11) so context hashes for active controls are byte-identical to
+    the pre-upgrade shape — no spurious cache invalidation or re-assessment.
+    """
+    entry = {
+        "scf_id": ctrl.scf_id,
+        "control_name": ctrl.control_name,
+        "control_description": ctrl.control_description or "",
+    }
+    if getattr(ctrl, "status", None) == "deprecated":
+        entry["catalog_status"] = "deprecated"
+        entry["retired_in_version"] = ctrl.retired_in_version or ""
+        entry["superseded_by"] = ctrl.superseded_by or ""
+    return entry
+
+
+def _control_requirements_block(controls: List[Dict[str, str]]) -> str:
+    """Render the mapped-control requirements lines for a prompt.
+
+    Deprecated controls still resolve — historical evidence is assessed
+    against the scope it was collected under — but the LLM context carries an
+    explicit deprecation note line (plan §4.4 consumer 11).
+    """
+    if not controls:
+        return "No specific control mappings defined for this evidence item."
+    lines: List[str] = []
+    for ctrl in controls:
+        lines.append(
+            f"- **{ctrl['scf_id']}** ({ctrl['control_name']}): {ctrl['control_description']}"
+        )
+        if ctrl.get("catalog_status") == "deprecated":
+            note = f"  - NOTE: control {ctrl['scf_id']} is deprecated in the SCF catalog"
+            if ctrl.get("retired_in_version"):
+                note += f" (retired in {ctrl['retired_in_version']})"
+            if ctrl.get("superseded_by"):
+                note += f"; superseded by {ctrl['superseded_by']}"
+            note += ". Assess the evidence against it as historical scope."
+            lines.append(note)
+    return "\n".join(lines)
+
+
 @dataclass
 class ControlContext:
     """Assembled control context for an evidence item."""
@@ -106,11 +150,7 @@ async def assemble_control_context(
             )
         )
         for ctrl in ctrl_result.scalars().all():
-            controls.append({
-                "scf_id": ctrl.scf_id,
-                "control_name": ctrl.control_name,
-                "control_description": ctrl.control_description or "",
-            })
+            controls.append(_control_entry(ctrl))
 
     # Build context hash (for cache invalidation and audit)
     context_data = {
@@ -164,11 +204,7 @@ def assemble_control_context_sync(
             )
         )
         for ctrl in ctrl_result.scalars().all():
-            controls.append({
-                "scf_id": ctrl.scf_id,
-                "control_name": ctrl.control_name,
-                "control_description": ctrl.control_description or "",
-            })
+            controls.append(_control_entry(ctrl))
 
     context_data = {
         "evidence_id": evidence_id,
@@ -205,17 +241,8 @@ def build_assessment_prompt(
     Returns (system_prompt, user_prompt) tuple.
     Also returns the prompt hash for audit trail.
     """
-    # Format control requirements
-    controls_text = ""
-    if control_context.controls:
-        control_lines = []
-        for ctrl in control_context.controls:
-            control_lines.append(
-                f"- **{ctrl['scf_id']}** ({ctrl['control_name']}): {ctrl['control_description']}"
-            )
-        controls_text = "\n".join(control_lines)
-    else:
-        controls_text = "No specific control mappings defined for this evidence item."
+    # Format control requirements (deprecated controls get a note line)
+    controls_text = _control_requirements_block(control_context.controls)
 
     date_line = f"\n\nToday's date is {assessment_date}. Evaluate all date references relative to this date." if assessment_date else ""
 
@@ -344,15 +371,8 @@ def build_window_assessment_prompt(
 
     Returns (system_prompt, user_prompt).
     """
-    # --- Control requirements block (reused shape from build_assessment_prompt) ---
-    if control_context.controls:
-        control_lines = [
-            f"- **{c['scf_id']}** ({c['control_name']}): {c['control_description']}"
-            for c in control_context.controls
-        ]
-        controls_text = "\n".join(control_lines)
-    else:
-        controls_text = "No specific control mappings defined for this evidence item."
+    # --- Control requirements block (shared with build_assessment_prompt) ---
+    controls_text = _control_requirements_block(control_context.controls)
 
     # --- Expected artifact types block ---
     if expected_artifact_types:

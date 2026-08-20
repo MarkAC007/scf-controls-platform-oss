@@ -103,6 +103,11 @@ async def bulk_export_controls(
     CMM maturity, business size guidance, SCRM focus, and risk/threat mappings.
 
     Returns the same format as control_guidance.json for compatibility.
+
+    Deliberately includes deprecated rows: this export is the frontend's
+    metadata resolver for org data that may reference retired controls, so
+    each item carries catalog_status/retired_in_version/superseded_by for
+    badging instead of being filtered out.
     """
     etag = await _catalog_etag(db, SCFCatalogControl)
     if (cached := _not_modified(request, etag)) is not None:
@@ -160,6 +165,9 @@ async def bulk_export_controls(
                     "risk_codes": c.risk_codes or [],
                     "threat_codes": c.threat_codes or [],
                 },
+                "catalog_status": c.status,
+                "retired_in_version": c.retired_in_version,
+                "superseded_by": c.superseded_by,
             }
             for c in controls
         ],
@@ -197,6 +205,9 @@ async def bulk_export_evidence(
             "artifact_title": e.artifact_title,
             "artifact_description": e.artifact_description,
             "control_mappings": e.control_mappings or [],
+            "catalog_status": e.status,
+            "retired_in_version": e.retired_in_version,
+            "superseded_by": e.superseded_by,
         }
         for e in evidence_list
     }
@@ -214,6 +225,7 @@ async def list_controls(
     csf_function: Optional[str] = Query(None, description="Filter by NIST CSF function"),
     control_weighting: Optional[int] = Query(None, ge=0, le=10, description="Filter by control weighting (0-10)"),
     search: Optional[str] = Query(None, description="Search control name/description"),
+    include_deprecated: bool = Query(False, description="Include deprecated catalog controls. Default: False"),
     limit: int = Query(100, ge=1, le=1000, description="Max results"),
     offset: int = Query(0, ge=0, description="Pagination offset"),
 ):
@@ -221,8 +233,13 @@ async def list_controls(
     List SCF catalog controls with optional filtering.
 
     Returns controls with core metadata. Use /controls/{scf_id} for full details.
+    Deprecated controls are excluded by default; pass include_deprecated=true
+    to list them (badged via catalog_status/retired_in_version/superseded_by).
     """
     query = select(SCFCatalogControl)
+
+    if not include_deprecated:
+        query = query.where(SCFCatalogControl.status == 'active')
 
     # Apply filters
     if domain:
@@ -268,6 +285,9 @@ async def list_controls(
                 "nist_csf_function": c.nist_csf_function,
                 "control_weighting": c.control_weighting,
                 "validation_cadence": c.validation_cadence,
+                "catalog_status": c.status,
+                "retired_in_version": c.retired_in_version,
+                "superseded_by": c.superseded_by,
             }
             for c in controls
         ],
@@ -339,6 +359,9 @@ async def get_control(
         "required_artifact_types": control.required_artifact_types,
         "required_artifact_types_extracted_at": control.required_artifact_types_extracted_at,
         "catalog_version": control.catalog_version,
+        "catalog_status": control.status,
+        "retired_in_version": control.retired_in_version,
+        "superseded_by": control.superseded_by,
     }
 
 
@@ -350,13 +373,15 @@ async def get_control(
 async def list_domains(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_auth),
+    include_deprecated: bool = Query(False, description="Include deprecated domains. Default: False"),
 ):
     """
-    List all SCF domains in order.
+    List all SCF domains in order. Deprecated domains excluded by default.
     """
-    result = await db.execute(
-        select(SCFCatalogDomain).order_by(SCFCatalogDomain.order)
-    )
+    query = select(SCFCatalogDomain)
+    if not include_deprecated:
+        query = query.where(SCFCatalogDomain.status == 'active')
+    result = await db.execute(query.order_by(SCFCatalogDomain.order))
     domains = result.scalars().all()
 
     return {
@@ -368,6 +393,9 @@ async def list_domains(
                 "name": d.name,
                 "principle": d.principle,
                 "principle_intent": d.principle_intent,
+                "catalog_status": d.status,
+                "retired_in_version": d.retired_in_version,
+                "superseded_by": d.superseded_by,
             }
             for d in domains
         ],
@@ -379,9 +407,13 @@ async def get_domain(
     identifier: str,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_auth),
+    include_deprecated: bool = Query(False, description="Include deprecated controls in the domain listing. Default: False"),
 ):
     """
     Get a specific SCF domain with its controls.
+
+    The domain itself always resolves (deprecated included, badged); its
+    control listing excludes deprecated controls unless include_deprecated=true.
     """
     # Get domain
     result = await db.execute(
@@ -393,10 +425,14 @@ async def get_domain(
         raise HTTPException(status_code=404, detail=f"Domain {identifier} not found")
 
     # Get controls in this domain
-    controls_result = await db.execute(
+    controls_query = (
         select(SCFCatalogControl)
         .where(SCFCatalogControl.scf_id.like(f"{identifier.upper()}-%"))
-        .order_by(SCFCatalogControl.scf_id)
+    )
+    if not include_deprecated:
+        controls_query = controls_query.where(SCFCatalogControl.status == 'active')
+    controls_result = await db.execute(
+        controls_query.order_by(SCFCatalogControl.scf_id)
     )
     controls = controls_result.scalars().all()
 
@@ -406,12 +442,18 @@ async def get_domain(
         "name": domain.name,
         "principle": domain.principle,
         "principle_intent": domain.principle_intent,
+        "catalog_status": domain.status,
+        "retired_in_version": domain.retired_in_version,
+        "superseded_by": domain.superseded_by,
         "control_count": len(controls),
         "controls": [
             {
                 "scf_id": c.scf_id,
                 "control_name": c.control_name,
                 "nist_csf_function": c.nist_csf_function,
+                "catalog_status": c.status,
+                "retired_in_version": c.retired_in_version,
+                "superseded_by": c.superseded_by,
             }
             for c in controls
         ],
@@ -428,13 +470,18 @@ async def list_evidence(
     current_user: User = Depends(require_auth),
     area: Optional[str] = Query(None, description="Filter by area of focus"),
     search: Optional[str] = Query(None, description="Search title/description"),
+    include_deprecated: bool = Query(False, description="Include deprecated evidence entries. Default: False"),
     limit: int = Query(100, ge=1, le=500, description="Max results"),
     offset: int = Query(0, ge=0, description="Pagination offset"),
 ):
     """
     List SCF Evidence Request List (ERL) entries.
+    Deprecated entries excluded by default.
     """
     query = select(SCFCatalogEvidence)
+
+    if not include_deprecated:
+        query = query.where(SCFCatalogEvidence.status == 'active')
 
     if area:
         query = query.where(SCFCatalogEvidence.area_of_focus.ilike(f"%{area}%"))
@@ -470,6 +517,9 @@ async def list_evidence(
                 "artifact_title": e.artifact_title,
                 "artifact_description": e.artifact_description,
                 "control_mappings": e.control_mappings,
+                "catalog_status": e.status,
+                "retired_in_version": e.retired_in_version,
+                "superseded_by": e.superseded_by,
             }
             for e in evidence
         ],
@@ -500,6 +550,9 @@ async def get_evidence(
         "artifact_description": evidence.artifact_description,
         "control_mappings": evidence.control_mappings,
         "catalog_version": evidence.catalog_version,
+        "catalog_status": evidence.status,
+        "retired_in_version": evidence.retired_in_version,
+        "superseded_by": evidence.superseded_by,
     }
 
 
@@ -514,13 +567,18 @@ async def list_assessment_objectives(
     scf_id: Optional[str] = Query(None, description="Filter by parent control ID"),
     rigor: Optional[int] = Query(None, ge=1, le=3, description="Filter by assessment rigor (1-3)"),
     search: Optional[str] = Query(None, description="Search objective text"),
+    include_deprecated: bool = Query(False, description="Include deprecated assessment objectives. Default: False"),
     limit: int = Query(100, ge=1, le=500, description="Max results"),
     offset: int = Query(0, ge=0, description="Pagination offset"),
 ):
     """
     List SCF Assessment Objectives with optional filtering.
+    Deprecated objectives excluded by default.
     """
     query = select(SCFCatalogAssessmentObjective)
+
+    if not include_deprecated:
+        query = query.where(SCFCatalogAssessmentObjective.status == 'active')
 
     if scf_id:
         query = query.where(SCFCatalogAssessmentObjective.scf_id == scf_id.upper())
@@ -554,6 +612,9 @@ async def list_assessment_objectives(
                 "objective_text": ao.objective_text[:200] + "..." if len(ao.objective_text) > 200 else ao.objective_text,
                 "assessment_rigor": ao.assessment_rigor,
                 "ao_origins": ao.ao_origins,
+                "catalog_status": ao.status,
+                "retired_in_version": ao.retired_in_version,
+                "superseded_by": ao.superseded_by,
                 "pptdf_applicability": {
                     "people": ao.pptdf_people,
                     "process": ao.pptdf_process,
@@ -616,6 +677,9 @@ async def get_assessment_objective(
             "expected_results": ao.expected_results,
         },
         "catalog_version": ao.catalog_version,
+        "catalog_status": ao.status,
+        "retired_in_version": ao.retired_in_version,
+        "superseded_by": ao.superseded_by,
     }
 
 
@@ -628,9 +692,12 @@ async def get_control_assessment_objectives(
     scf_id: str,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_auth),
+    include_deprecated: bool = Query(False, description="Include deprecated assessment objectives. Default: False"),
 ):
     """
     Get all assessment objectives for a specific control.
+    The control itself always resolves; deprecated objectives are excluded
+    by default.
     """
     # Verify control exists
     control_result = await db.execute(
@@ -643,10 +710,13 @@ async def get_control_assessment_objectives(
         raise HTTPException(status_code=404, detail=f"Control {scf_id} not found")
 
     # Get assessment objectives
+    ao_query = select(SCFCatalogAssessmentObjective).where(
+        SCFCatalogAssessmentObjective.scf_id == scf_id.upper()
+    )
+    if not include_deprecated:
+        ao_query = ao_query.where(SCFCatalogAssessmentObjective.status == 'active')
     ao_result = await db.execute(
-        select(SCFCatalogAssessmentObjective)
-        .where(SCFCatalogAssessmentObjective.scf_id == scf_id.upper())
-        .order_by(SCFCatalogAssessmentObjective.ao_id)
+        ao_query.order_by(SCFCatalogAssessmentObjective.ao_id)
     )
     objectives = ao_result.scalars().all()
 
@@ -671,9 +741,12 @@ async def get_control_evidence(
     scf_id: str,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_auth),
+    include_deprecated: bool = Query(False, description="Include deprecated evidence entries. Default: False"),
 ):
     """
     Get all evidence requirements for a specific control.
+    The control itself always resolves; deprecated evidence entries are
+    excluded by default.
     """
     # Get control with evidence_requests
     result = await db.execute(
@@ -688,10 +761,12 @@ async def get_control_evidence(
 
     # Get evidence details
     if evidence_ids:
-        evidence_result = await db.execute(
-            select(SCFCatalogEvidence)
-            .where(SCFCatalogEvidence.evidence_id.in_(evidence_ids))
+        evidence_query = select(SCFCatalogEvidence).where(
+            SCFCatalogEvidence.evidence_id.in_(evidence_ids)
         )
+        if not include_deprecated:
+            evidence_query = evidence_query.where(SCFCatalogEvidence.status == 'active')
+        evidence_result = await db.execute(evidence_query)
         evidence = evidence_result.scalars().all()
     else:
         evidence = []
@@ -759,6 +834,8 @@ async def list_frameworks(
         FROM
             scf_catalog_controls,
             jsonb_object_keys(framework_mappings) as framework_key
+        WHERE
+            scf_catalog_controls.status = 'active'
         GROUP BY
             framework_key
         ORDER BY

@@ -1090,6 +1090,9 @@ class AuditEngagement(Base):
     status = Column(String(20), nullable=False, default=AuditEngagementStatus.DRAFT.value)
     start_date = Column(Date, nullable=True)
     end_date = Column(Date, nullable=True)
+    # Catalog version the engagement scope was materialised under (frozen scope
+    # renders against this version forever). Backfilled by migration catupg006.
+    catalog_version = Column(String(20), nullable=True)
     created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now())
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now())
@@ -2695,3 +2698,134 @@ class CDMMapping(Base):
 
     def __repr__(self):
         return f"<CDMMapping(id={self.id}, control={self.scoped_control_id}, status={self.status})>"
+
+
+# =============================================================================
+# Catalog Upgrade & Per-Org Reconciliation
+# =============================================================================
+
+class OrganizationCatalogState(Base):
+    """Which catalog version an organisation is reconciled to.
+
+    A dedicated table, NOT Organization.settings JSON — generic settings
+    writes must not be able to corrupt upgrade eligibility. One row per
+    organisation, backfilled at migration time (catupg003).
+    """
+    __tablename__ = "organization_catalog_state"
+
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), primary_key=True)
+    reconciled_catalog_version = Column(String(20), nullable=False)
+    last_reconciled_at = Column(DateTime(timezone=False), nullable=True)
+    last_reconciliation_run_id = Column(UUID(as_uuid=True), ForeignKey("organization_reconciliation_runs.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now())
+    updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now())
+
+    organization = relationship("Organization")
+    last_reconciliation_run = relationship("OrganizationReconciliationRun", foreign_keys=[last_reconciliation_run_id])
+
+    def __repr__(self):
+        return f"<OrganizationCatalogState(org={self.organization_id}, version={self.reconciled_catalog_version})>"
+
+
+class OrganizationFrameworkSelection(Base):
+    """Structured record of a framework an organisation scoped.
+
+    Replaces free-text selection_reason parsing as the source of truth for
+    which frameworks drive scope re-materialisation at reconciliation.
+    Forward-written by the bulk-scope endpoint; deactivated by bulk-unscope.
+    Backfill rows (source='backfill') are heuristic and require explicit
+    admin confirmation at the org's first reconciliation preview.
+    """
+    __tablename__ = "organization_framework_selections"
+    __table_args__ = (
+        CheckConstraint("source IN ('bulk_scope', 'backfill', 'reconciliation')", name='ck_org_framework_selections_source'),
+        UniqueConstraint('organization_id', 'framework_id', name='uq_org_framework_selections_org_framework'),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    framework_id = Column(String(100), nullable=False)
+    selected_at = Column(DateTime(timezone=False), server_default=func.now())
+    selected_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    source = Column(String(20), nullable=False)  # bulk_scope | backfill | reconciliation
+    active = Column(Boolean, nullable=False, default=True)
+
+    organization = relationship("Organization")
+    selected_by_user = relationship("User", foreign_keys=[selected_by])
+
+    def __repr__(self):
+        return f"<OrganizationFrameworkSelection(org={self.organization_id}, framework={self.framework_id}, active={self.active})>"
+
+
+class CatalogImportRun(Base):
+    """Platform-level catalog import run ledger.
+
+    Records every platform catalog upgrade attempt. The diff detail (stored
+    in object storage under diff_detail_object_key) holds old AND new values
+    per changed field — the diff IS the platform revert anchor. The latest
+    'applied' run's to_version is the canonical catalog version authority.
+    A partial unique index (migration catupg004) enforces at most one
+    in-flight run (staging|staged|applying).
+    """
+    __tablename__ = "catalog_import_runs"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('staging', 'staged', 'blocked', 'applying', 'applied', 'failed', 'cancelled', 'reverted')",
+            name='ck_catalog_import_runs_status',
+        ),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    from_version = Column(String(20), nullable=True)
+    to_version = Column(String(20), nullable=False)
+    status = Column(String(20), nullable=False, default='staging')
+    workbook_object_key = Column(String(512), nullable=True)
+    diff_detail_object_key = Column(String(512), nullable=True)
+    diff_summary = Column(JSONB, nullable=True)
+    sanity_report = Column(JSONB, nullable=True)
+    superseded_pairings = Column(JSONB, nullable=True)
+    started_by = Column(UUID(as_uuid=True), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now())
+    updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now())
+    completed_at = Column(DateTime(timezone=False), nullable=True)
+
+    def __repr__(self):
+        return f"<CatalogImportRun(id={self.id}, to={self.to_version}, status={self.status})>"
+
+
+class OrganizationReconciliationRun(Base):
+    """Per-org reconciliation run ledger + rollback anchor.
+
+    org_snapshot holds pre-images of every row the run touches — the rollback
+    authority (snapshot restore, not inverse operations). catalog_import_run_id
+    is the staleness guard against a newer platform apply landing between
+    preview and apply. A partial unique index (migration catupg005) enforces
+    one active run per org (previewed|applying|rolling_back).
+    """
+    __tablename__ = "organization_reconciliation_runs"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('previewed', 'applying', 'applied', 'failed', 'rolling_back', 'rolled_back', 'cancelled')",
+            name='ck_org_reconciliation_runs_status',
+        ),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    from_version = Column(String(20), nullable=False)
+    to_version = Column(String(20), nullable=False)
+    catalog_import_run_id = Column(UUID(as_uuid=True), ForeignKey("catalog_import_runs.id"), nullable=False)
+    status = Column(String(20), nullable=False, default='previewed')
+    diff_summary = Column(JSONB, nullable=True)
+    planned_actions = Column(JSONB, nullable=True)
+    org_snapshot = Column(JSONB, nullable=True)
+    actions_log = Column(JSONB, nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now())
+    updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now())
+    completed_at = Column(DateTime(timezone=False), nullable=True)
+
+    organization = relationship("Organization")
+    catalog_import_run = relationship("CatalogImportRun")
+
+    def __repr__(self):
+        return f"<OrganizationReconciliationRun(id={self.id}, org={self.organization_id}, status={self.status})>"

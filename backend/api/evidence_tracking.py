@@ -12,6 +12,7 @@ from uuid import UUID
 
 from database import get_db
 from models import EvidenceTracking, EvidenceFile, Organization, System
+from catalog_models import SCFCatalogEvidence
 from schemas import (
     EvidenceTrackingResponse,
     EvidenceTrackingCreate,
@@ -19,6 +20,7 @@ from schemas import (
     BatchEvidenceTrackingRequest,
     BatchEvidenceTrackingResponse,
 )
+from schemas_catalog_upgrade import CatalogLifecycleBadge
 from auth import require_org_role, OrgMembership
 from services.audit_service import (
     log_entity_changes,
@@ -32,9 +34,59 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["evidence_tracking"])
 
 
+class EvidenceTrackingBadgedResponse(EvidenceTrackingResponse, CatalogLifecycleBadge):
+    """Tracking record + catalog lifecycle badge (plan §4.4 consumer 10).
+
+    Existing tracked rows keep resolving after their ERL entry is retired;
+    NEW tracking of a deprecated evidence id is refused at the write path.
+    """
+
+
+async def _catalog_lifecycle_by_evidence_id(db: AsyncSession, evidence_ids):
+    """Bulk map evidence_id -> (status, retired_in_version, superseded_by)."""
+    if not evidence_ids:
+        return {}
+    result = await db.execute(
+        select(
+            SCFCatalogEvidence.evidence_id,
+            SCFCatalogEvidence.status,
+            SCFCatalogEvidence.retired_in_version,
+            SCFCatalogEvidence.superseded_by,
+        ).where(SCFCatalogEvidence.evidence_id.in_(list(evidence_ids)))
+    )
+    return {row.evidence_id: row for row in result.all()}
+
+
+def _apply_badge(tracking, meta) -> None:
+    """Stamp badge attributes on the ORM row for from_attributes serialization."""
+    tracking.catalog_status = meta.status if meta is not None else None
+    tracking.retired_in_version = meta.retired_in_version if meta is not None else None
+    tracking.superseded_by = meta.superseded_by if meta is not None else None
+
+
+async def _refuse_new_tracking_of_deprecated(db: AsyncSession, evidence_id: str) -> None:
+    """Raise 409 when a NEW tracking row targets a deprecated ERL entry."""
+    row = (
+        await db.execute(
+            select(SCFCatalogEvidence.status, SCFCatalogEvidence.superseded_by).where(
+                SCFCatalogEvidence.evidence_id == evidence_id
+            )
+        )
+    ).first()
+    if row is not None and row[0] == "deprecated":
+        hint = f" Consider its successor '{row[1]}'." if row[1] else ""
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Evidence '{evidence_id}' is deprecated in the SCF catalog "
+                f"and cannot be newly tracked.{hint}"
+            ),
+        )
+
+
 @router.get(
     "/organizations/{org_id}/evidence-tracking",
-    response_model=List[EvidenceTrackingResponse]
+    response_model=List[EvidenceTrackingBadgedResponse]
 )
 async def list_evidence_tracking(
     org_id: UUID,
@@ -87,12 +139,20 @@ async def list_evidence_tracking(
         for t in tracking:
             t.file_count = 0
 
+    # Attach catalog lifecycle badges — deprecated ERL entries keep resolving
+    # for existing tracked rows (plan §4.4 consumer 10).
+    lifecycle = await _catalog_lifecycle_by_evidence_id(
+        db, {t.evidence_id for t in tracking}
+    )
+    for t in tracking:
+        _apply_badge(t, lifecycle.get(t.evidence_id))
+
     return tracking
 
 
 @router.get(
     "/organizations/{org_id}/evidence-tracking/{evidence_id}",
-    response_model=EvidenceTrackingResponse
+    response_model=EvidenceTrackingBadgedResponse
 )
 async def get_evidence_tracking(
     org_id: UUID,
@@ -130,6 +190,9 @@ async def get_evidence_tracking(
         )
     )
     tracking.file_count = count_result.scalar() or 0
+
+    lifecycle = await _catalog_lifecycle_by_evidence_id(db, {evidence_id})
+    _apply_badge(tracking, lifecycle.get(evidence_id))
 
     return tracking
 
@@ -179,6 +242,11 @@ async def create_or_update_evidence_tracking(
         )
     )
     existing_tracking = result.scalar_one_or_none()
+
+    if not existing_tracking:
+        # NEW tracking is active-catalog-only (plan §4.4 consumer 10);
+        # updates to an existing row remain allowed.
+        await _refuse_new_tracking_of_deprecated(db, tracking_data.evidence_id)
 
     if existing_tracking:
         # Update existing record
@@ -288,6 +356,13 @@ async def batch_update_evidence_tracking(
                 result_evidence.append(existing)
                 updated_count += 1
             else:
+                # NEW tracking is active-catalog-only (plan §4.4 consumer 10):
+                # surface the refusal as a per-op error, not a batch failure.
+                try:
+                    await _refuse_new_tracking_of_deprecated(db, op.evidence_id)
+                except HTTPException as http_exc:
+                    raise ValueError(http_exc.detail)
+
                 # Create new record
                 create_data = op.model_dump(exclude={'evidence_id'}, exclude_unset=True)
                 new_tracking = EvidenceTracking(

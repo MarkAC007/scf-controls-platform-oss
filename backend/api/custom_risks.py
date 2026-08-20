@@ -269,13 +269,21 @@ async def list_custom_risk_controls(
             "scoped_controls": []
         }
 
-    # Look up control names from catalog
+    # Look up control names + lifecycle columns from the catalog. Existing
+    # mappings always resolve — including deprecated controls — and render
+    # badged (plan §4.4 consumer 9).
     catalog_result = await db.execute(
-        select(SCFCatalogControl.scf_id, SCFCatalogControl.control_name).where(
+        select(
+            SCFCatalogControl.scf_id,
+            SCFCatalogControl.control_name,
+            SCFCatalogControl.status,
+            SCFCatalogControl.retired_in_version,
+            SCFCatalogControl.superseded_by,
+        ).where(
             SCFCatalogControl.scf_id.in_(scf_ids)
         )
     )
-    catalog_lookup = {row.scf_id: row.control_name for row in catalog_result.all()}
+    catalog_lookup = {row.scf_id: row for row in catalog_result.all()}
 
     # Get scoped controls for enrichment
     scoped_result = await db.execute(
@@ -291,12 +299,16 @@ async def list_custom_risk_controls(
 
     scoped_response = []
     for sc in scoped_controls:
+        cat = catalog_lookup.get(sc.scf_id)
         scoped_response.append({
             "scf_id": sc.scf_id,
-            "control_name": catalog_lookup.get(sc.scf_id, "Unknown"),
+            "control_name": cat.control_name if cat is not None else "Unknown",
             "implementation_status": sc.implementation_status,
             "priority": sc.priority,
             "target_date": sc.target_date.isoformat() if sc.target_date else None,
+            "catalog_status": cat.status if cat is not None else None,
+            "retired_in_version": cat.retired_in_version if cat is not None else None,
+            "superseded_by": cat.superseded_by if cat is not None else None,
         })
 
     return {
@@ -345,6 +357,26 @@ async def add_custom_risk_control(
     )
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail=f"Control '{data.scf_id}' is already linked to '{risk_code}'")
+
+    # New links are active-catalog-only (plan §4.4 consumer 9): refuse a NEW
+    # mapping onto a deprecated control, hinting at its successor. Existing
+    # mappings are untouched — they keep resolving, badged.
+    catalog_row = (
+        await db.execute(
+            select(SCFCatalogControl.status, SCFCatalogControl.superseded_by).where(
+                SCFCatalogControl.scf_id == data.scf_id
+            )
+        )
+    ).first()
+    if catalog_row is not None and catalog_row[0] == "deprecated":
+        hint = f" Consider its successor '{catalog_row[1]}'." if catalog_row[1] else ""
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Control '{data.scf_id}' is deprecated in the SCF catalog "
+                f"and cannot be newly linked to a risk.{hint}"
+            ),
+        )
 
     current_user = membership.user
     user_id = UUID(current_user.db_id) if current_user and current_user.db_id else None
