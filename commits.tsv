@@ -1,2 +1,2 @@
-4f333e9e8b6ce2259ea0254383ee43ff6018c3ab	Merge pull request #753 from MarkAC007/fix/release-oss-promote-digest
-06a6e97ba631070d2fa46f65199bce5ec11132d2	fix(release-oss): byte-preserving retag so latest converges on the release digest
+0ab5a1248300cb5fbfcca181b0e17247029c09f9	Merge pull request #755 from MarkAC007/fix/stale-release-notes-guard
+8304ac7c14e07011227c2ee988befb553613aab6	fix(release): reset stale RELEASE_META.yml + guard against republishing previous release notes
