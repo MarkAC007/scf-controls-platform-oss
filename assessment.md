@@ -2,27 +2,30 @@
 
 | | |
 |---|---|
-| last published release | `0.13.1` |
-| staged in package.json | `0.13.1` |
-| commits assessed | 13 |
+| last published release | `0.14.0` |
+| staged in package.json | `0.14.0` |
+| commits assessed | 16 |
 | derived level | **minor** (new feature) |
-| target version | **0.14.0** |
+| target version | **0.15.0** |
 
 **Features**
 
-- `feat(engagements): auditor queries drawer — frontend (increment 4)`
-- `feat(engagements): structured auditor queries — backend (increment 4)`
-- `feat(engagements): auditor management panel — frontend (increment 3)`
-- `feat(engagements): engagement-scoped auditor access — backend (increment 3)`
-- `feat(engagements): framework-native presentation view (increment 2)`
-- `feat(engagements): scope comparison + out-of-scope justification (increment 1)`
+- `feat(notifications): add four missing notification types with triggers`
+- `feat(celery): schedule evidence task generation and due/overdue notifiers`
+- `feat(dashboard): mount work queue panel with assigned-to-me filter`
 
 **Other**
 
-- `Merge pull request #743 from MarkAC007/feat/audit-engagements-design`
-- `fix(engagements): address UI feedback — names, search, dark-mode dates, help`
-- `docs(engagements): record implementation status in design spec`
-- `docs(engagements): design spec for framework-native audit workspace`
-- `Merge pull request #742 from MarkAC007/fix/upgrade-sh-bash52-and-health-probe`
-- `fix(upgrade): bash 5.2 preflight parse error + host-side health probe rollback (#741)`
-- `Merge pull request #740 from MarkAC007/chore/bump-v0.13.1`
+- `Merge pull request #749 from MarkAC007/feat/r4-notification-types`
+- `Merge branch 'main' into feat/r4-notification-types`
+- `Merge pull request #748 from MarkAC007/fix/r3-idor-and-ui-bugs`
+- `fix(ui): repair four dead controls in tasks, dashboard and risk detail`
+- `fix(security): enforce org tenancy on evidence-task routes`
+- `Merge branch 'main' into feat/r4-notification-types`
+- `Merge pull request #747 from MarkAC007/feat/r1-schedule-engines`
+- `Merge branch 'main' into feat/r1-schedule-engines`
+- `Merge pull request #746 from MarkAC007/feat/r2-mount-work-queue`
+- `Merge pull request #745 from MarkAC007/docs/pdca-journey-assessment`
+- `docs: add worktree fan-out execution strategy with per-item goals`
+- `docs: add PDCA journey assessment (Closing the Loop)`
+- `Merge pull request #744 from MarkAC007/chore/bump-v0.14.0`

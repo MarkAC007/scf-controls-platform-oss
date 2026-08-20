@@ -9,7 +9,7 @@ from uuid import UUID
 from datetime import date, datetime
 
 from database import get_db
-from auth import require_auth, User
+from auth import require_auth, get_accessible_org_ids, verify_org_membership, User
 from models import EvidenceCollectionTask, EvidenceTracking, User as DBUser
 from schemas import (
     EvidenceCollectionTaskCreate,
@@ -24,6 +24,80 @@ router = APIRouter(
 )
 
 
+# ---------------------------------------------------------------------------
+# Tenancy helpers
+#
+# Evidence collection tasks have no organization column of their own — they
+# inherit tenancy from the parent EvidenceTracking row, so every single-resource
+# route has to resolve that parent before it can authorise the caller.
+# ---------------------------------------------------------------------------
+
+async def _resolve_task_access(
+    task_id: UUID,
+    current_user: User,
+    db: AsyncSession,
+    min_role: str = "viewer"
+) -> EvidenceCollectionTask:
+    """Load a task only if the caller may act on its owning organisation.
+
+    A caller without viewer access gets the same 404 as a caller asking for a
+    task that does not exist, so task IDs cannot be probed across tenants. A
+    caller who *is* a member but lacks the required role gets a 403 — they can
+    already see the task, so there is nothing left to leak.
+    """
+    result = await db.execute(
+        select(EvidenceCollectionTask, EvidenceTracking.organization_id)
+        .join(EvidenceTracking, EvidenceCollectionTask.evidence_tracking_id == EvidenceTracking.id)
+        .where(EvidenceCollectionTask.id == task_id)
+    )
+    row = result.first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    task, organization_id = row
+
+    try:
+        membership = await verify_org_membership(organization_id, current_user, db, "viewer")
+    except HTTPException:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    if not membership.has_role(min_role):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Access denied: requires '{min_role}' role on this organisation"
+        )
+
+    return task
+
+
+async def _resolve_evidence_access(
+    evidence_tracking_id: UUID,
+    current_user: User,
+    db: AsyncSession,
+    min_role: str = "viewer"
+) -> EvidenceTracking:
+    """Load an evidence tracking record the caller may act on, else 404/403."""
+    result = await db.execute(
+        select(EvidenceTracking).where(EvidenceTracking.id == evidence_tracking_id)
+    )
+    evidence = result.scalar_one_or_none()
+    if not evidence:
+        raise HTTPException(status_code=404, detail="Evidence tracking record not found")
+
+    try:
+        membership = await verify_org_membership(evidence.organization_id, current_user, db, "viewer")
+    except HTTPException:
+        raise HTTPException(status_code=404, detail="Evidence tracking record not found")
+
+    if not membership.has_role(min_role):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Access denied: requires '{min_role}' role on this organisation"
+        )
+
+    return evidence
+
+
 @router.get("/api/evidence-tasks", response_model=List[dict])
 async def list_evidence_tasks(
     status_filter: Optional[str] = Query(None, regex="^(not_started|in_progress|completed)$"),
@@ -34,7 +108,16 @@ async def list_evidence_tasks(
     current_user: User = Depends(require_auth)
 ):
     """List evidence collection tasks with optional filters and evidence details."""
-    query = select(EvidenceCollectionTask)
+    # Tasks inherit tenancy from their parent EvidenceTracking row
+    accessible_org_ids = await get_accessible_org_ids(current_user, db)
+    if not accessible_org_ids:
+        return []
+
+    query = (
+        select(EvidenceCollectionTask)
+        .join(EvidenceTracking, EvidenceCollectionTask.evidence_tracking_id == EvidenceTracking.id)
+        .where(EvidenceTracking.organization_id.in_(accessible_org_ids))
+    )
 
     # Framework filter: 2-step JSONB pre-query
     # Step 1: find scf_ids for controls in the requested frameworks
@@ -68,9 +151,7 @@ async def list_evidence_tasks(
         if not framework_erl_ids:
             return []
 
-        query = query.join(
-            EvidenceTracking, EvidenceCollectionTask.evidence_tracking_id == EvidenceTracking.id
-        ).where(EvidenceTracking.evidence_id.in_(framework_erl_ids))
+        query = query.where(EvidenceTracking.evidence_id.in_(framework_erl_ids))
 
     filters = []
     if status_filter:
@@ -148,13 +229,10 @@ async def create_evidence_task(
     current_user: User = Depends(require_auth)
 ):
     """Create a manual evidence collection task."""
-    # Verify evidence tracking exists
-    result = await db.execute(
-        select(EvidenceTracking).where(EvidenceTracking.id == task_data.evidence_tracking_id)
+    # Verify evidence tracking exists and the caller may write to its organisation
+    await _resolve_evidence_access(
+        task_data.evidence_tracking_id, current_user, db, "editor"
     )
-    evidence = result.scalar_one_or_none()
-    if not evidence:
-        raise HTTPException(status_code=404, detail="Evidence tracking record not found")
 
     # Verify assigned user exists if provided
     user = None
@@ -211,15 +289,11 @@ async def update_evidence_task(
     current_user: User = Depends(require_auth)
 ):
     """Update an evidence collection task."""
-    result = await db.execute(
-        select(EvidenceCollectionTask).where(EvidenceCollectionTask.id == task_id)
-    )
-    task = result.scalar_one_or_none()
-
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+    task = await _resolve_task_access(task_id, current_user, db, "editor")
 
     # Update fields
+    if task_update.due_date is not None:
+        task.due_date = task_update.due_date
     if task_update.status is not None:
         task.status = task_update.status
     if task_update.task_type is not None:
@@ -278,13 +352,7 @@ async def complete_evidence_task(
     current_user: User = Depends(require_auth)
 ):
     """Mark an evidence collection task as completed."""
-    result = await db.execute(
-        select(EvidenceCollectionTask).where(EvidenceCollectionTask.id == task_id)
-    )
-    task = result.scalar_one_or_none()
-
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+    task = await _resolve_task_access(task_id, current_user, db, "editor")
 
     # Update task
     task.status = 'completed'
@@ -338,22 +406,31 @@ async def get_my_dashboard(
     current_user: User = Depends(require_auth)
 ):
     """Get current user's task dashboard with counts and upcoming tasks."""
+    empty_dashboard = {
+        "total_tasks": 0,
+        "not_started": 0,
+        "in_progress": 0,
+        "completed": 0,
+        "overdue": 0,
+        "upcoming_tasks": []
+    }
+
     if not current_user.db_id:
-        return {
-            "total_tasks": 0,
-            "not_started": 0,
-            "in_progress": 0,
-            "completed": 0,
-            "overdue": 0,
-            "upcoming_tasks": []
-        }
+        return empty_dashboard
+
+    # Assignments can outlive membership — scope to orgs the caller can still access
+    accessible_org_ids = await get_accessible_org_ids(current_user, db)
+    if not accessible_org_ids:
+        return empty_dashboard
 
     user_id = UUID(current_user.db_id)
 
     # Get all tasks for user
     result = await db.execute(
         select(EvidenceCollectionTask)
+        .join(EvidenceTracking, EvidenceCollectionTask.evidence_tracking_id == EvidenceTracking.id)
         .where(EvidenceCollectionTask.assigned_user_id == user_id)
+        .where(EvidenceTracking.organization_id.in_(accessible_org_ids))
     )
     all_tasks = result.scalars().all()
 
@@ -367,11 +444,13 @@ async def get_my_dashboard(
     # Get upcoming tasks (next 30 days, not completed)
     result = await db.execute(
         select(EvidenceCollectionTask)
+        .join(EvidenceTracking, EvidenceCollectionTask.evidence_tracking_id == EvidenceTracking.id)
         .where(
             and_(
                 EvidenceCollectionTask.assigned_user_id == user_id,
                 EvidenceCollectionTask.status != 'completed',
-                EvidenceCollectionTask.due_date >= date.today()
+                EvidenceCollectionTask.due_date >= date.today(),
+                EvidenceTracking.organization_id.in_(accessible_org_ids)
             )
         )
         .order_by(EvidenceCollectionTask.due_date.asc())

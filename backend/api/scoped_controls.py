@@ -30,6 +30,7 @@ from schemas import (
 )
 from auth import require_org_role, OrgMembership
 from services.audit_service import log_entity_changes, get_request_id, detect_action_source, SCOPED_CONTROL_TRACKED_FIELDS
+from services.notifications import create_control_ready_for_review_notifications
 
 logger = logging.getLogger(__name__)
 
@@ -480,6 +481,12 @@ async def update_scoped_control(
         elif new_status != 'implemented' and control.completion_date:
             control.completion_date = None
 
+    # Notify only on a genuine transition into ready_for_review
+    became_ready_for_review = (
+        update_data.get('implementation_status') == 'ready_for_review'
+        and old_values.get('implementation_status') != 'ready_for_review'
+    )
+
     # Log field-level changes
     new_values = {f: getattr(control, f) for f in SCOPED_CONTROL_TRACKED_FIELDS}
     await log_entity_changes(
@@ -493,6 +500,16 @@ async def update_scoped_control(
 
     await db.commit()
     await db.refresh(control)
+
+    if became_ready_for_review:
+        await create_control_ready_for_review_notifications(
+            db,
+            organization_id=org_id,
+            scoped_control_id=control.id,
+            scf_id=scf_id,
+            actor_user_id=user_id,
+        )
+
     return control
 
 

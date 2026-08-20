@@ -114,9 +114,10 @@ class TestReviewWindowAssessmentHappyPath:
         "status",
         ["approved", "rejected", "needs_revision", "not_reviewed"],
     )
+    @patch("api.evidence_window_assessment.create_evidence_rejected_notifications", new_callable=AsyncMock)
     @patch("api.evidence_window_assessment.log_entity_changes", new_callable=AsyncMock)
     async def test_each_valid_status_persists_and_returns(
-        self, mock_audit, status, membership, mock_db, org_id, ewa_id, user_id,
+        self, mock_audit, mock_notify, status, membership, mock_db, org_id, ewa_id, user_id,
     ):
         from api.evidence_window_assessment import review_window_assessment
         from schemas import WindowAssessmentReviewRequest
@@ -401,10 +402,11 @@ class TestNeedsRevisionDispatch:
         "status",
         ["approved", "rejected", "not_reviewed"],
     )
+    @patch("api.evidence_window_assessment.create_evidence_rejected_notifications", new_callable=AsyncMock)
     @patch("api.evidence_window_assessment.log_entity_changes", new_callable=AsyncMock)
     @patch("api.evidence_window_assessment.assess_window_task")
     async def test_non_revision_statuses_do_not_dispatch(
-        self, mock_task, mock_audit, status, membership, mock_db, org_id, ewa_id,
+        self, mock_task, mock_audit, mock_notify, status, membership, mock_db, org_id, ewa_id,
     ):
         from api.evidence_window_assessment import review_window_assessment
         from schemas import WindowAssessmentReviewRequest

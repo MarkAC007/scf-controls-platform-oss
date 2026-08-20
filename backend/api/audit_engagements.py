@@ -55,6 +55,7 @@ from auth import (
 from services.audit_service import log_entity_changes, detect_action_source, get_request_id
 from services.engagement_presentation import build_framework_presentation
 from services.engagement_queries import status_after_response, is_valid_query_transition
+from services.notifications import create_engagement_query_raised_notifications
 
 
 # =============================================================================
@@ -1074,6 +1075,15 @@ async def create_engagement_query(
     await db.commit()
     await db.refresh(query)
     logger.info("Query raised: engagement=%s scf=%s by=%s", engagement_id, payload.scf_id, _access_user_id(access))
+
+    await create_engagement_query_raised_notifications(
+        db,
+        organization_id=org_id,
+        query_id=query.id,
+        scf_id=payload.scf_id,
+        raised_by_user_id=_access_user_id(access),
+    )
+
     return _query_item(query, access.user.email if access.user else None, 0, responses=[])
 
 

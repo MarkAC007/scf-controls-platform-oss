@@ -55,6 +55,7 @@ from models import (
     EvidenceWindowAssessment,
     ScopedControl,
 )
+from services.notifications import create_composite_insufficient_notifications_sync
 
 # Inlined to avoid pulling in services.validation_service's transitive
 # boto3/storage imports — the constant is small, stable, and copying it here
@@ -716,10 +717,23 @@ def recompute_control_composite_task(
 
     session = _get_sync_session()
     try:
+        # Prior status read before upsert so the insufficient-transition
+        # notification fires only on a genuine change, not steady state.
+        prior_status = (
+            session.query(ControlAssessmentComposite.composite_status)
+            .filter(
+                ControlAssessmentComposite.organization_id == org_uuid,
+                ControlAssessmentComposite.scf_id == scf_id,
+            )
+            .scalar()
+        )
         payload = _compute_composite(session, org_uuid, scf_id)
         composite = _upsert_composite(session, payload)
         session.commit()
         elapsed_ms = int((time.monotonic() - started_at) * 1000)
+
+        if payload["composite_status"] == "insufficient" and prior_status != "insufficient":
+            create_composite_insufficient_notifications_sync(session, org_uuid, scf_id)
 
         # Structured per-compute log line (§7) — JSON for easy grep.
         logger.info(

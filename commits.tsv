@@ -1,13 +1,16 @@
-b1e66307141c145775d2262f22a2c0a2953942b9	Merge pull request #743 from MarkAC007/feat/audit-engagements-design
-56328b940afd91a25277a9b64663271d5940f15d	fix(engagements): address UI feedback — names, search, dark-mode dates, help
-fef25170919087e69292342008b2d4b9ed36710d	docs(engagements): record implementation status in design spec
-2fb5f404d45da6519f465f7a2535918438296fb5	feat(engagements): auditor queries drawer — frontend (increment 4)
-556d4c4fcc150d0d7baf3a06e1bb4ab0d9fb9adf	feat(engagements): structured auditor queries — backend (increment 4)
-e14fdaffd61904b2a20e4d97c2a3996c5bfbc9ae	feat(engagements): auditor management panel — frontend (increment 3)
-0cc5635ba8f301cd4146a61cbad7dd6399151d0e	feat(engagements): engagement-scoped auditor access — backend (increment 3)
-db4cff1aaddc497b55c4ce539389e3e7157284d9	feat(engagements): framework-native presentation view (increment 2)
-a7b92105fe934c601a45f7df2a3d6b2e366e4525	feat(engagements): scope comparison + out-of-scope justification (increment 1)
-e48da0ca74f6bfa40b1a703146b6605cd760eecd	docs(engagements): design spec for framework-native audit workspace
-93d76151ffc0532bb52232be9780c28e2b133ad6	Merge pull request #742 from MarkAC007/fix/upgrade-sh-bash52-and-health-probe
-6c8629aec559d6ebbcac8188859e5621e1644bf0	fix(upgrade): bash 5.2 preflight parse error + host-side health probe rollback (#741)
-ff1d28d6cf6da3159ed04b333b4bf0a376e44beb	Merge pull request #740 from MarkAC007/chore/bump-v0.13.1
+64332be2b2c7aca1f204d1f4c68b6f2fe4334c64	Merge pull request #749 from MarkAC007/feat/r4-notification-types
+05da792a837c397f0453f1cdf1de4b5f7f9c02dc	Merge branch 'main' into feat/r4-notification-types
+3f1b005b70408afa4d1b8b77c06c0a731cd809df	Merge pull request #748 from MarkAC007/fix/r3-idor-and-ui-bugs
+56ec9354a6f930aa563e356f0e98ae5c379f8e95	fix(ui): repair four dead controls in tasks, dashboard and risk detail
+e2151e28944f39630e7b8b301653c97e95f82960	fix(security): enforce org tenancy on evidence-task routes
+67cb5d7b939e549ece70854442e09c19b521b411	Merge branch 'main' into feat/r4-notification-types
+ee1eb520bce533825ac19b645426e83ed9c32e78	Merge pull request #747 from MarkAC007/feat/r1-schedule-engines
+9a4dc69b5a4727094e62600bb905c8cf1c7095d5	Merge branch 'main' into feat/r1-schedule-engines
+a0cb94791d18f9c493ca28ca01ee54fcfa582803	Merge pull request #746 from MarkAC007/feat/r2-mount-work-queue
+657b08f9410cd22c948cc4b6a319b96380d3babf	Merge pull request #745 from MarkAC007/docs/pdca-journey-assessment
+66373c367cf4a330b6df9b5191a37094cade05ae	feat(notifications): add four missing notification types with triggers
+198e00aba82d302e806884cd60ea1905cd27de88	feat(celery): schedule evidence task generation and due/overdue notifiers
+cb8b987f8dd1ed87b361c3659f99133f1f621f5f	feat(dashboard): mount work queue panel with assigned-to-me filter
+dbd71a57d00554b43ac39fd07f5ad2230cfab56d	docs: add worktree fan-out execution strategy with per-item goals
+7e768e2562c64cae286d546bbb37a769966383f8	docs: add PDCA journey assessment (Closing the Loop)
+2c89390ff205f14740de4ea1e755a45fe5757f95	Merge pull request #744 from MarkAC007/chore/bump-v0.14.0

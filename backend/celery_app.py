@@ -43,6 +43,11 @@ CELERY_RESULT_BACKEND = _fix_rediss_url(CELERY_RESULT_BACKEND)
 os.environ["CELERY_BROKER_URL"] = CELERY_BROKER_URL
 os.environ["CELERY_RESULT_BACKEND"] = CELERY_RESULT_BACKEND
 
+
+def _flag_enabled(env_name: str, default: str) -> bool:
+    """Beat gate: enabled unless the env var is explicitly false/0."""
+    return os.getenv(env_name, default).strip().lower() not in ("false", "0")
+
 # Create Celery application
 celery_app = Celery(
     "scf_tasks",
@@ -58,6 +63,7 @@ celery_app = Celery(
         "tasks_window_assessment",
         "tasks_catalog",
         "tasks_updates",
+        "tasks_automation",
         "services.composite_service",
     ],
 )
@@ -161,6 +167,13 @@ celery_app.conf.update(
         "tasks_assessment.assess_evidence_task": {"queue": "evidence_assessment"},
         "tasks_window_assessment.assess_window_task": {"queue": "evidence_window"},
         "tasks_window_assessment.nightly_window_refresh_task": {"queue": "evidence_window"},
+        # Route automation jobs to default deliberately: docker-compose.yml:202
+        # starts workers with an explicit -Q list, but
+        # terraform-aws/scripts/user-data.sh:266 and GCP Cloud Run start
+        # celery -A celery_app worker with no -Q, consuming only default.
+        "tasks_automation.generate_evidence_tasks_task": {"queue": "default"},
+        "tasks_automation.notify_due_tasks_task": {"queue": "default"},
+        "tasks_automation.notify_overdue_tasks_task": {"queue": "default"},
         "cdm.classify_intent": {"queue": "cdm_intent"},
         "services.composite_service.recompute_control_composite_task": {"queue": "evidence_composite"},
         "services.composite_service.backfill_all_composites_task": {"queue": "evidence_composite"},
@@ -177,9 +190,8 @@ celery_app.conf.update(
             "schedule": 3600.0,  # 1 hour
         },
         # Nightly window refresh — runs at 04:00 UTC, after daily collectors
-        # (which run 07:00-08:40 UTC the previous day). Gated by
-        # WINDOW_ASSESSMENT_NIGHTLY_ENABLED so the job can be flipped off
-        # without a code change.
+        # (which run 07:00-08:40 UTC the previous day). Defaults ON; set
+        # WINDOW_ASSESSMENT_NIGHTLY_ENABLED=false/0 to opt out.
         **(
             {
                 "nightly-window-refresh": {
@@ -187,7 +199,28 @@ celery_app.conf.update(
                     "schedule": crontab(hour=4, minute=0),
                 }
             }
-            if os.getenv("WINDOW_ASSESSMENT_NIGHTLY_ENABLED", "false").lower() == "true"
+            if _flag_enabled("WINDOW_ASSESSMENT_NIGHTLY_ENABLED", "true")
+            else {}
+        ),
+        # Daily GRC automation cadence: generate evidence tasks at 01:00 UTC so
+        # fresh tasks are visible to the 07:00 due-notifier the same morning;
+        # run overdue notifications at 07:15 so notifier sweeps do not contend.
+        **(
+            {
+                "evidence-task-generation-daily": {
+                    "task": "tasks_automation.generate_evidence_tasks_task",
+                    "schedule": crontab(hour=1, minute=0),
+                },
+                "task-due-notifications-daily": {
+                    "task": "tasks_automation.notify_due_tasks_task",
+                    "schedule": crontab(hour=7, minute=0),
+                },
+                "task-overdue-notifications-daily": {
+                    "task": "tasks_automation.notify_overdue_tasks_task",
+                    "schedule": crontab(hour=7, minute=15),
+                },
+            }
+            if _flag_enabled("TASK_AUTOMATION_ENABLED", "true")
             else {}
         ),
         # Daily platform update check (upgrade design Part B) — polls the public

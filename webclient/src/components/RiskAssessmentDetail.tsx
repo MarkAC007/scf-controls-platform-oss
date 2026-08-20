@@ -581,9 +581,9 @@ export default function RiskAssessmentDetail({
                   No controls addressing this risk are currently in scope. Consider scoping these controls:
                   <div style={{ marginTop: '0.5rem', display: 'flex', flexWrap: 'wrap', gap: '0.25rem' }}>
                     {controlsData.catalog_control_ids.slice(0, 10).map((id: string) => (
-                      <a
+                      <button
                         key={id}
-                        href={`/scoping?search=${id}`}
+                        onClick={() => onNavigateToControl?.(id)}
                         style={{
                           padding: '2px 6px',
                           backgroundColor: 'var(--card)',
@@ -591,11 +591,12 @@ export default function RiskAssessmentDetail({
                           borderRadius: '4px',
                           fontSize: '0.75rem',
                           color: 'var(--text)',
-                          textDecoration: 'none',
+                          cursor: 'pointer',
+                          fontFamily: 'inherit',
                         }}
                       >
                         {id}
-                      </a>
+                      </button>
                     ))}
                     {controlsData.catalog_control_ids.length > 10 && (
                       <span style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>
