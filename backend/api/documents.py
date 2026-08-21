@@ -469,12 +469,13 @@ async def get_document(
             )
             for s in sorted(document.sections, key=lambda s: s.ordinal)
         ],
-        available_transitions=[
-            {"to_status": t, "label": lifecycle.transition_label(
-                document.lifecycle_status, t)}
-            for t in lifecycle.available_transitions(
-                document.lifecycle_status, membership.role)
-        ],
+        # available_transitions() already returns UI-shaped dicts (to_status /
+        # label / required_role). Re-wrapping them treated each dict as a
+        # status string, so every document with a legal next state raised
+        # "unhashable type: 'dict'" on the label lookup.
+        available_transitions=lifecycle.available_transitions(
+            document.lifecycle_status, membership.role
+        ),
     )
     return detail
 
@@ -629,10 +630,9 @@ async def transition_document(
         "ok": True,
         "from_status": from_status,
         "to_status": payload.to_status,
-        "available_transitions": [
-            {"to_status": t, "label": lifecycle.transition_label(payload.to_status, t)}
-            for t in lifecycle.available_transitions(payload.to_status, membership.role)
-        ],
+        "available_transitions": lifecycle.available_transitions(
+            payload.to_status, membership.role
+        ),
     }
 
 

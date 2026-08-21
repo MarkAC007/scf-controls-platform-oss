@@ -205,11 +205,23 @@ def run_generation(
     if spec.domain_scoped:
         bundle = ctx.domain(stored_domain)
         if bundle is None:
+            # The context keys domains by identifier, but a caller may have
+            # passed the display name. Match that too rather than failing on a
+            # spelling difference.
+            bundle = next(
+                (d for d in ctx.domains if (d.domain.name or "").upper() == stored_domain),
+                None,
+            )
+        if bundle is None:
             available = ", ".join(d.domain.identifier for d in ctx.domains)
             raise PipelineError(
                 f"Domain '{stored_domain}' has no scoped controls. "
                 f"Available: {available or 'none'}"
             )
+        # Canonicalise before anything persists it: the filename, the stored
+        # domain_id and the per-domain uniqueness constraint must not fork on
+        # whether the caller said "GOV" or "Governance & Risk Management".
+        stored_domain = bundle.domain.identifier
 
     existing = _existing_document(session, organization_id, spec.name, stored_domain)
     generation_version = existing.generation_version if existing else 0
