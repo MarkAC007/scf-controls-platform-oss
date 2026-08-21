@@ -3,6 +3,19 @@ import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 import packageJson from './package.json'
 
+// Extra hostnames the dev and preview servers will answer to, comma-separated:
+//   VITE_ALLOWED_HOSTS=scf.example.com,grc.internal
+// Vite refuses any request whose Host header it does not recognise with
+// "Blocked request. This host is not allowed." — which is exactly what a
+// reverse proxy, a Cloudflare tunnel or a custom LAN name in front of the
+// server produces. Reading it from the environment means a self-hosted
+// deployment configures its own hostname in .env instead of editing this
+// tracked file and re-applying that edit after every upgrade.
+const extraAllowedHosts = (process.env.VITE_ALLOWED_HOSTS ?? '')
+  .split(',')
+  .map((h) => h.trim())
+  .filter((h) => h.length > 0)
+
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [
@@ -55,7 +68,7 @@ export default defineConfig({
     port: 5173,
     host: '0.0.0.0',
     strictPort: true,
-    allowedHosts: ['localhost', 'cg-scf-frontend', 'host.docker.internal'],
+    allowedHosts: ['localhost', 'cg-scf-frontend', 'host.docker.internal', ...extraAllowedHosts],
     proxy: {
       // Proxy API requests to backend during development
       '/api': {
@@ -77,8 +90,8 @@ export default defineConfig({
     //
     // Setting allowedHosts to true disables host checking (allows all hosts)
     // This is safe because the service is only accessible via the load balancer
-    allowedHosts: process.env.VITE_ALLOWED_HOSTS
-      ? process.env.VITE_ALLOWED_HOSTS.split(',').map(h => h.trim()).filter(h => h.length > 0)
+    allowedHosts: extraAllowedHosts.length > 0
+      ? extraAllowedHosts
       : true, // Allow all hosts in production (safe behind load balancer)
   }
 })

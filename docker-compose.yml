@@ -491,6 +491,12 @@ services:
         VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID}
         VITE_API_KEY: ${VITE_API_KEY}
     container_name: cg-scf-frontend
+    environment:
+      # Runtime, not a build arg: this is the Vite DEV server, so vite.config.ts
+      # is evaluated by Node when the container starts. Set it when the UI is
+      # reached under a hostname Vite would otherwise reject ("Blocked request"),
+      # e.g. behind a reverse proxy or tunnel.
+      VITE_ALLOWED_HOSTS: ${VITE_ALLOWED_HOSTS:-}
     ports:
       # Host side is remappable (FRONTEND_PORT) if 5173 is taken on your host.
       - "${FRONTEND_PORT:-5173}:5173"
