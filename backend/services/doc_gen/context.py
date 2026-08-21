@@ -162,6 +162,29 @@ def _breakdown(values) -> Dict[str, int]:
     return out
 
 
+def _resolve_domain_name(
+    domain_filter: str,
+    name_by_code: Dict[str, str],
+    code_by_name: Dict[str, str],
+) -> str:
+    """Translate a caller's domain filter into the catalog's display name.
+
+    Controls carry ``scf_domain`` as the display name, so a filter expressed as
+    an identifier ("GOV") would match nothing. Accept either form, in either
+    case, and fall through unchanged when neither matches — an unknown domain
+    then yields an empty context, which the pipeline reports as "no controls in
+    scope for that domain" rather than silently generating the whole estate.
+    """
+    wanted = (domain_filter or "").strip()
+    by_code = name_by_code.get(wanted.upper())
+    if by_code:
+        return by_code
+    for name in code_by_name:
+        if name.lower() == wanted.lower():
+            return name
+    return wanted
+
+
 def build_context(
     session: Session,
     organization_id: str,
@@ -220,6 +243,24 @@ def build_context(
     )
     catalog_version = catalog_state.reconciled_catalog_version if catalog_state else None
 
+    # --- domain metadata ----------------------------------------------------
+    # Loaded before the controls query because a domain filter has to be
+    # translated first: ``scf_catalog_controls.scf_domain`` stores the domain's
+    # DISPLAY NAME ("Governance & Risk Management"), while callers, stored
+    # documents and filenames all speak the short identifier ("GOV"). Keeping
+    # both directions lets either form be accepted and lets the grouping below
+    # key on the identifier, which is what ``OrganisationContext.domain()``
+    # looks up.
+    domain_rows = (
+        session.query(SCFCatalogDomain)
+        .filter(SCFCatalogDomain.status == "active")
+        .order_by(SCFCatalogDomain.order)
+        .all()
+    )
+    domain_meta = {d.identifier: d for d in domain_rows}
+    code_by_name = {d.name: d.identifier for d in domain_rows if d.name}
+    name_by_code = {d.identifier: d.name for d in domain_rows}
+
     # --- controls, joined to their catalog definitions ---------------------
     q = (
         session.query(ScopedControl, SCFCatalogControl)
@@ -230,7 +271,10 @@ def build_context(
         )
     )
     if domain_filter:
-        q = q.filter(SCFCatalogControl.scf_domain == domain_filter)
+        q = q.filter(
+            SCFCatalogControl.scf_domain
+            == _resolve_domain_name(domain_filter, name_by_code, code_by_name)
+        )
     rows = q.order_by(ScopedControl.scf_id).all()
 
     scf_ids = [sc.scf_id for sc, _ in rows]
@@ -279,7 +323,9 @@ def build_context(
             scf_id=scoped.scf_id,
             control_name=catalog.control_name or "",
             control_description=catalog.control_description or "",
-            domain_identifier=catalog.scf_domain or "",
+            domain_identifier=code_by_name.get(
+                catalog.scf_domain or "", catalog.scf_domain or ""
+            ),
             implementation_status=scoped.implementation_status or "not_started",
             maturity_level=scoped.maturity_level,
             owner=scoped.owner,
@@ -301,14 +347,6 @@ def build_context(
         ))
 
     # --- group by domain ---------------------------------------------------
-    domain_rows = (
-        session.query(SCFCatalogDomain)
-        .filter(SCFCatalogDomain.status == "active")
-        .order_by(SCFCatalogDomain.order)
-        .all()
-    )
-    domain_meta = {d.identifier: d for d in domain_rows}
-
     grouped: Dict[str, List[EnrichedControl]] = {}
     for c in controls:
         grouped.setdefault(c.domain_identifier, []).append(c)
@@ -352,6 +390,22 @@ def build_context(
     risk_assessments: List[Dict[str, Any]] = []
     risk_profile: Dict[str, Any] = {}
     if include_risks:
+        profile = (
+            session.query(OrganizationRiskProfile)
+            .filter(OrganizationRiskProfile.organization_id == organization_id)
+            .one_or_none()
+        )
+        # Risk levels are DERIVED, not stored: RiskAssessment holds
+        # likelihood/impact and converts the score to a band using the
+        # organisation's own thresholds. Reading a ``*_risk_level`` attribute
+        # off it raises AttributeError and kills the whole generation.
+        bands = {}
+        if profile:
+            bands = {
+                "low_max": profile.low_max,
+                "medium_max": profile.medium_max,
+                "high_max": profile.high_max,
+            }
         for ra in session.query(RiskAssessment).filter(
             RiskAssessment.organization_id == organization_id
         ).all():
@@ -361,21 +415,21 @@ def build_context(
                 "impact": ra.impact,
                 "inherent_risk_score": ra.inherent_risk_score,
                 "residual_risk_score": ra.residual_risk_score,
-                "inherent_risk_level": ra.inherent_risk_level,
-                "residual_risk_level": ra.residual_risk_level,
+                "inherent_risk_level": ra.get_inherent_risk_level(**bands),
+                "residual_risk_level": ra.get_residual_risk_level(**bands),
                 "treatment_status": ra.treatment_status,
                 "treatment_plan": ra.treatment_plan,
                 "treatment_due_date": (
                     ra.treatment_due_date.isoformat() if ra.treatment_due_date else None
                 ),
-                "owner": ra.owner,
+                # ``ra.owner`` is the User relationship, not a name. Rendering
+                # it straight into a table cell prints a repr; put the human
+                # identifier in instead.
+                "owner": (
+                    (ra.owner.display_name or ra.owner.email) if ra.owner else None
+                ),
                 "notes": ra.notes,
             })
-        profile = (
-            session.query(OrganizationRiskProfile)
-            .filter(OrganizationRiskProfile.organization_id == organization_id)
-            .one_or_none()
-        )
         if profile:
             risk_profile = {
                 "low_max": profile.low_max,
