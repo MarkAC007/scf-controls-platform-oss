@@ -1,4 +1,1 @@
-32ef340ee8f776db76e7f22010a11cee2c659791	feat(release): auto-draft OSS release notes in Propose Version Bump (#758)
-85541d34f9765d4f55bd39e9d2432f7942a00277	docs: correct docs-site claims against verified app behaviour
-b10010de15cd380abf045574256f4f0b5b502b72	docs(docs-site): backfill end-user docs for recent feature PRs
-244e59f57a660416315f84255e801be1a44d8806	Merge pull request #756 from MarkAC007/chore/bump-v0.16.2
+27b70001a7134db35b1b016f0c72ca90ba58bd23	fix(auth): stop /api/users/me 500ing for static API-key sessions (#760)
