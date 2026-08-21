@@ -2056,7 +2056,19 @@ summary{
   gap:6px;
   margin-bottom:12px;
 }
-.btn{
+/* Base button chrome. The variant classes are listed alongside `.btn` because the
+   codebase writes `className="btn-primary"` far more often than `className="btn btn-primary"`
+   (91 bare callsites vs 65 with the base), and a bare variant used to inherit browser chrome —
+   1px padding, square corners, Arial — while still wearing the app's gradient. Listing them
+   here is safe by source order: every bespoke `.btn-*` rule in this file is defined below this
+   point and therefore still wins for anything it sets. `.btn-graph-toggle` (line ~1376) is the
+   only `.btn-*` rule above it and is deliberately excluded.
+   `.btn-text`, `.btn-link` and `.btn-icon` are excluded on purpose — they are text and icon
+   controls, not filled buttons, and get their own rules. */
+.btn,
+.btn-primary,
+.btn-secondary,
+.btn-outline{
   padding:8px 14px;
   border-radius:8px;
   border:none;
@@ -2068,6 +2080,29 @@ summary{
   display:inline-flex;
   align-items:center;
   gap:6px;
+  /* No button in this app is designed to wrap its label. Without this a squeezed
+     flex row breaks a two-word label over three lines and the button grows taller
+     than its neighbours instead of the row wrapping — seen on the document editor
+     topbar with "Submit for Review". Containers that can run out of room already
+     carry `flex-wrap: wrap`, so the row wraps instead. */
+  white-space:nowrap;
+}
+/* Disabled chrome, same selector list and the same source-order argument as above.
+   Disabled styling in this file is written per container -- `.modal-footer
+   .btn-primary:disabled`, `.settings-actions .btn-primary:disabled`,
+   `.risk-detail-actions .btn-primary:disabled` and a dozen more -- which covers
+   50 selectors against 205 `disabled=` callsites in the TSX. A button outside one
+   of those containers rendered identically enabled and disabled, still wearing its
+   gradient and still showing a pointer cursor: the document editor's "Save section"
+   on a published, read-only document was the case that surfaced it. Values match the
+   established treatment; the container-scoped rules all sit below this point and
+   still win where they differ. */
+.btn:disabled,
+.btn-primary:disabled,
+.btn-secondary:disabled,
+.btn-outline:disabled{
+  opacity:0.5;
+  cursor:not-allowed;
 }
 .btn-small{
   padding:6px 12px;
@@ -2103,6 +2138,48 @@ summary{
 .btn-secondary:hover{
   background:var(--secondary);
   border-color:var(--accent);
+}
+/* Icon-only control (a close x, a kebab). Square so the glyph sits centred, and
+   deliberately transparent — it lives on top of a panel, not beside other buttons.
+   Previously referenced in JSX with no rule at all, so it rendered as raw browser chrome. */
+.btn-icon{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  width:28px;
+  height:28px;
+  padding:0;
+  border:none;
+  border-radius:6px;
+  background:transparent;
+  color:var(--muted);
+  font-size:18px;
+  line-height:1;
+  cursor:pointer;
+  transition:all 0.2s;
+  font-family:inherit;
+}
+.btn-icon:hover{
+  background:var(--secondary);
+  color:var(--text);
+}
+/* An inline action that reads as a link, not a button — used inside notices and
+   prose where a filled button would outweigh the sentence around it. Also had no
+   rule at all before, so it rendered as a grey system button mid-paragraph. */
+.btn-link{
+  display:inline;
+  padding:0;
+  border:none;
+  background:none;
+  color:var(--primary);
+  font-family:inherit;
+  font-size:inherit;
+  font-weight:500;
+  text-decoration:underline;
+  cursor:pointer;
+}
+.btn-link:hover{
+  color:var(--accent);
 }
 .btn-framework{
   width:100%;
@@ -18153,7 +18230,12 @@ textarea.form-control{
 }
 
 /* Settings Group — independent card container for each settings area */
-.settings-group {
+/* `.settings-card` shares this rule rather than copying it. DocGenSettingsCard's
+   outer container previously had no CSS at all, so Document Generation rendered
+   with no panel while every neighbouring section had one. Sharing the selector
+   (rather than duplicating the declarations) means the two cannot drift apart. */
+.settings-group,
+.settings-card {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 0.75rem;
@@ -24988,6 +25070,43 @@ textarea.form-control{
 }
 .appearance-section { margin-top: 16px; }
 .appearance-hint { color: var(--muted); font-size: 13px; margin: 4px 0 12px; }
+
+/* Organisation metadata (name + industry) — two-up on desktop, stacked on narrow.
+   Built entirely from existing theme tokens so all 18 themes inherit it; no
+   theme-specific overrides are needed and none should be added. */
+.org-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: var(--section-gap, 16px);
+  margin-bottom: 12px;
+}
+.org-meta-field { display: flex; flex-direction: column; }
+.org-meta-field > label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+.org-meta-field .appearance-hint { margin: 6px 0 0; }
+.org-meta-input {
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 14px;
+  font-family: inherit;
+  color: var(--text);
+  background: var(--input-bg, var(--panel));
+  border: 1px solid var(--border);
+  border-radius: var(--badge-radius, 6px);
+}
+.org-meta-input:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+.org-meta-input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.org-meta-input::placeholder { color: var(--muted); }
 .theme-base-badge {
   font-size: 11px; text-transform: uppercase; letter-spacing: var(--label-tracking);
   border-radius: var(--badge-radius); padding: 2px 6px;
@@ -26398,10 +26517,24 @@ textarea.form-control{
 
 /* ── Library ─────────────────────────────────────────────────────────────── */
 
-.documents-page {
+/* Page gutter. `.app-content` has no padding of its own — every page supplies its
+   own, and this one supplied none, so Documents ran edge to edge against the sidebar
+   while every neighbouring page sat inside a gutter. Matched to `.dm-container`
+   (Document Map), its sibling in the Knowledge Base nav group.
+   `.doc-editor` is listed here because DocumentsPage returns it *instead of*
+   `.documents-page` when a document is open (DocumentsPage.tsx:71), so opening a
+   document used to drop the gutter and run the editor flush to both window edges.
+   Its own rule further down keeps the tighter `gap: 1rem`; only the gutter
+   properties, which it does not set, come from here. */
+.documents-page,
+.doc-editor {
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
+  padding: 32px;
+  max-width: 1600px;
+  margin: 0 auto;
+  width: 100%;
 }
 
 .documents-header {
@@ -26415,6 +26548,16 @@ textarea.form-control{
 .documents-header h1 {
   margin: 0 0 0.35rem;
   font-size: 1.6rem;
+}
+
+/* Keeps the Generate action aligned to the top of the header row rather than
+   stretching with the description column, and stops it collapsing to zero width
+   when the header wraps at narrow viewports. Referenced in JSX with no rule before. */
+.documents-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
 }
 
 .documents-sub {
@@ -26582,18 +26725,6 @@ textarea.form-control{
   color: var(--danger);
 }
 
-.doc-derivative-tag {
-  padding: 0.15rem 0.5rem;
-  border-radius: 999px;
-  font-size: 0.68rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  background: var(--warning-bg);
-  color: var(--warning);
-  box-shadow: inset 0 0 0 1px var(--warning);
-}
-
 .doc-status-pill {
   padding: 0.25rem 0.7rem;
   border-radius: 999px;
@@ -26634,6 +26765,15 @@ textarea.form-control{
 /* ── Settings card ───────────────────────────────────────────────────────── */
 
 .doc-settings-card { display: flex; flex-direction: column; gap: 1.1rem; }
+
+/* Sub-line under a settings card heading. Matches `.settings-description`, the
+   equivalent line on every other settings panel, so the two read as one design. */
+.settings-card-sub {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--muted);
+}
 
 .doc-settings-head {
   display: flex;
@@ -26858,6 +26998,7 @@ textarea.form-control{
 }
 
 .doc-conflict-note { color: var(--warning); font-weight: 600; }
+.doc-scope-note { color: var(--danger); font-weight: 600; }
 
 /* ── Editor ──────────────────────────────────────────────────────────────── */
 
@@ -26869,6 +27010,13 @@ textarea.form-control{
   gap: 1rem;
   flex-wrap: wrap;
 }
+
+/* The shared `.btn-secondary` rule carries `flex: 1` (styles.css:2119), so every
+   secondary button stretches inside any flex row. In this topbar that turned the
+   back button into a 383px slab. Overridden here rather than at `.btn-secondary`
+   because 88 callsites across the app currently sit on that declaration and some
+   modal footers rely on it — narrowing it app-wide is its own change. */
+.doc-editor-topbar > .btn-secondary { flex: 0 0 auto; }
 
 .doc-editor-title { flex: 1 1 260px; }
 .doc-editor-title h1 { margin: 0; font-size: 1.3rem; }
@@ -26887,6 +27035,11 @@ textarea.form-control{
   gap: 0.5rem;
   align-items: center;
   flex-wrap: wrap;
+  /* The title next to this group is `flex: 1 1 260px`, so without this the action
+     group was the only thing that could give and every button got compressed below
+     its label width. Holding its natural width makes the topbar (which wraps) drop
+     the whole group onto its own line instead. */
+  flex-shrink: 0;
 }
 
 .doc-editor-body {
@@ -27071,3 +27224,269 @@ textarea.form-control{
   font-variant-numeric: tabular-nums;
   min-width: 12ch;
 }
+
+/* ── Document reader ─────────────────────────────────────────────────────── */
+/* Reading is the default view of a generated document; the section editor is a
+   mode entered from here. Every value below is a token, so both themes track
+   automatically — the reader has no colours of its own. */
+
+/* The reader owns its own scrolling.
+
+   `position: sticky` cannot work here: .app-content declares overflow-y auto,
+   which makes it the scrollport for anything inside it, but it grows to its
+   content height and so never actually scrolls — the window does. A sticky
+   rail therefore has no scroll to react to and simply travels off the top.
+
+   Fitting the reader to the viewport and scrolling the two panes internally
+   fixes the rail and earns something the design wants anyway: the masthead and
+   the lifecycle stay on screen while you read, instead of being the first
+   thing to disappear. */
+.doc-reader {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  height: calc(100vh - 6.5rem);
+  min-height: 32rem;
+}
+
+.doc-reader-head {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+  padding: 1.25rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.doc-reader-head-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.doc-reader-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+.doc-reader-title { margin: 0; font-size: 1.6rem; line-height: 1.25; }
+
+.doc-reader-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1rem;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.doc-reader-facts > span { display: inline-flex; align-items: center; gap: 0.35rem; }
+
+/* The lifecycle stated on the page. An auditor's first question is where this
+   document stands and who put it there; that should not be behind a toggle. */
+.doc-lifecycle-steps {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  list-style: none;
+  margin: 0.25rem 0 0;
+  padding: 0;
+  flex-wrap: wrap;
+}
+
+.doc-lifecycle-step {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: var(--label-tracking, 0.08em);
+}
+
+.doc-lifecycle-step + .doc-lifecycle-step { margin-left: 0.35rem; }
+
+/* The connector doubles as the progress track, so a completed stage reads as
+   filled rather than merely ticked. */
+.doc-lifecycle-step + .doc-lifecycle-step::before {
+  content: '';
+  width: 2.25rem;
+  height: 2px;
+  margin-right: 0.7rem;
+  background: var(--border);
+  border-radius: 1px;
+}
+
+.doc-lifecycle-step.is-done + .doc-lifecycle-step::before,
+.doc-lifecycle-step.is-current + .doc-lifecycle-step::before { background: var(--primary); }
+
+.doc-lifecycle-dot {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  background: transparent;
+  flex: none;
+}
+
+.doc-lifecycle-step.is-done .doc-lifecycle-dot {
+  background: var(--primary);
+  border-color: var(--primary);
+}
+
+.doc-lifecycle-step.is-current .doc-lifecycle-dot {
+  background: var(--primary);
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 25%, transparent);
+}
+
+.doc-lifecycle-step.is-current .doc-lifecycle-label {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.doc-lifecycle-step.is-done .doc-lifecycle-label { color: var(--text); }
+
+.doc-reader-body {
+  display: grid;
+  grid-template-columns: minmax(200px, 280px) 1fr;
+  gap: 1.25rem;
+  align-items: stretch;
+  flex: 1;
+  min-height: 0; /* without this the grid refuses to shrink and both panes grow */
+}
+
+/* Narrow screens get the ordinary page scroll — two stacked scroll panes on a
+   phone is worse than no rail at all. */
+@media (max-width: 900px) {
+  .doc-reader { height: auto; min-height: 0; }
+  .doc-reader-body { grid-template-columns: 1fr; }
+  .doc-reader-toc { max-height: 18rem; }
+  .doc-reader-page { overflow-y: visible; }
+}
+
+.doc-reader-toc {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.doc-reader-toc .doc-outline-list { overflow-y: auto; flex: 1; min-height: 0; }
+
+.doc-reader-page {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+  padding: 2.25rem clamp(1.25rem, 4vw, 3.5rem);
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* Measure, not width. Long-form prose is read in a column, not across a
+   1400px monitor. */
+.doc-reader-prose { max-width: 78ch; margin: 0 auto; }
+
+.doc-reader-prose h1 { font-size: 1.75rem; margin: 0 0 1.5rem; }
+.doc-reader-prose h2 { font-size: 1.3rem; margin: 0 0 0.75rem; }
+.doc-reader-prose h3 { font-size: 1.05rem; margin: 0 0 0.6rem; }
+.doc-reader-prose p { line-height: 1.7; margin: 0 0 0.9rem; }
+.doc-reader-prose ul,
+.doc-reader-prose ol { line-height: 1.7; margin: 0 0 0.9rem; padding-left: 1.4rem; }
+.doc-reader-prose li { margin-bottom: 0.3rem; }
+.doc-reader-prose strong { color: var(--text); }
+.doc-reader-prose em { color: var(--muted); }
+
+/* Tables scroll inside their own box rather than pushing the page sideways. */
+.doc-reader-prose table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0 0 1.1rem;
+  font-size: 0.88rem;
+}
+.doc-reader-prose th,
+.doc-reader-prose td {
+  border: 1px solid var(--border);
+  padding: 0.45rem 0.6rem;
+  text-align: left;
+}
+.doc-reader-prose th { background: var(--panel); font-weight: 600; }
+
+.doc-reader-prose pre {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.75rem 1rem;
+  overflow-x: auto;
+}
+
+/* ── Sections in the flow ────────────────────────────────────────────────── */
+/* The three-layer merge was only ever visible in the editor's outline. Here it
+   is visible where it matters: against the prose it changed. */
+
+.docr-sec { scroll-margin-top: 1.5rem; padding-left: 1rem; margin-left: -1rem; }
+.docr-sec:last-child { margin-bottom: 0; }
+
+.docr-sec.status-new,
+.docr-sec.status-conflict,
+.docr-sec.status-human_preserved,
+.docr-sec.status-pending_retirement {
+  border-left: 3px solid var(--border);
+  padding-left: 1rem;
+  margin-left: -1rem;
+}
+
+.docr-sec.status-new { border-left-color: var(--success); }
+.docr-sec.status-conflict { border-left-color: var(--warning); }
+.docr-sec.status-human_preserved { border-left-color: var(--primary); }
+.docr-sec.status-pending_retirement { border-left-color: var(--muted); }
+
+/* A retiring section is still in the document — nothing is deleted — but it
+   should not read with the same authority as operative policy. */
+.docr-sec.status-pending_retirement > h1,
+.docr-sec.status-pending_retirement > h2,
+.docr-sec.status-pending_retirement > h3,
+.docr-sec.status-pending_retirement > h4,
+.docr-sec.status-pending_retirement > p,
+.docr-sec.status-pending_retirement > ul,
+.docr-sec.status-pending_retirement > ol,
+.docr-sec.status-pending_retirement > table { opacity: 0.62; }
+
+.docr-flag {
+  font-size: 0.76rem;
+  line-height: 1.5;
+  margin: 0 0 0.6rem;
+  padding: 0.4rem 0.65rem;
+  border-radius: var(--badge-radius, 6px);
+  background: var(--panel);
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+
+.docr-flag-new { color: var(--success); border-color: color-mix(in srgb, var(--success) 35%, transparent); }
+.docr-flag-conflict { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 40%, transparent); font-weight: 600; }
+.docr-flag-human_preserved { color: var(--primary); border-color: color-mix(in srgb, var(--primary) 35%, transparent); }
+.docr-flag-pending_retirement { color: var(--muted); }
+
+.docr-controls { display: flex; flex-wrap: wrap; gap: 0.3rem; margin: 0.5rem 0 1.4rem; }
+
+.docr-control {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.68rem;
+  padding: 0.1rem 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: var(--badge-radius, 6px);
+  color: var(--muted);
+}
+
+.docr-preamble { color: var(--muted); font-size: 0.85rem; margin-bottom: 1.5rem; }
+
+/* The app-wide `.btn-secondary { flex: 1 }` makes sense inside the form
+   footers it was written for, but here it stretches the back button across the
+   masthead. Neutralised locally rather than globally — that rule reaches 88
+   call sites and is not this feature's to change. */
+.doc-reader-head-top > .btn-secondary,
+.doc-reader-actions > button { flex: none; }

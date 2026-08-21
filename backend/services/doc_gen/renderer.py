@@ -22,70 +22,252 @@ from .three_layer import strip_markers
 
 logger = logging.getLogger(__name__)
 
-#: Print stylesheet. ``__FOOTER__`` is substituted with ``str.replace`` rather
-#: than %-formatting, because the stylesheet contains literal percent signs
-#: (``width: 100%``) that %-formatting reads as conversion specifiers.
-#: Deliberately plain: an ISMS document is read for its
-#: content and is often bound into a larger evidence pack, so it needs to look
-#: like a controlled document rather than like marketing.
+#: Print stylesheet. ``__FOOTER__`` and ``__RUNHEAD__`` are substituted with
+#: ``str.replace`` rather than %-formatting, because the stylesheet contains
+#: literal percent signs (``width: 100%``) that %-formatting reads as
+#: conversion specifiers.
+#:
+#: The palette and proportions are the ones the standalone generator used
+#: before this feature was folded into the platform -- navy masthead rule,
+#: banded table heads, an accent bar on every sub-heading. An ISMS document is
+#: usually met as a PDF attachment on an auditor's desk long before anyone sees
+#: the app, so the export is the product's first impression and should look
+#: like a controlled document that somebody owns.
 _PRINT_CSS = """
 @page {
     size: A4;
-    margin: 20mm 18mm 22mm 18mm;
-    @bottom-center {
-        content: counter(page) " of " counter(pages);
-        font-family: "DejaVu Sans", sans-serif;
-        font-size: 8pt;
-        color: #666;
+    margin: 22mm 18mm 20mm 18mm;
+    @top-left {
+        content: "__RUNHEAD__";
+        font-family: Inter, "DejaVu Sans", sans-serif;
+        font-size: 7.5pt;
+        color: #94a3b8;
+        vertical-align: bottom;
+        padding-bottom: 5pt;
+    }
+    @top-right {
+        content: "__CLASSIFICATION__";
+        font-family: Inter, "DejaVu Sans", sans-serif;
+        font-size: 7.5pt;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: #94a3b8;
+        vertical-align: bottom;
+        padding-bottom: 5pt;
     }
     @bottom-left {
         content: "__FOOTER__";
-        font-family: "DejaVu Sans", sans-serif;
-        font-size: 7pt;
-        color: #888;
+        font-family: Inter, "DejaVu Sans", sans-serif;
+        font-size: 7.5pt;
+        color: #94a3b8;
+        vertical-align: top;
+        padding-top: 5pt;
+    }
+    @bottom-right {
+        content: "Page " counter(page) " of " counter(pages);
+        font-family: Inter, "DejaVu Sans", sans-serif;
+        font-size: 7.5pt;
+        color: #94a3b8;
+        vertical-align: top;
+        padding-top: 5pt;
     }
 }
+
+/* The masthead already carries the brand on page one, so the running header
+   would only repeat it. Margin boxes cannot be styled away with display:none
+   -- setting the content to nothing is how you empty one. */
+@page :first {
+    @top-left { content: ""; }
+    @top-right { content: ""; }
+}
+
 body {
-    font-family: "DejaVu Serif", Georgia, serif;
+    font-family: Inter, "DejaVu Sans", Helvetica, sans-serif;
+    font-size: 9.5pt;
+    line-height: 1.6;
+    color: #1e293b;
+}
+
+/* ── Masthead ─────────────────────────────────────────────────────────── */
+
+.doc-masthead {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12pt;
+    border-bottom: 2.5pt solid #1a2744;
+    padding-bottom: 10pt;
+    margin-bottom: 20pt;
+}
+.doc-masthead-left { flex: 1; }
+.doc-masthead-brand {
+    font-size: 7.5pt;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 3pt;
+}
+.doc-masthead-title {
+    font-size: 16pt;
+    font-weight: 700;
+    color: #1a2744;
+    line-height: 1.2;
+    margin-bottom: 3pt;
+}
+.doc-masthead-sub { font-size: 8.5pt; color: #475569; }
+.doc-masthead-right {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 6pt;
+}
+.doc-masthead-logo { height: 52pt; }
+.doc-masthead-badge {
+    background: #1a2744;
+    color: #ffffff;
+    font-size: 7.5pt;
+    font-weight: 700;
+    padding: 2.5pt 8pt;
+    border-radius: 3pt;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+/* ── Typography ───────────────────────────────────────────────────────── */
+
+/* The title is set in the masthead. Leaving the Markdown's own H1 in the flow
+   would print it twice. */
+h1 { display: none; }
+
+h2 {
+    font-family: Inter, "DejaVu Sans", sans-serif;
+    font-size: 12.5pt;
+    font-weight: 700;
+    color: #1a2744;
+    border-bottom: 1.5pt solid #1a2744;
+    padding-bottom: 3pt;
+    margin: 22pt 0 10pt;
+}
+h3 {
+    font-family: Inter, "DejaVu Sans", sans-serif;
     font-size: 10.5pt;
-    line-height: 1.5;
-    color: #1a1a1a;
+    font-weight: 600;
+    color: #1a2744;
+    border-left: 2.5pt solid #3b82f6;
+    padding-left: 7pt;
+    margin: 16pt 0 6pt;
 }
-h1, h2, h3, h4 {
-    font-family: "DejaVu Sans", Helvetica, sans-serif;
-    color: #0f2a4a;
-    line-height: 1.25;
+h4 {
+    font-family: Inter, "DejaVu Sans", sans-serif;
+    font-size: 9.5pt;
+    font-weight: 600;
+    color: #334155;
+    margin: 12pt 0 5pt;
 }
-h1 { font-size: 20pt; margin: 0 0 4pt; }
-h2 { font-size: 14pt; margin: 18pt 0 6pt; border-bottom: 0.5pt solid #c9d4e0; padding-bottom: 3pt; }
-h3 { font-size: 11.5pt; margin: 13pt 0 4pt; }
 h2, h3, h4 { page-break-after: avoid; }
-p { margin: 0 0 7pt; orphans: 3; widows: 3; }
+p { margin: 0 0 8pt; orphans: 3; widows: 3; }
+a { color: #3b82f6; text-decoration: none; }
+
+/* ── Tables ───────────────────────────────────────────────────────────── */
+
 table {
     border-collapse: collapse;
     width: 100%;
-    margin: 8pt 0 12pt;
+    margin: 10pt 0 14pt;
     font-size: 8.5pt;
-    page-break-inside: auto;
 }
-th, td {
-    border: 0.5pt solid #c9d4e0;
-    padding: 3.5pt 5pt;
+thead th {
+    background: #1a2744;
+    color: #ffffff;
+    font-weight: 600;
+    font-size: 7.5pt;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 6pt 7pt;
     text-align: left;
+}
+td {
+    padding: 5pt 7pt;
+    border-bottom: 0.5pt solid #e2e8f0;
     vertical-align: top;
 }
-th { background: #eef3f8; font-family: "DejaVu Sans", sans-serif; font-weight: 600; }
+tbody tr:nth-child(even) { background: #f8fafc; }
 tr { page-break-inside: avoid; }
+/* Repeat the head when a long register runs over a page break, otherwise the
+   continuation reads as an unlabelled grid of values. */
+thead { display: table-header-group; }
+
+/* ── Blocks ───────────────────────────────────────────────────────────── */
+
 blockquote {
-    margin: 8pt 0;
-    padding: 5pt 10pt;
-    border-left: 2.5pt solid #3b6ea5;
-    background: #f6f9fc;
-    font-style: italic;
+    border-left: 3pt solid #3b82f6;
+    background: #eff6ff;
+    margin: 12pt 0;
+    padding: 8pt 12pt;
+    color: #1e40af;
+    font-size: 9pt;
+    page-break-inside: avoid;
 }
-code { font-family: "DejaVu Sans Mono", monospace; font-size: 8.5pt; background: #f2f4f7; padding: 0 2pt; }
-pre { background: #f2f4f7; padding: 6pt; page-break-inside: avoid; }
+blockquote p { margin: 0; }
+ul, ol { margin: 6pt 0; padding-left: 16pt; }
+li { margin-bottom: 3pt; }
+hr { border: none; border-top: 0.5pt solid #e2e8f0; margin: 18pt 0; }
+code {
+    font-family: "DejaVu Sans Mono", monospace;
+    font-size: 8pt;
+    background: #f1f5f9;
+    padding: 0.5pt 3pt;
+    border-radius: 2pt;
+    color: #0f172a;
+}
+pre {
+    background: #0f172a;
+    color: #e2e8f0;
+    padding: 9pt 11pt;
+    border-radius: 4pt;
+    font-size: 8pt;
+    margin: 10pt 0;
+    page-break-inside: avoid;
+}
+pre code { background: none; padding: 0; color: inherit; }
 """
+
+
+def build_masthead(
+    *,
+    title: str,
+    organisation: str = "",
+    subtitle: str = "",
+    domain_id: str = "",
+    logo_data_uri: str = "",
+) -> str:
+    """The page-one masthead: brand line, title, subtitle, logo, domain badge.
+
+    Every part is optional and simply absent when the platform has no value for
+    it -- an organisation that has not uploaded a logo gets a masthead without
+    one rather than a broken image box.
+    """
+    left = [f'<div class="doc-masthead-title">{_escape(title)}</div>']
+    if organisation:
+        left.insert(0, f'<div class="doc-masthead-brand">{_escape(organisation)}</div>')
+    if subtitle:
+        left.append(f'<div class="doc-masthead-sub">{_escape(subtitle)}</div>')
+
+    right = []
+    if logo_data_uri:
+        right.append(f'<img class="doc-masthead-logo" src="{logo_data_uri}" alt="">')
+    if domain_id:
+        right.append(f'<div class="doc-masthead-badge">{_escape(domain_id)}</div>')
+
+    right_html = (
+        f'<div class="doc-masthead-right">{"".join(right)}</div>' if right else ""
+    )
+    return (
+        '<div class="doc-masthead">'
+        f'<div class="doc-masthead-left">{"".join(left)}</div>'
+        f"{right_html}"
+        "</div>"
+    )
 
 
 def markdown_to_html(
@@ -93,6 +275,7 @@ def markdown_to_html(
     *,
     title: str = "",
     include_markers: bool = False,
+    body_prefix: str = "",
 ) -> str:
     """Convert document Markdown to a standalone HTML page.
 
@@ -102,13 +285,21 @@ def markdown_to_html(
             Markdown does not open with one.
         include_markers: Keep merge markers. Only the in-app preview wants
             this; exports never do.
+        body_prefix: Raw HTML placed ahead of the converted Markdown. The PDF
+            path passes its masthead here. It is our own markup, never user
+            input, and the escaping happens in :func:`build_masthead`.
     """
     import markdown as md
 
     body = content if include_markers else strip_markers(content)
     html_body = md.markdown(
-        body,
-        extensions=["tables", "fenced_code", "toc", "sane_lists", "attr_list"],
+        _neutralise_raw_html(body),
+        # No attr_list. It lets the Markdown source set arbitrary attributes on
+        # the element it follows -- `## Heading {: onclick="..." }` really does
+        # render as `<h2 onclick="...">` -- which escaping `<` does not close.
+        # Nothing generates or stores that syntax, so the extension only ever
+        # cost us an injection vector.
+        extensions=["tables", "fenced_code", "toc", "sane_lists"],
         output_format="html5",
     )
 
@@ -120,17 +311,149 @@ def markdown_to_html(
         "<!DOCTYPE html>\n"
         '<html lang="en-GB">\n<head>\n<meta charset="utf-8">\n'
         f"<title>{_escape(title)}</title>\n</head>\n<body>\n"
-        f"{heading}{html_body}\n</body>\n</html>\n"
+        f"{body_prefix}{heading}{html_body}\n</body>\n</html>\n"
     )
 
 
+READER_FLAGS = {
+    "new": "New — written from controls that have just come into scope.",
+    "conflict": (
+        "Both you and the generator changed this. Your text was kept; the "
+        "generated alternative is in version history."
+    ),
+    "pending_retirement": (
+        "The controls behind this section have left scope. Nothing has been "
+        "deleted — retire it deliberately, or keep it."
+    ),
+    "human_preserved": "Your edit was kept; the generator did not touch this.",
+}
+
+
+def markdown_to_reader_fragment(content: str, sections) -> str:
+    """Render the document as an HTML *fragment* for the in-app reader.
+
+    Unlike :func:`markdown_to_html` this returns no page chrome -- the reader
+    injects it into a React tree, so a doctype and ``<head>`` would be wrong.
+    That mismatch is why the preview endpoint existed for months without a
+    caller.
+
+    Each section is wrapped in its own element carrying its stored
+    ``section_id`` and merge status. The wrapper is what makes the document
+    readable *as a document* while still showing the merge: the contents rail
+    scroll-spies on it, the status drives the in-flow styling, and clicking
+    "Edit" from a section can open that exact section in the editor.
+
+    Markers are stripped rather than passed through. They are HTML comments, so
+    a browser renders them as nothing at all -- the merge state was invisible
+    in the very view that most needs to show it. The status class and the
+    :data:`READER_FLAGS` banner carry the same meaning visibly.
+    """
+    import markdown as md
+
+    from .section_parser import flatten_sections, parse_markdown_sections
+
+    def render(fragment: str) -> str:
+        # Every piece of document content reaching the reader goes through
+        # here -- preamble, heading and section body alike -- so this is the
+        # one place the neutralising has to happen. See
+        # :func:`_neutralise_raw_html` for why, and for why attr_list is gone.
+        return md.markdown(
+            _neutralise_raw_html(fragment),
+            extensions=["tables", "fenced_code", "sane_lists"],
+            output_format="html5",
+        )
+
+    body = strip_markers(content)
+    parsed = flatten_sections(parse_markdown_sections(body))
+
+    # Status by stored id, paired positionally for the same reason the merge
+    # engine does it: a retired section re-parses under whichever heading now
+    # precedes it, so its stored id is not the one the parser derives here.
+    status_by_index = {}
+    ordered = sorted(sections, key=lambda r: r.ordinal or 0)
+    if len(ordered) == len(parsed):
+        for i, row in enumerate(ordered):
+            status_by_index[i] = (row.section_id, row.status, row.control_ids or [])
+
+    lines = body.split("\n")
+    first_heading = next(
+        (i for i, line in enumerate(lines) if re.match(r"^#{1,6}\s+", line)), None
+    )
+    parts = []
+    if first_heading:
+        preamble = "\n".join(lines[:first_heading]).strip()
+        if preamble:
+            parts.append(f'<div class="docr-preamble">{render(preamble)}</div>')
+
+    for index, section in enumerate(parsed):
+        section_id, status, control_ids = status_by_index.get(
+            index, (section.section_id, "unchanged", section.control_ids)
+        )
+        hashes = "#" * section.heading_level
+        inner = render(f"{hashes} {section.heading_text}\n\n{section.content}")
+        flag = READER_FLAGS.get(status)
+        banner = (
+            f'<p class="docr-flag docr-flag-{status}">{_escape(flag)}</p>'
+            if flag
+            else ""
+        )
+        chips = ""
+        if control_ids:
+            chips = (
+                '<p class="docr-controls">'
+                + "".join(
+                    f'<span class="docr-control">{_escape(c)}</span>'
+                    for c in control_ids
+                )
+                + "</p>"
+            )
+        parts.append(
+            f'<section class="docr-sec status-{_escape(status)}"'
+            f' data-section-id="{_escape(section_id)}"'
+            f' data-level="{section.heading_level}">'
+            f"{banner}{inner}{chips}</section>"
+        )
+
+    return "\n".join(parts)
+
+
 def _escape(value: str) -> str:
+    """Escape a value for either element text or a quoted attribute value.
+
+    The quotes matter. This is interpolated into ``data-section-id="..."`` and
+    ``class="docr-sec status-..."`` as well as into element text, and a section
+    id or status carrying a double quote would otherwise close the attribute
+    and open a new one. Escaping quotes is inert in element context -- the
+    browser renders the entity back as the character -- so one helper can
+    serve both rather than leaving a choice to get wrong at each call site.
+    """
     return (
         (value or "")
         .replace("&", "&amp;")
         .replace("<", "&lt;")
         .replace(">", "&gt;")
+        .replace('"', "&quot;")
+        .replace("'", "&#39;")
     )
+
+
+def _neutralise_raw_html(markdown_source: str) -> str:
+    """Strip a Markdown document of its ability to emit raw HTML.
+
+    Document content is Markdown by contract: every generator template emits
+    Markdown and the section editor edits Markdown. Raw HTML is not a feature
+    of that contract, but Python-Markdown passes it straight through -- it
+    dropped ``safe_mode`` at 3.0 and tells you to sanitise downstream instead.
+    Downstream here is three different consumers (the in-app reader, the HTML
+    export and WeasyPrint), so the sanitising belongs at the one boundary they
+    share rather than three times over.
+
+    ``&`` is escaped before ``<`` so that a literal ``&lt;`` typed into a
+    section cannot decode back into a tag. ``>`` is deliberately left alone:
+    it opens no tag on its own and it is blockquote syntax at line start, so
+    escaping it would break legitimate Markdown to buy nothing.
+    """
+    return markdown_source.replace("&", "&amp;").replace("<", "&lt;")
 
 
 def render_pdf(
@@ -139,15 +462,27 @@ def render_pdf(
     title: str = "",
     organisation: str = "",
     classification: str = "Internal",
+    subtitle: str = "",
+    domain_id: str = "",
+    logo_data_uri: str = "",
 ) -> bytes:
-    """Render document Markdown to PDF bytes.
+    """Render document Markdown to branded PDF bytes.
 
     Args:
         content: The document's merged Markdown.
-        title: Document title.
-        organisation: Shown in the page footer, so a printed page is
-            attributable when it is separated from the file.
-        classification: Also shown in the footer.
+        title: Document title. Set in the masthead; the Markdown's own H1 is
+            hidden so it does not print twice.
+        organisation: The owning organisation. Appears in the masthead brand
+            line and in the page footer, so a page separated from the file is
+            still attributable.
+        classification: Printed in the running header of every page after the
+            first, where a reader flicking through will actually see it.
+        subtitle: What kind of document this is and where it stands -- e.g.
+            "Domain Policy · Version 2 · Draft".
+        domain_id: SCF domain code for the badge, e.g. ``GOV``.
+        logo_data_uri: ``data:`` URI for the organisation's logo. A URL would
+            make rendering depend on the network and on the renderer being
+            able to authenticate to our own API, so the caller inlines it.
 
     Returns:
         PDF bytes.
@@ -168,14 +503,34 @@ def render_pdf(
 
     stamped = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     footer = " · ".join(
-        part for part in (organisation, classification, f"Generated {stamped}") if part
+        part for part in (organisation, f"Generated {stamped}") if part
     )
-    html = markdown_to_html(content, title=title, include_markers=False)
+    masthead = build_masthead(
+        title=title,
+        organisation=organisation,
+        subtitle=subtitle,
+        domain_id=domain_id,
+        logo_data_uri=logo_data_uri,
+    )
+    html = markdown_to_html(
+        content, title=title, include_markers=False, body_prefix=masthead
+    )
 
-    document = HTML(string=html).render(
-        stylesheets=[CSS(string=_PRINT_CSS.replace("__FOOTER__", footer.replace('"', "'")))]
+    # Margin-box content is a CSS string literal, so a stray double quote would
+    # end it early and drop the rest of the stylesheet on the floor.
+    css = (
+        _PRINT_CSS
+        .replace("__FOOTER__", _css_string(footer))
+        .replace("__RUNHEAD__", _css_string(" · ".join(p for p in (organisation, title) if p)))
+        .replace("__CLASSIFICATION__", _css_string(classification))
     )
+    document = HTML(string=html).render(stylesheets=[CSS(string=css)])
     return document.write_pdf()
+
+
+def _css_string(value: str) -> str:
+    """Make a value safe to sit inside a CSS ``content: "..."`` literal."""
+    return value.replace("\\", "").replace('"', "'").replace("\n", " ")
 
 
 def export_markdown(content: str, *, title: str = "") -> str:

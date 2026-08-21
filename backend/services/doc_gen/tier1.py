@@ -66,6 +66,10 @@ def _header(ctx: OrganisationContext, title: str) -> List[str]:
         f"**Controls in Scope:** {ctx.total_scoped_controls}",
         f"**Domains:** {ctx.total_domains}",
     ]
+    # Omitted entirely when unset — an "Industry:" label with nothing after it
+    # reads as a data error in a document handed to an auditor.
+    if ctx.industry:
+        lines.append(f"**Industry:** {ctx.industry}")
     if ctx.catalog_version:
         lines.append(f"**SCF Catalog Version:** {ctx.catalog_version}")
     lines += ["", "---", ""]

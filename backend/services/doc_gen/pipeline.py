@@ -26,16 +26,20 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional
 
 from sqlalchemy.orm import Session
 
 from . import lifecycle, tier2
 from .context import OrganisationContext, build_context
 from .fingerprint import compute_fingerprint, describe_change
-from .licence import assert_generation_allowed, attribution_footer
+from .licence import assert_generation_allowed
 from .registry import GeneratorSpec, get_generator
-from .section_parser import parse_markdown_sections, to_section_rows
+from .section_parser import (
+    extract_control_ids,
+    parse_markdown_sections,
+    to_section_rows,
+)
 from .three_layer import STATUS_CONFLICT, collect_human_edits, three_way_merge
 
 logger = logging.getLogger(__name__)
@@ -63,6 +67,10 @@ class GenerationResult:
     change_reasons: List[str] = field(default_factory=list)
     mocked: bool = False
     generation_version: int = 0
+    #: SCF ids the document cites that are NOT in scope for this run. Empty is
+    #: the expected case; a non-empty list means the generated prose asserts a
+    #: requirement this organisation has not scoped, which is an audit finding.
+    out_of_scope_citations: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -78,7 +86,29 @@ class GenerationResult:
             "change_reasons": self.change_reasons,
             "mocked": self.mocked,
             "generation_version": self.generation_version,
+            "out_of_scope_citations": list(self.out_of_scope_citations),
         }
+
+
+def find_out_of_scope_citations(
+    content: str, in_scope_ids: Iterable[str]
+) -> List[str]:
+    """SCF ids cited by generated prose that are not in the scoped set.
+
+    The context builder already restricts every generator's input to controls
+    with ``selected = True``, and the Tier 2 prompts now forbid going beyond
+    that set. Neither is a guarantee: a prompt is an instruction to a model, not
+    a constraint on it. This is the check that turns "no drift was observed"
+    into "drift would be seen".
+
+    Only bracketed identifiers count, matching
+    :func:`section_parser.extract_control_ids` -- prose that names a control
+    without brackets is not a citation.
+    """
+    scoped = set(in_scope_ids)
+    return sorted(
+        scf_id for scf_id in extract_control_ids(content) if scf_id not in scoped
+    )
 
 
 def _settings_for(session: Session, organization_id: str):
@@ -284,7 +314,23 @@ def run_generation(
         )
         content, model_id, mocked = output.content, output.model_id, output.mocked
 
-    content = content.rstrip() + attribution_footer(spec.is_derivative)
+    # Trailing whitespace only. The document is the organisation's policy and
+    # carries nothing about this platform's own licensing position -- that
+    # acknowledgement is made once, when an administrator enables the module.
+    content = content.rstrip()
+
+    # The generated layer is what gets checked, not the merged document: a
+    # human is entitled to cite whatever they like in their own edit, and
+    # attributing that to the generator would make the signal noise. This
+    # catches the model reaching past the controls it was given.
+    out_of_scope = find_out_of_scope_citations(
+        content, (c.scf_id for c in ctx.all_controls)
+    )
+    if out_of_scope:
+        logger.warning(
+            "doc_gen: %s cited %d control(s) outside %s's scope: %s",
+            spec.name, len(out_of_scope), organization_id, ", ".join(out_of_scope),
+        )
 
     # --- 5. Merge ------------------------------------------------------------
     emit("merging", "Merging with your edits")
@@ -441,4 +487,5 @@ def run_generation(
         change_reasons=change_reasons,
         mocked=mocked,
         generation_version=new_generation_version,
+        out_of_scope_citations=out_of_scope,
     )

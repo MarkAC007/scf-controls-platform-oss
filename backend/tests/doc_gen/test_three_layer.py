@@ -244,3 +244,100 @@ class TestResolveSection:
     def test_unknown_choice_is_refused(self):
         with pytest.raises(ValueError):
             resolve_section({"section_id": "s"}, "whatever")
+
+
+class TestNestedSectionIdentity:
+    """Regeneration must not lose a nested section's identity.
+
+    Every other fixture in this file is flat -- ``## Purpose`` / ``## Scope`` --
+    so a re-parse of the merged document reproduces each ``section_id``
+    verbatim and the identity question never arises. Real generated policies
+    are nested, and that is where the merge and the re-parse disagree.
+
+    The shape that breaks: a nested section retires while **its parent
+    survives**, and another top-level heading follows the parent. The retiree
+    is appended at the end of the document at its original depth, so it
+    re-parses under the *last* heading rather than its own -- ``roles.scope``
+    becomes ``review.scope``. Retiring a whole branch does NOT reproduce this,
+    because parent and child are appended together and the tree is preserved.
+    """
+
+    V1 = (
+        "## Purpose\nWhy.\n\n"
+        "## Roles\nWho.\n\n"
+        "### Scope\nScope text.\n\n"
+        "## Review\nAnnual.\n"
+    )
+    # "### Scope" has left scope; "## Roles" survives and "## Review" follows it.
+    V2 = "## Purpose\nWhy.\n\n## Roles\nWho.\n\n## Review\nAnnual.\n"
+
+    def edited_first_run(self):
+        """First generation with a human edit on the section about to retire."""
+        rows = three_way_merge(self.V1, None, None).sections
+        rows = [
+            {**r, "human_edited": True, "edited_content": "Hand-written scope."}
+            if r["section_id"] == "roles.scope"
+            else r
+            for r in rows
+        ]
+        merged = build_merged_document(self.V1, {"roles.scope": "Hand-written scope."})
+        return merged, rows
+
+    def test_the_manifest_already_knows_the_right_identity(self):
+        """Guards the premise: the merge is right, the persisted rows are not."""
+        merged, rows = first_run(self.V1)
+        result = three_way_merge(self.V2, merged, rows)
+        assert status_of(result, "roles.scope") == STATUS_PENDING_RETIREMENT
+
+    def test_retired_nested_section_keeps_its_stored_id(self):
+        merged, rows = first_run(self.V1)
+        result = three_way_merge(self.V2, merged, rows)
+        ids = {r["section_id"] for r in result.sections}
+        assert "roles.scope" in ids, f"identity lost; rows carry {sorted(ids)}"
+        assert "review.scope" not in ids, "section was re-parented by the re-parse"
+
+    def test_retired_nested_section_persists_its_status(self):
+        merged, rows = first_run(self.V1)
+        result = three_way_merge(self.V2, merged, rows)
+        assert row_for(result.sections, "roles.scope")["status"] == (
+            STATUS_PENDING_RETIREMENT
+        )
+
+    def test_human_edit_on_a_retired_nested_section_survives(self):
+        merged, rows = self.edited_first_run()
+        result = three_way_merge(self.V2, merged, rows)
+        retired = row_for(result.sections, "roles.scope")
+        assert retired["human_edited"] is True
+        assert retired["edited_content"] == "Hand-written scope."
+
+    def test_retired_nested_section_keeps_its_generated_hash(self):
+        merged, rows = first_run(self.V1)
+        before = row_for(rows, "roles.scope")["last_generated_hash"]
+        result = three_way_merge(self.V2, merged, rows)
+        assert row_for(result.sections, "roles.scope")["last_generated_hash"] == before
+
+    def test_identity_survives_a_second_regeneration(self):
+        merged, rows = self.edited_first_run()
+        first = three_way_merge(self.V2, merged, rows)
+        second = three_way_merge(self.V2, first.merged_content, first.sections)
+        assert "roles.scope" in {r["section_id"] for r in second.sections}
+        assert row_for(second.sections, "roles.scope")["human_edited"] is True
+
+    def test_retirement_marker_is_not_duplicated_on_every_regeneration(self):
+        """The retirement branch re-renders content that already holds a marker.
+
+        Left alone it appends another one each run, so a document regenerated
+        five times carries five copies of the same comment.
+        """
+        merged, rows = first_run(self.V1)
+        result = three_way_merge(self.V2, merged, rows)
+        for _ in range(2):
+            result = three_way_merge(self.V2, result.merged_content, result.sections)
+        assert result.merged_content.count(PENDING_RETIREMENT_MARKER) == 1
+
+    def test_the_retired_clause_text_is_never_lost(self):
+        merged, rows = first_run(self.V1)
+        result = three_way_merge(self.V2, merged, rows)
+        for _ in range(2):
+            result = three_way_merge(self.V2, result.merged_content, result.sections)
+        assert "Scope text." in result.merged_content

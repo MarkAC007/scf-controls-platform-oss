@@ -7,11 +7,11 @@ is a defect even when the verdict is right.
 """
 import pytest
 
+from services.doc_gen import licence
 from services.doc_gen.licence import (
     ACKNOWLEDGEMENT_TEXT,
     LicenceError,
     assert_generation_allowed,
-    attribution_footer,
     check_generation_allowed,
     is_derivative_tier,
     platform_kill_switch_engaged,
@@ -142,22 +142,30 @@ def test_assert_is_silent_when_allowed():
 
 
 # ---------------------------------------------------------------------------
-# Attribution
+# Acknowledgement
+#
+# The licence position is stated once, to the administrator who switches the
+# module on. It is deliberately absent from generated documents: a customer's
+# policy is their artifact and says nothing about how this platform is
+# licensed. The two tests below are the pair -- one asserts the acknowledgement
+# is still there, the other asserts nothing else in this module hands
+# document-facing licence text to the generator.
 # ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("derivative", [True, False])
-def test_attribution_is_present_regardless_of_tier(derivative):
-    """CC BY requires attribution whether or not the work is derivative."""
-    footer = attribution_footer(derivative)
-    assert "Secure Controls Framework" in footer
-    assert "CC BY-ND 4.0" in footer
-
-
-def test_derivative_attribution_says_derived():
-    assert "derived from" in attribution_footer(True)
 
 
 def test_acknowledgement_text_names_the_licence_and_the_consequence():
     assert "CC BY-ND 4.0" in ACKNOWLEDGEMENT_TEXT
     assert "derivative" in ACKNOWLEDGEMENT_TEXT
+
+
+def test_the_acknowledgement_is_the_only_licence_text_this_module_publishes():
+    """No attribution block may be reintroduced for appending to documents."""
+    published = {
+        name: value
+        for name, value in vars(licence).items()
+        if not name.startswith("_")
+        and isinstance(value, str)
+        and "Secure Controls Framework" in value
+    }
+    assert set(published) == {"ACKNOWLEDGEMENT_TEXT"}
+    assert not hasattr(licence, "attribution_footer")

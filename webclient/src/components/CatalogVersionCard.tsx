@@ -73,7 +73,10 @@ export default function CatalogVersionCard({ organizationId }: CatalogVersionCar
   const upgradeAvailable = isCatalogUpgradeAvailable(status)
 
   return (
-    <div className="card" data-testid="catalog-version-card">
+    // `.card` is the clickable list-card style (cursor:pointer, 10px padding) —
+    // wrong for a settings panel. `.settings-card` is the shared settings panel
+    // rule this section's neighbours already use.
+    <div className="settings-card catalog-version-card" data-testid="catalog-version-card">
       <h2>Catalog Version</h2>
 
       {upgradeAvailable && (

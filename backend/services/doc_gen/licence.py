@@ -56,13 +56,6 @@ LICENCE_TEXT_VERSION = "v1"
 #: turning off at once, without a deploy or a database migration.
 _PLATFORM_KILL_SWITCH_ENV = "DOC_GEN_DISABLED"
 
-ATTRIBUTION_NOTICE = (
-    "Portions of this document are derived from the Secure Controls Framework "
-    "(SCF), (c) Secure Controls Framework Council, LLC, licensed under "
-    "CC BY-ND 4.0. Control identifiers, names, and descriptions are reproduced "
-    "under that licence."
-)
-
 ACKNOWLEDGEMENT_TEXT = (
     "Enabling AI-augmented document generation produces derivative works of the "
     "Secure Controls Framework. The SCF is licensed CC BY-ND 4.0, which does not "
@@ -168,18 +161,3 @@ def assert_generation_allowed(settings, *, tier: int, is_derivative: bool) -> No
             tier, is_derivative, permission.reason,
         )
     permission.raise_if_denied()
-
-
-def attribution_footer(is_derivative: bool) -> str:
-    """The attribution block appended to every generated document.
-
-    Attribution is required by CC BY regardless of tier, so this is not
-    conditional on derivation — only the wording shifts.
-    """
-    if is_derivative:
-        return f"\n\n---\n\n*{ATTRIBUTION_NOTICE}*\n"
-    return (
-        "\n\n---\n\n*Control identifiers and names are reproduced from the "
-        "Secure Controls Framework (SCF), (c) Secure Controls Framework "
-        "Council, LLC, licensed under CC BY-ND 4.0.*\n"
-    )

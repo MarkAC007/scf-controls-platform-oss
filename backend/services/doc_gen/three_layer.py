@@ -38,6 +38,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence
 
+from .fingerprint import sha256
 from .section_parser import (
     ParsedSection,
     flatten_sections,
@@ -186,10 +187,17 @@ def detect_human_edits(
     if not stored_sections:
         return {}
 
-    current = {
-        section.section_id: section
-        for section in flatten_sections(parse_markdown_sections(merged_content))
-    }
+    parsed = flatten_sections(parse_markdown_sections(merged_content))
+    current = {section.section_id: section for section in parsed}
+    # Same identity rule as the merge: a section retired on an earlier run
+    # re-parses under whichever heading now precedes it, so its stored id is
+    # absent from the map above and an out-of-band edit to it would go
+    # undetected. Position pairs the two sequences, guarded on length for the
+    # case where a pasted markdown heading makes the parser see extra sections.
+    ordered = sorted(stored_sections, key=lambda r: r.get("ordinal") or 0)
+    if len(ordered) == len(parsed):
+        for row, section in zip(ordered, parsed):
+            current[row["section_id"]] = section
 
     edits: Dict[str, str] = {}
     for stored in stored_sections:
@@ -217,6 +225,34 @@ def collect_human_edits(stored_sections: Sequence[Dict[str, Any]]) -> Dict[str, 
 # ---------------------------------------------------------------------------
 
 
+def _body_lines(section: _MergedSection) -> List[str]:
+    """The lines :func:`_render` emits *after* a section's heading.
+
+    Split out so that :func:`_rendered_body` hashes exactly what was written.
+    Two functions deriving the same text independently is how the merged
+    document and its stored hashes drift apart; deriving both from here means
+    they cannot.
+    """
+    lines = [""]
+    if section.marker:
+        lines.append(section.marker)
+        lines.append("")
+    if section.content:
+        lines.append(section.content)
+    lines.append("")
+    return lines
+
+
+def _rendered_body(section: _MergedSection) -> str:
+    """What :func:`parse_markdown_sections` will read back as this section's body.
+
+    The parser takes every line between one heading and the next and strips it
+    (``section_parser.parse_markdown_sections``), so joining the same lines and
+    stripping reproduces its answer without re-parsing the document.
+    """
+    return "\n".join(_body_lines(section)).strip()
+
+
 def _render(preamble: str, sections: Sequence[_MergedSection]) -> str:
     parts: List[str] = []
     if preamble.rstrip():
@@ -225,13 +261,7 @@ def _render(preamble: str, sections: Sequence[_MergedSection]) -> str:
 
     for section in sections:
         parts.append("#" * section.heading_level + " " + section.heading_text)
-        parts.append("")
-        if section.marker:
-            parts.append(section.marker)
-            parts.append("")
-        if section.content:
-            parts.append(section.content)
-        parts.append("")
+        parts.extend(_body_lines(section))
 
     return "\n".join(parts)
 
@@ -317,10 +347,29 @@ def three_way_merge(
         )
 
     existing_by_id = {row["section_id"]: row for row in existing_sections}
+
+    # The stored rows -- not a re-parse -- are the identity system of record.
+    # A section retired on an earlier run sits at the end of the document at
+    # its original depth, so re-parsing renames it after whatever heading now
+    # precedes it ("roles.scope" reads back as "review.scope"). Looking the
+    # prior content up by that re-derived id misses, and the retirement branch
+    # below then drops the section entirely -- the silent deletion
+    # ``pending_retirement`` exists to prevent.
+    #
+    # Both sequences are in document order, so position pairs them. The
+    # length check is the guard: a human edit containing a markdown heading
+    # line makes the parser see more sections than there are rows, and a
+    # mismatched pairing would hand every section its neighbour's identity.
+    # In that case the id-keyed map alone stands, which is the previous
+    # behaviour rather than a corrupted one.
+    existing_parsed = flatten_sections(parse_markdown_sections(existing_merged_content))
     existing_content_by_id: Dict[str, ParsedSection] = {
-        section.section_id: section
-        for section in flatten_sections(parse_markdown_sections(existing_merged_content))
+        section.section_id: section for section in existing_parsed
     }
+    ordered_rows = sorted(existing_sections, key=lambda r: r.get("ordinal") or 0)
+    if len(ordered_rows) == len(existing_parsed):
+        for row, parsed in zip(ordered_rows, existing_parsed):
+            existing_content_by_id[row["section_id"]] = parsed
     new_generated_hash_by_id = {
         section.section_id: section.content_hash for section in new_flat
     }
@@ -424,7 +473,11 @@ def three_way_merge(
                 section_id=section_id,
                 heading_text=prior_content.heading_text,
                 heading_level=prior_content.heading_level,
-                content=prior_content.content,
+                # Stripped because this content already carries the marker from
+                # the run that retired it, and ``marker=`` below writes another.
+                # Left alone, a document regenerated five times accumulates five
+                # copies of the same comment and its content hash never settles.
+                content=strip_markers(prior_content.content),
                 control_ids=prior_content.control_ids,
                 status=STATUS_PENDING_RETIREMENT,
                 marker=PENDING_RETIREMENT_MARKER,
@@ -442,28 +495,57 @@ def three_way_merge(
 
     merged_content = _render(split_preamble(new_generated_content), merged)
 
-    # --- Rebuild section rows from the merged document -----------------------
-    # Re-parsing (rather than mapping the in-memory list) keeps content hashes
-    # honest: they must describe what is actually in the operative document,
-    # markers included, or the next run's edit detection misfires.
-    rows = to_section_rows(parse_markdown_sections(merged_content))
-    status_by_id = {section.section_id: section.status for section in merged}
-
-    for row in rows:
-        section_id = row["section_id"]
-        status = status_by_id.get(section_id, STATUS_UNCHANGED)
-        row["status"] = status
-        generated_hash = new_generated_hash_by_id.get(section_id)
-        if generated_hash:
-            row["last_generated_hash"] = generated_hash
-        if status in (STATUS_HUMAN_PRESERVED, STATUS_CONFLICT):
+    # --- Section rows, built from the merge itself ---------------------------
+    # Identity belongs to the merge, not to the parser. Every entry in
+    # ``merged`` already carries the ``section_id`` this section is stored
+    # under -- taken from the new generation, or from the row that retired it.
+    #
+    # This block used to re-parse ``merged_content`` and re-derive each id from
+    # the rendered tree. Section ids are content-and-position derived
+    # (``section_parser.parse_markdown_sections``), and rendering is not
+    # identity-preserving: a retired ``###`` is appended at the end of the
+    # document at its original depth, so it re-parses under whichever ``##``
+    # now precedes it. The lookup then missed, every retiree was written back
+    # as ``unchanged`` with ``human_edited`` cleared, and the next run could no
+    # longer find it at all.
+    #
+    # The re-parse existed to keep ``content_hash`` describing what is actually
+    # in the operative document, markers included, so the next run's edit
+    # detection does not misfire. :func:`_rendered_body` preserves that
+    # property without the re-parse: it joins the very lines :func:`_render`
+    # wrote and strips them, which is precisely what the parser reads back.
+    rows: List[Dict[str, Any]] = []
+    for ordinal, section in enumerate(merged):
+        body_hash = sha256(_rendered_body(section))
+        row: Dict[str, Any] = {
+            "section_id": section.section_id,
+            "heading_text": section.heading_text,
+            "heading_level": section.heading_level,
+            "ordinal": ordinal,
+            "content_hash": body_hash,
+            # Tracks the GENERATED layer, so it is the hash of the newly
+            # generated section, not of what the merge chose to keep.
+            "last_generated_hash": new_generated_hash_by_id.get(
+                section.section_id, body_hash
+            ),
+            "human_edited": False,
+            "edited_content": None,
+            "status": section.status,
+            "control_ids": list(section.control_ids),
+        }
+        if section.status in (STATUS_HUMAN_PRESERVED, STATUS_CONFLICT):
             row["human_edited"] = True
-            row["edited_content"] = human_edits.get(section_id)
-        elif status == STATUS_PENDING_RETIREMENT:
-            prior = existing_by_id.get(section_id, {})
+            row["edited_content"] = human_edits.get(section.section_id)
+        elif section.status == STATUS_PENDING_RETIREMENT:
+            # A retiring section has no new generated content, so its
+            # generated-layer hash and human layer both carry forward.
+            prior = existing_by_id.get(section.section_id, {})
             row["human_edited"] = bool(prior.get("human_edited"))
             row["edited_content"] = prior.get("edited_content")
-            row["last_generated_hash"] = prior.get("last_generated_hash") or row["last_generated_hash"]
+            row["last_generated_hash"] = (
+                prior.get("last_generated_hash") or row["last_generated_hash"]
+            )
+        rows.append(row)
 
     return MergeResult(merged_content=merged_content, manifest=manifest, sections=rows)
 

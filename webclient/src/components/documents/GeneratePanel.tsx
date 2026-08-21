@@ -1,35 +1,29 @@
 /**
  * Generation panel — pick generators, pick domains, queue the run.
  *
- * Derivative generators are shown even when they are switched off, marked and
+ * AI-augmented generators are shown even when the module is switched off,
  * disabled rather than hidden. Hiding them would leave an administrator
  * wondering why the platform cannot write a policy; showing them disabled
  * answers the question and points at the switch.
  */
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'react-hot-toast'
 import {
   generateDocuments,
   getDocGenSettings,
   getGenerationStatus,
+  listGeneratableDomains,
   listGenerators,
   type GenerationRequestItem,
 } from '../../data/documentsApi'
 
-interface DomainOption {
-  identifier: string
-  name: string
-  controlCount: number
-}
-
 interface Props {
   organizationId: string
-  domains: DomainOption[]
   onClose: () => void
 }
 
-export default function GeneratePanel({ organizationId, domains, onClose }: Props) {
+export default function GeneratePanel({ organizationId, onClose }: Props) {
   const queryClient = useQueryClient()
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [selectedDomains, setSelectedDomains] = useState<Set<string>>(new Set())
@@ -42,6 +36,14 @@ export default function GeneratePanel({ organizationId, domains, onClose }: Prop
   const { data: settings } = useQuery({
     queryKey: ['docgen-settings', organizationId],
     queryFn: () => getDocGenSettings(organizationId),
+  })
+  // Fetched here rather than passed in. The prop version was never supplied by
+  // any caller, so the domain picker was permanently empty and no Tier 2
+  // document could be started from the UI. The panel already owns its other
+  // reference data; this belongs with it.
+  const { data: domains = [] } = useQuery({
+    queryKey: ['docgen-domains', organizationId],
+    queryFn: () => listGeneratableDomains(organizationId),
   })
 
   // Poll while a run is in flight. The status key is per organisation, so this
@@ -56,6 +58,32 @@ export default function GeneratePanel({ organizationId, domains, onClose }: Prop
   })
 
   const running = status?.status === 'running' || status?.status === 'queued'
+
+  // Every out-of-scope citation across the run, deduplicated. The backend
+  // reports these per generator; an administrator cares about the set, not
+  // about which of six documents happened to mention the same control.
+  const outOfScope = useMemo(
+    () =>
+      Array.from(
+        new Set((status?.results ?? []).flatMap((r) => r.out_of_scope_citations ?? [])),
+      ).sort(),
+    [status?.results],
+  )
+
+  // Refresh the library when a run finishes. Polling only tracks the run's own
+  // status key; without this the list behind the panel still reads "No documents
+  // yet" after a successful generation, because nothing invalidated it.
+  const wasRunning = useRef(false)
+  useEffect(() => {
+    if (running) {
+      wasRunning.current = true
+      return
+    }
+    if (wasRunning.current) {
+      wasRunning.current = false
+      queryClient.invalidateQueries({ queryKey: ['documents', organizationId] })
+    }
+  }, [running, organizationId, queryClient])
 
   const mutation = useMutation({
     mutationFn: (requests: GenerationRequestItem[]) =>
@@ -131,6 +159,13 @@ export default function GeneratePanel({ organizationId, domains, onClose }: Prop
               {' '}— some sections need your decision.
             </span>
           )}
+          {outOfScope.length > 0 && (
+            <span className="doc-scope-note">
+              {' '}— cites {outOfScope.length} control
+              {outOfScope.length === 1 ? '' : 's'} outside your scope:{' '}
+              {outOfScope.join(', ')}. Review before approving.
+            </span>
+          )}
         </div>
       ) : null}
 
@@ -158,14 +193,11 @@ export default function GeneratePanel({ organizationId, domains, onClose }: Prop
 
       {/* ── Tier 2 ──────────────────────────────────────────────────────── */}
       <section className="doc-gen-group">
-        <h3>
-          Policies and Procedures
-          <span className="doc-derivative-tag">Derivative work</span>
-        </h3>
+        <h3>Policies and Procedures</h3>
         {!derivativeAllowed && (
           <p className="doc-gen-group-sub doc-gen-locked">
-            AI-augmented generation is switched off. An administrator can enable
-            it in Org Settings after reviewing the SCF licence position.
+            AI-augmented generation is switched off. An administrator can turn
+            it on in Org Settings.
           </p>
         )}
         {tier2.map((g) => (
@@ -205,7 +237,7 @@ export default function GeneratePanel({ organizationId, domains, onClose }: Prop
                 />
                 <span>
                   <strong>{d.identifier}</strong> {d.name}
-                  <em>{d.controlCount}</em>
+                  <em>{d.control_count}</em>
                 </span>
               </label>
             ))}

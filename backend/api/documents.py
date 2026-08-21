@@ -13,6 +13,7 @@ Approving, publishing, enabling the feature, and acknowledging the SCF licence
 need admin. That split is the point of the lifecycle: the person who writes the
 policy must not be the person who signs it off alone.
 """
+import base64
 import json
 import logging
 from datetime import datetime, timezone
@@ -34,6 +35,7 @@ from models import (
     DocumentTransition,
     DocumentVersion,
     GeneratedDocument,
+    Organization,
 )
 from services.audit_service import create_audit_entry, detect_action_source
 from services.doc_gen import lifecycle
@@ -63,6 +65,21 @@ class GeneratorInfo(BaseModel):
     is_derivative: bool
     domain_scoped: bool
     description: str
+
+
+class DomainOption(BaseModel):
+    """A domain the organisation can actually generate a domain-scoped document for.
+
+    The list is derived from the same name-to-identifier mapping the generator
+    itself uses (``services.doc_gen.context`` groups controls by the catalog
+    domain's ``identifier``, looked up from the control's ``scf_domain`` name).
+    Deriving it any other way -- from the SCF ID prefix, say -- would let the
+    picker offer a domain the generator then finds empty.
+    """
+
+    identifier: str
+    name: str
+    control_count: int
 
 
 class GenerationRequestItem(BaseModel):
@@ -235,6 +252,44 @@ async def list_generators(
             domain_scoped=g.domain_scoped, description=g.description,
         )
         for g in all_generators()
+    ]
+
+
+@router.get(
+    "/organizations/{org_id}/documents/domains",
+    response_model=List[DomainOption],
+)
+async def list_generatable_domains(
+    org_id: UUID,
+    membership: OrgMembership = Depends(require_org_role("viewer")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Domains that have at least one in-scope control.
+
+    The generate panel needs this to offer domain-scoped generators. Without it
+    the picker has nothing to show and Tier 2 generation cannot be started from
+    the UI at all.
+    """
+    from catalog_models import SCFCatalogControl, SCFCatalogDomain
+    from models import ScopedControl
+
+    result = await db.execute(
+        select(
+            SCFCatalogDomain.identifier,
+            SCFCatalogDomain.name,
+            func.count(ScopedControl.id),
+        )
+        .select_from(ScopedControl)
+        .join(SCFCatalogControl, SCFCatalogControl.scf_id == ScopedControl.scf_id)
+        .join(SCFCatalogDomain, SCFCatalogDomain.name == SCFCatalogControl.scf_domain)
+        .where(ScopedControl.organization_id == membership.organization_id)
+        .where(ScopedControl.selected.is_(True))
+        .group_by(SCFCatalogDomain.identifier, SCFCatalogDomain.name, SCFCatalogDomain.order)
+        .order_by(SCFCatalogDomain.order)
+    )
+    return [
+        DomainOption(identifier=identifier, name=name, control_count=count)
+        for identifier, name, count in result.all()
     ]
 
 
@@ -717,11 +772,55 @@ async def export_document(
             media_type="text/html; charset=utf-8",
         )
 
+    # The masthead and footer name the organisation the document belongs to.
+    # This used to be derived from the exporting user's email domain, which is a
+    # property of the person clicking Export, not of the organisation — two
+    # members with different email domains got different footers on the same
+    # document. Read the org record.
+    org_row = await db.execute(
+        select(
+            Organization.name,
+            Organization.logo_data,
+            Organization.logo_content_type,
+        ).where(Organization.id == membership.organization_id)
+    )
+    org = org_row.one_or_none()
+    org_name = (org.name if org else "") or ""
+
+    # Inlined rather than linked: WeasyPrint would otherwise have to fetch the
+    # logo endpoint over the network and authenticate to our own API to do it.
+    logo_data_uri = ""
+    if org and org.logo_data and org.logo_content_type:
+        logo_data_uri = (
+            f"data:{org.logo_content_type};base64,"
+            f"{base64.b64encode(org.logo_data).decode('ascii')}"
+        )
+
+    # What kind of document this is and where it stands. The Document Control
+    # table inside the prose is written by the generator and can drift; this
+    # line is read straight off the platform record.
+    try:
+        type_label = get_generator(document.generator_name).display_name
+    except GeneratorNotFound:
+        type_label = (document.document_type or "Document").replace("_", " ").title()
+    subtitle = " · ".join(
+        part
+        for part in (
+            type_label,
+            f"Version {document.generation_version}" if document.generation_version else "",
+            (document.lifecycle_status or "").replace("_", " ").title(),
+        )
+        if part
+    )
+
     try:
         pdf = render_pdf(
             document.merged_content,
             title=document.title,
-            organisation=membership.user.email.split("@")[-1] if membership.user.email else "",
+            organisation=org_name,
+            subtitle=subtitle,
+            domain_id=document.domain_id or "",
+            logo_data_uri=logo_data_uri,
         )
     except RuntimeError as exc:
         # PDF rendering needs native libraries. If they are missing, say so —
@@ -745,15 +844,21 @@ async def preview_document(
     membership: OrgMembership = Depends(require_org_role("viewer")),
     db: AsyncSession = Depends(get_db),
 ):
-    """Rendered HTML for the in-app preview pane, markers retained."""
-    from services.doc_gen.renderer import markdown_to_html
+    """Rendered HTML for the in-app reader.
+
+    Returns a *fragment*, not a page. The previous version returned a full
+    ``<!DOCTYPE html>`` document with the merge markers left in as HTML
+    comments -- unusable inside the React tree, and invisible to a reader even
+    if it had been used. The fragment wraps each section with its stored id and
+    merge status so the reader can show the three-layer merge in the document
+    flow rather than only in the editor's outline.
+    """
+    from services.doc_gen.renderer import markdown_to_reader_fragment
 
     document = await _load_document(db, document_id, membership.organization_id,
-                                    with_sections=False)
+                                    with_sections=True)
     return {
-        "html": markdown_to_html(
-            document.merged_content, title=document.title, include_markers=True
-        ),
+        "html": markdown_to_reader_fragment(document.merged_content, document.sections),
         "title": document.title,
         "lifecycle_status": document.lifecycle_status,
     }
