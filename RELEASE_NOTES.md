@@ -1,11 +1,11 @@
-# v0.18.1
+# v0.18.2
 
 Adds SCF document generation to the platform — generated documents with versions, sections and review transitions. Migration docgen001 creates five new tables and changes no existing schema.
 
 ## Fixes and improvements
 
-- Repair the four v0.18.0 generation blockers (PR 767)
+- Read dev-server allowedHosts from VITE_ALLOWED_HOSTS (PR 769)
 
 ## Upgrading
 
-- Run `scripts/upgrade.sh v0.18.1` (read `UPGRADING.md` first).
+- Run `scripts/upgrade.sh v0.18.2` (read `UPGRADING.md` first).
