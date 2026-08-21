@@ -2829,3 +2829,242 @@ class OrganizationReconciliationRun(Base):
 
     def __repr__(self):
         return f"<OrganizationReconciliationRun(id={self.id}, org={self.organization_id}, status={self.status})>"
+
+
+# =============================================================================
+# Document Generation (ported from scf-doc-gen)
+# =============================================================================
+
+class GeneratedDocument(Base):
+    """A generated ISMS document -- the operative, merged copy.
+
+    One row per (organisation, generator, scope). ``merged_content`` is the
+    three-layer merge output: generated content with human section edits
+    applied. The pure generated layer lives in ``document_versions``; the human
+    layer lives in ``document_sections.edited_content``.
+
+    ``domain_id`` is an empty string (not NULL) for generators that are not
+    domain-scoped, so the unique constraint actually constrains -- Postgres
+    treats NULLs as distinct in a unique index.
+    """
+    __tablename__ = "generated_documents"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "generator_name", "domain_id",
+                         name="uq_generated_documents_org_generator_domain"),
+        Index("ix_generated_documents_org", "organization_id"),
+        Index("ix_generated_documents_org_status", "organization_id", "lifecycle_status"),
+        CheckConstraint(
+            "lifecycle_status IN ('draft', 'in_review', 'approved', 'published')",
+            name="ck_generated_documents_lifecycle_status",
+        ),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+
+    generator_name = Column(String(64), nullable=False)
+    document_type = Column(String(32), nullable=False)
+    domain_id = Column(String(16), nullable=False, server_default="", default="")
+    title = Column(String(500), nullable=False)
+    filename = Column(String(255), nullable=False)
+
+    merged_content = Column(Text, nullable=False, server_default="", default="")
+
+    input_fingerprint = Column(String(64), nullable=True)
+    input_components = Column(JSONB, nullable=False, server_default="{}", default=dict)
+    catalog_version = Column(String(20), nullable=True)
+
+    generator_version = Column(String(40), nullable=True)
+    model_id = Column(String(100), nullable=True)
+    generation_version = Column(Integer, nullable=False, server_default="0", default=0)
+    tier = Column(SmallInteger, nullable=False, server_default="1", default=1)
+    is_derivative = Column(Boolean, nullable=False, server_default="false", default=False)
+
+    # Spec R7 (CDM circularity): CDM must be able to tell a platform-generated
+    # document from a customer-authored one, or a generated policy gets ingested
+    # as evidence of the very control it was written from.
+    origin = Column(String(32), nullable=False, server_default="platform_generated", default="platform_generated")
+
+    lifecycle_status = Column(String(20), nullable=False, server_default="draft", default="draft")
+
+    created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now())
+    updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now())
+
+    organization = relationship("Organization")
+    created_by = relationship("User", foreign_keys=[created_by_user_id])
+    versions = relationship(
+        "DocumentVersion", back_populates="document",
+        cascade="all, delete-orphan", order_by="DocumentVersion.version",
+    )
+    sections = relationship(
+        "DocumentSection", back_populates="document",
+        cascade="all, delete-orphan", order_by="DocumentSection.ordinal",
+    )
+    transitions = relationship(
+        "DocumentTransition", back_populates="document",
+        cascade="all, delete-orphan", order_by="DocumentTransition.created_at",
+    )
+
+    def __repr__(self):
+        return f"<GeneratedDocument(id={self.id}, generator={self.generator_name}, domain={self.domain_id!r})>"
+
+
+class DocumentVersion(Base):
+    """An immutable snapshot of the pure generated layer.
+
+    Never updated after insert. The section-diff UI reads these to show what
+    the generator produced alongside what the human kept, which is why a
+    conflict does not need to store the rejected alternative separately.
+
+    Content over roughly 64KB is written to ``storage_service`` and the row
+    keeps ``blob_key`` instead of ``content``.
+    """
+    __tablename__ = "document_versions"
+    __table_args__ = (
+        UniqueConstraint("document_id", "version", name="uq_document_versions_doc_version"),
+        Index("ix_document_versions_doc", "document_id"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    document_id = Column(UUID(as_uuid=True), ForeignKey("generated_documents.id", ondelete="CASCADE"), nullable=False)
+    version = Column(Integer, nullable=False)
+    content = Column(Text, nullable=True)
+    blob_key = Column(String(500), nullable=True)
+    input_fingerprint = Column(String(64), nullable=True)
+    model_id = Column(String(100), nullable=True)
+    generator_version = Column(String(40), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now())
+
+    document = relationship("GeneratedDocument", back_populates="versions")
+
+    def __repr__(self):
+        return f"<DocumentVersion(document_id={self.document_id}, version={self.version})>"
+
+
+class DocumentSection(Base):
+    """One section of a generated document -- a node in the merge graph.
+
+    ``last_generated_hash`` tracks the *generated* layer; ``content_hash``
+    tracks what is actually in the operative document. When they diverge, a
+    human has edited the section. ``status`` carries the three-way merge
+    outcome from the last regeneration.
+    """
+    __tablename__ = "document_sections"
+    __table_args__ = (
+        UniqueConstraint("document_id", "section_id", name="uq_document_sections_doc_section"),
+        Index("ix_document_sections_doc", "document_id", "ordinal"),
+        CheckConstraint(
+            "status IN ('unchanged', 'updated', 'human_preserved', 'conflict', "
+            "'new', 'pending_retirement')",
+            name="ck_document_sections_status",
+        ),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    document_id = Column(UUID(as_uuid=True), ForeignKey("generated_documents.id", ondelete="CASCADE"), nullable=False)
+
+    section_id = Column(String(500), nullable=False)
+    heading_text = Column(Text, nullable=False, server_default="", default="")
+    heading_level = Column(SmallInteger, nullable=False, server_default="2", default=2)
+    ordinal = Column(Integer, nullable=False, server_default="0", default=0)
+
+    content_hash = Column(String(64), nullable=False, server_default="", default="")
+    last_generated_hash = Column(String(64), nullable=False, server_default="", default="")
+    human_edited = Column(Boolean, nullable=False, server_default="false", default=False)
+    edited_content = Column(Text, nullable=True)
+
+    status = Column(String(24), nullable=False, server_default="new", default="new")
+    control_ids = Column(JSONB, nullable=False, server_default="[]", default=list)
+    edited_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    edited_at = Column(DateTime(timezone=False), nullable=True)
+
+    document = relationship("GeneratedDocument", back_populates="sections")
+    edited_by = relationship("User", foreign_keys=[edited_by_user_id])
+
+    def __repr__(self):
+        return f"<DocumentSection(section_id={self.section_id!r}, status={self.status})>"
+
+
+class DocumentTransition(Base):
+    """Append-only lifecycle transition log.
+
+    Never updated, never deleted. Mirrored into ``AuditLog`` so document
+    approvals surface on the existing Audit Log page with no new UI.
+    """
+    __tablename__ = "document_transitions"
+    __table_args__ = (
+        Index("ix_document_transitions_doc", "document_id", "created_at"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    document_id = Column(UUID(as_uuid=True), ForeignKey("generated_documents.id", ondelete="CASCADE"), nullable=False)
+    from_status = Column(String(20), nullable=True)
+    to_status = Column(String(20), nullable=False)
+    actor_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    actor_email = Column(String(255), nullable=True)
+    reason = Column(Text, nullable=True)
+    trigger = Column(String(20), nullable=False, server_default="manual", default="manual")
+    created_at = Column(DateTime(timezone=False), server_default=func.now())
+
+    document = relationship("GeneratedDocument", back_populates="transitions")
+    actor = relationship("User", foreign_keys=[actor_user_id])
+
+    def __repr__(self):
+        return f"<DocumentTransition({self.from_status} -> {self.to_status})>"
+
+
+class DocGenSettings(Base):
+    """Per-organisation document generation settings and licence acknowledgement.
+
+    Two independent gates, because Tier 1 and Tier 2/3 are not the same licence
+    question. Tier 1 tabular output lists SCF IDs and verbatim control names
+    beside the organisation's own status -- arguably a compilation, which
+    CC BY-ND permits. Tier 2/3 has a language model write prose *from* SCF
+    content, which is derivative. Gating both behind one switch would surrender
+    the free-licence position for no benefit.
+
+    The acknowledgement columns are write-once and are never cleared on
+    disable: disabling the feature does not un-derive documents that already
+    exist.
+    """
+    __tablename__ = "doc_gen_settings"
+    __table_args__ = (
+        CheckConstraint(
+            "NOT (enabled AND licence_acknowledged_at IS NULL)",
+            name="ck_doc_gen_settings_enabled_requires_acknowledgement",
+        ),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id = Column(
+        UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False, unique=True,
+    )
+
+    enabled = Column(Boolean, nullable=False, server_default="false", default=False)
+    derivative_generators_enabled = Column(Boolean, nullable=False, server_default="false", default=False)
+
+    licence_acknowledged_at = Column(DateTime(timezone=False), nullable=True)
+    licence_acknowledged_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    licence_acknowledged_by_email = Column(String(255), nullable=True)
+    licence_text_version = Column(String(20), nullable=True)
+    acknowledged_ip = Column(String(64), nullable=True)
+
+    enabled_at = Column(DateTime(timezone=False), nullable=True)
+    enabled_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    disabled_at = Column(DateTime(timezone=False), nullable=True)
+
+    daily_generation_limit = Column(Integer, nullable=False, server_default="25", default=25)
+    created_at = Column(DateTime(timezone=False), server_default=func.now())
+    updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now())
+
+    organization = relationship("Organization")
+    acknowledged_by = relationship("User", foreign_keys=[licence_acknowledged_by_user_id])
+
+    @property
+    def licence_acknowledged(self) -> bool:
+        return self.licence_acknowledged_at is not None
+
+    def __repr__(self):
+        return f"<DocGenSettings(org={self.organization_id}, enabled={self.enabled})>"

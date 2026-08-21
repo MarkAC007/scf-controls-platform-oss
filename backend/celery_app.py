@@ -65,6 +65,7 @@ celery_app = Celery(
         "tasks_reconciliation",
         "tasks_updates",
         "tasks_automation",
+        "tasks_doc_gen",
         "services.composite_service",
     ],
 )
@@ -179,6 +180,12 @@ celery_app.conf.update(
         "tasks_automation.generate_evidence_tasks_task": {"queue": "default"},
         "tasks_automation.notify_due_tasks_task": {"queue": "default"},
         "tasks_automation.notify_overdue_tasks_task": {"queue": "default"},
+        # Document generation routes to default for the same reason as the
+        # automation tasks above: a dedicated queue would be consumed by the
+        # compose worker's -Q list but not by the AWS/GCP workers, which start
+        # with no -Q at all. A queue that works locally and is silently dead in
+        # production is worse than sharing default.
+        "doc_gen.generate": {"queue": "default"},
         "cdm.classify_intent": {"queue": "cdm_intent"},
         # Catalog upgrade flow (WP1b). catalog.import routes itself via its
         # task decorator (queue="catalog"); the upgrade tasks route here.

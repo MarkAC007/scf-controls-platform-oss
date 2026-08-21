@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react'
 
-type Tab = 'dashboard' | 'capability-posture' | 'library' | 'scoping' | 'evidence' | 'mapping-matrix' | 'tasks' | 'systems' | 'users' | 'consultant-portal' | 'risk-register' | 'vendors' | 'settings' | 'webhooks' | 'audit-log' | 'engagements' | 'cdm' | 'document-map' | 'platform-catalog' | 'platform-tenants' | 'catalog-changelog'
+type Tab = 'dashboard' | 'capability-posture' | 'library' | 'scoping' | 'evidence' | 'mapping-matrix' | 'tasks' | 'systems' | 'users' | 'consultant-portal' | 'risk-register' | 'vendors' | 'settings' | 'webhooks' | 'audit-log' | 'engagements' | 'cdm' | 'document-map' | 'documents' | 'platform-catalog' | 'platform-tenants' | 'catalog-changelog'
 
 interface SidebarProps {
   activeTab: Tab
@@ -144,6 +144,15 @@ const Icons = {
       <path d="M8 17h5" />
     </svg>
   ),
+  documents: (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M15 2H8a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7z" />
+      <polyline points="15 2 15 7 20 7" />
+      <path d="M4 6v14a2 2 0 0 0 2 2h9" />
+      <path d="M10 12h5" />
+      <path d="M10 16h3" />
+    </svg>
+  ),
   documentMap: (
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2z" />
@@ -235,6 +244,7 @@ const navSections: NavSection[] = [
     items: [
       { id: 'cdm', label: 'Control Documents', icon: Icons.cdm },
       { id: 'document-map', label: 'Document Map', icon: Icons.documentMap },
+      { id: 'documents', label: 'Generated Documents', icon: Icons.documents },
     ],
   },
   {

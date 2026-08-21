@@ -32,6 +32,12 @@ jobs:
         # floating tags, and the new diff-scoped gate would flag this very line.
         # The rest of this file still uses @v5 — pre-existing, not touched here.
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          # Full history so the release-notes gate below can resolve a merge base.
+          # Without this the checkout is shallow, `base...HEAD` has no merge base,
+          # and that gate silently passes every PR. semgrep.yml sets the same value
+          # for the same reason.
+          fetch-depth: 0
 
       - name: Assert every mirrored version matches webclient/package.json
         run: |
@@ -101,8 +107,21 @@ jobs:
         run: |
           set -euo pipefail
 
-          git fetch --no-tags --depth=1 origin "$BASE_REF"
-          if ! git diff --name-only "origin/${BASE_REF}...HEAD" | grep -qx 'webclient/package.json'; then
+          # No --depth here, and fetch-depth: 0 on the checkout above: the three-dot
+          # form needs a merge base and a shallow repository does not have one.
+          git fetch --no-tags origin "$BASE_REF"
+
+          # Assigned to a variable rather than piped straight into grep, because in a
+          # pipeline the exit status belongs to the LAST command. With the shallow
+          # checkout the diff aborted with "no merge base", `set -euo pipefail` saw
+          # only grep's status, `if !` inverted the failed grep to true, and the step
+          # announced "version file untouched" and exited 0 — so this gate had been
+          # failing OPEN on every release PR. v0.17.1 shipped from a RELEASE_META.yml
+          # whose summary was empty, which is the text the in-app update panel and
+          # upgrade-manifest.json carry to operators. A bare assignment fails closed:
+          # if the diff cannot run, set -e stops the job instead of waving it through.
+          CHANGED="$(git diff --name-only "origin/${BASE_REF}...HEAD")"
+          if ! printf '%s\n' "$CHANGED" | grep -qx 'webclient/package.json'; then
             echo "version file untouched — release notes not required."
             exit 0
           fi

@@ -1,0 +1,160 @@
+# Document generator registry.
+#
+# Declarative because the licence position is per-generator, and a licence
+# position that lives in scattered Python constructors is a licence position
+# nobody can audit. One file, greppable, reviewable by someone who does not
+# read Python.
+#
+# is_derivative drives the gate in services/doc_gen/licence.py:
+#   false — renders SCF identifiers and names into tables. Arguably a
+#           compilation. Gated only by the feature toggle.
+#   true  — a language model writes prose from SCF content. Unambiguously
+#           derivative. Gated additionally by derivative_generators_enabled.
+#
+# domain_scoped generators produce one document per SCF domain and store the
+# domain in generated_documents.domain_id. Everything else stores '' there, so
+# the unique index actually constrains (Postgres treats NULLs as distinct).
+
+version: 1
+
+generators:
+  # ── Tier 1 — deterministic, data-driven ──────────────────────────────────
+  - name: soa
+    display_name: Statement of Applicability
+    tier: 1
+    document_type: soa
+    is_derivative: false
+    domain_scoped: false
+    renderer: tier1.render_soa
+    filename: statement-of-applicability.md
+    description: >-
+      In-scope controls with implementation status, owner, maturity level and
+      justification, grouped by domain.
+    requires:
+      controls: true
+      evidence: false
+      risks: false
+      systems: false
+
+  - name: control-status
+    display_name: Control Status Report
+    tier: 1
+    document_type: report
+    is_derivative: false
+    domain_scoped: false
+    renderer: tier1.render_control_status
+    filename: control-status-report.md
+    description: >-
+      Implementation progress across every scoped control, with per-domain
+      completion rates and an exceptions list.
+    requires:
+      controls: true
+      evidence: false
+      risks: false
+      systems: false
+
+  - name: risk-treatment
+    display_name: Risk Treatment Plan
+    tier: 1
+    document_type: report
+    is_derivative: false
+    domain_scoped: false
+    renderer: tier1.render_risk_treatment
+    filename: risk-treatment-plan.md
+    description: >-
+      Identified risks with inherent and residual scores, treatment decisions,
+      owners and due dates.
+    requires:
+      controls: true
+      evidence: false
+      risks: true
+      systems: false
+
+  - name: evidence-schedule
+    display_name: Evidence Schedule
+    tier: 1
+    document_type: report
+    is_derivative: false
+    domain_scoped: false
+    renderer: tier1.render_evidence_schedule
+    filename: evidence-schedule.md
+    description: >-
+      Evidence artefacts required by the scoped controls, with collection
+      method, owner, frequency and current tracking state.
+    requires:
+      controls: true
+      evidence: true
+      risks: false
+      systems: false
+
+  - name: maturity-report
+    display_name: Maturity Assessment Report
+    tier: 1
+    document_type: report
+    is_derivative: false
+    domain_scoped: false
+    renderer: tier1.render_maturity_report
+    filename: maturity-assessment-report.md
+    description: >-
+      Capability maturity distribution by domain, with the gap to target and
+      the controls holding each domain back.
+    requires:
+      controls: true
+      evidence: false
+      risks: false
+      systems: false
+
+  # ── Tier 2 — AI-augmented, derivative ────────────────────────────────────
+  - name: policy
+    display_name: Domain Policy
+    tier: 2
+    document_type: policy
+    is_derivative: true
+    domain_scoped: true
+    prompt: policy.md
+    filename: "policy-{domain}.md"
+    title: "{domain_name} Policy"
+    description: >-
+      Formal security policy for one SCF domain, written from the domain
+      principle, control descriptions and assessment objectives.
+    requires:
+      controls: true
+      evidence: false
+      risks: false
+      systems: false
+
+  - name: procedure
+    display_name: Domain Procedure
+    tier: 2
+    document_type: procedure
+    is_derivative: true
+    domain_scoped: true
+    prompt: procedure.md
+    filename: "procedure-{domain}.md"
+    title: "{domain_name} Procedure"
+    description: >-
+      Step-by-step operational procedure implementing the domain policy, with
+      responsibilities, triggers and records.
+    requires:
+      controls: true
+      evidence: true
+      risks: false
+      systems: false
+
+  - name: standard
+    display_name: Domain Standard
+    tier: 2
+    document_type: standard
+    is_derivative: true
+    domain_scoped: true
+    prompt: standard.md
+    filename: "standard-{domain}.md"
+    title: "{domain_name} Standard"
+    description: >-
+      Technical standard specifying the mandatory configuration and control
+      parameters for one domain.
+    requires:
+      controls: true
+      evidence: false
+      risks: false
+      systems: false

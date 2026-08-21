@@ -43,6 +43,8 @@ import AuditLogPage from './components/AuditLogPage'
 import EngagementsPage from './components/EngagementsPage'
 import CDMWorkspace from './components/CDMWorkspace'
 import DocumentMap from './components/DocumentMap'
+import DocumentsPage from './components/documents/DocumentsPage'
+import DocGenSettingsCard from './components/documents/DocGenSettingsCard'
 import CatalogUpgradePage from './components/platform/CatalogUpgradePage'
 import TenantReconciliationBoard from './components/platform/TenantReconciliationBoard'
 import CatalogChangelogPage from './components/CatalogChangelogPage'
@@ -60,7 +62,7 @@ import InviteAcceptance from './components/InviteAcceptance'
 import OrgSwitcher from './components/OrgSwitcher'
 import type { ClientSummary, ConsultantInvite } from './types'
 
-type Tab = 'dashboard' | 'capability-posture' | 'library' | 'scoping' | 'evidence' | 'mapping-matrix' | 'tasks' | 'systems' | 'users' | 'consultant-portal' | 'risk-register' | 'vendors' | 'settings' | 'webhooks' | 'audit-log' | 'engagements' | 'cdm' | 'document-map' | 'platform-catalog' | 'platform-tenants' | 'catalog-changelog'
+type Tab = 'dashboard' | 'capability-posture' | 'library' | 'scoping' | 'evidence' | 'mapping-matrix' | 'tasks' | 'systems' | 'users' | 'consultant-portal' | 'risk-register' | 'vendors' | 'settings' | 'webhooks' | 'audit-log' | 'engagements' | 'cdm' | 'document-map' | 'documents' | 'platform-catalog' | 'platform-tenants' | 'catalog-changelog'
 
 function AppContent() {
   const { isAuthenticated, authReady, user, isPlatformAdmin } = useAuth()
@@ -111,6 +113,8 @@ function AppContent() {
   }, [queryClient, currentOrg?.id])
 
   const [selectedId, setSelectedId] = useState<string | undefined>(undefined)
+  // One-shot "navigate me to this control" signal for ControlScoping.
+  const [controlNavTarget, setControlNavTarget] = useState<string | undefined>(undefined)
   const [activeTab, setActiveTab] = useState<Tab>('dashboard')
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   // OSS onboarding: null = not yet checked, false = empty (show upload gate), true = seeded
@@ -144,6 +148,17 @@ function AppContent() {
     // Store evidence ID in sessionStorage for EvidenceReview to pick up
     sessionStorage.setItem('navigate_to_evidence', evidenceId)
     setActiveTab('evidence')
+  }
+
+  // Handler for navigating to a specific control from the dashboard work
+  // queue, a risk assessment, or a notification. `controlNavTarget` is the
+  // "take me there" signal — distinct from `selectedId`, which only remembers
+  // the last selection. ControlScoping clears it once acted on, so arriving
+  // at Scoping later by other means does not re-trigger the search.
+  const handleNavigateToControl = (scfId: string) => {
+    setSelectedId(scfId)
+    setControlNavTarget(scfId)
+    setActiveTab('scoping')
   }
 
   // Handler for invite acceptance completion
@@ -470,6 +485,7 @@ function AppContent() {
         activeTab={activeTab}
         onTabChange={setActiveTab}
         onNavigateToEvidence={handleNavigateToEvidence}
+        onNavigateToControl={handleNavigateToControl}
         isConsultant={isConsultant === true}
         clientOrgIds={clientOrgIds}
         onOrgSwitch={(org) => {
@@ -486,10 +502,7 @@ function AppContent() {
               scopingData={scopingData}
               onScopingDataChange={setScopingData}
               onNavigateToEvidence={handleNavigateToEvidence}
-              onNavigateToControl={(scfId) => {
-                setSelectedId(scfId)
-                setActiveTab('scoping')
-              }}
+              onNavigateToControl={handleNavigateToControl}
               onNavigateToScoping={() => setActiveTab('scoping')}
             />
           )}
@@ -519,6 +532,8 @@ function AppContent() {
               erlData={erlData}
               frameworkNames={frameworkNames}
               initialSelectedId={selectedId}
+              navigateToId={controlNavTarget}
+              onNavigationConsumed={() => setControlNavTarget(undefined)}
             />
           )}
           {activeTab === 'evidence' && scopingData && (
@@ -547,10 +562,7 @@ function AppContent() {
           {activeTab === 'risk-register' && scopingData && (
             <RiskDashboard
               organizationId={scopingData.organizationId!}
-              onNavigateToControl={(scfId) => {
-                setSelectedId(scfId)
-                setActiveTab('scoping')
-              }}
+              onNavigateToControl={handleNavigateToControl}
             />
           )}
           {activeTab === 'vendors' && scopingData && (
@@ -621,6 +633,12 @@ function AppContent() {
               onOpenDocuments={() => setActiveTab('cdm')}
             />
           )}
+          {activeTab === 'documents' && scopingData && (
+            <DocumentsPage
+              organizationId={scopingData.organizationId!}
+              onOpenSettings={() => setActiveTab('settings')}
+            />
+          )}
           {activeTab === 'audit-log' && currentOrg && (
             <AuditLogPage organizationId={currentOrg.id} />
           )}
@@ -642,6 +660,9 @@ function AppContent() {
                 organizationId={scopingData.organizationId!}
               />
               <RiskProfileSettings
+                organizationId={scopingData.organizationId!}
+              />
+              <DocGenSettingsCard
                 organizationId={scopingData.organizationId!}
               />
               <BackupRestore

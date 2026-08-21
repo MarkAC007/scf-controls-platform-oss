@@ -164,8 +164,18 @@ class TestRevisionChain:
             assert module.revision == revision, filename
             assert module.down_revision == down_revision, filename
 
-    def test_catupg006_is_the_single_alembic_head(self):
-        revisions: set[str] = set()
+    def test_there_is_a_single_alembic_head_descending_from_catupg006(self):
+        """One head, and catupg006 still on the path to it.
+
+        The invariant this guards is that ``alembic upgrade head`` is
+        unambiguous — two heads means a branch and a failed deploy. The head's
+        *name* is deliberately not pinned: every migration added after this one
+        renames it, and a test that must be edited to add a migration stops
+        being a guard and becomes a formality. What is pinned is that the
+        catalog-upgrade chain this file covers is still an ancestor of the head
+        rather than stranded on an abandoned branch.
+        """
+        parents: dict[str, set[str]] = {}
         referenced: set[str] = set()
         for path in MIGRATIONS_DIR.glob("*.py"):
             source = path.read_text()
@@ -174,12 +184,31 @@ class TestRevisionChain:
             )
             if not rev_match:
                 continue
-            revisions.add(rev_match.group(1))
+            revision = rev_match.group(1)
             down_match = re.search(r"^down_revision[^=]*=\s*(.+)$", source, re.M)
-            if down_match:
-                referenced.update(re.findall(r"['\"]([^'\"]+)['\"]", down_match.group(1)))
-        heads = revisions - referenced
-        assert heads == {"catupg006"}, f"expected single head catupg006, got {heads}"
+            downs = set(
+                re.findall(r"['\"]([^'\"]+)['\"]", down_match.group(1))
+            ) if down_match else set()
+            parents[revision] = downs
+            referenced.update(downs)
+
+        heads = set(parents) - referenced
+        assert len(heads) == 1, f"expected exactly one alembic head, got {sorted(heads)}"
+
+        head = heads.pop()
+        ancestry: set[str] = set()
+        frontier = [head]
+        while frontier:
+            revision = frontier.pop()
+            if revision in ancestry:
+                continue
+            ancestry.add(revision)
+            frontier.extend(parents.get(revision, ()))
+
+        assert "catupg006" in ancestry, (
+            f"catupg006 is not an ancestor of head {head!r} — the catalog-upgrade "
+            "chain has been stranded on a branch"
+        )
 
 
 # ---------------------------------------------------------------------------
