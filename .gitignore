@@ -89,3 +89,11 @@ backend/ingest_real_*.py
 webclient/test-results/
 webclient/playwright-report/
 webclient/e2e/screenshots/
+
+# version-bump.yml scratch output. The bump job runs `git add -A`, so anything it
+# leaves in the repo root is committed into the release PR and then published to
+# the public OSS mirror by prepare-oss.sh, which only strips directories.
+assessment.md
+commits.tsv
+commits.raw
+labels.txt

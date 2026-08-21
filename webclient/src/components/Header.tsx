@@ -6,12 +6,13 @@ import OrgSwitcher from './OrgSwitcher'
 import { Organization, useOrganization } from '../contexts/OrganizationContext'
 import { useOrgLogo } from '../hooks/useOrgLogo'
 
-type Tab = 'dashboard' | 'capability-posture' | 'library' | 'scoping' | 'evidence' | 'mapping-matrix' | 'tasks' | 'systems' | 'users' | 'consultant-portal' | 'risk-register' | 'vendors' | 'settings' | 'webhooks' | 'audit-log' | 'engagements' | 'cdm' | 'document-map' | 'platform-catalog' | 'platform-tenants' | 'catalog-changelog'
+type Tab = 'dashboard' | 'capability-posture' | 'library' | 'scoping' | 'evidence' | 'mapping-matrix' | 'tasks' | 'systems' | 'users' | 'consultant-portal' | 'risk-register' | 'vendors' | 'settings' | 'webhooks' | 'audit-log' | 'engagements' | 'cdm' | 'document-map' | 'documents' | 'platform-catalog' | 'platform-tenants' | 'catalog-changelog'
 
 interface HeaderProps {
   activeTab: Tab
   onTabChange: (tab: Tab) => void
   onNavigateToEvidence?: (evidenceId: string) => void
+  onNavigateToControl?: (controlId: string) => void
   isConsultant?: boolean
   clientOrgIds?: string[]
   onOrgSwitch?: (org: Organization) => void
@@ -24,6 +25,7 @@ export default function Header({
   activeTab,
   onTabChange,
   onNavigateToEvidence,
+  onNavigateToControl,
   isConsultant,
   clientOrgIds,
   onOrgSwitch,
@@ -94,8 +96,14 @@ export default function Header({
           <div className="header-user-section">
             <NotificationBell
               onNavigateToEvidence={onNavigateToEvidence}
-              onNavigateToControl={() => {
-                onTabChange('scoping');
+              onNavigateToControl={(controlId) => {
+                // Forward the control id — dropping it here left control
+                // notifications landing on an unfiltered scoping list.
+                if (onNavigateToControl) {
+                  onNavigateToControl(controlId);
+                } else {
+                  onTabChange('scoping');
+                }
               }}
               onNavigateToTask={() => onTabChange('tasks')}
               onNavigateToChangelog={() => onTabChange('catalog-changelog')}

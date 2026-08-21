@@ -39,6 +39,16 @@ interface ControlScopingProps {
   erlData?: ERLFile
   frameworkNames?: FrameworkNameMap
   initialSelectedId?: string
+  /**
+   * A control the user asked to be taken to from elsewhere in the app (the
+   * dashboard work queue, a risk assessment, a notification). Unlike
+   * `initialSelectedId` — which merely restores a previous selection — this
+   * means "surface this control now", so we search for it and drop the
+   * filters that would hide it. Consumed once, then cleared by the parent.
+   */
+  navigateToId?: string
+  /** Called once `navigateToId` has been acted on, so the parent can clear it. */
+  onNavigationConsumed?: () => void
 }
 
 // Enriched control type for display (extends API response with resolved data)
@@ -66,6 +76,10 @@ interface EnrichedScopedControl extends Omit<ScopedControlWithCatalog, 'cmm_matu
 
 const ITEM_HEIGHT = 80 // Height of each scoping card in pixels
 const DEFAULT_LIST_HEIGHT = 600
+// How many extra pages to pull while hunting for an inbound navigation
+// target before giving up. Bounded so a stale control id cannot drive an
+// unbounded fetch loop.
+const MAX_NAV_PAGE_FETCHES = 5
 
 // Internal SCF mappings to exclude from framework display
 // These are risk/threat codes and internal SCF metadata, not external compliance frameworks
@@ -123,7 +137,9 @@ export default function ControlScoping({
   organizationId,
   erlData = {},
   frameworkNames = {},
-  initialSelectedId
+  initialSelectedId,
+  navigateToId,
+  onNavigationConsumed
 }: ControlScopingProps) {
   const queryClient = useQueryClient()
   // Internal scoping data — React Query is primary read source for the list,
@@ -162,6 +178,13 @@ export default function ControlScoping({
   const [listHeight, setListHeight] = useState(DEFAULT_LIST_HEIGHT)
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const listContainerRef = useRef<HTMLDivElement>(null)
+  const listRef = useRef<List>(null)
+  // Bounds the page-walk when resolving an inbound navigation target.
+  const navPageFetchesRef = useRef(0)
+  // Set while an inbound `navigateToId` is still being brought into the
+  // result set. Suppresses the "clear stale selection" effect below, which
+  // would otherwise wipe the target before its search results land.
+  const [pendingNavId, setPendingNavId] = useState<string | undefined>(navigateToId)
   const [localFormState, setLocalFormState] = useState<Partial<ScopedControl>>({})
   const [showFrameworkModal, setShowFrameworkModal] = useState(false)
   const [activeTab, setActiveTab] = useState<'details' | 'notes' | 'assignments' | 'history' | 'knowledge-base'>('details')
@@ -177,6 +200,35 @@ export default function ControlScoping({
     }
   }, [initialSelectedId])
 
+  // Act on an inbound "take me to this control" request. The list is
+  // server-side filtered and paginated, so the target is usually absent from
+  // the loaded page — searching for it by id is what actually makes it
+  // reachable. Filters are reset for the same reason: an in-scope-only or
+  // domain-filtered list would hide it. This runs only for `navigateToId`,
+  // never for a plain selection change, so a filter set the user configured
+  // themselves is left alone.
+  useEffect(() => {
+    if (!navigateToId) return
+    navPageFetchesRef.current = 0
+    setPendingNavId(navigateToId)
+    setSelectedId(navigateToId)
+    setSearchQuery(navigateToId)
+    // scope_status structurally hides out-of-scope controls and a work-queue
+    // or notification target may be either, so this one always has to relax.
+    setScopeFilter('all')
+    // Setting a filter to the value it already holds is a React bail-out, so
+    // these cost nothing in the common case where none were narrowed.
+    setDomainFilter('all')
+    setCsfFilter('all')
+    setWeightFilter('all')
+    setFrameworkFilter('all')
+    // Deliberately NOT calling onNavigationConsumed() here: under StrictMode
+    // React mounts, runs effects, unmounts and remounts. Clearing the parent
+    // during the first mount left the remount with no target and no seeded
+    // search — the original bug, reintroduced. The parent is told once the
+    // navigation has actually resolved instead.
+  }, [navigateToId])
+
   // Debounce search input
   const debouncedSearch = useDebounce(searchQuery, 300)
 
@@ -190,6 +242,7 @@ export default function ControlScoping({
     hasNextPage,
     isFetchingNextPage,
     isLoading,
+    isFetching,
     isError,
     refetch,
   } = useScopedControlsQuery({
@@ -264,6 +317,11 @@ export default function ControlScoping({
 
   // Clear selection if selected control is not in loaded results
   useEffect(() => {
+    // An inbound navigation target is legitimately absent from the loaded
+    // page until its search results arrive. Clearing here is exactly what
+    // broke work-queue navigation: the selection was wiped on arrival, so
+    // the user landed on an empty detail pane.
+    if (pendingNavId) return
     if (selectedId && controls.length > 0) {
       const stillInResults = controls.some(c => c.scf_id === selectedId)
       if (!stillInResults) {
@@ -272,7 +330,57 @@ export default function ControlScoping({
     } else if (selectedId && controls.length === 0) {
       setSelectedId(undefined)
     }
-  }, [controls, selectedId])
+  }, [controls, selectedId, pendingNavId])
+
+  // Resolve a pending inbound navigation once its control lands in the
+  // results, and scroll the virtualised list to it. If the search for that
+  // exact id settles with no match, give up — otherwise `pendingNavId` would
+  // stay set and permanently disable the clear-selection effect above.
+  useEffect(() => {
+    if (!pendingNavId) return
+    // Only trust results from the query that actually searched for this id.
+    // Filters commit immediately but the search is debounced, so there is an
+    // intermediate result set (relaxed filters, previous search text) that
+    // can contain the row by coincidence and is about to be replaced.
+    if (debouncedSearch !== pendingNavId) return
+    if (isLoading || isFetching || isFetchingNextPage) return
+
+    const index = controls.findIndex(c => c.scf_id === pendingNavId)
+    if (index !== -1) {
+      setSelectedId(pendingNavId)
+      listRef.current?.scrollToItem(index, 'smart')
+      setPendingNavId(undefined)
+      onNavigationConsumed?.()
+      return
+    }
+
+    // Backend search is a substring match across id/name/description ordered
+    // by scf_id, so the exact control can legitimately sit past the first
+    // page behind other controls that merely mention it. Walk forward a
+    // bounded number of pages before concluding it is not there.
+    if (hasNextPage && navPageFetchesRef.current < MAX_NAV_PAGE_FETCHES) {
+      navPageFetchesRef.current += 1
+      fetchNextPage()
+      return
+    }
+
+    // Genuinely not found (deleted control, stale notification reference).
+    // Release the pending state so the clear-selection effect above is not
+    // disabled forever.
+    setPendingNavId(undefined)
+    setSelectedId(undefined)
+    onNavigationConsumed?.()
+  }, [
+    controls,
+    pendingNavId,
+    debouncedSearch,
+    isLoading,
+    isFetching,
+    isFetchingNextPage,
+    hasNextPage,
+    fetchNextPage,
+    onNavigationConsumed,
+  ])
 
   // Get stats (based on server totals for in_scope vs API response)
   const stats = useMemo(() => {
@@ -686,6 +794,7 @@ export default function ControlScoping({
           ) : (
             <>
               <List
+                ref={listRef}
                 height={listHeight}
                 itemCount={controls.length}
                 itemSize={ITEM_HEIGHT}
