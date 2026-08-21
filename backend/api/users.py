@@ -9,6 +9,7 @@ SUBSCRIPTION: Team member limits
 from fastapi import APIRouter, Depends, HTTPException, Query, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
+from datetime import datetime, timezone
 from typing import List, Optional
 from uuid import UUID
 import logging
@@ -17,6 +18,8 @@ from sqlalchemy.orm import joinedload
 
 from database import get_db
 from auth import require_auth, require_org_role, OrgMembership, User
+from services.service_account import get_service_account_id
+from services.single_tenant import is_single_tenant_active
 from models import User as DBUser, OrganizationMember, Organization, OrganizationInvite, ApiKey
 from schemas import (
     OrganizationMemberCreate,
@@ -40,6 +43,10 @@ from services import org_invite as org_invite_service
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["users"])
+
+# Placeholder creation time for the static master key, which has no user row of
+# its own when the service account has not been seeded (non-single-tenant).
+_API_KEY_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 
 @router.get("/api/organizations/{org_id}/members", response_model=List[OrganizationMemberResponse])
@@ -266,16 +273,38 @@ async def get_current_user(
 ):
     """Get current authenticated user's details."""
     if current_user.auth_method == "api_key":
+        # The static master key has no human user row of its own; it is pinned to
+        # the seeded service account. In single-tenant mode that principal already
+        # administers the single organisation (see auth.require_org_role and
+        # auth.get_accessible_org_ids, which both grant on is_single_tenant_active),
+        # so report platform-admin here too — otherwise the web app hides admin
+        # surfaces the API would happily serve. Fail-closed: in any multi-tenant
+        # deployment is_single_tenant_active() is False and this reports False.
+        #
+        # created_at must be a real datetime — UserResponse requires it, and
+        # returning None made this endpoint 500 for every API-key session.
+        service_account_id = get_service_account_id()
+        db_user = None
+        if service_account_id:
+            result = await db.execute(
+                select(DBUser).where(DBUser.id == service_account_id)
+            )
+            db_user = result.scalar_one_or_none()
+
         # API key users have no subscription model — return null subscription
         return {
-            "id": "00000000-0000-0000-0000-000000000000",
-            "google_sub": "api_user",
+            "id": db_user.id if db_user else UUID(int=0),
+            "google_sub": db_user.google_sub if db_user else "api_user",
             "email": current_user.email,
             "display_name": current_user.name,
-            "created_at": None,
-            "last_login_at": None,
+            # Stable sentinel, not now(): the service-account row is only seeded in
+            # single-tenant mode, and a fresh timestamp per call would make this
+            # endpoint non-idempotent and report an ever-zero account age.
+            "created_at": db_user.created_at if db_user else _API_KEY_EPOCH,
+            "last_login_at": db_user.last_login_at if db_user else None,
             "email_notifications_enabled": False,
             "notification_frequency": "immediate",
+            "is_platform_admin": is_single_tenant_active(),
             "subscription": None,
         }
 

@@ -1,14 +1,9 @@
-# v0.17.0
-
-## What's new
-
-- Auto-draft OSS release notes in Propose Version Bump (PR 758)
+# v0.17.1
 
 ## Fixes and improvements
 
-- Correct docs-site claims against verified app behaviour
-- Backfill end-user docs for recent feature PRs
+- Stop /api/users/me 500ing for static API-key sessions (PR 760)
 
 ## Upgrading
 
-- Run `scripts/upgrade.sh v0.17.0` (read `UPGRADING.md` first).
+- Run `scripts/upgrade.sh v0.17.1` (read `UPGRADING.md` first).

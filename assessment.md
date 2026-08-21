@@ -2,18 +2,12 @@
 
 | | |
 |---|---|
-| last published release | `0.16.2` |
-| staged in package.json | `0.16.2` |
-| commits assessed | 4 |
-| derived level | **minor** (new feature) |
-| target version | **0.17.0** |
-
-**Features**
-
-- `feat(release): auto-draft OSS release notes in Propose Version Bump (#758)`
+| last published release | `0.17.0` |
+| staged in package.json | `0.17.0` |
+| commits assessed | 1 |
+| derived level | **patch** (no features or breaking changes) |
+| target version | **0.17.1** |
 
 **Other**
 
-- `docs: correct docs-site claims against verified app behaviour`
-- `docs(docs-site): backfill end-user docs for recent feature PRs`
-- `Merge pull request #756 from MarkAC007/chore/bump-v0.16.2`
+- `fix(auth): stop /api/users/me 500ing for static API-key sessions (#760)`
