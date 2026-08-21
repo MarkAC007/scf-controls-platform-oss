@@ -195,6 +195,9 @@ def build_user_prompt(
 
     return template.format(
         org_name=ctx.name,
+        # Prompt templates render this inline, so an unset industry becomes a
+        # neutral phrase rather than the literal "None" leaking into an LLM prompt.
+        industry=ctx.industry or "not specified",
         created_date=created_date,
         year=year,
         next_review_date=next_review,

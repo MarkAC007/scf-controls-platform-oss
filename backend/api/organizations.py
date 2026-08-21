@@ -301,6 +301,9 @@ async def get_organization_settings(
         owner_teams=settings.get("owner_teams", []),
         is_trust_portal_enabled=settings.get("is_trust_portal_enabled", False),
         trust_portal_description=settings.get("trust_portal_description"),
+        # name comes off the column, not the JSON blob (single source of truth)
+        name=organization.name,
+        industry=settings.get("industry"),
     )
 
 
@@ -325,6 +328,7 @@ async def update_organization_settings(
 
     # Capture old settings for audit trail
     old_settings = dict(organization.settings or {})
+    old_name = organization.name
 
     current_settings = dict(organization.settings or {})
     update = settings_data.model_dump(exclude_unset=True)
@@ -335,8 +339,18 @@ async def update_organization_settings(
         current_settings["is_trust_portal_enabled"] = update["is_trust_portal_enabled"]
     if "trust_portal_description" in update:
         current_settings["trust_portal_description"] = update["trust_portal_description"]
+    if "industry" in update:
+        current_settings["industry"] = update["industry"]
 
     organization.settings = current_settings
+
+    # `name` is deliberately NOT written into the settings JSON. It routes to the
+    # Organization.name column, which doc-gen, the app header, org listings and the
+    # consultant portal already read. Slug is left untouched on purpose — renaming an
+    # organisation must not change its URL identity, and the slug-conflict path on
+    # PATCH /{org_id} is not wanted here.
+    if "name" in update and update["name"] is not None:
+        organization.name = update["name"]
 
     # Capture new settings and log changes
     new_settings = dict(organization.settings or {})
@@ -344,8 +358,9 @@ async def update_organization_settings(
         db=db, organization_id=org_id, entity_type='organization',
         entity_id=organization.id, action='update',
         changed_by_user_id=UUID(membership.user.db_id) if membership.user and membership.user.db_id else None,
-        old_values={'settings': old_settings}, new_values={'settings': new_settings},
-        tracked_fields={'settings'},
+        old_values={'settings': old_settings, 'name': old_name},
+        new_values={'settings': new_settings, 'name': organization.name},
+        tracked_fields={'settings', 'name'},
         action_source=detect_action_source(request),
         request_id=get_request_id(request),
     )
@@ -357,6 +372,8 @@ async def update_organization_settings(
         owner_teams=current_settings.get("owner_teams", []),
         is_trust_portal_enabled=current_settings.get("is_trust_portal_enabled", False),
         trust_portal_description=current_settings.get("trust_portal_description"),
+        name=organization.name,
+        industry=current_settings.get("industry"),
     )
 
 

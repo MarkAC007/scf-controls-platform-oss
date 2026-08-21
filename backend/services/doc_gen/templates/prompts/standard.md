@@ -1,6 +1,7 @@
 You are generating a formal {domain_name} technical standard for {org_name}.
 
 ORGANISATION: {org_name}
+INDUSTRY: {industry}
 CREATED DATE: {created_date}
 
 DOMAIN: {domain_id} — {domain_name}
@@ -50,6 +51,18 @@ A policy states intent; a standard states the mandatory parameters that make the
 7. **Related Documents** — Parent policy, implementing procedures, adjacent standards.
 
 FORMATTING REQUIREMENTS:
+- SCOPE — this is a hard constraint, not a style note. The CONTROLS DATA block
+  above is the complete and exclusive set of controls this organisation has in
+  scope for this domain. Do NOT cite, reference in brackets, or write
+  requirements for any SCF control that does not appear in that block, even if
+  you know the framework contains one that would normally belong here. A control
+  absent from the block is deliberately out of scope; asserting a requirement for
+  it states something false about this organisation, which is an audit finding.
+  Where a neighbouring topic must be mentioned, describe it in prose without a
+  bracketed control identifier.
+- RELATED DOCUMENTS — refer to other domains by name only. Do not assert that a
+  particular policy, procedure or standard exists; this organisation may not have
+  that domain in scope.
 - Markdown, ## for main sections, ### for subsections
 - Every requirement must be testable — no requirement may be satisfied by opinion
 - Distinguish clearly between SCF-derived requirements and organisation-defined parameters

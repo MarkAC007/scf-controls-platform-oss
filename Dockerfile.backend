@@ -26,6 +26,7 @@ RUN apt-get update && \
     libcairo2 \
     libffi-dev \
     shared-mime-info \
+    fonts-inter \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for better caching

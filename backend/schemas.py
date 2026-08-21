@@ -202,6 +202,12 @@ class OrganizationSettingsResponse(BaseModel):
     owner_teams: List[str] = []
     is_trust_portal_enabled: bool = False
     trust_portal_description: Optional[str] = None
+    # Organisation metadata surfaced in generated document headers. `name` is
+    # NOT stored in the settings JSON — it lives on Organization.name, the single
+    # source of truth every other consumer already reads. It is echoed here so a
+    # settings form can round-trip both fields through one endpoint.
+    name: Optional[str] = None
+    industry: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -211,6 +217,18 @@ class OrganizationSettingsUpdate(BaseModel):
     owner_teams: Optional[List[str]] = None
     is_trust_portal_enabled: Optional[bool] = None
     trust_portal_description: Optional[str] = None
+    # See OrganizationSettingsResponse: `name` is routed to Organization.name,
+    # `industry` into the settings JSON. Blank/whitespace names are rejected
+    # rather than persisted — an empty org name breaks every document header.
+    name: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    industry: Optional[str] = Field(default=None, max_length=255)
+
+    @field_validator("name")
+    @classmethod
+    def _name_not_blank(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and not v.strip():
+            raise ValueError("Organisation name cannot be blank")
+        return v.strip() if v is not None else None
 
 
 class OrganizationLogoResponse(BaseModel):

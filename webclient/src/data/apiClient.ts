@@ -279,6 +279,11 @@ export interface OrganizationSettingsResponse {
   owner_teams: string[]
   is_trust_portal_enabled: boolean
   trust_portal_description: string | null
+  /** Organisation metadata rendered into generated document headers.
+   *  `name` is persisted to the organizations.name column, not the settings
+   *  JSON — it is exposed here so one settings form round-trips both fields. */
+  name: string | null
+  industry: string | null
 }
 
 export async function fetchOrganizationSettings(

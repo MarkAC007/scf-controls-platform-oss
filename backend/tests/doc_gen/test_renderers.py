@@ -12,7 +12,15 @@ from services.doc_gen.context import (
     OrganisationContext,
 )
 from services.doc_gen.registry import get_generator
-from services.doc_gen.renderer import export_markdown, markdown_to_html, safe_filename
+from services.doc_gen.renderer import (
+    _css_string,
+    build_masthead,
+    export_markdown,
+    _escape,
+    markdown_to_html,
+    markdown_to_reader_fragment,
+    safe_filename,
+)
 from services.doc_gen.tier1 import _cell, render_soa, status_label
 from services.doc_gen.tier2 import (
     build_user_prompt,
@@ -358,3 +366,179 @@ def test_an_unrelated_html_comment_is_preserved():
     """Only merge annotations are stripped. An author's own comment is theirs."""
     body = "## Scope\n\n<!-- author note: check this -->\n\nBody."
     assert "author note" in export_markdown(body)
+
+
+# ---------------------------------------------------------------------------
+# PDF masthead
+#
+# The masthead is the first thing an auditor sees, and every part of it is
+# optional -- an organisation with no logo, a report with no domain. It has to
+# degrade to something that still reads as a controlled document rather than
+# to a broken image box or an empty badge.
+# ---------------------------------------------------------------------------
+
+
+def test_masthead_carries_every_element_when_all_are_present():
+    html = build_masthead(
+        title="Asset Management Policy",
+        organisation="Ginga Ninja Holdings Ltd.",
+        subtitle="Domain Policy · Version 2 · Draft",
+        domain_id="AST",
+        logo_data_uri="data:image/png;base64,AAAA",
+    )
+    assert "Asset Management Policy" in html
+    assert "Ginga Ninja Holdings Ltd." in html
+    assert "Domain Policy · Version 2 · Draft" in html
+    assert ">AST<" in html
+    assert 'src="data:image/png;base64,AAAA"' in html
+
+
+def test_masthead_without_a_logo_emits_no_image_tag():
+    html = build_masthead(title="Control Status Report", domain_id="GOV")
+    assert "<img" not in html
+    assert ">GOV<" in html
+
+
+def test_masthead_without_a_domain_emits_no_badge():
+    """Organisation-wide reports have no domain. An empty navy pill is worse
+    than no pill."""
+    html = build_masthead(title="Statement of Applicability", organisation="Acme")
+    assert "doc-masthead-badge" not in html
+
+
+def test_masthead_with_neither_logo_nor_domain_drops_the_right_column():
+    html = build_masthead(title="Evidence Schedule")
+    assert "doc-masthead-right" not in html
+    assert "Evidence Schedule" in html
+
+
+def test_masthead_escapes_the_title():
+    html = build_masthead(title='Policy <script>alert("x")</script>')
+    assert "<script>" not in html
+    assert "&lt;script&gt;" in html
+
+
+def test_masthead_escapes_the_organisation_name():
+    html = build_masthead(title="Policy", organisation="A & B <Ltd>")
+    assert "<Ltd>" not in html
+    assert "&amp;" in html
+
+
+def test_markdown_to_html_places_the_prefix_before_the_body():
+    out = markdown_to_html("## Purpose\n\nText.", title="P", body_prefix="<div id=mh></div>")
+    assert out.index("id=mh") < out.index("Purpose")
+
+
+def test_html_export_has_no_masthead_by_default():
+    """Only the PDF path passes one; the HTML export is the raw document."""
+    assert "doc-masthead" not in markdown_to_html("# T\n\nBody.", title="T")
+
+
+# ---------------------------------------------------------------------------
+# CSS string escaping
+#
+# The running header and footer are injected into `content: "..."` literals. A
+# double quote in an organisation name would close the string early and take
+# the rest of the stylesheet with it.
+# ---------------------------------------------------------------------------
+
+
+def test_a_quote_in_the_value_cannot_close_the_css_string():
+    assert '"' not in _css_string('Bob "The Builder" Ltd')
+
+
+def test_a_newline_in_the_value_cannot_break_the_declaration():
+    assert "\n" not in _css_string("Line one\nLine two")
+
+
+def test_a_backslash_cannot_start_a_css_escape():
+    assert "\\" not in _css_string("Acme \\ Co")
+
+
+def test_an_ordinary_name_survives_unchanged():
+    assert _css_string("Ginga Ninja Holdings Ltd.") == "Ginga Ninja Holdings Ltd."
+
+
+# ── Untrusted document content ───────────────────────────────────────────────
+#
+# `merged_content` carries model output and text typed into the section editor,
+# and it reaches three markup consumers: the in-app reader, the HTML export and
+# WeasyPrint. Python-Markdown passes raw HTML through by design, so these assert
+# the boundary that stops it. They are the regression net for a real finding,
+# not hypotheticals -- both payloads below survived into the reader before it.
+
+XSS_MD = (
+    "## Purpose\n\n"
+    '<img src=x onerror="alert(1)">\n\n'
+    "<script>alert(2)</script>\n\n"
+    "Ordinary text.\n"
+)
+
+
+def test_raw_html_cannot_reach_the_reader_fragment():
+    out = markdown_to_reader_fragment(XSS_MD, [])
+    assert "<script" not in out
+    assert "<img" not in out
+    # Defanged, not deleted -- the author still sees the text they typed.
+    assert "&lt;script&gt;alert(2)&lt;/script&gt;" in out
+
+
+def test_raw_html_cannot_reach_the_html_export():
+    out = markdown_to_html(XSS_MD, title="P")
+    assert "<script>" not in out
+    assert "<img" not in out
+    assert "&lt;script&gt;" in out
+
+
+def test_an_escaped_entity_cannot_decode_back_into_a_tag():
+    """`&` must be escaped before `<`, or `&lt;script&gt;` round-trips to a tag."""
+    out = markdown_to_html("&lt;script&gt;alert(1)&lt;/script&gt;", title="P")
+    assert "<script>" not in out
+    assert "&amp;lt;" in out
+
+
+def test_attr_list_syntax_cannot_inject_an_event_handler():
+    """`## H {: onclick="..." }` rendered as a real onclick until attr_list went.
+
+    The syntax now degrades to visible text, which is the honest outcome: the
+    handler is inert and the author can see why their line looks odd.
+    """
+    src = '## Heading {: onclick="alert(1)" }'
+    for out in (markdown_to_html(src, title="P"), markdown_to_reader_fragment(src, [])):
+        assert "<h2 onclick" not in out
+        assert '{: onclick="alert(1)" }' in out
+
+
+def test_blockquotes_still_render_because_gt_is_left_alone():
+    assert "<blockquote>" in markdown_to_html("> Quoted.", title="P")
+
+
+def test_ordinary_markdown_survives_neutralisation():
+    src = (
+        "## Purpose\n\n"
+        "**Bold** and *italic*.\n\n"
+        "- one\n- two\n\n"
+        "| A | B |\n|---|---|\n| 1 | 2 |\n\n"
+        "```python\nx = 1\n```\n"
+    )
+    out = markdown_to_html(src, title="P")
+    for tag in ("<h2", "<strong>", "<em>", "<ul>", "<li>", "<table>", "<code"):
+        assert tag in out, tag
+
+
+def test_escape_closes_a_quoted_attribute_value():
+    """`_escape` feeds data-section-id="..." -- a quote there breaks out."""
+    assert _escape('a" onload="alert(1)') == "a&quot; onload=&quot;alert(1)"
+    assert _escape("a' b") == "a&#39; b"
+
+
+def test_a_quoted_section_id_cannot_break_out_of_its_attribute():
+    class Row:
+        section_id = 'x" onload="alert(1)'
+        status = "unchanged"
+        ordinal = 0
+        control_ids: list = []
+
+    out = markdown_to_reader_fragment("## Purpose\n\nText.\n", [Row()])
+    assert 'onload="' not in out
+    assert "&quot;" in out

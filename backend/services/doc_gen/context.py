@@ -469,6 +469,10 @@ def build_context(
         name=org.name,
         generated_at=datetime.now(timezone.utc).isoformat(),
         catalog_version=catalog_version,
+        # Organisation metadata configured in Settings. Stored in the settings JSON
+        # column; absent for orgs that never set it, which every consumer treats as
+        # "omit the line" rather than rendering an empty label.
+        industry=(org.settings or {}).get("industry") or None,
         domains=domains,
         all_controls=controls,
         evidence_items=evidence_items,

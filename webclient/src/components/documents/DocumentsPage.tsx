@@ -15,18 +15,11 @@ import {
   type LifecycleStatus,
 } from '../../data/documentsApi'
 import DocumentEditor from './DocumentEditor'
+import DocumentReader from './DocumentReader'
 import GeneratePanel from './GeneratePanel'
-
-interface DomainOption {
-  identifier: string
-  name: string
-  controlCount: number
-}
 
 interface Props {
   organizationId: string
-  /** Domains that have controls in scope, for the generate panel. */
-  domains?: DomainOption[]
   onOpenSettings?: () => void
 }
 
@@ -49,12 +42,10 @@ const STATUS_FILTERS: Array<{ value: string; label: string }> = [
 export const DOC_GEN_USER_DOC_URL =
   'https://docs.scfcontrolsplatform.app/user-guide/document-generation/'
 
-export default function DocumentsPage({
-  organizationId,
-  domains = [],
-  onOpenSettings,
-}: Props) {
+export default function DocumentsPage({ organizationId, onOpenSettings }: Props) {
   const [openDocument, setOpenDocument] = useState<string | null>(null)
+  const [editing, setEditing] = useState(false)
+  const [editSection, setEditSection] = useState<string | null>(null)
   const [showGenerate, setShowGenerate] = useState(false)
   const [statusFilter, setStatusFilter] = useState('')
 
@@ -81,11 +72,28 @@ export default function DocumentsPage({
   const totalConflicts = documents.reduce((sum, d) => sum + d.conflict_count, 0)
 
   if (openDocument) {
-    return (
+    // Reading is the default; editing is entered deliberately and returns
+    // here rather than dumping you back out to the list.
+    return editing ? (
       <DocumentEditor
         organizationId={organizationId}
         documentId={openDocument}
-        onBack={() => setOpenDocument(null)}
+        initialSectionId={editSection}
+        onBack={() => setEditing(false)}
+      />
+    ) : (
+      <DocumentReader
+        organizationId={organizationId}
+        documentId={openDocument}
+        onBack={() => {
+          setOpenDocument(null)
+          setEditing(false)
+          setEditSection(null)
+        }}
+        onEdit={(sectionId) => {
+          setEditSection(sectionId)
+          setEditing(true)
+        }}
       />
     )
   }
@@ -156,7 +164,6 @@ export default function DocumentsPage({
       {showGenerate && (
         <GeneratePanel
           organizationId={organizationId}
-          domains={domains}
           onClose={() => setShowGenerate(false)}
         />
       )}
@@ -206,9 +213,6 @@ export default function DocumentsPage({
                       <span className="doc-section-badge status-human_preserved">
                         {d.edited_count} edited
                       </span>
-                    )}
-                    {d.is_derivative && (
-                      <span className="doc-derivative-tag">Derivative</span>
                     )}
                   </div>
                   {d.updated_at && (

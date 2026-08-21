@@ -3,11 +3,16 @@
  * Theme selection lives in the header ThemeMenu; this page holds only
  * org-wide, admin-gated branding.
  */
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { toast } from 'react-hot-toast'
 import { useQueryClient } from '@tanstack/react-query'
 import { useOrgLogo, ORG_LOGO_QUERY_KEY } from '../hooks/useOrgLogo'
-import { uploadOrganizationLogo, deleteOrganizationLogo } from '../data/apiClient'
+import {
+  uploadOrganizationLogo,
+  deleteOrganizationLogo,
+  fetchOrganizationSettings,
+  updateOrganizationSettings,
+} from '../data/apiClient'
 
 interface AppearanceSettingsProps {
   organizationId: string
@@ -22,6 +27,70 @@ export default function AppearanceSettings({ organizationId }: AppearanceSetting
 
   const logoFileInputRef = useRef<HTMLInputElement>(null)
   const [isUploadingLogo, setIsUploadingLogo] = useState(false)
+
+  // Organisation metadata (name + industry) — rendered into generated document
+  // headers. Loaded once and edited locally; `savedMeta` is the last persisted
+  // state, so the Save button can stay disabled until something actually changed.
+  const [orgName, setOrgName] = useState('')
+  const [industry, setIndustry] = useState('')
+  const [savedMeta, setSavedMeta] = useState({ name: '', industry: '' })
+  const [isLoadingMeta, setIsLoadingMeta] = useState(true)
+  const [isSavingMeta, setIsSavingMeta] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    setIsLoadingMeta(true)
+    fetchOrganizationSettings(organizationId)
+      .then((s) => {
+        if (cancelled) return
+        const next = { name: s.name ?? '', industry: s.industry ?? '' }
+        setOrgName(next.name)
+        setIndustry(next.industry)
+        setSavedMeta(next)
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          toast.error(err instanceof Error ? err.message : 'Failed to load organisation details')
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingMeta(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [organizationId])
+
+  const metaChanged = orgName !== savedMeta.name || industry !== savedMeta.industry
+
+  const handleMetaSave = async () => {
+    const trimmedName = orgName.trim()
+    if (!trimmedName) {
+      toast.error('Organisation name cannot be blank')
+      return
+    }
+    setIsSavingMeta(true)
+    try {
+      const saved = await updateOrganizationSettings(organizationId, {
+        name: trimmedName,
+        // Empty input clears the field rather than storing an empty string —
+        // doc-gen treats null as "omit the Industry line" (see tier1._header).
+        industry: industry.trim() || null,
+      })
+      const next = { name: saved.name ?? '', industry: saved.industry ?? '' }
+      setOrgName(next.name)
+      setIndustry(next.industry)
+      setSavedMeta(next)
+      // The org name shows in the app header and org switcher, so refresh those.
+      await queryClient.invalidateQueries({ queryKey: ['organization'] })
+      toast.success('Organisation details saved')
+    } catch (err) {
+      // Non-admins get a 403 here; surface it rather than failing silently.
+      toast.error(err instanceof Error ? err.message : 'Failed to save organisation details')
+    } finally {
+      setIsSavingMeta(false)
+    }
+  }
 
   const handleLogoUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
@@ -63,6 +132,53 @@ export default function AppearanceSettings({ organizationId }: AppearanceSetting
   return (
     <div className="appearance-settings card">
       <h2>Organization Branding</h2>
+
+      <section className="appearance-section">
+        <h3>Organisation Details</h3>
+        <p className="appearance-hint">
+          Used in the header and footer of every generated document. Requires the
+          admin role to change.
+        </p>
+        <div className="org-meta-grid">
+          <div className="org-meta-field">
+            <label htmlFor="org-meta-name">Organisation Name</label>
+            <input
+              id="org-meta-name"
+              type="text"
+              className="org-meta-input"
+              value={orgName}
+              disabled={isLoadingMeta || isSavingMeta}
+              maxLength={255}
+              placeholder={isLoadingMeta ? 'Loading…' : 'e.g. Example Holdings Ltd.'}
+              onChange={(e) => setOrgName(e.target.value)}
+            />
+            <span className="appearance-hint">Full legal or trading name.</span>
+          </div>
+          <div className="org-meta-field">
+            <label htmlFor="org-meta-industry">Industry</label>
+            <input
+              id="org-meta-industry"
+              type="text"
+              className="org-meta-input"
+              value={industry}
+              disabled={isLoadingMeta || isSavingMeta}
+              maxLength={255}
+              placeholder={isLoadingMeta ? 'Loading…' : 'e.g. Technology'}
+              onChange={(e) => setIndustry(e.target.value)}
+            />
+            <span className="appearance-hint">Omitted from documents when blank.</span>
+          </div>
+        </div>
+        <div className="appearance-actions">
+          <button
+            className="btn btn-primary"
+            disabled={isLoadingMeta || isSavingMeta || !metaChanged}
+            onClick={handleMetaSave}
+          >
+            {isSavingMeta ? 'Saving…' : 'Save Organisation Details'}
+          </button>
+        </div>
+      </section>
 
       <section className="appearance-section">
         <h3>Logo</h3>

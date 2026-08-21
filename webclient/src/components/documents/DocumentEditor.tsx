@@ -26,6 +26,8 @@ interface Props {
   organizationId: string
   documentId: string
   onBack: () => void
+  /** Section to open first — whatever was being read when Edit was pressed. */
+  initialSectionId?: string | null
 }
 
 /** Section bodies, keyed by section id, sliced out of the merged markdown. */
@@ -53,7 +55,12 @@ function sliceSections(
   return out
 }
 
-export default function DocumentEditor({ organizationId, documentId, onBack }: Props) {
+export default function DocumentEditor({
+  organizationId,
+  documentId,
+  onBack,
+  initialSectionId = null,
+}: Props) {
   const queryClient = useQueryClient()
   const [activeSection, setActiveSection] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
@@ -76,18 +83,23 @@ export default function DocumentEditor({ organizationId, documentId, onBack }: P
     [doc]
   )
 
-  // Open the first section that needs a decision — that is what the reader
-  // came for after a regeneration.
+  // Open the section the reader was on when they pressed Edit. Failing that,
+  // the first that needs a decision — that is what the reader came for after a
+  // regeneration.
   useEffect(() => {
     if (!doc || activeSection) return
+    const anchored = initialSectionId
+      ? doc.sections.find((s) => s.section_id === initialSectionId)
+      : undefined
     const conflict = doc.sections.find((s) => s.status === 'conflict')
-    const first = conflict ?? [...doc.sections].sort((a, b) => a.ordinal - b.ordinal)[0]
+    const first =
+      anchored ?? conflict ?? [...doc.sections].sort((a, b) => a.ordinal - b.ordinal)[0]
     if (first) {
       setActiveSection(first.section_id)
       setDraft(bodies[first.section_id] ?? '')
       setDirty(false)
     }
-  }, [doc, activeSection, bodies])
+  }, [doc, activeSection, bodies, initialSectionId])
 
   const saveMutation = useMutation({
     mutationFn: (payload: { sectionId: string; content: string }) =>
@@ -135,25 +147,29 @@ export default function DocumentEditor({ organizationId, documentId, onBack }: P
     <div className="doc-editor">
       <div className="doc-editor-topbar">
         <button type="button" className="btn-secondary" onClick={onBack}>
-          ← All documents
+          ← Back to document
         </button>
         <div className="doc-editor-title">
           <h1>{doc.title}</h1>
           <span className="doc-editor-meta">
             v{doc.generation_version}
             {doc.catalog_version && ` · SCF ${doc.catalog_version}`}
-            {doc.is_derivative && <span className="doc-derivative-tag">Derivative</span>}
           </span>
         </div>
         <div className="doc-editor-actions">
           <span className={`doc-lifecycle-pill status-${doc.lifecycle_status}`}>
             {LIFECYCLE_LABELS[doc.lifecycle_status]}
           </span>
-          {doc.available_transitions.map((t) => (
+          {/* The backend lists the advancing transition first in every state
+              (lifecycle.VALID_TRANSITIONS), so index 0 is the forward move --
+              Submit for Review, Approve, Publish -- and earns the primary
+              treatment. Backward moves (Return to Draft, Request Changes) stay
+              secondary, matching every other action bar in the app. */}
+          {doc.available_transitions.map((t, i) => (
             <button
               key={t.to_status}
               type="button"
-              className="btn-secondary"
+              className={i === 0 ? 'btn-primary' : 'btn-secondary'}
               disabled={transitionMutation.isPending}
               onClick={() => transitionMutation.mutate(t.to_status)}
             >

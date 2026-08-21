@@ -37,6 +37,13 @@ export interface GeneratorInfo {
   description: string
 }
 
+/** A domain the org can generate a domain-scoped document for. */
+export interface GeneratableDomain {
+  identifier: string
+  name: string
+  control_count: number
+}
+
 export interface DocumentSummary {
   id: string
   generator_name: string
@@ -109,6 +116,8 @@ export interface GenerationStatus {
     action: 'created' | 'updated' | 'skipped' | 'failed'
     title?: string
     conflict_count?: number
+    /** SCF ids the generated text cited that are not in scope. Normally empty. */
+    out_of_scope_citations?: string[]
     change_reasons?: string[]
     skip_reason?: string
     error?: string
@@ -185,6 +194,15 @@ async function docFetch<T>(endpoint: string, options: RequestInit = {}): Promise
 
 export async function listGenerators(orgId: string): Promise<GeneratorInfo[]> {
   return docFetch(`/organizations/${orgId}/documents/generators`)
+}
+
+/**
+ * Domains with at least one in-scope control. The generate panel needs this to
+ * offer the domain-scoped (Tier 2) generators — without it the picker is empty
+ * and no policy, procedure or standard can be started from the UI.
+ */
+export async function listGeneratableDomains(orgId: string): Promise<GeneratableDomain[]> {
+  return docFetch(`/organizations/${orgId}/documents/domains`)
 }
 
 export async function getDocGenSettings(orgId: string): Promise<DocGenSettings> {
