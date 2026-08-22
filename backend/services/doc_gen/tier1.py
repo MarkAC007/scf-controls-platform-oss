@@ -43,6 +43,16 @@ def _cell(value: Any, limit: Optional[int] = None) -> str:
     return text or "—"
 
 
+def _tally(count: int, noun: str) -> str:
+    """"1 control" / "12 controls" -- a counted noun that agrees with its count.
+
+    Trivial, and worth having: this text goes into a heading of a document an
+    auditor reads, and "(1 controls)" in a Statement of Applicability is the
+    kind of detail that makes a reader distrust everything around it.
+    """
+    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
+
+
 def _pct(count: int, total: int) -> str:
     if not total:
         return "0.0%"
@@ -84,7 +94,7 @@ def _header(ctx: OrganisationContext, title: str) -> List[str]:
 def _soa_domain_section(bundle: DomainWithControls, index: int) -> List[str]:
     domain, controls = bundle.domain, bundle.controls
     lines = [
-        f"### {index}. {domain.identifier} — {domain.name} ({len(controls)} controls)",
+        f"### {index}. {domain.identifier} — {domain.name} ({_tally(len(controls), 'control')})",
         "",
     ]
     if domain.principle:
@@ -375,7 +385,7 @@ def render_evidence_schedule(ctx: OrganisationContext, **_: Any) -> str:
         for eid in untracked:
             lines.append(
                 f"- **{eid}** — {_cell(required[eid]['title'])} "
-                f"({len(required[eid]['controls'])} controls)"
+                f"({_tally(len(required[eid]['controls']), 'control')})"
             )
     else:
         lines.append("Every required artefact is tracked.")

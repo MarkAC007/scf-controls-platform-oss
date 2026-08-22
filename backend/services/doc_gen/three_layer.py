@@ -42,6 +42,7 @@ from .fingerprint import sha256
 from .section_parser import (
     ParsedSection,
     flatten_sections,
+    hashable_body,
     parse_markdown_sections,
     split_preamble,
     to_section_rows,
@@ -169,6 +170,41 @@ def strip_markers(content: str) -> str:
     # Catch reflowed or older-wording markers the literal pass missed.
     text = _MARKER_RE.sub("", text)
     return text.strip()
+
+
+def strip_markers_in_section(markdown: str, position: int) -> str:
+    """Remove merge markers from the ``position``-th section only.
+
+    Used when a human keeps a section the generator wanted to retire: the
+    decision has been made, so the PENDING RETIREMENT comment is now false, but
+    every *other* section's markers still describe unresolved state and must
+    survive. :func:`strip_markers` is document-wide and would erase those too.
+
+    Position rather than section id, for the same reason the merge engine pairs
+    rows to parsed sections positionally: a retired section re-parses under
+    whichever heading now precedes it, so its stored id is not the one the
+    parser derives from the operative document.
+    """
+    from .section_parser import heading_line_indices
+
+    lines = (markdown or "").split("\n")
+    indices = heading_line_indices(markdown)
+    if position < 0 or position >= len(indices):
+        return markdown or ""
+
+    start = indices[position]
+    end = indices[position + 1] if position + 1 < len(indices) else len(lines)
+    block = "\n".join(lines[start:end])
+    for marker in _MARKERS:
+        block = block.replace(marker, "")
+    block = _MARKER_RE.sub("", block)
+    # Collapse the blank line the removed comment leaves behind, so repeated
+    # keep/regenerate cycles do not accumulate vertical whitespace.
+    cleaned = [
+        line for i, line in enumerate(block.split("\n"))
+        if line.strip() or i == 0 or block.split("\n")[i - 1].strip()
+    ]
+    return "\n".join(lines[:start] + cleaned + lines[end:])
 
 
 def detect_human_edits(
@@ -516,7 +552,7 @@ def three_way_merge(
     # wrote and strips them, which is precisely what the parser reads back.
     rows: List[Dict[str, Any]] = []
     for ordinal, section in enumerate(merged):
-        body_hash = sha256(_rendered_body(section))
+        body_hash = sha256(hashable_body(_rendered_body(section)))
         row: Dict[str, Any] = {
             "section_id": section.section_id,
             "heading_text": section.heading_text,

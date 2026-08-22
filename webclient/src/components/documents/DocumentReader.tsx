@@ -19,8 +19,15 @@
  *   - The lifecycle. For a compliance artifact the provenance *is* the
  *     credibility, so the stepper and the approval facts sit in the header
  *     rather than behind a History toggle.
+ *
+ * The merge state being *visible* was never enough on its own, though. A
+ * conflict and a pending retirement each need an answer, and the reader now
+ * carries the controls that give one — in the document flow, against the prose
+ * they are about, and in a side-by-side diff for the reader who wants to see
+ * both texts before choosing.
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useQuery } from '@tanstack/react-query'
 import DOMPurify from 'dompurify'
 import { toast } from 'react-hot-toast'
@@ -34,6 +41,10 @@ import {
   type DocumentSection,
   type LifecycleStatus,
 } from '../../data/documentsApi'
+import OutlineCount from './OutlineCount'
+import SectionDecision from './SectionDecision'
+import SectionDiff from './SectionDiff'
+import { useResolveSection } from './useResolveSection'
 
 interface Props {
   organizationId: string
@@ -55,6 +66,12 @@ interface Props {
  * `data-section-id` and `data-level` are not decoration: the scroll-spy and the
  * contents rail both query for them, so stripping data attributes wholesale —
  * as the two sibling sinks in this app do — would silently kill navigation.
+ *
+ * Nothing was added here for the decision controls or the table wrappers. Both
+ * are built with `document.createElement` from this file and appended to the
+ * already-sanitised tree, so they never pass through DOMPurify and must not be
+ * allowed through it either: widening the allowlist to admit markup we generate
+ * ourselves would widen it for the document content too.
  */
 const READER_SANITIZE_CONFIG = {
   ALLOWED_TAGS: [
@@ -76,6 +93,9 @@ const LIFECYCLE_ORDER: LifecycleStatus[] = [
   'published',
 ]
 
+/** Statuses that always earn their chrome, however uniform the document is. */
+const ALWAYS_FLAGGED = new Set(['conflict', 'pending_retirement'])
+
 export default function DocumentReader({
   organizationId,
   documentId,
@@ -84,7 +104,19 @@ export default function DocumentReader({
 }: Props) {
   const [activeSection, setActiveSection] = useState<string | null>(null)
   const [showHistory, setShowHistory] = useState(false)
+  const [diffSectionId, setDiffSectionId] = useState<string | null>(null)
+  const [diffVersion, setDiffVersion] = useState<number | undefined>(undefined)
+  /**
+   * Where each in-flow decision control is portalled to. The document body is
+   * server-rendered HTML injected as a string, so React cannot render into it
+   * directly — but it can render *through* a node we append to it ourselves.
+   * That keeps the buttons as ordinary React (state, mutation, disabled while
+   * pending) instead of hand-wired DOM listeners, and leaves the sanitised
+   * markup untouched.
+   */
+  const [decisionMounts, setDecisionMounts] = useState<Record<string, HTMLElement>>({})
   const bodyRef = useRef<HTMLDivElement>(null)
+  const tocRef = useRef<HTMLUListElement>(null)
 
   const { data: doc } = useQuery({
     queryKey: ['document', organizationId, documentId],
@@ -99,12 +131,25 @@ export default function DocumentReader({
   const { data: history } = useQuery({
     queryKey: ['document-history', organizationId, documentId],
     queryFn: () => getDocumentHistory(organizationId, documentId),
-    enabled: showHistory,
+    // The diff's version picker is built from the same list, so it needs
+    // history whether or not the panel happens to be open.
+    enabled: showHistory || diffSectionId !== null,
   })
+
+  const resolve = useResolveSection(organizationId, documentId)
 
   const ordered = useMemo(
     () => (doc ? [...doc.sections].sort((a, b) => a.ordinal - b.ordinal) : []),
     [doc]
+  )
+
+  /** The sections that need an answer, in document order. */
+  const actionable = useMemo(
+    () =>
+      ordered.filter(
+        (s) => s.status === 'conflict' || s.status === 'pending_retirement'
+      ),
+    [ordered]
   )
 
   // Scroll-spy. The rail is the only navigation for a document this long, so
@@ -135,6 +180,98 @@ export default function DocumentReader({
     return () => observer.disconnect()
   }, [preview])
 
+  /**
+   * Seed the anchor.
+   *
+   * `activeSection` used to stay null until the scroll-spy first fired, which
+   * it does not do on a document short enough to fit without scrolling, or
+   * before the observer's first callback. Pressing Edit in that window handed
+   * the editor no anchor at all and it fell back to an ordinal, which is how a
+   * blank editor happened. The top of the document is the honest answer to
+   * "what am I reading" before anything has scrolled.
+   */
+  useEffect(() => {
+    if (activeSection || !ordered.length) return
+    setActiveSection(ordered[0].section_id)
+  }, [ordered, activeSection])
+
+  /**
+   * Keep the active item in the contents rail visible.
+   *
+   * With seventy-one sections the rail is a scroll box several screens long, so
+   * `is-active` was usually applied to something off-screen — correct and
+   * useless. Only `scrollTop` on the rail itself is touched: `scrollIntoView`
+   * would walk every scrollable ancestor including the reading pane, which is
+   * what drives the scroll-spy, and the two would fight.
+   */
+  useEffect(() => {
+    const list = tocRef.current
+    if (!list || !activeSection) return
+    const item = list.querySelector<HTMLElement>(
+      `[data-toc-id="${CSS.escape(activeSection)}"]`
+    )
+    if (!item) return
+    const listBox = list.getBoundingClientRect()
+    const itemBox = item.getBoundingClientRect()
+    if (itemBox.top < listBox.top) {
+      list.scrollTop += itemBox.top - listBox.top
+    } else if (itemBox.bottom > listBox.bottom) {
+      list.scrollTop += itemBox.bottom - listBox.bottom
+    }
+  }, [activeSection])
+
+  /**
+   * Give wide tables their own scroll box.
+   *
+   * `markdown_to_reader_fragment` emits a bare `<table>` as a direct child of
+   * the section — there is no wrapper to hang `overflow-x` on, and the SoA is
+   * mostly six-column control tables. Without this the table either crams into
+   * the prose measure or pushes the whole page sideways. The wrapper is created
+   * here rather than in the renderer because the fragment is also what the PDF
+   * export path renders, where a scroll box means nothing.
+   */
+  useEffect(() => {
+    const root = bodyRef.current
+    if (!root || !preview) return
+    root.querySelectorAll<HTMLTableElement>('table').forEach((table) => {
+      if (table.parentElement?.classList.contains('doc-table-scroll')) return
+      const wrap = document.createElement('div')
+      wrap.className = 'doc-table-scroll'
+      table.replaceWith(wrap)
+      wrap.appendChild(table)
+    })
+  }, [preview])
+
+  /**
+   * Attach a portal host to every section that needs a decision.
+   *
+   * Re-runs whenever the preview HTML or the set of actionable sections
+   * changes, which is exactly when the injected markup has been replaced and
+   * the previous hosts are gone.
+   */
+  useEffect(() => {
+    const root = bodyRef.current
+    if (!root || !preview) {
+      setDecisionMounts({})
+      return
+    }
+    const next: Record<string, HTMLElement> = {}
+    for (const section of actionable) {
+      const host = root.querySelector<HTMLElement>(
+        `[data-section-id="${CSS.escape(section.section_id)}"]`
+      )
+      if (!host) continue
+      const mount = document.createElement('div')
+      mount.className = 'doc-decision-mount'
+      host.appendChild(mount)
+      next[section.section_id] = mount
+    }
+    setDecisionMounts(next)
+    return () => {
+      Object.values(next).forEach((mount) => mount.remove())
+    }
+  }, [preview, actionable])
+
   function jumpTo(section: DocumentSection) {
     const target = bodyRef.current?.querySelector<HTMLElement>(
       `[data-section-id="${CSS.escape(section.section_id)}"]`
@@ -159,21 +296,45 @@ export default function DocumentReader({
   // read-only editor is a worse answer than saying why up front.
   const published = doc.lifecycle_status === 'published'
   const conflicts = ordered.filter((s) => s.status === 'conflict')
+  // The backend counts these now. Prefer its number: it counts against the
+  // stored rows, whereas filtering here counts whatever this client happens to
+  // have cached. Fall back while an older backend is deployed.
+  const retiringCount = doc.pending_retirement_count ?? ordered.filter(
+    (s) => s.status === 'pending_retirement'
+  ).length
   const retiring = ordered.filter((s) => s.status === 'pending_retirement')
   // The transition that moved it to its current state — who signed it off and
   // when. Exactly the question an auditor opens with.
   const signoff = history?.transitions.find(
     (t) => t.to_status === doc.lifecycle_status
   )
+  const diffSection = ordered.find((s) => s.section_id === diffSectionId) ?? null
+
+  /**
+   * On a first generation every section is `new`, so forty "New" callouts and
+   * forty badges say nothing that the version number in the masthead does not.
+   * Status chrome is worth its space only when it distinguishes one section
+   * from another — except for the two statuses that are a request for a
+   * decision, which are never suppressed.
+   */
+  const uniformStatus =
+    ordered.length > 1 && ordered.every((s) => s.status === ordered[0].status)
+  const quietChrome = doc.generation_version === 1 || uniformStatus
 
   return (
     <div className="doc-reader">
       {/* ── Masthead ─────────────────────────────────────────────────── */}
+      {/* Compact on purpose. At 1280×800 the header, stepper and stacked
+          notices used to take half the window and left the document itself in
+          a letterbox. The provenance stays — for a compliance artefact it *is*
+          the credibility — but the title shares the action row and the
+          lifecycle shares the facts row instead of each claiming a line. */}
       <header className="doc-reader-head">
         <div className="doc-reader-head-top">
           <button type="button" className="btn-secondary" onClick={onBack}>
             ← All documents
           </button>
+          <h1 className="doc-reader-title">{doc.title}</h1>
           <div className="doc-reader-actions">
             <button
               type="button"
@@ -204,64 +365,114 @@ export default function DocumentReader({
           </div>
         </div>
 
-        <h1 className="doc-reader-title">{doc.title}</h1>
-
-        <div className="doc-reader-facts">
-          <span>Version {doc.generation_version}</span>
-          {doc.catalog_version && <span>SCF {doc.catalog_version}</span>}
-          <span>{doc.section_count} sections</span>
-          {signoff?.actor_email && (
+        <div className="doc-reader-meta">
+          <div className="doc-reader-facts">
+            <span>Version {doc.generation_version}</span>
+            {doc.catalog_version && <span>SCF {doc.catalog_version}</span>}
             <span>
-              {LIFECYCLE_LABELS[doc.lifecycle_status]} by {signoff.actor_email}
-              {signoff.created_at &&
-                ` · ${new Date(signoff.created_at).toLocaleDateString('en-GB')}`}
+              {doc.section_count} section{doc.section_count === 1 ? '' : 's'}
             </span>
-          )}
-        </div>
+            {signoff?.actor_email && (
+              <span>
+                {LIFECYCLE_LABELS[doc.lifecycle_status]} by {signoff.actor_email}
+                {signoff.created_at &&
+                  ` · ${new Date(signoff.created_at).toLocaleDateString('en-GB')}`}
+              </span>
+            )}
+            {doc.is_stale && (
+              <span className="doc-stale" title={doc.stale_reason ?? undefined}>
+                May be out of date
+                {doc.stale_reason ? ` — ${doc.stale_reason}` : ''}
+              </span>
+            )}
+          </div>
 
-        {/* The lifecycle, stated rather than hidden. */}
-        <ol className="doc-lifecycle-steps">
-          {LIFECYCLE_ORDER.map((stage, i) => (
-            <li
-              key={stage}
-              className={`doc-lifecycle-step ${
-                i < stageIndex ? 'is-done' : ''
-              } ${i === stageIndex ? 'is-current' : ''}`}
-            >
-              <span className="doc-lifecycle-dot" aria-hidden="true" />
-              <span className="doc-lifecycle-label">{LIFECYCLE_LABELS[stage]}</span>
-            </li>
-          ))}
-        </ol>
+          {/* The lifecycle, stated rather than hidden. */}
+          <ol className="doc-lifecycle-steps">
+            {LIFECYCLE_ORDER.map((stage, i) => (
+              <li
+                key={stage}
+                className={`doc-lifecycle-step ${
+                  i < stageIndex ? 'is-done' : ''
+                } ${i === stageIndex ? 'is-current' : ''}`}
+              >
+                <span className="doc-lifecycle-dot" aria-hidden="true" />
+                <span className="doc-lifecycle-label">{LIFECYCLE_LABELS[stage]}</span>
+              </li>
+            ))}
+          </ol>
+        </div>
       </header>
 
-      {published && (
-        <div className="doc-notice">
-          This document is published and is read-only. Return it to review to
-          make changes.
+      {/* One strip rather than three stacked blocks. Each line is a statement
+          and, where there is something to do about it, the control that does
+          it — the banners used to describe a problem and then point at version
+          history, which had no way to show what it was pointing at. */}
+      {(published || conflicts.length > 0 || retiringCount > 0) && (
+        <div className="doc-alerts">
+          {published && (
+            <p className="doc-alert">
+              Published and read-only. Return it to review to make changes.
+            </p>
+          )}
+
+          {conflicts.length > 0 && (
+            <p className="doc-alert is-warning">
+              <strong>
+                {conflicts.length} section{conflicts.length === 1 ? '' : 's'}{' '}
+                {conflicts.length === 1 ? 'needs' : 'need'} your decision.
+              </strong>{' '}
+              Your text was kept, but it was written against an earlier scope, so
+              it can contradict the rest of the document.
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => jumpTo(conflicts[0])}
+              >
+                Review {conflicts.length} decision{conflicts.length === 1 ? '' : 's'}
+              </button>
+            </p>
+          )}
+
+          {retiringCount > 0 && (
+            <p className="doc-alert">
+              <strong>
+                {retiringCount} section{retiringCount === 1 ? '' : 's'}{' '}
+                {retiringCount === 1 ? 'is' : 'are'} pending retirement.
+              </strong>{' '}
+              The controls behind them have left scope. Nothing has been deleted.
+              {retiring.length > 0 && (
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => jumpTo(retiring[0])}
+                >
+                  Review
+                </button>
+              )}
+            </p>
+          )}
         </div>
       )}
 
-      {conflicts.length > 0 && (
-        <div className="doc-notice doc-notice-warning">
-          <strong>
-            {conflicts.length} section{conflicts.length === 1 ? '' : 's'} need your
-            decision.
-          </strong>{' '}
-          Your edit was kept in each. The generated alternative is in this
-          document's version history — nothing was overwritten.
-        </div>
-      )}
-
-      {retiring.length > 0 && (
-        <div className="doc-notice">
-          <strong>
-            {retiring.length} section{retiring.length === 1 ? '' : 's'} are
-            pending retirement.
-          </strong>{' '}
-          The controls behind them have left scope. They are marked in the
-          document below and nothing has been deleted.
-        </div>
+      {diffSection && (
+        <SectionDiff
+          organizationId={organizationId}
+          documentId={documentId}
+          section={diffSection}
+          versions={history?.versions}
+          version={diffVersion}
+          onVersionChange={setDiffVersion}
+          onClose={() => setDiffSectionId(null)}
+          onResolve={(choice) => {
+            resolve.mutate(
+              { sectionId: diffSection.section_id, choice },
+              { onSuccess: () => setDiffSectionId(null) }
+            )
+          }}
+          pending={resolve.isPending}
+          disabled={published}
+        />
       )}
 
       {showHistory && history && (
@@ -292,8 +503,21 @@ export default function DocumentReader({
                 </span>
                 <span>
                   v{v.version}
+                  {v.is_current && ' · current'}
                   {v.model_id && ` · ${v.model_id}`}
                 </span>
+                {/* A version number is only useful if you can see what it
+                    holds. With a section open for comparison this switches
+                    which snapshot the diff is against. */}
+                {diffSection && (
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => setDiffVersion(v.version)}
+                  >
+                    Diff against v{v.version}
+                  </button>
+                )}
               </li>
             ))}
           </ul>
@@ -305,24 +529,32 @@ export default function DocumentReader({
         <aside className="doc-reader-toc">
           <div className="doc-outline-head">
             <h3>Contents</h3>
-            <span>{ordered.length}</span>
+            {/* Not `ordered.length`: that counts the rows the rail renders,
+                retiring ghosts included, and so contradicted the masthead the
+                moment `section_count` became operative-only. See OutlineCount. */}
+            <OutlineCount
+              sectionCount={doc.section_count}
+              retiringCount={doc.pending_retirement_count}
+            />
           </div>
-          <ul className="doc-outline-list">
+          <ul className="doc-outline-list" ref={tocRef}>
             {ordered.map((s) => (
               <li key={s.section_id}>
                 <button
                   type="button"
+                  data-toc-id={s.section_id}
                   className={`doc-outline-item level-${s.heading_level} ${
                     s.section_id === activeSection ? 'is-active' : ''
                   } status-${s.status}`}
                   onClick={() => jumpTo(s)}
                 >
                   <span className="doc-outline-label">{s.heading_text}</span>
-                  {s.status !== 'unchanged' && (
-                    <span className={`doc-section-badge status-${s.status}`}>
-                      {SECTION_STATUS_LABELS[s.status]}
-                    </span>
-                  )}
+                  {s.status !== 'unchanged' &&
+                    (!quietChrome || ALWAYS_FLAGGED.has(s.status)) && (
+                      <span className={`doc-section-badge status-${s.status}`}>
+                        {SECTION_STATUS_LABELS[s.status]}
+                      </span>
+                    )}
                 </button>
               </li>
             ))}
@@ -334,7 +566,7 @@ export default function DocumentReader({
           {previewLoading && <p className="doc-empty">Rendering document…</p>}
           {preview && (
             <article
-              className="doc-reader-prose"
+              className={`doc-reader-prose ${quietChrome ? 'is-quiet' : ''}`}
               dangerouslySetInnerHTML={{
                 // Document content is Markdown written by a generator and then
                 // edited by people, so it is untrusted on both counts. The
@@ -343,6 +575,28 @@ export default function DocumentReader({
                 __html: DOMPurify.sanitize(preview.html, READER_SANITIZE_CONFIG),
               }}
             />
+          )}
+          {/* Decision controls, rendered through hosts appended to the
+              sanitised markup above. Nothing here reaches DOMPurify. */}
+          {actionable.map((section) =>
+            decisionMounts[section.section_id]
+              ? createPortal(
+                  <SectionDecision
+                    section={section}
+                    pending={resolve.isPending}
+                    disabled={published}
+                    onResolve={(choice) =>
+                      resolve.mutate({ sectionId: section.section_id, choice })
+                    }
+                    onCompare={() => {
+                      setDiffSectionId(section.section_id)
+                      setDiffVersion(undefined)
+                    }}
+                  />,
+                  decisionMounts[section.section_id],
+                  section.section_id
+                )
+              : null
           )}
         </main>
       </div>

@@ -18,6 +18,13 @@ interface MarkdownEditorProps {
   onChange: (value: string) => void
   readOnly?: boolean
   placeholder?: string
+  /**
+   * Optional floor, in pixels. Left unset the editor takes its height from the
+   * layout instead — which is what the document editor wants: a hard 320px
+   * inside an 800px window left two thirds of the pane empty while the text
+   * scrolled inside a letterbox. Callers that place the editor somewhere with
+   * no height of its own can still pin one.
+   */
   minHeight?: number
 }
 
@@ -28,7 +35,7 @@ export default function MarkdownEditor({
   onChange,
   readOnly = false,
   placeholder = 'Write in Markdown…',
-  minHeight = 320,
+  minHeight,
 }: MarkdownEditorProps) {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const viewRef = useRef<any>(null)
@@ -119,7 +126,7 @@ export default function MarkdownEditor({
         placeholder={placeholder}
         readOnly={readOnly}
         spellCheck
-        style={{ minHeight }}
+        style={minHeight === undefined ? undefined : { minHeight }}
         onChange={(e) => onChange(e.target.value)}
       />
     )
@@ -127,7 +134,11 @@ export default function MarkdownEditor({
 
   return (
     <div className="doc-editor-host-wrap">
-      <div ref={hostRef} className="doc-editor-host" style={{ minHeight }} />
+      <div
+        ref={hostRef}
+        className="doc-editor-host"
+        style={minHeight === undefined ? undefined : { minHeight }}
+      />
       {mode === 'loading' && (
         <div className="doc-editor-loading">Loading editor…</div>
       )}

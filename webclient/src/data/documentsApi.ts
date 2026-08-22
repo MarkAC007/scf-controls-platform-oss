@@ -59,6 +59,17 @@ export interface DocumentSummary {
   conflict_count: number
   edited_count: number
   updated_at: string | null
+  /**
+   * Sections whose controls have left scope and are awaiting a deliberate
+   * retire-or-keep decision. Optional because the field landed after the first
+   * release of this client: an older backend simply omits it, and every reader
+   * of it must treat `undefined` as "not reported" rather than as zero.
+   */
+  pending_retirement_count?: number
+  /** The document no longer matches the scope it was generated against. */
+  is_stale?: boolean
+  /** Why it is stale, in words fit to show a reader. Null when it is not. */
+  stale_reason?: string | null
 }
 
 export interface DocumentSection {
@@ -139,6 +150,8 @@ export interface DocumentHistory {
     generator_version: string | null
     input_fingerprint: string | null
     created_at: string | null
+    /** The snapshot the document currently sits on. Optional: see above. */
+    is_current?: boolean
   }>
 }
 
@@ -266,6 +279,98 @@ export async function saveSection(
   return docFetch(
     `/organizations/${orgId}/documents/${documentId}/sections/${encodeURIComponent(sectionId)}`,
     { method: 'PUT', body: JSON.stringify({ content }) }
+  )
+}
+
+/**
+ * What a reader can decide about a section the merge could not settle alone.
+ *
+ * `keep_mine` / `take_generated` answer a conflict; `retire` / `keep` answer a
+ * pending retirement. The backend rejects the wrong pair with a 409 rather than
+ * silently doing nothing, so the UI never has to guess which pair applies — it
+ * offers the pair that matches the section's status and lets the server be the
+ * authority.
+ */
+export type SectionResolveChoice = 'keep_mine' | 'take_generated' | 'retire' | 'keep'
+
+export interface SectionResolveResult {
+  ok: boolean
+  section_id: string
+  status: SectionStatus
+  /** True when the section was retired and no longer appears in the document. */
+  removed: boolean
+  conflict_count: number
+  pending_retirement_count: number
+  lifecycle_status: LifecycleStatus
+}
+
+/**
+ * The generator's text for one section, from one snapshot.
+ *
+ * `available: false` with `content: null` is not an error and not an empty
+ * section — it means the generator no longer emits this section at all, which
+ * is precisely why a pending-retirement section is retiring. The diff view has
+ * to say that in words; rendering an empty pane would read as "the generator
+ * wrote nothing here", which is a different and wrong claim.
+ *
+ * `current_content` is the operative body — what the document says today, with
+ * the merge marker comments already stripped by the backend.
+ */
+export interface SectionGenerated {
+  section_id: string
+  version: number
+  /**
+   * `null` whenever `available` is false — which is the defining case for a
+   * pending-retirement section, the very path this panel was built for. The
+   * backend types it `Optional[str] = None`; claiming `string` here made every
+   * consumer's `.trim()`/`.length` a latent throw.
+   */
+  heading_text: string | null
+  content: string | null
+  available: boolean
+  current_content: string
+}
+
+/**
+ * Record a decision about one section.
+ *
+ * `section_id` is hierarchical (`parent.child`) so it contains dots. The route
+ * is declared `:path` on the backend for exactly that reason, but it still has
+ * to be percent-encoded here or a heading containing `/` or `#` would break the
+ * URL. Same treatment as `saveSection`.
+ */
+export async function resolveSection(
+  orgId: string,
+  documentId: string,
+  sectionId: string,
+  choice: SectionResolveChoice
+): Promise<SectionResolveResult> {
+  return docFetch(
+    `/organizations/${orgId}/documents/${documentId}/sections/${encodeURIComponent(
+      sectionId
+    )}/resolve`,
+    { method: 'POST', body: JSON.stringify({ choice }) }
+  )
+}
+
+/**
+ * Fetch the generated alternative for one section so it can be diffed against
+ * what the document currently says.
+ *
+ * Omit `version` to get the latest snapshot. The History panel supplies a
+ * specific one when the reader wants to compare against an older generation.
+ */
+export async function getSectionGenerated(
+  orgId: string,
+  documentId: string,
+  sectionId: string,
+  version?: number
+): Promise<SectionGenerated> {
+  const qs = version === undefined ? '' : `?version=${encodeURIComponent(String(version))}`
+  return docFetch(
+    `/organizations/${orgId}/documents/${documentId}/sections/${encodeURIComponent(
+      sectionId
+    )}/generated${qs}`
   )
 }
 

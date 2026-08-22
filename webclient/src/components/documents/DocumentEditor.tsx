@@ -5,6 +5,10 @@
  * merge becomes visible: which sections the generator changed, which carry
  * your edits, and which need a decision because both moved. Without it a
  * regenerated document is just a wall of text you have to re-read.
+ *
+ * Seeing that a section needs a decision is not the same as being able to make
+ * one, so the open section carries the same Keep mine / Take generated /
+ * Retire / Keep controls the reader does, beside Save section.
  */
 import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -21,6 +25,10 @@ import {
   type LifecycleStatus,
 } from '../../data/documentsApi'
 import MarkdownEditor from './MarkdownEditor'
+import OutlineCount from './OutlineCount'
+import SectionDecision from './SectionDecision'
+import { sliceSections } from './sectionText'
+import { useResolveSection } from './useResolveSection'
 
 interface Props {
   organizationId: string
@@ -28,31 +36,6 @@ interface Props {
   onBack: () => void
   /** Section to open first — whatever was being read when Edit was pressed. */
   initialSectionId?: string | null
-}
-
-/** Section bodies, keyed by section id, sliced out of the merged markdown. */
-function sliceSections(
-  markdown: string,
-  sections: DocumentSection[]
-): Record<string, string> {
-  const lines = markdown.split('\n')
-  const headingIndexes: number[] = []
-  let inFence = false
-
-  lines.forEach((line, i) => {
-    if (/^(`{3,}|~{3,})/.test(line)) inFence = !inFence
-    if (!inFence && /^#{1,6}\s+/.test(line)) headingIndexes.push(i)
-  })
-
-  const ordered = [...sections].sort((a, b) => a.ordinal - b.ordinal)
-  const out: Record<string, string> = {}
-  ordered.forEach((section, i) => {
-    const start = headingIndexes[i]
-    if (start === undefined) return
-    const end = headingIndexes[i + 1] ?? lines.length
-    out[section.section_id] = lines.slice(start + 1, end).join('\n').trim()
-  })
-  return out
 }
 
 export default function DocumentEditor({
@@ -66,11 +49,28 @@ export default function DocumentEditor({
   const [draft, setDraft] = useState('')
   const [dirty, setDirty] = useState(false)
   const [showHistory, setShowHistory] = useState(false)
+  /** Section the user asked for while the open one has unsaved changes. */
+  const [pendingSelection, setPendingSelection] = useState<DocumentSection | null>(null)
 
-  const { data: doc, isLoading } = useQuery({
+  const { data: doc, isLoading, dataUpdatedAt } = useQuery({
     queryKey: ['document', organizationId, documentId],
     queryFn: () => getDocument(organizationId, documentId),
   })
+
+  /**
+   * A decision taken while this section is open, awaiting the refetch it
+   * triggered.
+   *
+   * `take_generated` rewrites the body server-side, but `draft` still holds
+   * the text the decision just discarded. Left alone the pane shows the
+   * rejected words, and the next keystroke makes them dirty and therefore
+   * saveable -- silently undoing the decision the user had already been told
+   * succeeded. `at` is the moment the decision was sent: the reseed waits for
+   * document data newer than that, because `bodies` is still the pre-decision
+   * text when the mutation resolves. Reseeding off whatever is in the cache at
+   * that instant would put the stale body back.
+   */
+  const [reseed, setReseed] = useState<{ sectionId: string; at: number } | null>(null)
 
   const { data: history } = useQuery({
     queryKey: ['document-history', organizationId, documentId],
@@ -78,22 +78,46 @@ export default function DocumentEditor({
     enabled: showHistory,
   })
 
-  const bodies = useMemo(
-    () => (doc ? sliceSections(doc.merged_content, doc.sections) : {}),
+  const slices = useMemo(
+    () =>
+      doc
+        ? sliceSections(doc.merged_content, doc.sections)
+        : { bodies: {} as Record<string, string>, unmatched: [] as string[] },
     [doc]
   )
+  const bodies = slices.bodies
+  const resolve = useResolveSection(organizationId, documentId)
 
-  // Open the section the reader was on when they pressed Edit. Failing that,
-  // the first that needs a decision — that is what the reader came for after a
-  // regeneration.
+  /**
+   * Choose the section to open.
+   *
+   * The reader's anchor first — that is what the user was looking at when they
+   * pressed Edit. Then the first section needing a decision, which is what a
+   * reader comes to the editor for after a regeneration.
+   *
+   * The `hasBody` test on the anchor is the part that matters. The top of a
+   * generated document is its H1 — "Statement of Applicability" — a heading
+   * whose entire content is its subsections, so it has no body of its own.
+   * Anchoring there is correct for the reader and useless for the editor: it
+   * opens an empty box on a document with seventy-one sections of text. An
+   * anchor with nothing to edit is not an anchor, so it falls through. A
+   * genuinely empty section can still be opened deliberately from the outline.
+   */
   useEffect(() => {
     if (!doc || activeSection) return
+    const hasBody = (s: DocumentSection) => (bodies[s.section_id] ?? '').trim().length > 0
+    const ordered = [...doc.sections].sort((a, b) => a.ordinal - b.ordinal)
     const anchored = initialSectionId
       ? doc.sections.find((s) => s.section_id === initialSectionId)
       : undefined
-    const conflict = doc.sections.find((s) => s.status === 'conflict')
+    const conflict = ordered.find((s) => s.status === 'conflict')
+    const firstWithBody = ordered.find(hasBody)
     const first =
-      anchored ?? conflict ?? [...doc.sections].sort((a, b) => a.ordinal - b.ordinal)[0]
+      (anchored && hasBody(anchored) ? anchored : undefined) ??
+      conflict ??
+      firstWithBody ??
+      anchored ??
+      ordered[0]
     if (first) {
       setActiveSection(first.section_id)
       setDraft(bodies[first.section_id] ?? '')
@@ -101,12 +125,31 @@ export default function DocumentEditor({
     }
   }, [doc, activeSection, bodies, initialSectionId])
 
+  useEffect(() => {
+    // Only once the document query has produced data newer than the decision.
+    if (!reseed || dataUpdatedAt <= reseed.at) return
+    const next = bodies[reseed.sectionId]
+    // `undefined` means the section is gone -- `retire` removes the row. There
+    // is no body to show and nothing to reseed; the outline moves on.
+    if (next !== undefined && reseed.sectionId === activeSection) {
+      setDraft(next)
+      setDirty(false)
+    }
+    setReseed(null)
+  }, [reseed, dataUpdatedAt, bodies, activeSection])
+
   const saveMutation = useMutation({
     mutationFn: (payload: { sectionId: string; content: string }) =>
       saveSection(organizationId, documentId, payload.sectionId, payload.content),
     onSuccess: (result) => {
       setDirty(false)
       queryClient.invalidateQueries({ queryKey: ['document', organizationId, documentId] })
+      // The reader renders from the preview, not from `merged_content`, so a
+      // save that skipped this key left the reader showing the old text and,
+      // with it, the old status callout for the section just edited.
+      queryClient.invalidateQueries({
+        queryKey: ['document-preview', organizationId, documentId],
+      })
       queryClient.invalidateQueries({ queryKey: ['documents', organizationId] })
       toast.success(
         result.lifecycle_status === 'in_review'
@@ -127,8 +170,27 @@ export default function DocumentEditor({
     onError: (error: Error) => toast.error(error.message),
   })
 
+  /**
+   * Move to another section, asking first if the current one has unsaved work.
+   *
+   * The confirmation is in the page rather than `window.confirm`. A native
+   * dialog blocks the whole renderer while it is up — it cannot be styled or
+   * themed, it is unreachable to the browser automation this feature is
+   * verified with, and it gives the user no way to look at what they are about
+   * to discard. Here the pending target is held in state and the outline says
+   * what will be lost until the user answers.
+   */
   function selectSection(section: DocumentSection) {
-    if (dirty && !window.confirm('Discard unsaved changes to this section?')) return
+    if (section.section_id === activeSection) return
+    if (dirty) {
+      setPendingSelection(section)
+      return
+    }
+    openSection(section)
+  }
+
+  function openSection(section: DocumentSection) {
+    setPendingSelection(null)
     setActiveSection(section.section_id)
     setDraft(bodies[section.section_id] ?? '')
     setDirty(false)
@@ -211,11 +273,12 @@ export default function DocumentEditor({
       {conflicts.length > 0 && (
         <div className="doc-notice doc-notice-warning doc-conflict-banner">
           <strong>
-            {conflicts.length} section{conflicts.length === 1 ? '' : 's'} need
-            your decision.
+            {conflicts.length} section{conflicts.length === 1 ? '' : 's'}{' '}
+            {conflicts.length === 1 ? 'needs' : 'need'} your decision.
           </strong>{' '}
-          Your edit was kept in each. The generated alternative is in this
-          document's version history — nothing was overwritten.
+          Your text was kept in each, but it was written against an earlier
+          scope. Open one to keep it or take the generated version — nothing was
+          overwritten either way.
         </div>
       )}
 
@@ -262,12 +325,42 @@ export default function DocumentEditor({
         </div>
       )}
 
+      {pendingSelection && (
+        <div className="doc-notice doc-notice-warning doc-decision-confirm">
+          <span>
+            “{current?.heading_text ?? 'This section'}” has unsaved changes.
+            Discard them and open “{pendingSelection.heading_text}”?
+          </span>
+          <div className="doc-decision-actions">
+            <button
+              type="button"
+              className="btn-danger"
+              onClick={() => openSection(pendingSelection)}
+            >
+              Discard and switch
+            </button>
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => setPendingSelection(null)}
+            >
+              Keep editing
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="doc-editor-body">
         {/* ── Outline ─────────────────────────────────────────────────── */}
         <aside className="doc-outline">
           <div className="doc-outline-head">
             <h3>Sections</h3>
-            <span>{ordered.length}</span>
+            {/* Same count, same words as the reader's rail and the masthead —
+                the three are one system. See OutlineCount. */}
+            <OutlineCount
+              sectionCount={doc.section_count}
+              retiringCount={doc.pending_retirement_count}
+            />
           </div>
           <ul className="doc-outline-list">
             {ordered.map((s) => (
@@ -310,20 +403,57 @@ export default function DocumentEditor({
                       ` · edited ${new Date(current.edited_at).toLocaleDateString('en-GB')}`}
                   </span>
                 </div>
-                <button
-                  type="button"
-                  className="btn-primary"
-                  disabled={!dirty || saveMutation.isPending || readOnly}
-                  onClick={() =>
-                    saveMutation.mutate({
-                      sectionId: current.section_id,
-                      content: draft,
-                    })
-                  }
-                >
-                  {saveMutation.isPending ? 'Saving…' : 'Save section'}
-                </button>
+                <div className="doc-section-head-actions">
+                  {/* A conflicted or retiring section can be settled from here
+                      rather than by retyping your own words over themselves,
+                      which was the only exit this screen used to offer. */}
+                  <SectionDecision
+                    section={current}
+                    pending={resolve.isPending}
+                    disabled={readOnly}
+                    variant="bar"
+                    onResolve={(choice) =>
+                      resolve.mutate(
+                        { sectionId: current.section_id, choice },
+                        {
+                          onSuccess: () =>
+                            setReseed({
+                              sectionId: current.section_id,
+                              at: Date.now(),
+                            }),
+                        }
+                      )
+                    }
+                  />
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    disabled={!dirty || saveMutation.isPending || readOnly}
+                    onClick={() =>
+                      saveMutation.mutate({
+                        sectionId: current.section_id,
+                        content: draft,
+                      })
+                    }
+                  >
+                    {saveMutation.isPending ? 'Saving…' : 'Save section'}
+                  </button>
+                </div>
               </div>
+
+              {/* The body could not be located in the document. That is a
+                  mapping failure, not an empty section, and showing a blank box
+                  would invite the user to "fix" it by typing — which would then
+                  overwrite whatever the section really holds. */}
+              {slices.unmatched.includes(current.section_id) && (
+                <div className="doc-notice doc-notice-warning doc-editor-guard">
+                  <strong>This section's text could not be located.</strong> Its
+                  heading is not in the document as stored, so there is nothing
+                  safe to load here. Saving would replace the section's real
+                  content — regenerate the document or edit it as Markdown
+                  instead.
+                </div>
+              )}
 
               {current.control_ids.length > 0 && (
                 <div className="doc-section-controls">
@@ -337,7 +467,7 @@ export default function DocumentEditor({
 
               <MarkdownEditor
                 value={draft}
-                readOnly={readOnly}
+                readOnly={readOnly || slices.unmatched.includes(current.section_id)}
                 onChange={(next) => {
                   setDraft(next)
                   setDirty(true)

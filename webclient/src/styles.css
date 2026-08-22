@@ -26867,6 +26867,22 @@ textarea.form-control{
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--card);
+  /* The panel owns its own scrolling so `.doc-gen-footer` has a scrollport to
+     stick against. `.app-content` sets `overflow-y: auto` but a later
+     `flex: 1` rule lets it grow to content height, so it is a scroll container
+     that never scrolls — the window scrolls instead. Sticky resolves against
+     the nearest scroll container, not the one that happens to be moving, so
+     without this bound the footer never engages and the primary action is
+     unreachable when many generators are listed.
+
+     The 20rem reserve is the page chrome above the panel (masthead, page
+     heading, blurb, status filters) plus breathing room below it. Measured at
+     278px in Chrome at 1456x917, so there is ~42px of slack: the panel and its
+     action bar both land inside the viewport when the panel opens, without the
+     user having to scroll the window first to discover that a Generate button
+     exists. */
+  max-height: calc(100vh - 20rem);
+  overflow-y: auto;
 }
 
 .doc-panel-head {
@@ -26944,14 +26960,44 @@ textarea.form-control{
   font-variant-numeric: tabular-nums;
 }
 
+/* The panel is as tall as the number of generators the organisation has, and on
+   a fully scoped estate that runs well past the fold. The Generate button went
+   with it: you ticked six document types, reached the bottom of the list, and
+   the panel gave no sign that its primary action existed somewhere further
+   down. Sticking the bar to the bottom of the scrollport keeps the button, the
+   Cancel beside it and the "N documents selected" count on screen for the whole
+   scroll — which also, at no extra cost, explains why the button is disabled
+   when nothing is ticked.
+
+   It sticks against `.doc-generate-panel` itself, which is bounded and scrolls
+   for exactly this reason. It cannot stick against `.app-content`: that element
+   sets `overflow-y: auto` but a later `flex: 1` rule lets it grow to content
+   height, so it is a scroll container that never scrolls — measured in Chrome
+   at `scrollHeight === clientHeight === 2105` with the window carrying the
+   scroll instead. `bottom` is negative by the panel's padding so the bar pins
+   to the padding edge rather than the content edge; at `bottom: 0` a 1.25rem
+   strip of option rows scrolled visibly beneath it. The negative
+   margins cancel `.doc-generate-panel`'s 1.25rem padding so the stuck bar spans
+   the panel edge to edge and paints over the option rows passing underneath;
+   the matching horizontal padding puts its contents back where they were, and
+   the bottom radius keeps it from squaring off the panel's rounded corner.
+   `flex-wrap` is retained from the original rule: the force-regenerate
+   checkbox carries a two-line explainer, and on a narrow viewport the bar
+   wraps rather than crushing it. */
 .doc-gen-footer {
   display: flex;
   justify-content: space-between;
   align-items: flex-end;
   gap: 1.5rem;
-  padding-top: 1rem;
   border-top: 1px solid var(--border);
   flex-wrap: wrap;
+  position: sticky;
+  bottom: -1.25rem;
+  z-index: 2;
+  margin: 0 -1.25rem -1.25rem;
+  padding: 1rem 1.25rem 1.25rem;
+  background: var(--card);
+  border-radius: 0 0 var(--radius) var(--radius);
 }
 
 .doc-force-check {
@@ -27076,6 +27122,17 @@ textarea.form-control{
 
 .doc-outline-head h3 { margin: 0; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.03em; }
 .doc-outline-head span { font-size: 0.78rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* Retiring sections are still listed in the rail — they have to be reachable to
+   be retired or kept — but they are not part of how long the document is. So
+   they are a second, quieter tally beside the operative count rather than
+   folded into it. Needs to outrank `.doc-outline-head span` above, which also
+   matches this nested element. */
+.doc-outline-head .doc-outline-retiring {
+  margin-left: 0.4rem;
+  font-size: 0.72rem;
+  opacity: 0.7;
+}
 
 .doc-outline-list {
   list-style: none;
@@ -27249,27 +27306,55 @@ textarea.form-control{
   min-height: 32rem;
 }
 
+/* Compact by intent. At 1280x800 the masthead, the lifecycle stepper on its
+   own line and three stacked notice blocks consumed ~400px of an 800px window,
+   leaving the document itself in a letterbox. Nothing was removed — for a
+   compliance artefact the provenance IS the credibility — but the title now
+   shares the action row and the stepper shares the facts row. */
 .doc-reader-head {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--card);
-  padding: 1.25rem 1.5rem;
+  padding: 0.7rem 1rem;
   display: flex;
   flex-direction: column;
-  gap: 0.85rem;
+  gap: 0.5rem;
 }
 
 .doc-reader-head-top {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 1rem;
+  gap: 0.75rem;
   flex-wrap: wrap;
 }
 
 .doc-reader-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
 
-.doc-reader-title { margin: 0; font-size: 1.6rem; line-height: 1.25; }
+.doc-reader-title {
+  margin: 0;
+  font-size: 1.15rem;
+  line-height: 1.3;
+  /* Takes the slack between the back button and the action group, and wraps
+     rather than pushing the actions onto a second line. */
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+
+/* Facts and lifecycle on one line; the stepper drops below only when there is
+   genuinely no room for both. */
+.doc-reader-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 1.25rem;
+  flex-wrap: wrap;
+}
+
+/* The document no longer matches the scope it was generated against. Stated in
+   the facts row because that is where the reader is already asking "how
+   current is this". */
+.doc-stale { color: var(--warning); font-weight: 600; }
 
 .doc-reader-facts {
   display: flex;
@@ -27288,7 +27373,7 @@ textarea.form-control{
   align-items: center;
   gap: 0;
   list-style: none;
-  margin: 0.25rem 0 0;
+  margin: 0;
   padding: 0;
   flex-wrap: wrap;
 }
@@ -27309,9 +27394,9 @@ textarea.form-control{
    filled rather than merely ticked. */
 .doc-lifecycle-step + .doc-lifecycle-step::before {
   content: '';
-  width: 2.25rem;
+  width: 1.5rem;
   height: 2px;
-  margin-right: 0.7rem;
+  margin-right: 0.5rem;
   background: var(--border);
   border-radius: 1px;
 }
@@ -27386,9 +27471,49 @@ textarea.form-control{
   overflow-y: auto;
 }
 
-/* Measure, not width. Long-form prose is read in a column, not across a
-   1400px monitor. */
-.doc-reader-prose { max-width: 78ch; margin: 0 auto; }
+/* Measure, not width — but the measure belongs to the prose, not to the pane.
+   Capping the whole article at 78ch also capped the SoA's six-column control
+   tables, which crammed into ~787px while 500px sat empty either side. So the
+   article spans the pane and lays its children out on a three-track grid: text
+   sits in the centre `measure` track, and a table's scroll box spans `full`. */
+.doc-reader-prose,
+.doc-reader-prose > .docr-sec {
+  display: grid;
+  grid-template-columns:
+    [full-start] minmax(0, 1fr)
+    [measure-start] minmax(0, 78ch) [measure-end]
+    minmax(0, 1fr) [full-end];
+  align-content: start;
+}
+
+.doc-reader-prose { max-width: none; margin: 0; }
+.doc-reader-prose > *,
+.doc-reader-prose > .docr-sec > * { grid-column: measure; min-width: 0; }
+.doc-reader-prose > .docr-sec { grid-column: full; }
+
+/* Wide content scrolls inside its own box. Without this the table pushes the
+   reading pane sideways and takes the masthead with it. */
+/* Selector weight matters here: `.doc-reader-prose > .docr-sec > *` above
+   assigns the measure track with two class selectors, so a single-class rule
+   would lose to it and the table would stay boxed in. */
+.doc-reader-prose > .doc-table-scroll,
+.doc-reader-prose > .docr-sec > .doc-table-scroll {
+  grid-column: full;
+}
+
+.doc-table-scroll {
+  overflow-x: auto;
+  max-width: 100%;
+  margin: 0 0 1.1rem;
+}
+.doc-table-scroll > table { margin: 0; }
+
+/* On a first generation every section carries the same status, so forty "New"
+   callouts distinguish nothing. The two statuses that are a request for a
+   decision are never quietened. */
+.doc-reader-prose.is-quiet .docr-flag:not(.docr-flag-conflict):not(.docr-flag-pending_retirement) {
+  display: none;
+}
 
 .doc-reader-prose h1 { font-size: 1.75rem; margin: 0 0 1.5rem; }
 .doc-reader-prose h2 { font-size: 1.3rem; margin: 0 0 0.75rem; }
@@ -27400,7 +27525,6 @@ textarea.form-control{
 .doc-reader-prose strong { color: var(--text); }
 .doc-reader-prose em { color: var(--muted); }
 
-/* Tables scroll inside their own box rather than pushing the page sideways. */
 .doc-reader-prose table {
   width: 100%;
   border-collapse: collapse;
@@ -27429,6 +27553,9 @@ textarea.form-control{
 
 .docr-sec { scroll-margin-top: 1.5rem; padding-left: 1rem; margin-left: -1rem; }
 .docr-sec:last-child { margin-bottom: 0; }
+/* The section is a grid (see the measure note above), so its children no longer
+   collapse margins with each other. Nothing depended on that collapsing; the
+   spacing below simply becomes exact rather than approximate. */
 
 .docr-sec.status-new,
 .docr-sec.status-conflict,
@@ -27490,3 +27617,317 @@ textarea.form-control{
    call sites and is not this feature's to change. */
 .doc-reader-head-top > .btn-secondary,
 .doc-reader-actions > button { flex: none; }
+
+/* ── Alerts strip ────────────────────────────────────────────────────────── */
+/* Three stacked `.doc-notice` blocks were ~150px of chrome describing problems
+   the reader then had no way to act on. One strip, one line each, and the
+   control that does something about it on the same line. */
+
+.doc-alerts {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.doc-alert {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.5rem;
+  margin: 0;
+  padding: 0.45rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-bright);
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.doc-alert strong { color: var(--text); }
+
+.doc-alert.is-warning {
+  border-color: color-mix(in srgb, var(--warning) 45%, transparent);
+  background: color-mix(in srgb, var(--warning) 8%, transparent);
+}
+
+.doc-alert.is-warning strong { color: var(--warning); }
+
+.doc-alert > button {
+  flex: none;
+  margin-left: auto;
+  padding: 0.2rem 0.65rem;
+  font-size: 0.78rem;
+}
+
+/* ── Section decisions ───────────────────────────────────────────────────── */
+/* `doc-decision-mount` is created in DocumentReader.tsx and appended to a
+   section inside the sanitised fragment; the controls are React, portalled
+   into it. It takes the measure track like the prose it is about — a
+   full-bleed panel would read as belonging to the page rather than to the
+   section. */
+
+.doc-decision {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin: 0.25rem 0 1.4rem;
+}
+
+.doc-decision-flow {
+  padding: 0.7rem 0.85rem;
+  border: 1px solid color-mix(in srgb, var(--warning) 40%, transparent);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--warning) 7%, transparent);
+}
+
+.doc-decision-flow.status-pending_retirement {
+  border-color: var(--border);
+  background: var(--surface-bright);
+}
+
+.doc-decision-bar { margin: 0; }
+
+.doc-decision-text {
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.55;
+  color: var(--text);
+}
+
+.doc-decision-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+/* The one destructive action in this feature confirms in the page. A native
+   `window.confirm` cannot be themed, blocks the renderer, and is unreachable
+   to the browser automation this is verified with. */
+.doc-decision-confirm {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.doc-decision-confirm > .doc-decision-actions { margin-left: auto; }
+.doc-decision-actions > button { flex: none; }
+
+/* ── Section diff ────────────────────────────────────────────────────────── */
+/* The banners pointed at "the generated alternative in version history"; this
+   is the first screen that can actually show it. */
+
+.doc-diff {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+  min-height: 0;
+}
+
+.doc-diff-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.doc-diff-head h3 { margin: 0; font-size: 1rem; }
+/* Shown in place of the decision bar while an older generation is selected:
+   the decision would silently apply to the latest one. */
+.doc-diff-note {
+  margin: 0;
+  padding: 0.75rem 0 0;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+/* Stands in for the documents workspace while its scoping data is unresolved,
+   so a `?tab=documents` deep link never lands on an empty pane. Only tokens
+   here -- it inherits the theme like every other doc- surface. */
+.doc-tab-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 4rem 1.5rem;
+  color: var(--muted);
+  text-align: center;
+}
+
+.doc-tab-placeholder p { margin: 0; }
+
+.doc-diff-summary { font-size: 0.78rem; color: var(--muted); }
+.doc-diff-head-actions { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+.doc-diff-head-actions > button { flex: none; }
+
+.doc-diff-versions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.doc-diff-versions select {
+  font-size: 0.78rem;
+  padding: 0.2rem 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface-highest);
+  color: var(--text);
+}
+
+.doc-diff-unavailable {
+  margin: 0;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-bright);
+  color: var(--muted);
+  font-size: 0.83rem;
+  line-height: 1.5;
+}
+
+/* Side by side while there is room for two columns of code; stacked below
+   ~900px, where two 40-character panes are worse than one readable one. */
+.doc-diff-panes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+  min-height: 0;
+}
+
+@media (max-width: 900px) {
+  .doc-diff-panes { grid-template-columns: 1fr; }
+}
+
+.doc-diff-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.doc-diff-pane-head {
+  margin: 0;
+  padding: 0.4rem 0.6rem;
+  background: var(--surface-bright);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  letter-spacing: var(--label-tracking, 0.06em);
+  color: var(--muted);
+}
+
+.doc-diff-lines {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  max-height: 34vh;
+  background: var(--surface-highest);
+}
+
+.doc-diff-line {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+  padding: 0 0.5rem;
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
+.doc-diff-line code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text);
+}
+
+.doc-diff-gutter {
+  flex: none;
+  min-width: 2.5ch;
+  text-align: right;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.72rem;
+  user-select: none;
+}
+
+/* A blank row is alignment padding for the opposite pane, not content. */
+.doc-diff-line.is-blank { background: var(--panel); min-height: 1.2rem; }
+.doc-diff-line.is-removed { background: color-mix(in srgb, var(--danger, var(--warning)) 14%, transparent); }
+.doc-diff-line.is-added { background: color-mix(in srgb, var(--success) 14%, transparent); }
+
+/* ── Guard rail ──────────────────────────────────────────────────────────── */
+.doc-editor-guard { font-size: 0.83rem; line-height: 1.5; }
+
+/* ── Editor fills the height it is given ─────────────────────────────────── */
+/* `.doc-editor` had no height, so the outline was `position: sticky` against a
+   page scroll and the editor pane took a 320px inline minimum inside a 799px
+   body. The reader already fits itself to the viewport and scrolls its panes
+   internally; the editor now does the same, so the textarea is as tall as the
+   window allows and there is exactly one scrollbar in the pane. */
+.doc-editor {
+  height: calc(100vh - 6.5rem);
+  min-height: 32rem;
+}
+
+.doc-editor-body {
+  flex: 1;
+  min-height: 0;
+  align-items: stretch;
+}
+
+.doc-editor-body > .doc-outline {
+  position: static;
+  top: auto;
+  max-height: none;
+  min-height: 0;
+}
+
+.doc-section-editor { min-height: 0; }
+
+.doc-editor-host-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.doc-editor-host-wrap > .doc-editor-host { flex: 1 1 auto; min-height: 0; }
+
+/* The textarea fallback is a direct child of the flex column, not of the wrap. */
+.doc-section-editor > .doc-editor-textarea {
+  flex: 1 1 auto;
+  min-height: 0;
+  resize: none;
+}
+
+.doc-section-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  flex: none;
+}
+
+.doc-section-head-actions > button { flex: none; }
+
+/* Narrow screens keep the ordinary page scroll, as the reader does. */
+@media (max-width: 900px) {
+  .doc-editor { height: auto; min-height: 0; }
+  .doc-editor-host-wrap { min-height: 20rem; }
+}
