@@ -10,19 +10,9 @@
     <meta name="theme-color" content="#1a202c" />
     <title>SCF Controls Platform - GRC Control Management</title>
     <link rel="stylesheet" href="/src/styles.css" />
-    <!-- Prevent flash of wrong theme -->
-    <script>
-      (function() {
-        var base = localStorage.getItem('scf-theme-base');
-        if (base !== 'light' && base !== 'dark') {
-          base = localStorage.getItem('scf-theme-preference');
-        }
-        if (base !== 'light' && base !== 'dark') {
-          base = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-        }
-        document.documentElement.setAttribute('data-theme', base);
-      })();
-    </script>
+    <!-- Prevent flash of wrong theme. External (not inline) so the CSP can drop
+         script-src 'unsafe-inline' — see webclient/public/theme-init.js. -->
+    <script src="/theme-init.js"></script>
   </head>
   <body>
     <div id="root"></div>

@@ -474,17 +474,30 @@ services:
     restart: "no"
 
   frontend:
-    # NOT switched to a published image yet — OPEN DECISION (see PR).
-    # This service is the Vite DEV server (Dockerfile.frontend.dev, port 5173, build-time
-    # VITE args). The published `ghcr.io/markac007/scf-frontend` image is PROD nginx
-    # (Dockerfile.frontend, port 80, runtime BACKEND_URL, Google-auth disabled). Swapping
-    # requires a deliberate prod-frontend service (different port + runtime env), not a
-    # one-line image: swap. Left on build until the OSS-frontend shape is decided.
+    # PRODUCTION frontend: `vite build` output served by nginx (Dockerfile.frontend),
+    # with the security headers from nginx.conf and the API proxied to the backend.
+    #
+    # This service used to be the Vite DEV server, which meant the SHIPPED DEFAULT
+    # stack put a development server on whatever address you exposed it at —
+    # unminified TypeScript source under /src/**, the HMR client at /@vite/client,
+    # and Vite's /@fs/ file-serving surface (a live arbitrary-file-read CVE class),
+    # with none of nginx.conf's response headers. That is issue #777, and it was
+    # found running on a public host. `docker compose up` must give you something
+    # safe to expose; hot reload is a deliberate opt-in, not the default.
+    #
+    # Hot reload for frontend development is unchanged, one flag away:
+    #   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+    # which overrides this service back to Dockerfile.frontend.dev on :5173.
+    #
+    # Still built from source rather than pulled from ghcr.io/markac007/scf-frontend
+    # — publishing the OSS frontend image is a separate open decision.
     build:
       context: .
-      dockerfile: Dockerfile.frontend.dev
+      dockerfile: Dockerfile.frontend
       args:
-        # No VITE_API_URL needed - uses relative URLs
+        # No VITE_API_URL needed - uses relative URLs (nginx proxies /api/).
+        # NOTE: these are BAKED INTO THE BUNDLE at build time. Changing any of
+        # them requires `docker compose up -d --build frontend`, not a restart.
         VITE_GOOGLE_AUTH_ENABLED: ${VITE_GOOGLE_AUTH_ENABLED}
         # Issue #699: redirect-based OIDC sign-in (bundled Keycloak or BYO IdP)
         VITE_OIDC_ENABLED: ${VITE_OIDC_ENABLED:-false}
@@ -492,14 +505,26 @@ services:
         VITE_API_KEY: ${VITE_API_KEY}
     container_name: cg-scf-frontend
     environment:
-      # Runtime, not a build arg: this is the Vite DEV server, so vite.config.ts
-      # is evaluated by Node when the container starts. Set it when the UI is
-      # reached under a hostname Vite would otherwise reject ("Blocked request"),
-      # e.g. behind a reverse proxy or tunnel.
+      # Runtime (envsubst'd into nginx.conf by docker-entrypoint.sh): where
+      # nginx forwards /api/*. The backend is on the internal docker network.
+      BACKEND_URL: ${BACKEND_URL:-http://backend:8000}
+      # Runtime: extra CSP connect-src origins for THIS deployment's evidence
+      # storage. Defaults to the bundled MinIO's browser-facing endpoint so
+      # presigned upload/download works out of the box — same auto-follow
+      # pattern as EVIDENCE_PUBLIC_ENDPOINT above. Point it at your own S3 /
+      # Azure / S3-compatible origin if you replaced MinIO, or set it empty to
+      # allow nothing beyond the shipped CSP.
+      EXTRA_CONNECT_SRC: ${EXTRA_CONNECT_SRC-http://localhost:${MINIO_PORT:-9000}}
+      # Only consumed by the Vite DEV server (docker-compose.dev.yml overlay),
+      # where vite.config.ts is evaluated by Node at container start. Set it
+      # when the dev UI is reached under a hostname Vite would otherwise reject
+      # ("Blocked request"), e.g. behind a reverse proxy or tunnel. Inert here.
       VITE_ALLOWED_HOSTS: ${VITE_ALLOWED_HOSTS:-}
     ports:
       # Host side is remappable (FRONTEND_PORT) if 5173 is taken on your host.
-      - "${FRONTEND_PORT:-5173}:5173"
+      # The host port is unchanged from the dev-server era on purpose — every
+      # doc, and the CORS_ORIGINS default above, still say localhost:5173.
+      - "${FRONTEND_PORT:-5173}:80"
     depends_on:
       - backend
     networks:

@@ -193,6 +193,21 @@ imports and seeds in the background — no CLI needed.
 docker compose up -d
 ```
 
+The frontend is compiled to static files and served by nginx, so the `VITE_*`
+values in `.env` are **baked into the bundle at build time**. Change any of them
+and you need a rebuild, not a restart:
+
+```bash
+docker compose up -d --build frontend
+```
+
+Once it is up, confirm you are serving a production build with its security
+headers — this is the check that would have caught [#777](https://github.com/MarkAC007/scf-controls-platform/issues/777):
+
+```bash
+scripts/verify-prod-build.sh http://localhost:5173
+```
+
 On first boot the backend **runs database migrations automatically** (Alembic) and
 **seeds the catalogue** if it is empty — there is no manual migration step. Watch progress with:
 
@@ -259,7 +274,7 @@ All of these are off by default; enable only what you need in `.env`.
 | Component        | Role                                                                    |
 | ---------------- | ----------------------------------------------------------------------- |
 | **backend**      | FastAPI REST API (port 8000), runs migrations and seeds on startup.     |
-| **frontend**     | React + Vite web app (port 5173). Currently served by the Vite **dev server** — fine for internal/evaluation use; put a reverse proxy with TLS in front (or build the production nginx image from `Dockerfile.frontend`) before exposing it beyond a trusted network. |
+| **frontend**     | React web app (port 5173). A production `vite build`, served by nginx with security headers and an `/api/` proxy to the backend. Still put a reverse proxy with TLS in front before exposing it to the internet. Frontend developers swap in the Vite dev server with `docker compose -f docker-compose.yml -f docker-compose.dev.yml up` — **never** on a host reachable from outside your machine. |
 | **postgres**     | PostgreSQL 15 — the system of record.                                   |
 | **redis**        | Cache and Celery broker (internal network only).                        |
 | **celery-worker / celery-beat** | Async tasks: catalogue import, evidence assessment, scheduling. |
