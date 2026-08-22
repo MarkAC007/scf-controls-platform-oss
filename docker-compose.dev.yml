@@ -1,7 +1,13 @@
 # Docker Compose development override
-# Use with: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+# Use with: docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 #
-# This enables hot-reload for frontend development without rebuilding
+# This replaces the production nginx frontend from docker-compose.yml with the
+# Vite DEV server, giving hot reload without rebuilding.
+#
+# NEVER use this overlay on anything reachable from outside your machine. The
+# Vite dev server publishes the full unminified TypeScript source at /src/**,
+# an HMR websocket, and the /@fs/ file-serving surface, and it serves none of
+# nginx.conf's security headers. Running it on a public host is issue #777.
 
 services:
   frontend:
@@ -18,8 +24,13 @@ services:
       - ./webclient/tsconfig.node.json:/app/tsconfig.node.json:ro
       # Mount .env file for environment variables
       - ./webclient/.env:/app/.env:ro
-    ports:
-      - "5173:5173"  # Vite dev server port
+    # `!override` REPLACES the base service's ports list instead of appending to
+    # it. Without it, compose merges the two lists and the stack fails to start:
+    # the base publishes host 5173 -> container 80 (nginx) and this file
+    # publishes host 5173 -> container 5173 (vite), so host 5173 is claimed
+    # twice. Requires Docker Compose >= 2.24.4.
+    ports: !override
+      - "${FRONTEND_PORT:-5173}:5173"  # Vite dev server port
     environment:
       # These can be overridden by .env file
       VITE_API_URL: ${VITE_API_URL:-http://localhost:8000/api}

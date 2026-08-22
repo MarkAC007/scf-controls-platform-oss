@@ -1,17 +1,13 @@
-# v0.19.2
+# v0.19.3
 
 Adds SCF document generation to the platform — generated documents with versions, sections and review transitions. Migration docgen001 creates five new tables and changes no existing schema.
 
 ## Fixes and improvements
 
-- Document status tracks the lifecycle, and revision history says what changed (PR 775)
-
-## Migrations
-
-- `docgen003` — Record what each generated version actually changed.
-
-Migrations run automatically on upgrade. Review them before upgrading a deployment you cannot restore.
+- Keep the literal token add_header out of location-block comments
+- Move all security headers to server level, drop per-location add_header
+- Serve a production build by default, restore the missing headers
 
 ## Upgrading
 
-- Run `scripts/upgrade.sh v0.19.2` (read `UPGRADING.md` first).
+- Run `scripts/upgrade.sh v0.19.3` (read `UPGRADING.md` first).

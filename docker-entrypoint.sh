@@ -13,10 +13,23 @@ if [ -z "$BACKEND_URL" ]; then
   export BACKEND_URL="http://localhost:9999"  # Placeholder, won't be used
 fi
 
-echo "Substituting BACKEND_URL=$BACKEND_URL"
+# Extra CSP connect-src origins for this deployment's object storage — the
+# bundled MinIO, a non-eu-west-1 S3 region, a custom S3-compatible endpoint.
+# Space-separated list of origins, e.g.
+#   EXTRA_CONNECT_SRC="http://localhost:9000 https://*.s3.us-east-2.amazonaws.com"
+# Empty by default: the shipped CSP already covers Google auth, generic S3,
+# eu-west-1 S3 and Azure Blob. Evidence upload/download from any OTHER storage
+# origin is blocked by the browser until it is listed here.
+: "${EXTRA_CONNECT_SRC:=}"
+export EXTRA_CONNECT_SRC
 
-# Substitute BACKEND_URL in nginx config template
-envsubst '$BACKEND_URL' < /etc/nginx/nginx.conf.template > /etc/nginx/nginx.conf
+echo "Substituting BACKEND_URL=$BACKEND_URL"
+echo "Substituting EXTRA_CONNECT_SRC=${EXTRA_CONNECT_SRC:-<empty>}"
+
+# Substitute BACKEND_URL and EXTRA_CONNECT_SRC in nginx config template.
+# envsubst is given an explicit variable list so nginx's own $-variables
+# ($host, $csp_policy, $remote_addr, ...) survive untouched.
+envsubst '$BACKEND_URL $EXTRA_CONNECT_SRC' < /etc/nginx/nginx.conf.template > /etc/nginx/nginx.conf
 
 # Validate that substitution worked (proxy_pass should contain http:// or https://)
 if ! grep "proxy_pass" /etc/nginx/nginx.conf | grep -qE "https?://"; then
