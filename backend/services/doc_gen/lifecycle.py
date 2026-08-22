@@ -17,6 +17,7 @@ rules.
 """
 from __future__ import annotations
 
+import re
 from typing import Dict, List, Optional, Tuple
 
 STATUS_DRAFT = "draft"
@@ -55,6 +56,109 @@ TRANSITION_LABELS: Dict[Tuple[str, str], str] = {
 }
 
 ROLE_RANK = {"viewer": 1, "editor": 2, "admin": 3}
+
+#: How each status is written for a human reader. The stored values are
+#: snake_case machine states; "in_review" in a Document Control table read by an
+#: auditor is a defect, not a status.
+STATUS_LABELS: Dict[str, str] = {
+    STATUS_DRAFT: "Draft",
+    STATUS_IN_REVIEW: "In Review",
+    STATUS_APPROVED: "Approved",
+    STATUS_PUBLISHED: "Published",
+}
+
+
+def status_label(status: Optional[str]) -> str:
+    """The reader-facing name for a lifecycle status.
+
+    Falls back to title-casing an unknown value rather than raising: this is
+    called on the export path, and a status the map has not caught up with must
+    degrade to something readable rather than take the document down.
+    """
+    if not status:
+        return ""
+    return STATUS_LABELS.get(status) or status.replace("_", " ").title()
+
+
+#: The ``Document Control`` heading, at any depth, numbered or not.
+_DOC_CONTROL_HEADING_RE = re.compile(
+    r"^#{1,6}\s*(?:\d+[.)]\s*)?document\s+control\s*$",
+    re.IGNORECASE,
+)
+
+#: A table row whose *first* cell is "Status", with optional bold markers.
+#: Anchoring to the first cell is deliberate: the Statement of Applicability and
+#: the Control Status Report both carry a per-control "Status" column, and a
+#: pattern matching the word anywhere in a row would rewrite a hundred control
+#: rows into nonsense. Scoping to the Document Control block is the primary
+#: guard; this is the second.
+_STATUS_ROW_RE = re.compile(
+    r"^(\|\s*\*{0,2}\s*Status\s*\*{0,2}\s*\|)([^|]*)(\|\s*)$",
+    re.IGNORECASE,
+)
+
+_ANY_HEADING_RE = re.compile(r"^#{1,6}\s")
+
+
+def apply_lifecycle_status(markdown: str, status: Optional[str]) -> str:
+    """Write ``status`` into the document's own Document Control table.
+
+    The Document Control block is what an auditor reads to decide whether a
+    policy is in force, and until now it said whatever the generator wrote at
+    generation time -- always the literal "Draft", frozen there even after the
+    document had been approved and published. The platform record and the
+    document's own front matter disagreed, and the document was the one people
+    read.
+
+    Regenerating to fix that would mean an LLM bill and a rewrite of prose
+    somebody has already approved, so instead the single cell that encodes the
+    claim is rewritten in place. This is applied at generation *and* on every
+    lifecycle transition, so the two cannot drift apart again.
+
+    **Why the prompt is not templated instead.** Interpolating the status into
+    the generator prompt would move ``prompt_hash``, and with it every
+    document's staleness verdict, on every approval. The prompt stays fixed and
+    this owns the value.
+
+    Scope rules, in order:
+
+    1. Only inside the ``Document Control`` block, which ends at the next
+       heading of any level. Tier 1 documents (Statement of Applicability,
+       Control Status Report, Evidence Schedule) have no such block, so this is
+       a no-op for them.
+    2. Only a row whose first cell is "Status".
+
+    A human who edited the Document Control section keeps that edit -- only the
+    one cell moves. A human who deleted the Status row keeps it deleted: this
+    never re-adds a row, because the absence is a choice the document's owner
+    made, and silently reversing it would be the same overreach the generator
+    has just stopped committing.
+
+    Returns the markdown unchanged when there is nothing to rewrite, so callers
+    may apply it unconditionally.
+    """
+    label = status_label(status)
+    if not markdown or not label:
+        return markdown
+
+    lines = markdown.split("\n")
+    start = next(
+        (i for i, line in enumerate(lines)
+         if _DOC_CONTROL_HEADING_RE.match(line.strip())),
+        None,
+    )
+    if start is None:
+        return markdown
+
+    for i in range(start + 1, len(lines)):
+        if _ANY_HEADING_RE.match(lines[i]):
+            break  # left the Document Control block without finding the row
+        match = _STATUS_ROW_RE.match(lines[i].strip())
+        if match:
+            lines[i] = f"{match.group(1)} {label} {match.group(3).strip()}"
+            return "\n".join(lines)
+
+    return markdown
 
 
 class TransitionError(ValueError):

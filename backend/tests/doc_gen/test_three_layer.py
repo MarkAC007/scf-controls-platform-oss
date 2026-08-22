@@ -18,6 +18,7 @@ from services.doc_gen.three_layer import (
     STATUS_UPDATED,
     build_merged_document,
     collect_human_edits,
+    describe_version_summary,
     detect_human_edits,
     resolve_section,
     strip_markers,
@@ -341,3 +342,71 @@ class TestNestedSectionIdentity:
         for _ in range(2):
             result = three_way_merge(self.V2, result.merged_content, result.sections)
         assert "Scope text." in result.merged_content
+
+
+# ---------------------------------------------------------------------------
+# Describing a stored generation
+#
+# The merge tallies existed for the length of one request and were then thrown
+# away, so the History panel could only ever render a column of version numbers.
+# ``describe_version_summary`` turns the persisted tallies back into the
+# sentence a person actually wanted.
+# ---------------------------------------------------------------------------
+
+
+class TestDescribeVersionSummary:
+    def test_first_generation_reports_an_issue_not_a_delta(self):
+        out = describe_version_summary(
+            {"counts": {"new": 12}, "control_count": 34, "initial": True}
+        )
+        assert out == "Initial generation from 34 controls."
+
+    def test_names_what_the_merge_did(self):
+        out = describe_version_summary({
+            "counts": {"unchanged": 40, "updated": 3, "conflict": 1},
+            "control_count": 57,
+            "initial": False,
+        })
+        assert "1 conflict raised" in out
+        assert "3 sections updated" in out
+        assert "(from 57 controls)" in out
+
+    def test_conflicts_lead(self):
+        # A reader scanning the list wants the conflicts, not the tally of
+        # things that stayed the same.
+        out = describe_version_summary({
+            "counts": {"unchanged": 40, "conflict": 2},
+            "control_count": 57,
+            "initial": False,
+        })
+        assert out.index("conflict") < out.index("unchanged")
+
+    def test_singular_and_plural_are_both_grammatical(self):
+        one = describe_version_summary(
+            {"counts": {"new": 1}, "control_count": 5, "initial": False})
+        many = describe_version_summary(
+            {"counts": {"new": 2}, "control_count": 5, "initial": False})
+        assert "1 section added" in one
+        assert "2 sections added" in many
+
+    def test_machine_states_never_reach_the_reader(self):
+        out = describe_version_summary({
+            "counts": {"human_preserved": 2, "pending_retirement": 1},
+            "control_count": 9,
+            "initial": False,
+        })
+        assert "human_preserved" not in out
+        assert "pending_retirement" not in out
+        assert "2 edits preserved" in out
+        assert "1 section awaiting retirement" in out
+
+    def test_a_merge_that_changed_nothing_says_so(self):
+        out = describe_version_summary(
+            {"counts": {}, "control_count": 12, "initial": False})
+        assert out == "Regenerated with no section changes."
+
+    def test_an_unrecorded_version_says_nothing_at_all(self):
+        # NULL means "not measured". Rendering it as "no changes" would invent
+        # a finding about a merge nobody observed.
+        assert describe_version_summary(None) == ""
+        assert describe_version_summary({}) == ""

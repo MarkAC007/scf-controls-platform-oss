@@ -120,6 +120,40 @@ def _settings_for(session: Session, organization_id: str):
     )
 
 
+def _change_note(reasons: List[str]) -> str:
+    """A one-line description of what moved, for the Change History table.
+
+    ``describe_change`` already names the components that differ between two
+    fingerprints -- it is what the staleness column renders. The same sentence
+    is exactly what a Change History row should carry: "Revised -- updated
+    control data" is a record in shape only, and an auditor reading a version
+    table full of it learns nothing about any version.
+
+    Returns "" when nothing is nameable, so the caller falls back to the
+    generic wording rather than emitting an empty claim.
+    """
+    named = [r for r in reasons if r and r != "first generation"]
+    if not named:
+        return ""
+    return "; ".join(named)
+
+
+def _version_change_summary(
+    counts: Dict[str, int], control_count: int, initial: bool
+) -> Dict[str, Any]:
+    """What this generation did, in the shape ``DocumentVersion`` stores.
+
+    Only non-zero tallies are kept. A summary saying ``{"unchanged": 41}`` and
+    one saying ``{"unchanged": 41, "conflict": 0}`` mean the same thing, and the
+    second invites a renderer to write "0 conflicts" as though that were news.
+    """
+    return {
+        "counts": {k: v for k, v in (counts or {}).items() if v},
+        "control_count": control_count,
+        "initial": initial,
+    }
+
+
 def _existing_document(session: Session, organization_id: str, generator_name: str,
                        domain_id: str):
     from models import GeneratedDocument
@@ -311,6 +345,10 @@ def run_generation(
             spec, ctx, bundle,
             generation_version=generation_version,
             existing_content=(existing.merged_content if existing else ""),
+            # Deliberately NOT passed to the fingerprint's prompt above: that
+            # one must stay a pure function of the inputs, or every run would
+            # hash a prompt describing the previous run.
+            change_note=_change_note(change_reasons),
         )
         content, model_id, mocked = output.content, output.model_id, output.mocked
 
@@ -445,6 +483,15 @@ def run_generation(
         input_fingerprint=fingerprint.input_fingerprint,
         model_id=model_id,
         generator_version=GENERATOR_VERSION,
+        # The merge tallies exist for one request and were then discarded, so
+        # the History panel could only ever list version numbers. Carried
+        # forward here, "what changed in v7?" survives the request that
+        # answered it.
+        change_summary=_version_change_summary(
+            counts,
+            len(bundle.controls if bundle else ctx.all_controls),
+            existing is None,
+        ),
     ))
 
     # Replace section rows wholesale. They are derived state — rebuilt from the

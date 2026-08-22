@@ -2934,6 +2934,11 @@ class DocumentVersion(Base):
     input_fingerprint = Column(String(64), nullable=True)
     model_id = Column(String(100), nullable=True)
     generator_version = Column(String(40), nullable=True)
+    #: What this generation changed, from the merge that produced it:
+    #: ``{"counts": {...}, "control_count": N, "initial": bool}``. NULL means
+    #: "not recorded" -- every row predating the column -- which is a different
+    #: claim from "nothing changed" and must not be rendered as one.
+    change_summary = Column(JSONB, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now())
 
     document = relationship("GeneratedDocument", back_populates="versions")

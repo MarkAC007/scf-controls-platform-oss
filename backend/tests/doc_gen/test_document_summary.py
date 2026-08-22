@@ -135,7 +135,16 @@ class TestHistoryMarksTheCurrentVersion:
                     )
                 versions = [
                     SimpleNamespace(version=v, model_id=None, generator_version="1.0.0",
-                                    input_fingerprint="f", created_at=None)
+                                    input_fingerprint="f", created_at=None,
+                                    # v1 predates the summary column. NULL there
+                                    # means "not recorded", and the endpoint must
+                                    # render it as nothing rather than as a claim
+                                    # that nothing changed.
+                                    change_summary=None if v == 1 else {
+                                        "counts": {"updated": 2},
+                                        "control_count": 41,
+                                        "initial": False,
+                                    })
                     for v in (1, 2, 3)
                 ]
                 return SimpleNamespace(
@@ -151,3 +160,7 @@ class TestHistoryMarksTheCurrentVersion:
             membership.organization_id, DOC_ID, membership, _Session(),
         ))
         assert [v["is_current"] for v in out["versions"]] == [False, False, True]
+        # An unrecorded version says nothing; a recorded one says what it did.
+        assert out["versions"][0]["change_description"] == ""
+        assert "2 sections updated" in out["versions"][1]["change_description"]
+        assert "41 controls" in out["versions"][1]["change_description"]

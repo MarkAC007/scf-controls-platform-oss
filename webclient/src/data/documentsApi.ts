@@ -152,6 +152,13 @@ export interface DocumentHistory {
     created_at: string | null
     /** The snapshot the document currently sits on. Optional: see above. */
     is_current?: boolean
+    /**
+     * A sentence describing what this generation changed, built server-side so
+     * the wording is the same wherever it is read. Empty for every version
+     * generated before the summary was recorded -- which means *not recorded*,
+     * not *nothing changed*, and must not be rendered as the latter.
+     */
+    change_description?: string
   }>
 }
 

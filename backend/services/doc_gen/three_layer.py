@@ -36,7 +36,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .fingerprint import sha256
 from .section_parser import (
@@ -58,6 +58,68 @@ STATUS_HUMAN_PRESERVED = "human_preserved"
 STATUS_CONFLICT = "conflict"
 STATUS_NEW = "new"
 STATUS_PENDING_RETIREMENT = "pending_retirement"
+
+#: How each merge status is named in a sentence a person reads, singular and
+#: plural. The stored keys are machine states; "3 human_preserved" in a History
+#: panel is a leak of the schema, not a description of a version.
+_SUMMARY_WORDS: Dict[str, Tuple[str, str]] = {
+    STATUS_NEW: ("section added", "sections added"),
+    STATUS_UPDATED: ("section updated", "sections updated"),
+    STATUS_HUMAN_PRESERVED: ("edit preserved", "edits preserved"),
+    STATUS_CONFLICT: ("conflict raised", "conflicts raised"),
+    STATUS_PENDING_RETIREMENT: (
+        "section awaiting retirement", "sections awaiting retirement"),
+    STATUS_UNCHANGED: ("section unchanged", "sections unchanged"),
+}
+
+#: Most-interesting first. A reader scanning a version list wants the conflicts
+#: and the additions; "41 unchanged" is the least informative thing a merge can
+#: report, so it is last and only ever appears when nothing else did.
+_SUMMARY_ORDER = (
+    STATUS_CONFLICT,
+    STATUS_NEW,
+    STATUS_UPDATED,
+    STATUS_PENDING_RETIREMENT,
+    STATUS_HUMAN_PRESERVED,
+    STATUS_UNCHANGED,
+)
+
+
+def describe_version_summary(summary: Optional[Dict[str, Any]]) -> str:
+    """One sentence describing what a stored generation changed.
+
+    ``summary`` is a ``DocumentVersion.change_summary`` payload. ``None`` --
+    every row generated before the column existed -- returns "", which the UI
+    must render as *nothing recorded* rather than as *nothing changed*. Those
+    are different claims, and inventing the second from the first is the kind
+    of plausible fiction an ISMS record must not carry.
+    """
+    if not summary:
+        return ""
+
+    controls = summary.get("control_count")
+    if summary.get("initial"):
+        parts = ["Initial generation"]
+        if controls:
+            parts.append(f"from {controls} controls")
+        return " ".join(parts) + "."
+
+    counts = summary.get("counts") or {}
+    bits: List[str] = []
+    for status in _SUMMARY_ORDER:
+        n = counts.get(status) or 0
+        if not n:
+            continue
+        singular, plural = _SUMMARY_WORDS[status]
+        bits.append(f"{n} {singular if n == 1 else plural}")
+
+    if not bits:
+        return "Regenerated with no section changes."
+
+    sentence = "Regenerated: " + ", ".join(bits)
+    if controls:
+        sentence += f" (from {controls} controls)"
+    return sentence + "."
 
 SECTION_STATUSES = (
     STATUS_UNCHANGED,
