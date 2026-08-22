@@ -64,6 +64,28 @@ import type { ClientSummary, ConsultantInvite } from './types'
 
 type Tab = 'dashboard' | 'capability-posture' | 'library' | 'scoping' | 'evidence' | 'mapping-matrix' | 'tasks' | 'systems' | 'users' | 'consultant-portal' | 'risk-register' | 'vendors' | 'settings' | 'webhooks' | 'audit-log' | 'engagements' | 'cdm' | 'document-map' | 'documents' | 'platform-catalog' | 'platform-tenants' | 'catalog-changelog'
 
+/**
+ * The one screen whose location is reflected in the URL.
+ *
+ * This app selects screens from `activeTab` state; `react-router-dom` is a
+ * dependency that drives nothing, and giving it the wheel would touch all
+ * twenty-two screens above. So this does the narrow thing the document
+ * workspace actually needs — survive a reload, and be linkable — and leaves
+ * every other screen's behaviour exactly as it was.
+ *
+ * A `tab` parameter naming anything else is ignored rather than honoured. That
+ * is the point: honouring arbitrary values would quietly turn this into a
+ * router for screens nobody has checked, several of which read one-shot
+ * navigation signals out of sessionStorage and would arrive without them.
+ */
+const URL_SYNCED_TAB = 'documents' as const
+
+/** The tab the query string asks for, or the app's usual landing screen. */
+function readTabFromUrl(): Tab {
+  const requested = new URLSearchParams(window.location.search).get('tab')
+  return requested === URL_SYNCED_TAB ? URL_SYNCED_TAB : 'dashboard'
+}
+
 function AppContent() {
   const { isAuthenticated, authReady, user, isPlatformAdmin } = useAuth()
   const { currentOrg, isLoading: orgLoading, switchOrganization } = useOrganization()
@@ -81,7 +103,7 @@ function AppContent() {
   // (ControlScoping) or updates the cache (EvidenceReview / FrameworkGapDetail
   // via onScopingDataChange) propagates to every consumer by construction —
   // no full page reload, no per-tab refetch hack.
-  const { data: scopingDataRaw } = useQuery({
+  const { data: scopingDataRaw, isError: scopingFailed } = useQuery({
     queryKey: ['scoping-data', currentOrg?.id],
     queryFn: async (): Promise<ScopedControlsFile> => {
       const scoping = await loadScopedControls()
@@ -115,7 +137,10 @@ function AppContent() {
   const [selectedId, setSelectedId] = useState<string | undefined>(undefined)
   // One-shot "navigate me to this control" signal for ControlScoping.
   const [controlNavTarget, setControlNavTarget] = useState<string | undefined>(undefined)
-  const [activeTab, setActiveTab] = useState<Tab>('dashboard')
+  // Seeded from the URL, but only ever with `documents` — see URL_SYNCED_TAB.
+  // For every other entry point this returns 'dashboard', which is what the
+  // literal default returned before.
+  const [activeTab, setActiveTab] = useState<Tab>(readTabFromUrl)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   // OSS onboarding: null = not yet checked, false = empty (show upload gate), true = seeded
   const [catalogSeeded, setCatalogSeeded] = useState<boolean | null>(null)
@@ -315,6 +340,43 @@ function AppContent() {
       loadConsultantDataInternal()
     }
   }, [activeTab, isAuthenticated, isConsultant, loadConsultantDataInternal])
+
+  // Keep `?tab=documents` in step with the document workspace, and only with
+  // it. `replaceState` rather than `pushState`: no other screen writes history
+  // entries, so pushing here would give Back one meaning inside documents and
+  // another everywhere else.
+  useEffect(() => {
+    const url = new URL(window.location.href)
+    if (activeTab === URL_SYNCED_TAB) {
+      // Already marked. Returning early matters: DocumentsPage owns `doc` and
+      // `mode` on this same URL, and a blind rewrite here would race it.
+      if (url.searchParams.get('tab') === URL_SYNCED_TAB) return
+      url.searchParams.set('tab', URL_SYNCED_TAB)
+    } else {
+      if (!url.searchParams.has('tab')) return
+      // Leaving documents takes its parameters with it. A `doc` left behind on
+      // the dashboard's URL would reopen that document on the next reload.
+      url.searchParams.delete('tab')
+      url.searchParams.delete('doc')
+      url.searchParams.delete('mode')
+    }
+    window.history.replaceState(window.history.state, '', url.toString())
+  }, [activeTab])
+
+  // Browser Back and Forward. Confined to the documents path on purpose: this
+  // acts when the URL names documents, or when we are leaving documents, and
+  // otherwise leaves `activeTab` alone so the other screens behave exactly as
+  // they did before any of this existed.
+  useEffect(() => {
+    const onPopState = () => {
+      const fromUrl = readTabFromUrl()
+      setActiveTab((current) =>
+        fromUrl === URL_SYNCED_TAB || current === URL_SYNCED_TAB ? fromUrl : current
+      )
+    }
+    window.addEventListener('popstate', onPopState)
+    return () => window.removeEventListener('popstate', onPopState)
+  }, [])
 
   // Load initial data
   const loadData = async (showLoadingIndicator = true) => {
@@ -638,6 +700,28 @@ function AppContent() {
               organizationId={scopingData.organizationId!}
               onOpenSettings={() => setActiveTab('settings')}
             />
+          )}
+          {/* Every screen above is gated on `scopingData` the same way, and a
+              null renders nothing at all. That is survivable where the user
+              clicked a tab and can click another, but this is the one tab a
+              link can land on cold: `?tab=documents` reopens here after a
+              reload, and `loading` clears when `loadAllData` finishes, which
+              does not own this query. If it is still in flight the pane is
+              briefly empty; if it failed it is empty for good, with nothing on
+              screen to say so. Say which, rather than showing a blank page. */}
+          {activeTab === 'documents' && !scopingData && (
+            <div className="doc-tab-placeholder">
+              {scopingFailed ? (
+                <>
+                  <p>Your scoping data could not be loaded, so documents cannot open.</p>
+                  <button type="button" className="btn-secondary" onClick={() => window.location.reload()}>
+                    Retry
+                  </button>
+                </>
+              ) : (
+                <p>Loading your scoped controls…</p>
+              )}
+            </div>
           )}
           {activeTab === 'audit-log' && currentOrg && (
             <AuditLogPage organizationId={currentOrg.id} />

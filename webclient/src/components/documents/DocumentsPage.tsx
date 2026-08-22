@@ -5,7 +5,7 @@
  * related artefacts, and a reader looking for "the access control policy"
  * navigates by kind first.
  */
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   LIFECYCLE_LABELS,
@@ -42,12 +42,83 @@ const STATUS_FILTERS: Array<{ value: string; label: string }> = [
 export const DOC_GEN_USER_DOC_URL =
   'https://docs.scfcontrolsplatform.app/user-guide/document-generation/'
 
+/** Where the workspace is, as the URL records it. */
+interface DocLocation {
+  /** The open document's id, or null for the library list. */
+  doc: string | null
+  /** True when the URL asks for the editor rather than the reader. */
+  editing: boolean
+}
+
+/**
+ * Read the workspace's position out of the query string.
+ *
+ * `mode` is honoured only alongside a `doc`. "Editor, no document" is not a
+ * place in this app, and treating it as one would open the editor on nothing.
+ * Anything other than `mode=editor` — including a missing or misspelt value —
+ * means the reader, which is the deliberate default everywhere else here.
+ */
+function readDocLocation(): DocLocation {
+  const params = new URLSearchParams(window.location.search)
+  const doc = params.get('doc')
+  return { doc, editing: doc !== null && params.get('mode') === 'editor' }
+}
+
 export default function DocumentsPage({ organizationId, onOpenSettings }: Props) {
-  const [openDocument, setOpenDocument] = useState<string | null>(null)
-  const [editing, setEditing] = useState(false)
+  // Seeded from the URL so a reload, a bookmark or a pasted link lands back on
+  // the same document in the same mode instead of dumping the reader at the
+  // top of the library. See the sync effect below for why this is parameter
+  // sync and not a router.
+  const [openDocument, setOpenDocument] = useState<string | null>(
+    () => readDocLocation().doc,
+  )
+  const [editing, setEditing] = useState(() => readDocLocation().editing)
   const [editSection, setEditSection] = useState<string | null>(null)
   const [showGenerate, setShowGenerate] = useState(false)
   const [statusFilter, setStatusFilter] = useState('')
+
+  /**
+   * Keep `?doc=…&mode=…` in step with what is open.
+   *
+   * `replaceState`, not `pushState`: this is the only URL-aware screen in an
+   * app that otherwise selects screens from `activeTab` state, so pushing
+   * entries here would make Back mean something inside the document workspace
+   * that it means nowhere else. Replacing keeps the address bar truthful
+   * without inventing a history model for one screen out of twenty-five.
+   */
+  useEffect(() => {
+    const url = new URL(window.location.href)
+    if (openDocument) {
+      url.searchParams.set('doc', openDocument)
+      url.searchParams.set('mode', editing ? 'editor' : 'reader')
+    } else {
+      url.searchParams.delete('doc')
+      url.searchParams.delete('mode')
+    }
+    // Guarded because replaceState on an unchanged URL still churns history
+    // state, and this effect runs on every mount.
+    if (url.toString() === window.location.href) return
+    window.history.replaceState(window.history.state, '', url.toString())
+  }, [openDocument, editing])
+
+  /**
+   * Browser Back and Forward.
+   *
+   * Nothing in this app pushes history entries, so this fires when the user
+   * returns to the app from somewhere else in their history. At that point the
+   * screen has to match the URL they came back to rather than whatever was
+   * mounted when they left.
+   */
+  useEffect(() => {
+    const onPopState = () => {
+      const next = readDocLocation()
+      setOpenDocument(next.doc)
+      setEditing(next.editing)
+      setEditSection(null)
+    }
+    window.addEventListener('popstate', onPopState)
+    return () => window.removeEventListener('popstate', onPopState)
+  }, [])
 
   const { data: settings } = useQuery({
     queryKey: ['docgen-settings', organizationId],
@@ -139,9 +210,13 @@ export default function DocumentsPage({ organizationId, onOpenSettings }: Props)
 
       {totalConflicts > 0 && (
         <div className="doc-notice doc-notice-warning">
+          {/* Verb agrees with the count, and the words are the reader's:
+              DocumentReader says "1 section needs your decision." A library
+              that says "1 of your documents need a decision" about the same
+              fact is two defects, not one. */}
           <strong>
             {totalConflicts} section{totalConflicts === 1 ? '' : 's'} across your
-            documents need a decision.
+            documents {totalConflicts === 1 ? 'needs' : 'need'} your decision.
           </strong>{' '}
           These are places where you edited a section and a regeneration also
           changed it. Your text is what the document currently says.
@@ -200,15 +275,43 @@ export default function DocumentsPage({ organizationId, onOpenSettings }: Props)
                   <div className="document-card-meta">
                     <span>v{d.generation_version}</span>
                     {d.domain_id && <span>{d.domain_id}</span>}
-                    <span>{d.section_count} sections</span>
+                    {/* Operative sections only — `section_count` excludes
+                        pending_retirement rows (backend `_section_stats`). The
+                        retiring tally is a separate badge below rather than a
+                        number folded in here, because a Statement of
+                        Applicability with 39 live sections and 30 retiring ones
+                        is a 39-section document, not a 69-section one. */}
+                    <span>
+                      {d.section_count} section{d.section_count === 1 ? '' : 's'}
+                    </span>
                     {d.catalog_version && <span>SCF {d.catalog_version}</span>}
                   </div>
                   <div className="document-card-flags">
                     {d.conflict_count > 0 && (
                       <span className="doc-section-badge status-conflict">
-                        {d.conflict_count} need{d.conflict_count === 1 ? 's' : ''} a decision
+                        {d.conflict_count} section
+                        {d.conflict_count === 1 ? '' : 's'}{' '}
+                        {d.conflict_count === 1 ? 'needs' : 'need'} a decision
                       </span>
                     )}
+                    {/* Same wording as OutlineCount's "+30 retiring", and the
+                        same `undefined` guard for the same reason: the field
+                        landed with the operative-only section_count, so an
+                        older backend that omits it must read as "not reported"
+                        rather than as zero. */}
+                    {d.pending_retirement_count !== undefined &&
+                      d.pending_retirement_count > 0 && (
+                        <span
+                          className="doc-section-badge status-pending_retirement"
+                          title={
+                            `${d.pending_retirement_count} section` +
+                            `${d.pending_retirement_count === 1 ? ' is' : 's are'} ` +
+                            'pending retirement, still in the document until you decide.'
+                          }
+                        >
+                          +{d.pending_retirement_count} retiring
+                        </span>
+                      )}
                     {d.edited_count > 0 && (
                       <span className="doc-section-badge status-human_preserved">
                         {d.edited_count} edited

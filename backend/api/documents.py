@@ -46,6 +46,8 @@ from services.doc_gen.licence import (
 )
 from services.doc_gen.registry import GeneratorNotFound, all_generators, get_generator
 from services.doc_gen.renderer import export_markdown, render_pdf, safe_filename
+from services.doc_gen.section_parser import section_body_from_markdown
+from services.doc_gen.staleness import NOT_STALE, Staleness, assess_documents
 
 logger = logging.getLogger(__name__)
 
@@ -108,9 +110,19 @@ class DocumentSummary(BaseModel):
     is_derivative: bool
     generation_version: int
     catalog_version: Optional[str] = None
+    #: Operative sections only. A ``pending_retirement`` section is a ghost the
+    #: generator no longer produces, kept for a human to dispose of; counting it
+    #: made a Statement of Applicability claim 71 sections when 33 of them were
+    #: awaiting deletion, which is not a count of anything the document says.
     section_count: int = 0
     conflict_count: int = 0
     edited_count: int = 0
+    pending_retirement_count: int = 0
+    #: The organisation's inputs have moved since this document was generated.
+    #: Advisory only -- nothing auto-regenerates. See
+    #: :mod:`services.doc_gen.staleness` for what is compared and what is not.
+    is_stale: bool = False
+    stale_reason: Optional[str] = None
     updated_at: Optional[str] = None
 
 
@@ -133,6 +145,40 @@ class DocumentDetail(DocumentSummary):
 
 class SectionEditRequest(BaseModel):
     content: str
+
+
+class SectionResolveRequest(BaseModel):
+    """One human decision about one section's merge state.
+
+    ``keep_mine`` / ``take_generated`` answer a conflict; ``retire`` / ``keep``
+    answer a pending retirement. The pairing is enforced in the route rather
+    than in the schema so a misapplied choice returns 409 (this section is not
+    in that state) rather than 422 (that is not a word) -- the two mean very
+    different things to a client that has just raced another editor.
+    """
+
+    choice: str = Field(..., pattern="^(keep_mine|take_generated|retire|keep)$")
+
+
+class SectionResolveResponse(BaseModel):
+    ok: bool
+    section_id: str
+    status: str
+    removed: bool
+    conflict_count: int
+    pending_retirement_count: int
+    lifecycle_status: str
+
+
+class GeneratedSectionOut(BaseModel):
+    """What the generator wrote for one section, in one version snapshot."""
+
+    section_id: str
+    version: int
+    heading_text: Optional[str] = None
+    content: Optional[str] = None
+    available: bool
+    current_content: str
 
 
 class TransitionRequest(BaseModel):
@@ -190,26 +236,45 @@ async def _load_document(
 
 
 async def _section_stats(db: AsyncSession, document_ids: List[UUID]) -> Dict[UUID, Dict[str, int]]:
-    """Per-document section tallies, in one query rather than N."""
+    """Per-document section tallies, in one query rather than N.
+
+    ``total`` counts *operative* sections. Retiring sections are counted
+    separately and excluded here on purpose: they are content the generator has
+    stopped producing, held only until someone disposes of them, so reporting
+    them as part of "how big is this document" overstates it by however many
+    ghosts a scope change left behind.
+    """
     if not document_ids:
         return {}
+    retiring = DocumentSection.status == "pending_retirement"
     rows = (await db.execute(
         select(
             DocumentSection.document_id,
-            func.count().label("total"),
+            func.count().filter(~retiring).label("total"),
             func.count().filter(DocumentSection.status == "conflict").label("conflicts"),
             func.count().filter(DocumentSection.human_edited.is_(True)).label("edited"),
+            func.count().filter(retiring).label("pending_retirement"),
         )
         .where(DocumentSection.document_id.in_(document_ids))
         .group_by(DocumentSection.document_id)
     )).all()
     return {
-        r.document_id: {"total": r.total, "conflicts": r.conflicts, "edited": r.edited}
+        r.document_id: {
+            "total": r.total,
+            "conflicts": r.conflicts,
+            "edited": r.edited,
+            "pending_retirement": r.pending_retirement,
+        }
         for r in rows
     }
 
 
-def _summary(document: GeneratedDocument, stats: Dict[str, int]) -> DocumentSummary:
+def _summary(
+    document: GeneratedDocument,
+    stats: Dict[str, int],
+    staleness: Optional[Staleness] = None,
+) -> DocumentSummary:
+    staleness = staleness or NOT_STALE
     return DocumentSummary(
         id=str(document.id),
         generator_name=document.generator_name,
@@ -224,6 +289,9 @@ def _summary(document: GeneratedDocument, stats: Dict[str, int]) -> DocumentSumm
         section_count=stats.get("total", 0),
         conflict_count=stats.get("conflicts", 0),
         edited_count=stats.get("edited", 0),
+        pending_retirement_count=stats.get("pending_retirement", 0),
+        is_stale=staleness.is_stale,
+        stale_reason=staleness.reason,
         updated_at=document.updated_at.isoformat() if document.updated_at else None,
     )
 
@@ -500,7 +568,14 @@ async def list_documents(
     )).scalars().all()
 
     stats = await _section_stats(db, [d.id for d in documents])
-    return [_summary(d, stats.get(d.id, {})) for d in documents]
+    # One read of the organisation's current inputs serves the whole page --
+    # see :mod:`services.doc_gen.staleness` for why that is affordable here and
+    # why building a generation context per document would not be.
+    stale = await assess_documents(db, membership.organization_id, documents)
+    return [
+        _summary(d, stats.get(d.id, {}), stale.get(d.id))
+        for d in documents
+    ]
 
 
 @router.get("/organizations/{org_id}/documents/{document_id}", response_model=DocumentDetail)
@@ -512,8 +587,11 @@ async def get_document(
 ):
     document = await _load_document(db, document_id, membership.organization_id)
     stats = (await _section_stats(db, [document.id])).get(document.id, {})
+    stale = (await assess_documents(db, membership.organization_id, [document])).get(
+        document.id
+    )
     detail = DocumentDetail(
-        **_summary(document, stats).model_dump(),
+        **_summary(document, stats, stale).model_dump(),
         merged_content=document.merged_content,
         sections=[
             SectionOut(
@@ -550,6 +628,18 @@ async def edit_section(
     The edit is written to the human layer and the merged document is rebuilt
     around it. The generated layer is untouched — that is what allows the next
     regeneration to tell an edit from a divergence rather than simply losing it.
+
+    **Editing does not decide a pending retirement.** Every other prior status
+    becomes ``human_preserved``: saving your own text over a conflict *is* a
+    "keep mine", and there is nothing left to review. ``pending_retirement`` is
+    different — it is not a merge outcome awaiting confirmation, it is an open
+    question about whether this clause should exist at all, and rewriting the
+    clause before answering that question is a normal thing to do. Overwriting
+    the status here silently answered it: a typo fix on an *unrelated* section
+    took one policy from fifteen pending retirements to fourteen, because the
+    rebuild rewrote the row it touched and the retirement went with it. The
+    only way out of ``pending_retirement`` is the resolve endpoint, where the
+    human says ``retire`` or ``keep`` deliberately.
     """
     from services.doc_gen.fingerprint import sha256
 
@@ -564,7 +654,8 @@ async def edit_section(
     section.edited_content = new_content
     section.human_edited = True
     section.content_hash = sha256(new_content.strip())
-    section.status = "human_preserved"
+    if section.status != "pending_retirement":
+        section.status = "human_preserved"
     section.edited_by_user_id = _actor_id(membership)
     section.edited_at = now
 
@@ -594,13 +685,19 @@ async def edit_section(
         action="update",
         changed_by_user_id=_actor_id(membership),
         field_name=f"section:{section_id}",
+        # ``field_name`` is a bounded column and is clamped for long section
+        # ids; the exact identity is carried here, where the column is Text.
+        new_value=json.dumps({"section_id": section_id, "status": section.status}),
         action_source=detect_action_source(request),
     )
     await db.commit()
     return {"ok": True, "lifecycle_status": document.lifecycle_status}
 
 
-def _rebuild_merged(document: GeneratedDocument) -> str:
+def _rebuild_merged(
+    document: GeneratedDocument,
+    overrides: Optional[Dict[str, str]] = None,
+) -> str:
     """Reassemble the operative document from its stored layers.
 
     The current merged content supplies the skeleton — headings, ordering,
@@ -608,7 +705,19 @@ def _rebuild_merged(document: GeneratedDocument) -> str:
     only: a human editing a section must not be able to renumber the document
     out from under the next regeneration, because section identity is derived
     from headings.
+
+    ``overrides`` substitutes a body for a section that carries no human edit.
+    Exactly one caller needs it: ``take_generated`` clears the human layer and
+    then has to put the generated text into the operative document in the same
+    breath. Without it that section would keep whatever the merge had left
+    there — the rejected human text — while its row claimed the generated
+    content had been accepted.
     """
+    from services.doc_gen.section_parser import (
+        flatten_sections,
+        pair_sections_to_headings,
+        parse_markdown_sections,
+    )
     from services.doc_gen.three_layer import build_merged_document
 
     human_edits = {
@@ -616,7 +725,429 @@ def _rebuild_merged(document: GeneratedDocument) -> str:
         for s in document.sections
         if s.human_edited and s.edited_content is not None
     }
-    return build_merged_document(document.merged_content, human_edits)
+    if overrides:
+        human_edits.update(overrides)
+
+    # ``build_merged_document`` keys the edits it applies off the ids it
+    # re-derives from the markdown it is given, which is correct where it is
+    # called from -- the generation pipeline hands it a *fresh* generation,
+    # whose ids are by definition the ones the parser derives. Here the
+    # markdown is the operative document, and one class of section reads back
+    # under a different id there: a retiree, re-rendered at the end at its
+    # original depth. Passing stored ids straight through would silently drop
+    # that section's edit from the rebuilt document -- the save would report
+    # success and the text would be unchanged.
+    #
+    # So translate the keys into the ids this markdown parses to, and leave the
+    # merge engine alone; its own callers depend on its current behaviour.
+    parsed = flatten_sections(parse_markdown_sections(document.merged_content))
+    pairing = pair_sections_to_headings(
+        document.merged_content, document.sections, parsed=parsed
+    )
+    translated = {}
+    for section_id, content in human_edits.items():
+        index = pairing.heading_index.get(section_id)
+        if index is None:
+            # No heading in the operative document belongs to this row, so
+            # there is nowhere to put its body. Passing the stored id through
+            # would be worse than skipping: if some *other* row's heading
+            # happens to parse to the same id, the merge engine would write
+            # this section's text into that one.
+            logger.warning(
+                "doc_gen: section %s of document %s has no heading in the "
+                "operative document; its edit was not applied",
+                section_id,
+                document.id,
+            )
+            continue
+        translated[parsed[index].section_id] = content
+
+    return build_merged_document(document.merged_content, translated)
+
+
+def _section_position(document: GeneratedDocument, section: DocumentSection) -> int:
+    """Where this section's heading sits among the operative document's headings.
+
+    Sections are addressed by position rather than by id whenever the *document
+    text* has to be edited, for the reason the merge engine documents at
+    length: a retiring section is re-rendered at the end of the document at its
+    original depth, so re-parsing renames it after whichever heading now
+    precedes it. Its stored id is real; the id a fresh parse derives for it is
+    not.
+
+    Neither ``ordinal`` nor a re-derived id can answer this on its own.
+    ``ordinal`` is the render position, but only while the row sequence and the
+    heading sequence agree exactly, and a human edit containing a markdown
+    heading line is enough to break that for every row after it. A re-derived
+    id is right for every section *except* a retiree, which is the one case
+    that matters here. :func:`pair_sections_to_headings` resolves both by
+    matching rows to headings by identity, consuming each heading once.
+
+    ``-1`` means "cannot be located", and callers must leave the markdown
+    alone rather than edit a guessed span.
+    """
+    from services.doc_gen.section_parser import pair_sections_to_headings
+
+    pairing = pair_sections_to_headings(document.merged_content, document.sections)
+    return pairing.heading_index.get(section.section_id, -1)
+
+
+async def _version_markdown(version: DocumentVersion) -> Optional[str]:
+    """The whole-document markdown a version snapshot holds.
+
+    ``DocumentVersion.content`` is nullable: content over roughly 64KB is
+    written to ``storage_service`` and the row keeps ``blob_key`` instead. A
+    reader that only looks at ``content`` therefore works perfectly until the
+    first genuinely large policy, then silently reports every one of its
+    sections as "not in this version" — which is the same answer a retired
+    section gives, so the failure would masquerade as normal behaviour rather
+    than announce itself.
+
+    The blob read is synchronous and goes over the network, so it runs off the
+    event loop.
+    """
+    if version.content is not None:
+        return version.content
+    if not version.blob_key:
+        return None
+
+    import asyncio
+
+    from services import storage_service
+
+    def _read() -> Optional[str]:
+        chunks = storage_service.download_blob_stream(version.blob_key)
+        if chunks is None:
+            return None
+        return b"".join(chunks).decode("utf-8")
+
+    try:
+        return await asyncio.to_thread(_read)
+    except Exception as exc:
+        # A configured-but-unreachable blob store is an infrastructure fault,
+        # not an absent section. Say so rather than rendering an empty pane.
+        logger.exception("doc_gen: could not read version blob %s", version.blob_key)
+        raise HTTPException(
+            status_code=503,
+            detail="The stored generated content for this version could not be read.",
+        ) from exc
+
+
+def _operative_body(document: GeneratedDocument, section: DocumentSection) -> str:
+    """This section's body as it stands in the operative document, markers out.
+
+    Returned alongside the generated alternative so the client can diff the two
+    without re-slicing the merged markdown itself — and, more to the point,
+    without having to reimplement the positional identity rule that
+    :func:`_section_position` exists to encapsulate.
+    """
+    from services.doc_gen.section_parser import (
+        flatten_sections,
+        parse_markdown_sections,
+    )
+    from services.doc_gen.three_layer import strip_markers
+
+    parsed = flatten_sections(parse_markdown_sections(document.merged_content))
+    position = _section_position(document, section)
+    if 0 <= position < len(parsed):
+        return strip_markers(parsed[position].content)
+    return strip_markers(section.edited_content or "")
+
+
+@router.get(
+    "/organizations/{org_id}/documents/{document_id}/sections/{section_id:path}/generated",
+    response_model=GeneratedSectionOut,
+)
+async def get_generated_section(
+    org_id: UUID,
+    document_id: UUID,
+    section_id: str,
+    version: Optional[int] = Query(
+        None, description="Version number; omitted means the latest."
+    ),
+    membership: OrgMembership = Depends(require_org_role("viewer")),
+    db: AsyncSession = Depends(get_db),
+):
+    """What the generator wrote for one section, sliced out of a version snapshot.
+
+    ``document_versions`` stores the pure generated layer as one markdown blob
+    per run. Until now the only thing the UI could show from it was a row in a
+    list — number, model, date — so "your edit was kept, the generated
+    alternative is in version history" was true and useless: there was no way
+    to look at the alternative before choosing between them. Resolving a
+    conflict was a decision made blind.
+
+    ``available: false`` (with ``content: null``) is a real answer, not an
+    error. A ``pending_retirement`` section is *defined* by its absence from
+    the newest generation, so asking for its generated text and being told
+    there is none is exactly the information the reader needs — and the reason
+    this returns a flag rather than a 404 on the section body.
+    """
+    document = await _load_document(db, document_id, membership.organization_id)
+    section = next((s for s in document.sections if s.section_id == section_id), None)
+    if section is None:
+        raise HTTPException(status_code=404, detail="Section not found")
+
+    stmt = select(DocumentVersion).where(DocumentVersion.document_id == document.id)
+    if version is not None:
+        stmt = stmt.where(DocumentVersion.version == version)
+    snapshot = (await db.execute(
+        stmt.order_by(DocumentVersion.version.desc()).limit(1)
+    )).scalar_one_or_none()
+    if snapshot is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"Version {version} not found for this document."
+                if version is not None
+                else "This document has no generated versions."
+            ),
+        )
+
+    markdown = await _version_markdown(snapshot)
+    generated = (
+        section_body_from_markdown(markdown, section_id) if markdown else None
+    )
+
+    return GeneratedSectionOut(
+        section_id=section_id,
+        version=snapshot.version,
+        heading_text=generated.heading_text if generated else None,
+        content=generated.content if generated else None,
+        available=generated is not None,
+        current_content=_operative_body(document, section),
+    )
+
+
+@router.post(
+    "/organizations/{org_id}/documents/{document_id}/sections/{section_id:path}/resolve",
+    response_model=SectionResolveResponse,
+)
+async def resolve_document_section(
+    org_id: UUID,
+    document_id: UUID,
+    section_id: str,
+    payload: SectionResolveRequest,
+    request: Request,
+    membership: OrgMembership = Depends(require_org_role("editor")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Settle one section's merge state.
+
+    The three-layer engine has always known how to resolve a section
+    (``three_layer.resolve_section``) and has been unit-tested doing it since
+    the feature shipped. Nothing called it. A conflict raised by a
+    regeneration therefore stayed a conflict for ever, and a section the
+    generator wanted to retire could only be disposed of by editing the
+    markdown by hand — which the editor's own save path then re-marked. This
+    endpoint is the door.
+
+    Four choices, paired to the two states that can be open:
+
+    ``keep_mine`` / ``take_generated``
+        Only on a ``conflict``. Both are delegated to
+        :func:`~services.doc_gen.three_layer.resolve_section`, whose semantics
+        are not changed here. ``take_generated`` additionally clears the human
+        layer and writes the generated body into the operative document, so
+        the row and the text cannot disagree about which side won.
+
+    ``retire``
+        Only on a ``pending_retirement``. **This is the one destructive action
+        in the feature**: the section is excised from ``merged_content`` and
+        its row is deleted. It is still recoverable — every
+        ``document_versions`` snapshot that contained the section is immutable
+        and untouched, so the text can be read back out of history — but it
+        will not come back on its own, and the next regeneration will not
+        recreate it.
+
+    ``keep``
+        Only on a ``pending_retirement``. Cancels the retirement: the section
+        goes back to ``human_preserved`` if it carries an edit and
+        ``unchanged`` otherwise, and the PENDING RETIREMENT comment is stripped
+        from that section alone. The next regeneration will propose the
+        retirement again if the controls are still out of scope — keeping a
+        section is a decision about this generation, not a permanent pin.
+
+    A choice applied to the wrong state returns **409**, not 404 or 422: the
+    section exists and the word is valid, but two editors looking at the same
+    review queue will race, and "someone already resolved this" has to be
+    distinguishable from "there is no such section".
+    """
+    from services.doc_gen.section_parser import excise_section_block
+    from services.doc_gen.three_layer import (
+        STATUS_CONFLICT,
+        STATUS_HUMAN_PRESERVED,
+        STATUS_PENDING_RETIREMENT,
+        STATUS_UNCHANGED,
+        resolve_section,
+        strip_markers_in_section,
+    )
+
+    document = await _load_document(db, document_id, membership.organization_id)
+    section = next((s for s in document.sections if s.section_id == section_id), None)
+    if section is None:
+        raise HTTPException(status_code=404, detail="Section not found")
+
+    choice = payload.choice
+    prior_status = section.status
+    required = (
+        STATUS_CONFLICT
+        if choice in ("keep_mine", "take_generated")
+        else STATUS_PENDING_RETIREMENT
+    )
+    if prior_status != required:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"'{choice}' applies to a section in '{required}'; this section "
+                f"is '{prior_status}'."
+            ),
+        )
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    removed = False
+
+    if choice in ("keep_mine", "take_generated"):
+        generated_body: Optional[str] = None
+        if choice == "take_generated":
+            snapshot = (await db.execute(
+                select(DocumentVersion)
+                .where(DocumentVersion.document_id == document.id)
+                .order_by(DocumentVersion.version.desc())
+                .limit(1)
+            )).scalar_one_or_none()
+            markdown = await _version_markdown(snapshot) if snapshot else None
+            parsed = (
+                section_body_from_markdown(markdown, section_id) if markdown else None
+            )
+            if parsed is None:
+                # The generated alternative is what this choice selects. Without
+                # it there is nothing to take, and silently keeping the human
+                # text while reporting "updated" would be a lie about which
+                # side won.
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "The generated alternative for this section is not in the "
+                        "latest version snapshot, so it cannot be taken."
+                    ),
+                )
+            generated_body = parsed.content
+
+        row = {
+            "status": section.status,
+            "human_edited": section.human_edited,
+            "edited_content": section.edited_content,
+            "content_hash": section.content_hash,
+            "last_generated_hash": section.last_generated_hash,
+        }
+        row = resolve_section(row, choice, generated_body)
+
+        section.status = row["status"]
+        section.human_edited = bool(row["human_edited"])
+        section.edited_content = row["edited_content"]
+        section.content_hash = row["content_hash"]
+        section.edited_by_user_id = _actor_id(membership)
+        section.edited_at = now
+
+        document.merged_content = _rebuild_merged(
+            document,
+            overrides={section_id: generated_body} if generated_body is not None else None,
+        )
+
+    elif choice == "keep":
+        position = _section_position(document, section)
+        if position >= 0:
+            document.merged_content = strip_markers_in_section(
+                document.merged_content, position
+            )
+        section.status = (
+            STATUS_HUMAN_PRESERVED if section.human_edited else STATUS_UNCHANGED
+        )
+        section.edited_by_user_id = _actor_id(membership)
+        section.edited_at = now
+
+    else:  # retire
+        position = _section_position(document, section)
+        # ``-1`` means the heading could not be located, and
+        # :func:`_section_position` is explicit that callers must then leave the
+        # markdown alone. Deleting the row anyway is worse than editing a
+        # guessed span: the prose stays in ``merged_content`` with nothing
+        # backing it, the reader re-parses it as an ordinary ``unchanged``
+        # section with no decision controls, and the only handle on it is gone
+        # -- so the section can never be retired, while the call reports
+        # success. Refuse instead, leaving both layers intact and recoverable.
+        if position < 0:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "This section's heading could not be located in the "
+                    "document, so retiring it would leave its text behind with "
+                    "nothing to remove it later. Regenerate the document and "
+                    "try again."
+                ),
+            )
+        document.merged_content = excise_section_block(
+            document.merged_content, position
+        )
+        document.sections.remove(section)
+        await db.delete(section)
+        removed = True
+        # Ordinals are the document's render order and the fallback identity
+        # rule keys on them, so a gap left by a deletion is not cosmetic.
+        for ordinal, remaining in enumerate(
+            sorted(document.sections, key=lambda s: s.ordinal or 0)
+        ):
+            remaining.ordinal = ordinal
+
+    document.updated_at = now
+
+    next_status = lifecycle.transition_on_edit(document.lifecycle_status)
+    if next_status:
+        db.add(DocumentTransition(
+            document_id=document.id,
+            from_status=document.lifecycle_status,
+            to_status=next_status,
+            actor_user_id=_actor_id(membership),
+            actor_email=membership.user.email,
+            trigger="edit",
+            reason=f"Section resolved ({choice}) after approval",
+        ))
+        document.lifecycle_status = next_status
+
+    final_status = "removed" if removed else section.status
+    await create_audit_entry(
+        db,
+        organization_id=membership.organization_id,
+        entity_type="generated_document",
+        entity_id=document.id,
+        action="update",
+        changed_by_user_id=_actor_id(membership),
+        field_name=f"section:{section_id}:resolve",
+        # As above: the clamped ``field_name`` stays readable, but the exact
+        # section id must survive verbatim, so it rides in the Text columns.
+        old_value=json.dumps({"section_id": section_id, "status": prior_status}),
+        new_value=json.dumps(
+            {"section_id": section_id, "status": final_status, "choice": choice}
+        ),
+        action_source=detect_action_source(request),
+    )
+    await db.commit()
+
+    remaining_sections = list(document.sections)
+    return SectionResolveResponse(
+        ok=True,
+        section_id=section_id,
+        status=final_status,
+        removed=removed,
+        conflict_count=sum(
+            1 for s in remaining_sections if s.status == STATUS_CONFLICT
+        ),
+        pending_retirement_count=sum(
+            1 for s in remaining_sections if s.status == STATUS_PENDING_RETIREMENT
+        ),
+        lifecycle_status=document.lifecycle_status,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -726,6 +1257,11 @@ async def document_history(
                 "version": v.version, "model_id": v.model_id,
                 "generator_version": v.generator_version,
                 "input_fingerprint": v.input_fingerprint,
+                # Which snapshot the operative document was merged from. The
+                # list is otherwise a column of indistinguishable numbers, and
+                # a reader comparing their text against "the generated version"
+                # has no way to tell which row that is.
+                "is_current": v.version == document.generation_version,
                 "created_at": v.created_at.isoformat() if v.created_at else None,
             }
             for v in versions

@@ -140,6 +140,27 @@ class FingerprintResult:
     input_components: InputComponents
 
 
+def compute_controls_hash(controls: Sequence[Dict[str, Any]]) -> str:
+    """The ``controls_hash`` component on its own, byte-identical to the composite's.
+
+    Split out of :func:`compute_fingerprint` -- which now calls it -- so the
+    staleness check can ask "have this document's *inputs* moved?" without
+    reassembling a prompt.
+
+    The other two components cannot answer that question. ``template_hash`` and
+    ``prompt_hash`` are properties of how the generator asked, and for Tier 2
+    the user prompt embeds the document's own previous content (the Change
+    History carry-forward in :mod:`services.doc_gen.tier2`). Recomputing a full
+    composite outside the pipeline would therefore report every *edited* Tier 2
+    document as permanently stale -- a false positive on precisely the
+    documents people work on hardest. Controls and catalog version are the
+    components that genuinely describe the organisation's inputs, so they are
+    what staleness is measured on.
+    """
+    ordered = sorted(controls, key=lambda c: (c.get("scf_id") or ""))
+    return sha256(_canonical_json([_canonical_control(c) for c in ordered]))
+
+
 def compute_fingerprint(
     controls: Sequence[Dict[str, Any]],
     system_prompt: str,
@@ -160,9 +181,8 @@ def compute_fingerprint(
         whether regeneration can be skipped.
     """
     ordered = sorted(controls, key=lambda c: (c.get("scf_id") or ""))
-    canonical = [_canonical_control(c) for c in ordered]
 
-    controls_hash = sha256(_canonical_json(canonical))
+    controls_hash = compute_controls_hash(ordered)
     template_hash = sha256(system_prompt or "")
     prompt_hash = sha256(user_prompt or "")
 

@@ -350,7 +350,11 @@ def markdown_to_reader_fragment(content: str, sections) -> str:
     """
     import markdown as md
 
-    from .section_parser import flatten_sections, parse_markdown_sections
+    from .section_parser import (
+        flatten_sections,
+        pair_sections_to_headings,
+        parse_markdown_sections,
+    )
 
     def render(fragment: str) -> str:
         # Every piece of document content reaching the reader goes through
@@ -366,14 +370,35 @@ def markdown_to_reader_fragment(content: str, sections) -> str:
     body = strip_markers(content)
     parsed = flatten_sections(parse_markdown_sections(body))
 
-    # Status by stored id, paired positionally for the same reason the merge
-    # engine does it: a retired section re-parses under whichever heading now
-    # precedes it, so its stored id is not the one the parser derives here.
-    status_by_index = {}
-    ordered = sorted(sections, key=lambda r: r.ordinal or 0)
-    if len(ordered) == len(parsed):
-        for i, row in enumerate(ordered):
-            status_by_index[i] = (row.section_id, row.status, row.control_ids or [])
+    # Which heading belongs to which stored row, matched by identity. The id
+    # emitted below is what the reader hangs its per-section decision controls
+    # on, so a wrong answer here does not mislabel a heading -- it points
+    # "Take generated" at somebody else's section. Position cannot be used to
+    # decide it: a retiree sits at the end of the document and a human edit can
+    # introduce a heading line of its own, and either one puts every section
+    # after it off by one. See :func:`pair_sections_to_headings`.
+    pairing = pair_sections_to_headings(body, sections, parsed=parsed)
+    rows_by_id = {row.section_id: row for row in sections}
+    status_by_index = {
+        index: (
+            section_id,
+            rows_by_id[section_id].status,
+            rows_by_id[section_id].control_ids or [],
+        )
+        for section_id, index in pairing.heading_index.items()
+        if section_id in rows_by_id
+    }
+    if pairing.unmatched:
+        # Not an error: a section retired on an earlier run and already excised
+        # from the text has no heading left to carry. Logged rather than
+        # dropped in silence so a genuine drift shows up in the logs instead of
+        # as an unexplained missing banner.
+        logger.debug(
+            "doc_gen: %d stored section(s) have no heading in the operative "
+            "document: %s",
+            len(pairing.unmatched),
+            ", ".join(pairing.unmatched),
+        )
 
     lines = body.split("\n")
     first_heading = next(

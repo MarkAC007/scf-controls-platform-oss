@@ -15,6 +15,7 @@ Key design decisions:
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import UUID
 from typing import Optional
+import hashlib
 import json
 import logging
 import re
@@ -165,6 +166,68 @@ API_KEY_TRACKED_FIELDS: set = {
 
 
 # ---------------------------------------------------------------------------
+# Column-width guards
+# ---------------------------------------------------------------------------
+
+#: Derived from the model so the guard cannot drift from the schema. If the
+#: column is ever widened (or narrowed) the clamp follows automatically.
+MAX_FIELD_NAME_LENGTH: int = AuditLog.field_name.type.length
+
+#: Hex digits of the digest appended to a clamped ``field_name``. Enough to
+#: keep two different long names distinguishable in the audit trail.
+_FIELD_NAME_DIGEST_CHARS = 10
+
+#: Separator between the readable head and the digest. Chosen so a clamped
+#: name is visually obvious and cannot be mistaken for a real field path.
+_FIELD_NAME_TRUNCATION_MARK = "~"
+
+
+def clamp_field_name(field_name: Optional[str]) -> Optional[str]:
+    """Fit ``field_name`` inside its column without ever raising.
+
+    ``AuditLog.field_name`` is a bounded ``varchar``, but several callers
+    compose it from data of unbounded length -- most notably document
+    section identifiers, which are derived from heading text
+    (``section:statement-of-applicability.controls.gov-...-35-controls``).
+    A composed name longer than the column silently worked until the data
+    grew, then failed the *entire* transaction with
+    ``StringDataRightTruncationError``, taking the user's action down with
+    it. An audit write must never break the thing it is auditing.
+
+    Over-long names are truncated to a readable head plus a short digest of
+    the full original, so distinct names stay distinct in the trail and the
+    entry is visibly marked as clamped. Callers that must retain the exact
+    value should also record it in ``old_value``/``new_value``, which are
+    unbounded ``Text``.
+
+    Args:
+        field_name: The composed field name, or ``None``.
+
+    Returns:
+        ``field_name`` unchanged when it already fits, ``None`` when given
+        ``None``, otherwise a clamped form of exactly
+        ``MAX_FIELD_NAME_LENGTH`` characters or fewer.
+    """
+    if field_name is None or len(field_name) <= MAX_FIELD_NAME_LENGTH:
+        return field_name
+
+    digest = hashlib.sha256(field_name.encode("utf-8")).hexdigest()[
+        :_FIELD_NAME_DIGEST_CHARS
+    ]
+    suffix = f"{_FIELD_NAME_TRUNCATION_MARK}{digest}"
+    head = field_name[: MAX_FIELD_NAME_LENGTH - len(suffix)]
+    clamped = f"{head}{suffix}"
+
+    logger.warning(
+        "Audit field_name exceeded %s chars (%s); clamped to %r",
+        MAX_FIELD_NAME_LENGTH,
+        len(field_name),
+        clamped,
+    )
+    return clamped
+
+
+# ---------------------------------------------------------------------------
 # Core functions
 # ---------------------------------------------------------------------------
 
@@ -213,7 +276,7 @@ async def create_audit_entry(
         entity_id=entity_id,
         action=action,
         changed_by_user_id=changed_by_user_id,
-        field_name=field_name,
+        field_name=clamp_field_name(field_name),
         old_value=old_value,
         new_value=new_value,
         scf_id=scf_id,

@@ -538,7 +538,49 @@ def test_a_quoted_section_id_cannot_break_out_of_its_attribute():
         status = "unchanged"
         ordinal = 0
         control_ids: list = []
+        # The heading fields are what pair this row to the heading in the
+        # document, and without them the id never reaches an attribute at all
+        # -- which would leave this test asserting nothing.
+        heading_text = "Purpose"
+        heading_level = 2
 
     out = markdown_to_reader_fragment("## Purpose\n\nText.\n", [Row()])
     assert 'onload="' not in out
     assert "&quot;" in out
+
+
+# ---------------------------------------------------------------------------
+# Counted-noun agreement in generated headings
+# ---------------------------------------------------------------------------
+
+
+def test_a_single_control_domain_says_control_not_controls(ctx):
+    """"(1 controls)" in a Statement of Applicability is a credibility problem.
+
+    Small, and the sort of thing a reader notices in a document they are being
+    asked to trust. The tally still appears in the heading -- only the section
+    *id* drops it (see ``normalise_section_id``).
+    """
+    ctx.domains[0].controls = ctx.domains[0].controls[:1]
+    ctx.all_controls = ctx.domains[0].controls
+    ctx.total_scoped_controls = 1
+    output = render_soa(ctx)
+    assert "(1 control)" in output
+    assert "(1 controls)" not in output
+
+
+def test_a_multi_control_domain_still_says_controls(ctx):
+    assert "(2 controls)" in render_soa(ctx)
+
+
+def test_the_domain_heading_id_ignores_the_tally(ctx):
+    # The whole reason the count had to leave the slug: scoping one more
+    # control must not rename the section and strand its edits.
+    from services.doc_gen.section_parser import flatten_sections, parse_markdown_sections
+
+    before = {s.section_id for s in flatten_sections(parse_markdown_sections(render_soa(ctx)))}
+    ctx.domains[0].controls = ctx.domains[0].controls[:1]
+    ctx.all_controls = ctx.domains[0].controls
+    ctx.total_scoped_controls = 1
+    after = {s.section_id for s in flatten_sections(parse_markdown_sections(render_soa(ctx)))}
+    assert before == after
