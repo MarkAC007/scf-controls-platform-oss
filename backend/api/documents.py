@@ -592,7 +592,7 @@ async def get_document(
     )
     detail = DocumentDetail(
         **_summary(document, stats, stale).model_dump(),
-        merged_content=document.merged_content,
+        merged_content=_operative_markdown(document),
         sections=[
             SectionOut(
                 section_id=s.section_id, heading_text=s.heading_text,
@@ -692,6 +692,32 @@ async def edit_section(
     )
     await db.commit()
     return {"ok": True, "lifecycle_status": document.lifecycle_status}
+
+
+def _operative_markdown(document: GeneratedDocument) -> str:
+    """The document's text as a reader should see it, right now.
+
+    The generator writes the Document Control table once, at generation, and it
+    has no way of knowing what happens to the document afterwards -- so a policy
+    that has since been reviewed, approved and published still introduced itself
+    as a draft. The platform record and the document's own front matter
+    disagreed, and the front matter is the half an auditor reads.
+
+    Applying the live status here rather than writing it into
+    ``merged_content`` on transition is deliberate (see
+    :func:`services.doc_gen.lifecycle.apply_lifecycle_status`): storing it would
+    move the Document Control section's hashes, which is how a section starts
+    reporting ``updated`` on every regeneration forever, and would have to
+    reconcile against a human edit of that same section. Nothing is stored, so
+    nothing can drift.
+
+    Every path that hands document text to a person goes through here -- detail,
+    preview, and all three exports -- so they cannot disagree with each other
+    either.
+    """
+    return lifecycle.apply_lifecycle_status(
+        document.merged_content, document.lifecycle_status
+    )
 
 
 def _rebuild_merged(
@@ -1230,6 +1256,11 @@ async def document_history(
     db: AsyncSession = Depends(get_db),
 ):
     """The append-only transition log, plus the generated-version index."""
+    # Imported here, as every other ``three_layer`` use in this module is: the
+    # merge layer pulls in the parser and the renderer, and this module is
+    # imported at app start.
+    from services.doc_gen.three_layer import describe_version_summary
+
     document = await _load_document(db, document_id, membership.organization_id,
                                     with_sections=False)
     transitions = (await db.execute(
@@ -1262,6 +1293,12 @@ async def document_history(
                 # a reader comparing their text against "the generated version"
                 # has no way to tell which row that is.
                 "is_current": v.version == document.generation_version,
+                # What the generation actually did. NULL on every row written
+                # before the column existed, and the empty string it renders to
+                # means "not recorded" -- the panel must not read that as
+                # "nothing changed".
+                "change_summary": v.change_summary,
+                "change_description": describe_version_summary(v.change_summary),
                 "created_at": v.created_at.isoformat() if v.created_at else None,
             }
             for v in versions
@@ -1291,7 +1328,7 @@ async def export_document(
                                     with_sections=False)
 
     if format == "md":
-        body = export_markdown(document.merged_content, title=document.title)
+        body = export_markdown(_operative_markdown(document), title=document.title)
         return Response(
             content=body,
             media_type="text/markdown; charset=utf-8",
@@ -1304,7 +1341,7 @@ async def export_document(
     if format == "html":
         from services.doc_gen.renderer import markdown_to_html
         return Response(
-            content=markdown_to_html(document.merged_content, title=document.title),
+            content=markdown_to_html(_operative_markdown(document), title=document.title),
             media_type="text/html; charset=utf-8",
         )
 
@@ -1351,7 +1388,7 @@ async def export_document(
 
     try:
         pdf = render_pdf(
-            document.merged_content,
+            _operative_markdown(document),
             title=document.title,
             organisation=org_name,
             subtitle=subtitle,
@@ -1394,7 +1431,9 @@ async def preview_document(
     document = await _load_document(db, document_id, membership.organization_id,
                                     with_sections=True)
     return {
-        "html": markdown_to_reader_fragment(document.merged_content, document.sections),
+        "html": markdown_to_reader_fragment(
+            _operative_markdown(document), document.sections
+        ),
         "title": document.title,
         "lifecycle_status": document.lifecycle_status,
     }

@@ -151,16 +151,38 @@ def extract_change_history(markdown: str) -> str:
     return "\n".join(rows)
 
 
+#: What a regeneration row says when nothing specific can be named. Kept as the
+#: fallback only: a table of identical rows is a record in shape alone.
+GENERIC_REVISION_NOTE = "Revised — updated control data"
+
+
 def _change_history_instruction(
-    existing_history: str, doc_version: str, created_date: str
+    existing_history: str,
+    doc_version: str,
+    created_date: str,
+    change_note: str = "",
 ) -> str:
+    """The Change History block of the user prompt.
+
+    ``change_note`` names what actually moved since the last generation --
+    "controls 3 added, 1 removed", "catalog 2025.2 → 2025.3" -- and comes from
+    the same :func:`~services.doc_gen.fingerprint.describe_change` the staleness
+    column renders. Without it every regeneration row read "Revised — updated
+    control data", which tells a reader that something happened and nothing
+    about what, on the one table an auditor uses to trace a policy's history.
+
+    The note is appended to the generic wording rather than replacing it, so the
+    column still scans as a list of revisions and the detail rides along after
+    the em dash.
+    """
     if existing_history:
+        description = f"Revised — {change_note}" if change_note else GENERIC_REVISION_NOTE
         return (
             f"   Carry forward these existing Change History rows VERBATIM, then "
             f"append exactly one new row for Version {doc_version}:\n"
             f"{existing_history}\n"
             f"   | {doc_version} | {created_date} | CISO function | "
-            f"Revised — updated control data |"
+            f"{description} |"
         )
     return (
         f"   First generation. The Change History table MUST contain exactly one "
@@ -175,12 +197,19 @@ def build_user_prompt(
     *,
     generation_version: Optional[int] = None,
     existing_content: str = "",
+    change_note: str = "",
 ) -> str:
     """Fill the generator's prompt template from context.
 
     Pure: same inputs, same string. This is what
     :func:`fingerprint.compute_fingerprint` hashes as ``prompt_hash``, so any
     drift here correctly invalidates every document the generator produced.
+
+    ``change_note`` is the one argument the pipeline deliberately withholds when
+    it builds the prompt *for the fingerprint*: the note describes the delta
+    against the previous fingerprint, so feeding it back in would hash a prompt
+    that describes its own comparison. The fingerprint sees the note-free
+    prompt; the model sees the note. Both are deterministic in their own inputs.
     """
     template = spec.load_prompt_template()
     created_date = ctx.generated_at[:10]
@@ -210,7 +239,8 @@ def build_user_prompt(
         control_sections=_control_sections(bundle),
         doc_version=doc_version,
         change_history_instruction=_change_history_instruction(
-            extract_change_history(existing_content), doc_version, created_date
+            extract_change_history(existing_content), doc_version, created_date,
+            change_note,
         ),
     )
 
@@ -292,6 +322,7 @@ def generate_document(
     *,
     generation_version: Optional[int] = None,
     existing_content: str = "",
+    change_note: str = "",
 ) -> GenerationOutput:
     """Produce Tier 2 document content.
 
@@ -303,6 +334,7 @@ def generate_document(
         spec, ctx, bundle,
         generation_version=generation_version,
         existing_content=existing_content,
+        change_note=change_note,
     )
     model_id = resolve_model()
 

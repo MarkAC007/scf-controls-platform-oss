@@ -506,6 +506,11 @@ export default function DocumentReader({
                   {v.is_current && ' · current'}
                   {v.model_id && ` · ${v.model_id}`}
                 </span>
+                {/* What the generation changed, in the same slot the
+                    transition list uses for its reason. Versions predating the
+                    stored summary render nothing at all rather than a
+                    reassuring "no changes" nobody measured. */}
+                {v.change_description && <em>{v.change_description}</em>}
                 {/* A version number is only useful if you can see what it
                     holds. With a section open for comparison this switches
                     which snapshot the diff is against. */}
