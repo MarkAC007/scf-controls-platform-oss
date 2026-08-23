@@ -9,8 +9,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from services.model_registry import resolve as resolve_model
 from services.vendor_assessment_engine import (
-    DEFAULT_MODEL,
+    MODEL_ROLE,
     MAX_OUTPUT_TOKENS,
     VendorAssessmentError,
     build_mock_report,
@@ -190,7 +191,7 @@ class TestLivePath:
 
         assert len(client.calls) == 1
         call = client.calls[0]
-        assert call["model"] == DEFAULT_MODEL
+        assert call["model"] == resolve_model(MODEL_ROLE)
         assert call["max_tokens"] == MAX_OUTPUT_TOKENS == 16384
         tool_types = {t.get("type") for t in call["tools"] if isinstance(t, dict)}
         assert "web_search_20250305" in tool_types

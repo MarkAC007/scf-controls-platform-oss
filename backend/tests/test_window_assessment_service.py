@@ -5,6 +5,7 @@ real LLM) are exercised manually via the CG production MCP path per the plan's
 Verification section — this file locks down the deterministic parts.
 """
 import os
+import pathlib
 import sys
 from datetime import datetime
 from uuid import uuid4
@@ -16,7 +17,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from services.window_assessment_service import (
     FALLBACK_FREQUENCY,
     _FileInWindow,
-    _apply_sticky_review_carryover,
+    _compose_findings,
+    _prior_review_reference,
     _compute_coverage,
     _compute_window_hash,
     _guess_artifact_type_for_source,
@@ -73,8 +75,23 @@ class TestResolveFrequency:
         assert freq == "daily"
         assert is_fallback is False
 
-    def test_unknown_frequency_falls_back(self):
+    def test_aliased_spellings_now_resolve(self):
+        """#783: 'fortnightly' used to fall back to monthly because each
+        subsystem kept its own spelling list. It now resolves through the shared
+        alias table, so the assessment window matches the declared cadence."""
         freq, is_fallback = _resolve_frequency(_FakeTracking("fortnightly"))
+        assert freq == "biweekly"
+        assert is_fallback is False
+
+    def test_annually_resolves_to_annual(self):
+        """The headline #783 defect at this callsite: the wizard's 'annually'
+        was not a key, so an annual control got a monthly assessment window."""
+        freq, is_fallback = _resolve_frequency(_FakeTracking("annually"))
+        assert freq == "annual"
+        assert is_fallback is False
+
+    def test_unknown_frequency_falls_back(self):
+        freq, is_fallback = _resolve_frequency(_FakeTracking("whenever we remember"))
         assert freq == FALLBACK_FREQUENCY
         assert is_fallback is True
 
@@ -297,20 +314,24 @@ class TestParseLLMResponse:
 
 
 # ---------------------------------------------------------------------------
-# Sticky review carryover (M4 PR 3) — Decision D3
+# Prior-review pointer (#789 audit lane, PR-1) — replaces the M4 PR 3 carryover
 # ---------------------------------------------------------------------------
 
-class TestStickyReviewCarryover:
-    """``_apply_sticky_review_carryover`` copies approved/rejected dispositions
-    from the most recent reviewed row onto a new assessment. needs_revision
-    is excluded by design (D3).
+class TestPriorReviewReference:
+    """``_prior_review_reference`` must NEVER put review state on a new row.
+
+    The function it replaced copied review_status / reviewed_by_user_id /
+    reviewed_at / review_notes from the last approved-or-rejected window
+    onto a brand-new one, fabricating an attestation under a real
+    reviewer's name. These tests pin the two halves of the fix: the new row
+    stays unattested, and the prior disposition is still discoverable.
     """
 
     def _make_new_assessment(self):
-        """Build a fresh assessment with no review state."""
+        """Build a fresh assessment carrying the model's unreviewed default."""
         from types import SimpleNamespace
         return SimpleNamespace(
-            review_status=None,
+            review_status="not_reviewed",
             reviewed_by_user_id=None,
             reviewed_at=None,
             review_notes=None,
@@ -323,10 +344,12 @@ class TestStickyReviewCarryover:
             reviewed_by_user_id=reviewer_id or uuid4(),
             reviewed_at=datetime(2026, 5, 1, 10, 0, 0),
             review_notes=notes,
+            window_start=datetime(2026, 4, 1, 0, 0, 0),
+            window_end=datetime(2026, 5, 1, 0, 0, 0),
         )
 
     def _fake_session(self, prior_row):
-        """Build a MagicMock session whose execute().scalar_one_or_none() returns prior_row."""
+        """A MagicMock session whose execute().scalar_one_or_none() returns prior_row."""
         from unittest.mock import MagicMock
         result = MagicMock()
         result.scalar_one_or_none.return_value = prior_row
@@ -334,71 +357,219 @@ class TestStickyReviewCarryover:
         session.execute.return_value = result
         return session
 
-    def test_new_assessment_inherits_approved_review(self):
+    # -- the fabrication, killed ------------------------------------------
+
+    def test_prior_approval_does_not_set_review_status(self):
         new_row = self._make_new_assessment()
-        prior = self._make_prior(review_status="approved", notes="LGTM")
-        session = self._fake_session(prior)
+        session = self._fake_session(self._make_prior(review_status="approved"))
 
-        _apply_sticky_review_carryover(session, uuid4(), "E-BCM-11", new_row)
+        _prior_review_reference(session, uuid4(), "E-BCM-11")
 
-        assert new_row.review_status == "approved"
-        assert new_row.reviewed_by_user_id == prior.reviewed_by_user_id
-        assert new_row.reviewed_at == prior.reviewed_at
-        assert new_row.review_notes == "LGTM"
+        assert new_row.review_status == "not_reviewed"
 
-    def test_new_assessment_inherits_rejected_review(self):
+    def test_prior_approval_does_not_name_a_reviewer(self):
         new_row = self._make_new_assessment()
-        prior = self._make_prior(review_status="rejected", notes="missing evidence")
-        session = self._fake_session(prior)
+        session = self._fake_session(self._make_prior(review_status="approved"))
 
-        _apply_sticky_review_carryover(session, uuid4(), "E-BCM-11", new_row)
+        _prior_review_reference(session, uuid4(), "E-BCM-11")
 
-        assert new_row.review_status == "rejected"
-        assert new_row.review_notes == "missing evidence"
-
-    def test_new_assessment_with_no_prior_review_starts_unreviewed(self):
-        new_row = self._make_new_assessment()
-        session = self._fake_session(prior_row=None)
-
-        _apply_sticky_review_carryover(session, uuid4(), "E-BCM-11", new_row)
-
-        # No prior row → row stays exactly as it was (no review state).
-        assert new_row.review_status is None
         assert new_row.reviewed_by_user_id is None
+
+    def test_prior_approval_does_not_set_a_review_timestamp(self):
+        new_row = self._make_new_assessment()
+        session = self._fake_session(self._make_prior(review_status="approved"))
+
+        _prior_review_reference(session, uuid4(), "E-BCM-11")
+
         assert new_row.reviewed_at is None
+
+    def test_prior_approval_does_not_copy_review_notes(self):
+        new_row = self._make_new_assessment()
+        session = self._fake_session(
+            self._make_prior(review_status="approved", notes="LGTM")
+        )
+
+        _prior_review_reference(session, uuid4(), "E-BCM-11")
+
         assert new_row.review_notes is None
 
-    def test_query_filters_for_approved_or_rejected_only(self):
-        """D3: needs_revision is excluded from the carryover query, by design.
-
-        The query itself filters review_status IN ("approved", "rejected"),
-        so a prior row with review_status="needs_revision" would not be
-        returned by scalar_one_or_none. We verify by setting up a session
-        whose query returns None when only needs_revision rows exist.
-        """
+    def test_prior_rejection_does_not_set_review_status(self):
         new_row = self._make_new_assessment()
-        # Simulate the SQL filter: only approved/rejected rows are returned.
-        # A pure-needs_revision history surfaces as "no prior reviewed row".
+        session = self._fake_session(self._make_prior(review_status="rejected"))
+
+        _prior_review_reference(session, uuid4(), "E-BCM-11")
+
+        assert new_row.review_status == "not_reviewed"
+
+    def test_function_takes_no_assessment_argument(self):
+        """Structural: the fabrication is impossible if the row is never passed in.
+
+        The replaced helper's fourth parameter was the row it mutated.
+        Removing it is what makes the fix un-regressable by accident.
+        """
+        import inspect
+        params = list(inspect.signature(_prior_review_reference).parameters)
+        assert params == ["session", "organization_id", "evidence_id"]
+
+    # -- the pointer, preserved -------------------------------------------
+
+    def test_prior_approval_is_reported_as_an_informational_finding(self):
+        session = self._fake_session(self._make_prior(review_status="approved"))
+
+        note = _prior_review_reference(session, uuid4(), "E-BCM-11")
+
+        assert note is not None
+        assert note["category"] == "review"
+        assert note["level"] == "info"
+
+    def test_finding_names_the_prior_disposition(self):
+        session = self._fake_session(self._make_prior(review_status="approved"))
+
+        note = _prior_review_reference(session, uuid4(), "E-BCM-11")
+
+        assert "approved" in note["message"]
+
+    def test_finding_names_the_prior_window_not_this_one(self):
+        session = self._fake_session(self._make_prior(review_status="approved"))
+
+        note = _prior_review_reference(session, uuid4(), "E-BCM-11")
+
+        assert "2026-04-01" in note["message"]
+        assert "2026-05-01" in note["message"]
+
+    def test_finding_states_it_is_not_an_attestation_of_this_window(self):
+        session = self._fake_session(self._make_prior(review_status="rejected"))
+
+        note = _prior_review_reference(session, uuid4(), "E-BCM-11")
+
+        assert "does not attest" in note["message"]
+        assert "unreviewed" in note["message"]
+
+    def test_no_prior_review_returns_no_finding(self):
         session = self._fake_session(prior_row=None)
 
-        _apply_sticky_review_carryover(session, uuid4(), "E-BCM-11", new_row)
+        assert _prior_review_reference(session, uuid4(), "E-BCM-11") is None
 
-        assert new_row.review_status is None
+    def test_prior_row_with_no_reviewed_at_still_produces_a_finding(self):
+        prior = self._make_prior(review_status="approved")
+        prior.reviewed_at = None
+        session = self._fake_session(prior)
 
-    def test_query_uses_correct_organization_and_evidence_filters(self):
-        """Defensive: the SELECT must filter by both org_id and evidence_id."""
+        note = _prior_review_reference(session, uuid4(), "E-BCM-11")
+
+        assert note is not None
+        assert "unrecorded date" in note["message"]
+
+    def test_query_filters_for_approved_or_rejected_only(self):
+        """needs_revision stays excluded — it explicitly asked for a re-run.
+
+        The SQL filters review_status IN ("approved", "rejected"), so a
+        history of nothing but needs_revision surfaces as "no prior row".
+        """
+        session = self._fake_session(prior_row=None)
+
+        assert _prior_review_reference(session, uuid4(), "E-BCM-11") is None
+
+    def test_a_single_select_is_issued(self):
         from unittest.mock import MagicMock
-        new_row = self._make_new_assessment()
         session = MagicMock()
         execute_result = MagicMock()
         execute_result.scalar_one_or_none.return_value = None
         session.execute.return_value = execute_result
 
-        org_id = uuid4()
-        _apply_sticky_review_carryover(session, org_id, "E-BCM-11", new_row)
+        _prior_review_reference(session, uuid4(), "E-BCM-11")
 
-        # Single SELECT issued.
         session.execute.assert_called_once()
-        # We don't introspect the SQL AST here — coverage of the WHERE
-        # clause is the integration responsibility; this test asserts the
-        # helper is wired into the query path.
+
+
+class TestComposeFindings:
+    """The prior-review pointer must actually reach the persisted findings.
+
+    Without these, dropping ``prior_review_note`` from the composition
+    would be a silent regression — the pointer half of the fix would
+    vanish while every non-inheritance test kept passing.
+    """
+
+    COVERAGE = {"category": "coverage", "level": "insufficient", "message": "c"}
+    NOTE = {"category": "review", "level": "info", "message": "n"}
+    AI = {"category": "relevance", "level": "warning", "message": "a"}
+
+    def test_prior_review_note_is_included(self):
+        out = _compose_findings([self.COVERAGE], self.NOTE, [self.AI])
+        assert self.NOTE in out
+
+    def test_prior_review_note_follows_coverage_findings(self):
+        out = _compose_findings([self.COVERAGE], self.NOTE, [self.AI])
+        assert out.index(self.NOTE) > out.index(self.COVERAGE)
+
+    def test_prior_review_note_precedes_ai_findings(self):
+        out = _compose_findings([self.COVERAGE], self.NOTE, [self.AI])
+        assert out.index(self.NOTE) < out.index(self.AI)
+
+    def test_absent_note_contributes_nothing(self):
+        assert _compose_findings([self.COVERAGE], None, [self.AI]) == [
+            self.COVERAGE, self.AI,
+        ]
+
+    def test_coverage_findings_are_never_suppressed_by_the_note(self):
+        out = _compose_findings([self.COVERAGE], self.NOTE, [])
+        assert self.COVERAGE in out
+
+    def test_inputs_are_not_mutated(self):
+        pre = [self.COVERAGE]
+        _compose_findings(pre, self.NOTE, [self.AI])
+        assert pre == [self.COVERAGE]
+
+
+class TestReviewBlockIsNeverWrittenByThisService:
+    """Structural guard on the whole module, not just the helper.
+
+    The defect this PR fixes was a *call site* copying four attributes onto
+    a fresh row. A unit test on the helper cannot see that call site coming
+    back. This walks the module AST and refuses any assignment to the
+    review block anywhere in the assessment service — review state is
+    written by the review API, and by nothing else.
+    """
+
+    REVIEW_BLOCK = {
+        "review_status",
+        "reviewed_by_user_id",
+        "reviewed_at",
+        "review_notes",
+    }
+
+    def _module_ast(self):
+        import ast
+        import services.window_assessment_service as mod
+        return ast.parse(pathlib.Path(mod.__file__).read_text())
+
+    def test_the_module_source_actually_loaded(self):
+        """Non-vacuity: the parse must find the functions we care about."""
+        import ast
+        tree = self._module_ast()
+        names = {
+            n.name for n in ast.walk(tree)
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        assert "assess_window" in names
+        assert "_prior_review_reference" in names
+
+    def test_no_assignment_to_any_review_block_attribute(self):
+        import ast
+        tree = self._module_ast()
+        offenders = []
+        for node in ast.walk(tree):
+            targets = []
+            if isinstance(node, ast.Assign):
+                targets = node.targets
+            elif isinstance(node, ast.AugAssign):
+                targets = [node.target]
+            elif isinstance(node, ast.AnnAssign):
+                targets = [node.target]
+            for t in targets:
+                if isinstance(t, ast.Attribute) and t.attr in self.REVIEW_BLOCK:
+                    offenders.append(f"line {t.lineno}: .{t.attr}")
+        assert offenders == [], (
+            "window_assessment_service must never write the review block; "
+            f"found {offenders}"
+        )

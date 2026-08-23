@@ -44,6 +44,8 @@ interface CollectionWizardProps {
   orgId: string
   onClose: () => void
   onComplete?: () => void
+  /** Opens the Systems Registry. Optional — see `SystemSelectStep`. */
+  onNavigateToSystems?: () => void
 }
 
 // ---- Progress indicator ----
@@ -77,7 +79,12 @@ function StepIndicator({ currentPhase }: { currentPhase: WizardPhase }) {
 
 // ---- Main component ----
 
-export function CollectionWizard({ orgId, onClose, onComplete }: CollectionWizardProps) {
+export function CollectionWizard({
+  orgId,
+  onClose,
+  onComplete,
+  onNavigateToSystems,
+}: CollectionWizardProps) {
   const [state, setState] = useState<WizardState>(initialState)
   const [systems, setSystems] = useState<System[]>([])
   const [loadingSystems, setLoadingSystems] = useState(true)
@@ -125,6 +132,17 @@ export function CollectionWizard({ orgId, onClose, onComplete }: CollectionWizar
               selectedSystem={state.selectedSystem}
               onSelect={(system) => updateState({ selectedSystem: system })}
               onNext={() => updateState({ phase: 'configure' })}
+              onNavigateToSystems={
+                onNavigateToSystems &&
+                (() => {
+                  // Leaving for the registry closes the wizard rather than
+                  // hiding it behind another tab. Its state is four fields deep
+                  // and every one of them depends on a system that does not
+                  // exist yet; preserving it would only restore a dead end.
+                  onClose()
+                  onNavigateToSystems()
+                })
+              }
             />
           )}
 

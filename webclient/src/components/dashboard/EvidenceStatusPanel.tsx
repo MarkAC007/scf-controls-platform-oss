@@ -24,7 +24,7 @@ interface EvidenceStatusPanelProps {
   evidenceMaturityDistribution: Record<string, number>
   evidenceGaps: EvidenceGaps | null
   loadingGaps: boolean
-  evidenceByTeamCounts: Record<string, { total: number; tracked: number }>
+  evidenceByOwnerCounts: Record<string, { total: number; tracked: number }>
 }
 
 function EvidenceStatusPanel({
@@ -34,12 +34,12 @@ function EvidenceStatusPanel({
   evidenceMaturityDistribution,
   evidenceGaps,
   loadingGaps,
-  evidenceByTeamCounts
+  evidenceByOwnerCounts
 }: EvidenceStatusPanelProps) {
-  const [teamBreakdownExpanded, setTeamBreakdownExpanded] = useState(false)
+  const [ownerBreakdownExpanded, setOwnerBreakdownExpanded] = useState(false)
 
   const clampedPercentage = Math.min(Math.max(evidencePercentage, 0), 100)
-  const teamEntries = Object.entries(evidenceByTeamCounts)
+  const ownerEntries = Object.entries(evidenceByOwnerCounts)
 
   return (
     <div className="evidence-status-panel">
@@ -93,30 +93,30 @@ function EvidenceStatusPanel({
         )}
       </div>
 
-      {/* Team Burden Breakdown */}
-      {teamEntries.length > 0 && (
+      {/* Owner Burden Breakdown */}
+      {ownerEntries.length > 0 && (
         <div className="esp-teams">
           <button
             type="button"
             className="esp-expand-toggle"
-            onClick={() => setTeamBreakdownExpanded((prev) => !prev)}
-            aria-expanded={teamBreakdownExpanded}
+            onClick={() => setOwnerBreakdownExpanded((prev) => !prev)}
+            aria-expanded={ownerBreakdownExpanded}
           >
-            {teamBreakdownExpanded ? 'Hide' : 'Show'} Team Breakdown
+            {ownerBreakdownExpanded ? 'Hide' : 'Show'} Owner Breakdown
           </button>
 
-          {teamBreakdownExpanded && (
+          {ownerBreakdownExpanded && (
             <div className="esp-teams-list">
-              {teamEntries.map(([team, counts]) => {
-                const teamPercentage =
+              {ownerEntries.map(([owner, counts]) => {
+                const ownerPercentage =
                   counts.total > 0
                     ? Math.round((counts.tracked / counts.total) * 100)
                     : 0
 
                 return (
-                  <div key={team} className="esp-team-item">
+                  <div key={owner} className="esp-team-item">
                     <div className="esp-team-label">
-                      <span className="esp-team-name">{team}</span>
+                      <span className="esp-team-name">{owner}</span>
                       <span className="esp-team-count">
                         {counts.tracked}/{counts.total}
                       </span>
@@ -124,7 +124,7 @@ function EvidenceStatusPanel({
                     <div className="esp-progress-bar">
                       <div
                         className="esp-progress-fill"
-                        style={{ width: `${teamPercentage}%` }}
+                        style={{ width: `${ownerPercentage}%` }}
                       />
                     </div>
                   </div>

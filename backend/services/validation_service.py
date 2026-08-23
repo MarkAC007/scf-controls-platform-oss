@@ -23,21 +23,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models import EvidenceFile, EvidenceTracking, EvidenceValidationResult
 from catalog_models import SCFCatalogEvidence
 from services.storage_service import ALLOWED_CONTENT_TYPES
+from services.frequency_vocabulary import STALENESS_DAYS, normalize as normalize_frequency, staleness_days
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Staleness thresholds (days) keyed by collection frequency
+#
+# Re-exported from services.frequency_vocabulary, which is the single source of
+# truth for the frequency vocabulary (#783). Kept as a module-level name because
+# several modules import it by this name; new code should call
+# frequency_vocabulary.staleness_days() so unrecognised values resolve to None
+# rather than to a plausible-looking default.
 # ---------------------------------------------------------------------------
-STALENESS_THRESHOLDS: Dict[str, int] = {
-    "real_time": 2,
-    "daily": 2,
-    "weekly": 9,
-    "monthly": 35,
-    "quarterly": 95,
-    "annual": 370,
-    "on_demand": 35,  # treat like monthly
-}
+STALENESS_THRESHOLDS: Dict[str, int] = dict(STALENESS_DAYS)
 
 # Status severity ordering (worst → best)
 _STATUS_SEVERITY = {"invalid": 0, "partial": 1, "warning": 2, "valid": 3}
@@ -220,8 +219,8 @@ async def _rule_freshness(
             "message": "No collection frequency configured — freshness check skipped",
         }
 
-    frequency = tracking.frequency.lower().strip()
-    threshold_days = STALENESS_THRESHOLDS.get(frequency)
+    frequency = normalize_frequency(tracking.frequency)
+    threshold_days = staleness_days(tracking.frequency)
     if threshold_days is None:
         return {
             "rule": "freshness",

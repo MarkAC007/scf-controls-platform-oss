@@ -3458,6 +3458,100 @@ textarea.form-control{
   border-radius:0.75rem;
   box-shadow:0 4px 16px rgba(0, 0, 0, 0.2);
 }
+/* ==========================================================================
+   Evidence bulk actions (#789)
+   ========================================================================== */
+
+.evidence-card-select-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.evidence-card-select-row > .evidence-card-modern {
+  flex: 1;
+  min-width: 0;
+}
+
+.evidence-card-select {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.evidence-card-modern.bulk-selected {
+  background: var(--primary-bg, rgba(59, 130, 246, 0.12));
+}
+
+.evidence-bulk-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.evidence-bulk-bar-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.evidence-bulk-count {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  margin-right: auto;
+}
+
+.evidence-bulk-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.evidence-bulk-field-label {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.evidence-bulk-busy {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.evidence-bulk-result {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+  background: var(--secondary);
+}
+
+/* Failures are stated in text, not only in colour. #ef4444 on white is 3.76:1
+   and fails AA, so the light value is the darker red and dark mode takes the
+   token. */
+.evidence-bulk-result.has-failures {
+  border-color: #b91c1c;
+  color: #b91c1c;
+}
+
+[data-theme="dark"] .evidence-bulk-result.has-failures {
+  border-color: var(--destructive);
+  color: var(--destructive);
+}
+
+.evidence-bulk-result-errors {
+  margin: 0;
+  padding-left: 18px;
+}
+
 .evidence-card-header{
   display:flex;
   justify-content:space-between;
@@ -6504,6 +6598,19 @@ textarea.form-control{
   letter-spacing: 0.5px;
 }
 
+/* "From SCF catalogue" is a different claim from "Generic" and must not read as
+   the same apology. Tinted rather than grey, and deliberately not green: derived
+   guidance is better than the fallback, not as good as a hand-written template. */
+.template-tier-derived {
+  background: var(--primary-bg, rgba(59, 130, 246, 0.12));
+  border-color: var(--primary, #3b82f6);
+  color: #1d4ed8;
+}
+
+[data-theme="dark"] .template-tier-derived {
+  color: #93c5fd;
+}
+
 .template-summary {
   margin: 0 0 14px;
   color: var(--text);
@@ -9016,6 +9123,24 @@ textarea.form-control{
   padding: 2rem;
   text-align: center;
   color: var(--muted);
+}
+
+/* Shown when a notification has no reachable destination. Previously that case
+   closed the dropdown and logged to a console the user does not have open.
+   Light uses #b91c1c (6.47:1 on --surface #ffffff) rather than --destructive,
+   which is #ef4444 = 3.76:1 and fails AA; dark uses the token, which is #ffb4ab
+   and passes comfortably. Same split as the #788 badge fix, for the same
+   reason: one value cannot serve both themes here. */
+.notification-nav-error {
+  padding: 0.75rem 1rem;
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  color: #b91c1c;
+  border-bottom: 1px solid var(--border);
+}
+
+[data-theme="dark"] .notification-nav-error {
+  color: var(--destructive);
 }
 
 .notification-item {
@@ -15140,10 +15265,76 @@ textarea.form-control{
   gap: 12px;
 }
 
+.maturity-distribution-row-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .maturity-distribution-row {
   display: flex;
   align-items: center;
   gap: 12px;
+  cursor: pointer;
+  border-radius: 6px;
+  padding: 4px;
+  margin: -4px;
+}
+
+.maturity-distribution-row:hover,
+.maturity-distribution-row.open {
+  background: var(--secondary, #f3f4f6);
+}
+
+.maturity-distribution-row:focus-visible {
+  outline: 2px solid var(--primary, #3b82f6);
+  outline-offset: 2px;
+}
+
+.maturity-distribution-guidance {
+  padding: 12px 14px;
+  background: var(--secondary, #f3f4f6);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.maturity-distribution-guidance-description {
+  margin: 0 0 10px;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.maturity-distribution-guidance-section {
+  margin-bottom: 10px;
+}
+
+.maturity-distribution-guidance-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.maturity-distribution-guidance-section ul {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text);
+}
+
+.maturity-distribution-guidance-section li {
+  margin-bottom: 2px;
+}
+
+.maturity-distribution-guidance-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
 }
 
 .maturity-distribution-label {
@@ -20696,7 +20887,14 @@ textarea.form-control{
 }
 
 .edt-row-overdue td {
-  color: #dc2626;
+  /* #dc2626 was 4.83:1 on the light card and 3.40:1 on the dark one — an AA
+     failure in dark (#788). Both themes are now stated explicitly: a single
+     colour cannot clear 4.5:1 against a white card AND a #171f33 one. */
+  color: #b91c1c; /* 6.47:1 on --card light */
+}
+
+[data-theme="dark"] .edt-row-overdue td {
+  color: var(--destructive); /* #ffb4ab — 9.66:1 on --card dark */
 }
 
 .edt-badge-overdue {
@@ -20706,7 +20904,14 @@ textarea.form-control{
   font-size: 11px;
   font-weight: 600;
   background: rgba(239, 68, 68, 0.12);
-  color: #dc2626;
+  /* Measured against the COMPOSITED background, not --card: the 12% red wash
+     lifts the light card to #fdeaea, which dropped #dc2626 to 4.14:1. The badge
+     failed AA in BOTH themes (light 4.14, dark 3.06), not only dark. */
+  color: #b91c1c; /* 5.55:1 on the light tint */
+}
+
+[data-theme="dark"] .edt-badge-overdue {
+  color: var(--destructive); /* #ffb4ab — 8.70:1 on the dark tint */
 }
 
 .edt-badge-upcoming {
@@ -20716,7 +20921,39 @@ textarea.form-control{
   font-size: 11px;
   font-weight: 600;
   background: rgba(245, 158, 11, 0.12);
-  color: #d97706;
+  /* The reverse of the overdue badge: #d97706 passes on dark (4.21:1) and fails
+     on light (2.90:1 over the composited #fef5e7). Same defect, opposite theme —
+     which is why "just use var(--warning)" would fix one and break the other. */
+  color: #b45309; /* 4.58:1 on the light tint */
+}
+
+[data-theme="dark"] .edt-badge-upcoming {
+  color: var(--warning); /* #fbbf24 — 8.03:1 on the dark tint */
+}
+
+/* Refresh feedback: the headline count, then why anything was skipped (#788). */
+.edt-refresh-message {
+  margin-left: 10px;
+  font-size: 0.78rem;
+  /* Was a hardcoded inline #6366f1: 4.47:1 light but 3.67:1 dark, an AA miss
+     nobody had measured. --primary is 4.60:1 / 6.20:1. */
+  color: var(--primary);
+}
+
+.edt-skip-reasons {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 0.78rem;
+  color: var(--muted); /* 4.76:1 light, 9.63:1 dark */
+  list-style: disc;
+}
+
+.edt-skip-reason {
+  color: var(--text);
+}
+
+.edt-skip-ids {
+  font-family: monospace;
 }
 
 .edt-stale-list {
@@ -20737,7 +20974,10 @@ textarea.form-control{
 }
 
 .edt-stale-amber {
-  border-left: 3px solid #f59e0b;
+  /* A 3px severity bar is a graphical object: WCAG 1.4.11 wants 3:1, and
+     #f59e0b managed 2.15:1 on the light card (7.64:1 on the dark one, so this
+     is a light-only correction). The red bar below already passes at 3.76:1. */
+  border-left: 3px solid #b45309; /* 5.02:1 on --card light */
 }
 
 .edt-stale-red {
@@ -20809,12 +21049,23 @@ textarea.form-control{
 /* Summary bar */
 .ehd-summary-bar {
   display: flex;
+  flex-wrap: wrap;
   gap: 16px;
   padding: 16px;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   margin-bottom: 8px;
+}
+
+/* The freshness rule, stated under the counts it explains. flex-basis: 100%
+   drops it onto its own line rather than squeezing it in beside the stats. */
+.ehd-summary-legend {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: var(--muted);
 }
 
 .ehd-summary-stat {

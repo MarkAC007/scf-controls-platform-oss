@@ -56,23 +56,14 @@ from models import (
     ScopedControl,
 )
 from services.notifications import create_composite_insufficient_notifications_sync
+from services.frequency_vocabulary import STALENESS_DAYS, staleness_days
 
-# Inlined to avoid pulling in services.validation_service's transitive
-# boto3/storage imports — the constant is small, stable, and copying it here
-# keeps composite_service startable inside Celery workers without S3 deps.
-# Mirrors services.validation_service.STALENESS_THRESHOLDS exactly. Bumped
-# in lockstep when the source-of-truth value changes (covered by ISC-A1's
-# "M3 must not perturb existing infra" — a constant copy is fine, drift is
-# the risk and is detected by the unit-test parity check below).
-STALENESS_THRESHOLDS: Dict[str, int] = {
-    "real_time": 2,
-    "daily": 2,
-    "weekly": 9,
-    "monthly": 35,
-    "quarterly": 95,
-    "annual": 370,
-    "on_demand": 35,
-}
+# Previously a hand-maintained copy of validation_service.STALENESS_THRESHOLDS,
+# inlined to avoid that module's transitive boto3/storage imports inside Celery
+# workers. #783 replaced the copy with an import from the shared vocabulary
+# module, which is stdlib-only by contract — so the import-weight reason for the
+# copy is satisfied without the drift risk the copy carried.
+STALENESS_THRESHOLDS: Dict[str, int] = dict(STALENESS_DAYS)
 
 logger = logging.getLogger(__name__)
 
@@ -290,7 +281,18 @@ def _is_window_stale(window: EvidenceWindowAssessment, latest_file_at: Optional[
     """Stale = latest_file_at older than 2 x cadence (ISC-10)."""
     if latest_file_at is None:
         return False
-    threshold_days = STALENESS_THRESHOLDS.get(window.frequency_used or "monthly", 35)
+    # Explicit None branch, not `... or DEFAULT`: `frequency_used` is a stored
+    # column that predates normalisation, so it can hold a value the vocabulary
+    # does not recognise. Collapsing that into the monthly default silently is
+    # the exact shape #783 exists to remove.
+    threshold_days = staleness_days(window.frequency_used)
+    if threshold_days is None:
+        logger.warning(
+            "Unrecognised frequency_used %r on window assessment — "
+            "falling back to the monthly threshold",
+            window.frequency_used,
+        )
+        threshold_days = STALENESS_DAYS["monthly"]
     cutoff = datetime.utcnow() - timedelta(days=threshold_days * 2)
     return latest_file_at < cutoff
 

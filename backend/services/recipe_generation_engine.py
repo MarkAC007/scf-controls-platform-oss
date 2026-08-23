@@ -10,8 +10,9 @@ Mirrors services/vendor_assessment_engine.py. Synchronous by design — called
 from the Celery worker (`tasks_recipe_generation.run_recipe_generation`).
 
 Modes:
-    - Live: requires ANTHROPIC_API_KEY. Model from SYSTEMS_AI_MODEL
-      (default "claude-sonnet-4-6"), web_search max_uses 6.
+    - Live: requires ANTHROPIC_API_KEY. Model from the "recipe_generation" role
+      in services/model_registry (env override SYSTEMS_AI_MODEL), web_search
+      max_uses 6.
     - Mock: SYSTEMS_AI_MOCK=1 or no ANTHROPIC_API_KEY — returns a clearly
       marked sample recipe set so the whole flow works keyless.
 
@@ -24,9 +25,12 @@ from typing import Any, Dict, List, Optional
 
 from services.system_catalog_validation import validate_recipes_map, RECIPE_LEVELS
 
+from services.model_registry import resolve as resolve_model
+
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "claude-sonnet-4-6"
+# Model id from services/model_registry (#782); SYSTEMS_AI_MODEL still overrides.
+MODEL_ROLE = "recipe_generation"
 MAX_OUTPUT_TOKENS = 16384
 WEB_SEARCH_MAX_USES = 6
 MAX_LOOP_ITERATIONS = 10
@@ -323,7 +327,7 @@ def run_generation(
         logger.info("Recipe generation engine running in MOCK mode for %s", system_name)
         result = build_mock_recipes(system_name, system_type)
     else:
-        model = os.getenv("SYSTEMS_AI_MODEL", DEFAULT_MODEL)
+        model = resolve_model(MODEL_ROLE)
         logger.info("Recipe generation engine calling Anthropic (model=%s) for %s", model, system_name)
         sources: List[str] = []
         user_prompt = build_user_prompt(system_name, vendor, system_type, description)

@@ -1,4 +1,4 @@
-import type { ControlsMappingFile, ERLFile, EnrichedControl, ControlGuidance, ResolvedArtifact, FrameworkNameMap, CollectionInterfacesFile, CollectionInterface, EvidenceId, EvidenceTemplatesFile } from '../types'
+import type { ControlsMappingFile, ERLFile, EnrichedControl, ControlGuidance, ResolvedArtifact, FrameworkNameMap, CollectionInterfacesFile, EvidenceTemplatesFile } from '../types'
 import { fetchBulkControls, fetchBulkEvidence, buildFrameworkNameMap } from './catalogApi'
 
 const DATA_BASE = '/data'
@@ -31,22 +31,6 @@ export async function loadEvidenceTemplates(): Promise<EvidenceTemplatesFile> {
   const res = await fetch(`${DATA_BASE}/evidence_templates.json`)
   if (!res.ok) return {}  // Graceful fallback — templates are optional
   return res.json()
-}
-
-export function getInterfacesForEvidence(
-  evidenceId: EvidenceId,
-  erl: ERLFile,
-  interfaces: CollectionInterfacesFile
-): { id: string; interface: CollectionInterface }[] {
-  const evidenceItem = erl[evidenceId]
-  if (!evidenceItem?.collection_interfaces) return []
-
-  return evidenceItem.collection_interfaces
-    .map(id => {
-      const ci = interfaces[id]
-      return ci ? { id, interface: ci } : null
-    })
-    .filter((item): item is { id: string; interface: CollectionInterface } => item !== null)
 }
 
 interface AllData {

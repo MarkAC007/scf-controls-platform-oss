@@ -1,6 +1,7 @@
 import React, { memo } from 'react'
 import DeprecatedBadge from './DeprecatedBadge'
 import type { CatalogLifecycleFields } from '../types/catalogUpgrade'
+import { interactiveRowProps } from '../data/interactiveRow'
 
 interface SidebarControlCardProps {
   scfId: string
@@ -38,10 +39,7 @@ function SidebarControlCardComponent({
     <div style={style}>
       <div
         className={`sidebar-control-card ${isSelected ? 'active' : ''}`}
-        onClick={onSelect}
-        role="button"
-        tabIndex={0}
-        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onSelect() }}
+        {...interactiveRowProps(onSelect)}
       >
         {checkbox && (
           <div className="sidebar-card-checkbox">

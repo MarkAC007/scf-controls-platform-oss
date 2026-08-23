@@ -4,12 +4,14 @@ Evidence Collection Tasks API endpoints - manage evidence collection tasks and d
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_, text
+from sqlalchemy.orm import selectinload
 from typing import List, Optional
 from uuid import UUID
 from datetime import date, datetime
 
 from database import get_db
-from auth import require_auth, get_accessible_org_ids, verify_org_membership, User
+from user_display import user_label as _user_label
+from auth import require_auth, get_accessible_org_ids, verify_org_membership, assert_user_in_org, User
 from models import EvidenceCollectionTask, EvidenceTracking, User as DBUser
 from schemas import (
     EvidenceCollectionTaskCreate,
@@ -104,10 +106,29 @@ async def list_evidence_tasks(
     assigned_user_id: Optional[UUID] = None,
     overdue_only: bool = False,
     frameworks: Optional[List[str]] = Query(None, description="Filter by SCF framework mapping keys (OR logic)"),
+    evidence_tracking_id: Optional[UUID] = Query(
+        None, description="Only tasks belonging to this evidence tracking row"
+    ),
+    task_type: Optional[str] = Query(
+        None,
+        # `pattern`, not the `regex=` used above: that spelling is deprecated
+        # and warns on every import.
+        pattern="^(feasibility|setup|collection|review|documentation|issue)$",
+        description="Only tasks of this type",
+    ),
+    assigned_to_me: bool = Query(
+        False, description="Only tasks assigned to the caller"
+    ),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_auth)
 ):
-    """List evidence collection tasks with optional filters and evidence details."""
+    """List evidence collection tasks with optional filters and evidence details.
+
+    Every filter is applied in SQL. Callers must not fetch the unfiltered list
+    and narrow it in the client: the response is unpaginated, so that pattern
+    grows with the whole organisation's task count rather than with what is
+    displayed.
+    """
     # Tasks inherit tenancy from their parent EvidenceTracking row
     accessible_org_ids = await get_accessible_org_ids(current_user, db)
     if not accessible_org_ids:
@@ -158,6 +179,23 @@ async def list_evidence_tasks(
         filters.append(EvidenceCollectionTask.status == status_filter)
     if assigned_user_id:
         filters.append(EvidenceCollectionTask.assigned_user_id == assigned_user_id)
+    # Both of these were filtered client-side after fetching every task in the
+    # org (#788): the evidence panel pulled the whole list to show one row's
+    # tasks, and the tasks page pulled it again to filter by type in JS.
+    if evidence_tracking_id:
+        filters.append(EvidenceCollectionTask.evidence_tracking_id == evidence_tracking_id)
+    if task_type:
+        filters.append(EvidenceCollectionTask.task_type == task_type)
+    # Server-resolved rather than an `assigned_user_id` the client supplies:
+    # the frontend's auth context carries placeholder ids ('google_user') before
+    # the profile fetch lands, and "my tasks" must never be one stale render away
+    # from showing somebody else's queue (#788).
+    if assigned_to_me:
+        if not current_user.db_id:
+            # Authenticated but not persisted (API-key service identity): no
+            # task can be assigned to a row that does not exist.
+            return []
+        filters.append(EvidenceCollectionTask.assigned_user_id == UUID(current_user.db_id))
     if overdue_only:
         filters.append(
             and_(
@@ -186,7 +224,11 @@ async def list_evidence_tasks(
 
         # Get evidence details
         evidence_result = await db.execute(
-            select(EvidenceTracking).where(EvidenceTracking.id == task.evidence_tracking_id)
+            # owner_user is a relationship; a lazy load here raises
+            # MissingGreenlet under async SQLAlchemy (#781).
+            select(EvidenceTracking)
+            .options(selectinload(EvidenceTracking.owner_user))
+            .where(EvidenceTracking.id == task.evidence_tracking_id)
         )
         evidence = evidence_result.scalar_one_or_none()
 
@@ -210,7 +252,10 @@ async def list_evidence_tasks(
             "frequency": evidence.frequency if evidence else None,
             "collecting_system": evidence.collecting_system if evidence else None,
             "method_of_collection": evidence.method_of_collection if evidence else None,
-            "owner": evidence.owner if evidence else None,
+            # Resolved accountable owner, not the old free-text label (#781).
+            # The key name is kept so TaskDashboard keeps rendering; what it
+            # carries is now a person, which is the point of the change.
+            "owner": _user_label(evidence.owner_user) if evidence else None,
             "assigned_user": {
                 "id": user.id,
                 "email": user.email,
@@ -230,13 +275,19 @@ async def create_evidence_task(
 ):
     """Create a manual evidence collection task."""
     # Verify evidence tracking exists and the caller may write to its organisation
-    await _resolve_evidence_access(
+    evidence = await _resolve_evidence_access(
         task_data.evidence_tracking_id, current_user, db, "editor"
     )
 
-    # Verify assigned user exists if provided
+    # The assignee must be a member of the task's own organisation, not merely a
+    # user that exists somewhere on the platform (#781). Existence alone let an
+    # editor assign a task to another tenant's account, which then surfaced this
+    # org's evidence IDs in that user's notifications and work queue.
     user = None
     if task_data.assigned_user_id:
+        await assert_user_in_org(
+            task_data.assigned_user_id, evidence.organization_id, db
+        )
         result = await db.execute(
             select(DBUser).where(DBUser.id == task_data.assigned_user_id)
         )
@@ -290,6 +341,28 @@ async def update_evidence_task(
 ):
     """Update an evidence collection task."""
     task = await _resolve_task_access(task_id, current_user, db, "editor")
+
+    # Reassignment had no validation at all before #781 — any UUID was accepted
+    # and written straight to the column. Resolve the owning org from the parent
+    # tracking row and require membership.
+    #
+    # Only a CHANGED assignee is validated. TaskEditModal re-sends
+    # assigned_user_id with every save, so validating the stored value would make
+    # a task un-editable the moment its assignee left the organisation — failing
+    # on a field the operator never touched.
+    if (
+        task_update.assigned_user_id is not None
+        and task_update.assigned_user_id != task.assigned_user_id
+    ):
+        org_result = await db.execute(
+            select(EvidenceTracking.organization_id).where(
+                EvidenceTracking.id == task.evidence_tracking_id
+            )
+        )
+        task_org_id = org_result.scalar_one_or_none()
+        if task_org_id is None:
+            raise HTTPException(status_code=404, detail="Task not found")
+        await assert_user_in_org(task_update.assigned_user_id, task_org_id, db)
 
     # Update fields
     if task_update.due_date is not None:
@@ -462,7 +535,11 @@ async def get_my_dashboard(
     for task in upcoming:
         # Get evidence info with details
         evidence_result = await db.execute(
-            select(EvidenceTracking).where(EvidenceTracking.id == task.evidence_tracking_id)
+            # owner_user is a relationship; a lazy load here raises
+            # MissingGreenlet under async SQLAlchemy (#781).
+            select(EvidenceTracking)
+            .options(selectinload(EvidenceTracking.owner_user))
+            .where(EvidenceTracking.id == task.evidence_tracking_id)
         )
         evidence = evidence_result.scalar_one_or_none()
 
@@ -482,7 +559,7 @@ async def get_my_dashboard(
             "frequency": evidence.frequency if evidence else None,
             "collecting_system": evidence.collecting_system if evidence else None,
             "method_of_collection": evidence.method_of_collection if evidence else None,
-            "owner": evidence.owner if evidence else None
+            "owner": _user_label(evidence.owner_user) if evidence else None
         })
 
     return {

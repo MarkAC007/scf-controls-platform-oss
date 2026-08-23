@@ -1,43 +1,46 @@
 import { useState, useCallback } from 'react'
-import type { EvidenceId, EvidenceTemplate, EvidenceTemplatesFile } from '../../types'
+import type { EvidenceId, EvidenceTemplatesFile, ERLFile, EvidenceTracking } from '../../types'
 import { submitRecipeFeedback } from '../../data/apiClient'
+import { resolveEvidenceGuidance, GUIDANCE_TIER_BADGE } from '../../data/evidenceGuidance'
+import { interactiveRowProps } from '../../data/interactiveRow'
 
 interface EvidenceTemplateGuidanceProps {
   evidenceId: EvidenceId
   evidenceTemplates: EvidenceTemplatesFile
   orgId?: string
+  /**
+   * The SCF evidence catalogue. Optional so existing callers keep working, but
+   * without it every item with no hand-written template falls to the generic
+   * text — which is the defect, not a degraded mode worth designing for.
+   */
+  erlData?: ERLFile
+  /** The organisation's own tracking row, for cadence and collecting system. */
+  tracking?: EvidenceTracking
 }
 
-/** Generic fallback guidance shown when no specific template exists. */
-const GENERIC_GUIDANCE = {
-  summary: 'Upload documentation that demonstrates this control is implemented and operating effectively.',
-  acceptable_formats: ['PDF', 'DOCX', 'XLSX', 'CSV', 'PNG', 'JPG'],
-  good_examples: [
-    'Signed, dated policy or procedure document with version control',
-    'System-generated report or export with timestamps',
-  ],
-  bad_examples: [
-    'Screenshot without date or context',
-    'Draft document without approval signatures',
-  ],
-  redaction_warnings: [
-    'Remove any personally identifiable information (PII) not relevant to the control',
-  ],
-  freshness: 'Within the current audit period',
-  auditor_tip: 'Auditors look for evidence that is current, complete, and demonstrates consistent operation over the audit period.',
-}
-
+/**
+ * Guidance for one evidence item, at the best tier available (#789).
+ *
+ * The tier decision and every sentence live in `data/evidenceGuidance.ts`; this
+ * component renders them and reports which tier it got. See that module's header
+ * for why "Generic" was showing on roughly nine items in ten.
+ */
 export function EvidenceTemplateGuidance({
   evidenceId,
   evidenceTemplates,
   orgId,
+  erlData,
+  tracking,
 }: EvidenceTemplateGuidanceProps) {
   const [collapsed, setCollapsed] = useState(true)
   const [feedbackSubmitted, setFeedbackSubmitted] = useState(false)
 
-  const template: EvidenceTemplate | undefined = evidenceTemplates[evidenceId]
-  const guidance = template?.guidance || GENERIC_GUIDANCE
-  const isGeneric = !template
+  const { tier, guidance } = resolveEvidenceGuidance(evidenceId, {
+    templates: evidenceTemplates,
+    erl: erlData,
+    tracking,
+  })
+  const badge = GUIDANCE_TIER_BADGE[tier]
 
   const handleFeedback = useCallback(async (feedbackType: 'helpful' | 'not_matching') => {
     if (!orgId) return
@@ -56,20 +59,28 @@ export function EvidenceTemplateGuidance({
 
   return (
     <div className={`detail-section-container evidence-template-guidance ${collapsed ? 'collapsed' : ''}`}>
+      {/*
+        The header declared a button role and gave neither a tab stop nor a key
+        handler, so it told a screen reader it was a control and then could not
+        be reached or operated by one. The shared helper supplies all four props
+        together, which is the point of it.
+
+        (The role is not spelled out above on purpose: `interactiveRow.usage.test`
+        asserts on this file's source and a literal in a comment would defeat it.)
+      */}
       <div
         className="container-header"
-        onClick={() => setCollapsed(!collapsed)}
         style={{ cursor: 'pointer' }}
-        role="button"
         aria-expanded={!collapsed}
+        {...interactiveRowProps(() => setCollapsed(!collapsed))}
       >
-        <span className="container-icon">{'\uD83D\uDCCB'}</span>
+        <span className="container-icon">{'📋'}</span>
         <span className="container-title">Evidence Guidance</span>
-        {isGeneric && (
-          <span className="template-generic-badge">Generic</span>
+        {badge && (
+          <span className={`template-generic-badge template-tier-${tier}`}>{badge}</span>
         )}
         <span className="container-collapse-icon" style={{ marginLeft: 'auto' }}>
-          {collapsed ? '\u25B6' : '\u25BC'}
+          {collapsed ? '▶' : '▼'}
         </span>
       </div>
 
@@ -122,7 +133,7 @@ export function EvidenceTemplateGuidance({
 
           {/* Freshness */}
           <div className="template-section template-freshness">
-            <span className="template-freshness-icon">{'\u23F0'}</span>
+            <span className="template-freshness-icon">{'⏰'}</span>
             <span className="template-freshness-text">
               <strong>Freshness:</strong> {guidance.freshness}
             </span>
@@ -131,7 +142,7 @@ export function EvidenceTemplateGuidance({
           {/* Auditor Tip */}
           <details className="template-auditor-tip">
             <summary className="template-auditor-tip-summary">
-              <span>{'\uD83D\uDD0D'}</span> Auditor Tip
+              <span>{'🔍'}</span> Auditor Tip
             </summary>
             <p className="template-auditor-tip-content">{guidance.auditor_tip}</p>
           </details>

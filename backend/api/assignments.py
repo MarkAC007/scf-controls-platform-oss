@@ -8,7 +8,7 @@ from typing import List, Optional
 from uuid import UUID
 
 from database import get_db
-from auth import require_auth, get_accessible_org_ids, User
+from auth import require_auth, get_accessible_org_ids, assert_user_in_org, User
 from models import Assignment, User as DBUser, ScopedControl, EvidenceTracking, EvidenceCollectionTask
 from schemas import (
     AssignmentCreate,
@@ -34,12 +34,6 @@ async def create_assignment(
     """Assign a user to a control or evidence item."""
     # Get user's accessible organisation IDs for tenant isolation
     accessible_org_ids = await get_accessible_org_ids(current_user, db)
-
-    # Verify user exists
-    result = await db.execute(select(DBUser).where(DBUser.id == assignment_data.user_id))
-    user = result.scalar_one_or_none()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
 
     # Verify assignable exists AND belongs to user's accessible organisations
     # Return 404 (not 403) to avoid leaking existence of entities in other orgs
@@ -72,6 +66,37 @@ async def create_assignment(
     if not assignable:
         raise HTTPException(status_code=404, detail=f"{assignment_data.assignable_type.capitalize()} not found")
 
+    # The assignee must belong to the assignable's OWN organisation (#781).
+    # Verifying only that the user exists let an editor assign another tenant's
+    # account to their control or evidence item; that account would then see the
+    # item in /api/users/me/assignments.
+    if assignment_data.assignable_type == 'task':
+        target_org_result = await db.execute(
+            select(EvidenceTracking.organization_id).where(
+                EvidenceTracking.id == assignable.evidence_tracking_id
+            )
+        )
+        target_org_id = target_org_result.scalar_one_or_none()
+    else:
+        target_org_id = getattr(assignable, 'organization_id', None)
+
+    if target_org_id is None:
+        raise HTTPException(status_code=404, detail=f"{assignment_data.assignable_type.capitalize()} not found")
+
+    await assert_user_in_org(assignment_data.user_id, target_org_id, db)
+
+    # Load the user for the response. This runs AFTER the membership check and
+    # raises the identical 404, deliberately: a distinct "User not found" ahead
+    # of it would let any authenticated user distinguish "this UUID is a platform
+    # account in some other tenant" from "this UUID does not exist" — an account
+    # oracle assembled out of two individually reasonable checks (#781).
+    result = await db.execute(select(DBUser).where(DBUser.id == assignment_data.user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(
+            status_code=404, detail="Assigned user not found in this organisation"
+        )
+
     # Check if assignment already exists
     result = await db.execute(
         select(Assignment).where(
@@ -97,17 +122,10 @@ async def create_assignment(
     db.add(assignment)
     await db.flush()
 
-    # Derive org_id from polymorphic parent for audit logging
-    if assignment_data.assignable_type == 'task':
-        et_result = await db.execute(
-            select(EvidenceTracking).where(EvidenceTracking.id == assignable.evidence_tracking_id)
-        )
-        et = et_result.scalar_one_or_none()
-        audit_org_id = et.organization_id if et else None
-    elif hasattr(assignable, 'organization_id'):
-        audit_org_id = assignable.organization_id
-    else:
-        audit_org_id = None
+    # Org for audit logging is the one already resolved for the membership check
+    # above — deriving it twice from the polymorphic parent invited the two to
+    # disagree.
+    audit_org_id = target_org_id
 
     if audit_org_id is not None:
         new_values = {f: getattr(assignment, f) for f in ASSIGNMENT_TRACKED_FIELDS if hasattr(assignment, f)}

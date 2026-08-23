@@ -30,15 +30,19 @@ from services.assessment_prompts import (
     PROMPT_VERSION,
 )
 
+from services.model_registry import cost_cents as model_cost_cents, resolve as resolve_model
+
 logger = logging.getLogger(__name__)
 
-# Model configuration
-DEFAULT_MODEL = "claude-sonnet-4-20250514"
+# Model configuration — from services/model_registry (#782).
+#
+# NOTE: nothing imports this module. `tasks_assessment` is the live per-file
+# assessment path and carries its own copy of this logic. It is repointed here
+# anyway rather than left on a retired pin, because a dormant module with a dead
+# model id is a trap for whoever wakes it up. Whether it should exist at all is
+# a separate question, raised on the PR.
+MODEL_ROLE = "evidence_assessment"
 MAX_OUTPUT_TOKENS = 2048
-
-# Cost per token (Sonnet pricing as of 2025-05 — $3/M input, $15/M output)
-INPUT_COST_PER_TOKEN = 3.0 / 1_000_000
-OUTPUT_COST_PER_TOKEN = 15.0 / 1_000_000
 
 
 async def assess_evidence(
@@ -184,7 +188,7 @@ async def assess_evidence(
                     "framework_version": control_context.framework_version,
                     "control_count": len(control_context.controls),
                     "extracted_text_length": len(extracted.text),
-                    "model_id": DEFAULT_MODEL,
+                    "model_id": resolve_model(MODEL_ROLE),
                     "system_prompt": system_prompt,
                     "user_prompt": user_prompt,
                 }
@@ -210,17 +214,20 @@ async def assess_evidence(
         assessment.summary = parsed.get("summary", "")
 
         # Audit trail
-        assessment.model_id = llm_result.get("model", DEFAULT_MODEL)
+        assessment.model_id = llm_result.get("model") or resolve_model(MODEL_ROLE)
         assessment.prompt_hash = prompt_hash_value
         assessment.control_context_hash = control_context.context_hash
         assessment.framework_version = control_context.framework_version
         assessment.input_token_count = llm_result.get("input_tokens", 0)
         assessment.output_token_count = llm_result.get("output_tokens", 0)
 
-        # Cost calculation
-        input_cost = (llm_result.get("input_tokens", 0)) * INPUT_COST_PER_TOKEN
-        output_cost = (llm_result.get("output_tokens", 0)) * OUTPUT_COST_PER_TOKEN
-        assessment.cost_cents = round((input_cost + output_cost) * 100, 4)
+        # Cost calculation — priced against the model that ANSWERED, and NULL
+        # rather than wrong when that model has no declared price.
+        assessment.cost_cents = model_cost_cents(
+            assessment.model_id,
+            llm_result.get("input_tokens", 0),
+            llm_result.get("output_tokens", 0),
+        )
 
         assessment.processing_time_ms = int((time.monotonic() - start_time) * 1000)
         assessment.assessed_at = datetime.utcnow()
@@ -228,11 +235,17 @@ async def assess_evidence(
         await db.flush()
 
         logger.info(
-            "AI assessment complete: file=%s, status=%s, score=%s, cost=%.4f cents, time=%dms",
+            "AI assessment complete: file=%s, status=%s, score=%s, model=%s, cost=%s, time=%dms",
             evidence_file.id,
             assessment.status,
             assessment.relevance_score,
-            assessment.cost_cents or 0,
+            assessment.model_id,
+            # NOT `or 0` — that prints "cost=0.0000 cents" for an unpriced
+            # model, which reads as "this was free". The telemetry dimension
+            # below carries None; the log line must agree with it.
+            f"{assessment.cost_cents:.4f} cents"
+            if assessment.cost_cents is not None
+            else "unknown (model not priced)",
             assessment.processing_time_ms,
             extra={
                 "custom_dimensions": {
@@ -295,7 +308,7 @@ async def _call_llm(system_prompt: str, user_prompt: str) -> Optional[dict]:
         client = anthropic.Anthropic(api_key=api_key)
 
         message = client.messages.create(
-            model=DEFAULT_MODEL,
+            model=resolve_model(MODEL_ROLE),
             max_tokens=MAX_OUTPUT_TOKENS,
             system=[{
                 "type": "text",

@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 logger = logging.getLogger(__name__)
 
@@ -215,6 +215,7 @@ def build_context(
     """
     # Imported here rather than at module scope: this module is imported by the
     # Celery task, and models pulls in the whole ORM graph.
+    from user_display import user_label
     from models import (
         EvidenceTracking,
         Organization,
@@ -373,7 +374,9 @@ def build_context(
     # --- supporting registers ----------------------------------------------
     evidence_items: List[Dict[str, Any]] = []
     if include_evidence:
-        for et in session.query(EvidenceTracking).filter(
+        for et in session.query(EvidenceTracking).options(
+            joinedload(EvidenceTracking.owner_user)
+        ).filter(
             EvidenceTracking.organization_id == organization_id
         ).all():
             evidence_items.append({
@@ -381,7 +384,12 @@ def build_context(
                 "is_tracked": bool(et.is_tracked),
                 "method_of_collection": et.method_of_collection,
                 "collecting_system": et.collecting_system,
-                "owner": et.owner,
+                # The accountable owner, resolved (#781). Free-text `owner` is
+                # no longer written or displayed, so a generated evidence
+                # schedule that still printed it would show a value the product
+                # no longer lets anyone set or correct. The dict key is
+                # unchanged, so tier1's Owner column needs no edit.
+                "owner": user_label(et.owner_user),
                 "frequency": et.frequency,
                 "comments": et.comments,
                 "maturity_level": getattr(et, "maturity_level", None),
@@ -424,10 +432,10 @@ def build_context(
                 ),
                 # ``ra.owner`` is the User relationship, not a name. Rendering
                 # it straight into a table cell prints a repr; put the human
-                # identifier in instead.
-                "owner": (
-                    (ra.owner.display_name or ra.owner.email) if ra.owner else None
-                ),
+                # identifier in instead — through the same helper as the
+                # evidence owner two blocks up, so one document cannot name the
+                # same person two different ways.
+                "owner": user_label(ra.owner),
                 "notes": ra.notes,
             })
         if profile:

@@ -11,8 +11,9 @@ Synchronous by design — called from the Celery worker
 async event loop.
 
 Modes:
-    - Live: requires ANTHROPIC_API_KEY. Model from VENDOR_AI_MODEL
-      (default "claude-sonnet-4-6"), max_tokens 16384, web_search max_uses 8.
+    - Live: requires ANTHROPIC_API_KEY. Model from the "vendor_assessment" role
+      in services/model_registry (env override VENDOR_AI_MODEL), max_tokens
+      16384, web_search max_uses 8.
     - Mock: VENDOR_AI_MOCK=1 or no ANTHROPIC_API_KEY — returns a deterministic
       canned report so the whole flow works keyless.
 
@@ -24,10 +25,16 @@ import time
 from datetime import date, timedelta
 from typing import Any, Dict, List, Optional
 
+from services.model_registry import resolve as resolve_model
+
 logger = logging.getLogger(__name__)
 
-# Model configuration
-DEFAULT_MODEL = "claude-sonnet-4-6"
+# Model configuration — id from services/model_registry (#782). This engine
+# already had the VENDOR_AI_MODEL knob and a current pin, so nothing here was
+# broken; it joins the registry so the inventory is complete and the liveness
+# check covers it. The env var name is unchanged — renaming it would silently
+# drop whatever production has configured.
+MODEL_ROLE = "vendor_assessment"
 MAX_OUTPUT_TOKENS = 16384
 WEB_SEARCH_MAX_USES = 8
 MAX_LOOP_ITERATIONS = 12  # safety guard on the research/tool loop
@@ -1068,7 +1075,7 @@ def run_assessment(
         logger.info("Vendor assessment engine running in MOCK mode for %s", vendor_name)
         report = build_mock_report(vendor_name, vendor_website, services_used, data_role)
     else:
-        model = os.getenv("VENDOR_AI_MODEL", DEFAULT_MODEL)
+        model = resolve_model(MODEL_ROLE)
         logger.info(
             "Vendor assessment engine calling Anthropic (model=%s) for %s",
             model, vendor_name,

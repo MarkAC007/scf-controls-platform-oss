@@ -13,6 +13,17 @@ interface AssignmentPickerProps {
   assignableId: string;
   currentAssignments?: any[];
   onAssignmentChange?: () => void;
+  /**
+   * Heading for the list. Defaults to "Assigned To".
+   *
+   * This component manages the polymorphic `assignments` table — a multi-user,
+   * role-bearing list that nothing downstream reads. It is NOT the field that
+   * decides who a generated collection task belongs to; that is
+   * `evidence_tracking.assigned_user_id`, edited by `EvidenceAssigneeSelect`.
+   * The evidence panel now shows both, so it overrides this label to say which
+   * is which (#781).
+   */
+  label?: string;
 }
 
 export const AssignmentPicker: React.FC<AssignmentPickerProps> = ({
@@ -20,7 +31,8 @@ export const AssignmentPicker: React.FC<AssignmentPickerProps> = ({
   assignableType,
   assignableId,
   currentAssignments = [],
-  onAssignmentChange
+  onAssignmentChange,
+  label = 'Assigned To'
 }) => {
   const [members, setMembers] = useState<User[]>([]);
   const [loading, setLoading] = useState(false);
@@ -97,7 +109,7 @@ export const AssignmentPicker: React.FC<AssignmentPickerProps> = ({
 
   return (
     <div className="assignment-picker">
-      <label className="assignment-picker-label">Assigned To</label>
+      <label className="assignment-picker-label">{label}</label>
 
       <div className="assignment-picker-list">
         {assignments.map((assignment: any) => (

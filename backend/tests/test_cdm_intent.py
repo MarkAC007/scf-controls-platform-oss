@@ -31,6 +31,7 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from services import cdm_intent, cdm_mapping  # noqa: E402
+from services.model_registry import resolve as resolve_model  # noqa: E402
 
 ORG_ID = UUID("00000000-0000-0000-0000-0000000000a1")
 DOC_A = UUID("00000000-0000-0000-0000-0000000000d1")
@@ -274,7 +275,7 @@ class TestGeminiIntentProvider:
         http_request, timeout = calls[0]
         assert timeout == 12.5
         assert http_request.full_url.endswith(
-            f"/{cdm_intent.GEMINI_MODEL}:generateContent"
+            f"/{resolve_model(cdm_intent.GEMINI_ROLE)}:generateContent"
         )
         assert http_request.get_header("X-goog-api-key") == "test-key"
         payload = json.loads(http_request.data.decode("utf-8"))
@@ -459,7 +460,7 @@ class TestGeminiIntentProvider:
 
         response = cdm_intent.GeminiIntentProvider().classify(self._request())
 
-        assert response.model_id == cdm_intent.GEMINI_MODEL
+        assert response.model_id == resolve_model(cdm_intent.GEMINI_ROLE)
 
 
 # --- the fail-open gate ---------------------------------------------------

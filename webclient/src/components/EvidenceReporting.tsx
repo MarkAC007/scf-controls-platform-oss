@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react'
 import type { EnrichedControl, ScopedControlsFile, EvidenceId } from '../types'
 import { getScopedControl, getEvidenceTracking } from '../data/scopingService'
+import { evidenceOwnerLabel } from '../data/userDisplay'
+import { frequencyLabel } from '../data/frequencyVocabulary'
 
 interface EvidenceReportingProps {
   controls: EnrichedControl[]
@@ -14,14 +16,19 @@ interface EvidenceItem {
   domain: string
   controlIds: string[]
   isTracked: boolean
-  owner?: string
+  /**
+   * Resolved owner name, never empty (#781). Grouping used to key off the
+   * free-text "Owner Team" box; that box is gone, so this is derived from the
+   * owner/assignee user columns by `evidenceOwnerLabel`.
+   */
+  ownerLabel: string
   frequency?: string
   collectingSystem?: string
   methodOfCollection?: string
 }
 
 export default function EvidenceReporting({ controls, scopingData, onNavigateToEvidence }: EvidenceReportingProps) {
-  const [groupBy, setGroupBy] = useState<'team' | 'frequency'>('team')
+  const [groupBy, setGroupBy] = useState<'owner' | 'frequency'>('owner')
   const [showOnlyTracked, setShowOnlyTracked] = useState(false)
 
   // Get all selected controls
@@ -46,7 +53,7 @@ export default function EvidenceReporting({ controls, scopingData, onNavigateToE
             domain: artifact.domain,
             controlIds: [control.scf_id],
             isTracked: tracking?.is_tracked || false,
-            owner: tracking?.owner,
+            ownerLabel: evidenceOwnerLabel(tracking),
             frequency: tracking?.frequency,
             collectingSystem: tracking?.collecting_system,
             methodOfCollection: tracking?.method_of_collection
@@ -71,16 +78,16 @@ export default function EvidenceReporting({ controls, scopingData, onNavigateToE
     return evidenceItems
   }, [evidenceItems, showOnlyTracked])
 
-  // Group evidence by team
-  const evidenceByTeam = useMemo(() => {
+  // Group evidence by owner
+  const evidenceByOwner = useMemo(() => {
     const groups: Record<string, EvidenceItem[]> = {}
 
     filteredEvidence.forEach(evidence => {
-      const team = evidence.owner || 'Unassigned'
-      if (!groups[team]) {
-        groups[team] = []
+      const owner = evidence.ownerLabel
+      if (!groups[owner]) {
+        groups[owner] = []
       }
-      groups[team].push(evidence)
+      groups[owner].push(evidence)
     })
 
     return groups
@@ -91,7 +98,7 @@ export default function EvidenceReporting({ controls, scopingData, onNavigateToE
     const groups: Record<string, EvidenceItem[]> = {}
 
     filteredEvidence.forEach(evidence => {
-      const frequency = evidence.frequency || 'Not Specified'
+      const frequency = frequencyLabel(evidence.frequency) || 'Not Specified'
       if (!groups[frequency]) {
         groups[frequency] = []
       }
@@ -105,16 +112,16 @@ export default function EvidenceReporting({ controls, scopingData, onNavigateToE
   const stats = useMemo(() => {
     const totalEvidence = evidenceItems.length
     const trackedEvidence = evidenceItems.filter(e => e.isTracked).length
-    const byTeam: Record<string, { total: number, tracked: number }> = {}
+    const byOwner: Record<string, { total: number, tracked: number }> = {}
 
     evidenceItems.forEach(evidence => {
-      const team = evidence.owner || 'Unassigned'
-      if (!byTeam[team]) {
-        byTeam[team] = { total: 0, tracked: 0 }
+      const owner = evidence.ownerLabel
+      if (!byOwner[owner]) {
+        byOwner[owner] = { total: 0, tracked: 0 }
       }
-      byTeam[team].total++
+      byOwner[owner].total++
       if (evidence.isTracked) {
-        byTeam[team].tracked++
+        byOwner[owner].tracked++
       }
     })
 
@@ -122,18 +129,18 @@ export default function EvidenceReporting({ controls, scopingData, onNavigateToE
       totalEvidence,
       trackedEvidence,
       notTracked: totalEvidence - trackedEvidence,
-      byTeam
+      byOwner
     }
   }, [evidenceItems])
 
-  const currentGroups = groupBy === 'team' ? evidenceByTeam : evidenceByFrequency
+  const currentGroups = groupBy === 'owner' ? evidenceByOwner : evidenceByFrequency
 
   return (
     <div className="evidence-reporting">
       <div className="reporting-header">
         <div>
           <h1>Evidence Reporting</h1>
-          <p className="reporting-subtitle">Team responsibilities and evidence collection overview</p>
+          <p className="reporting-subtitle">Ownership and evidence collection overview</p>
         </div>
 
         <div className="reporting-stats">
@@ -157,10 +164,10 @@ export default function EvidenceReporting({ controls, scopingData, onNavigateToE
           <label>Group By:</label>
           <select
             value={groupBy}
-            onChange={e => setGroupBy(e.target.value as 'team' | 'frequency')}
+            onChange={e => setGroupBy(e.target.value as 'owner' | 'frequency')}
             className="form-control"
           >
-            <option value="team">Owner Team</option>
+            <option value="owner">Owner</option>
             <option value="frequency">Collection Frequency</option>
           </select>
         </div>
@@ -207,8 +214,8 @@ export default function EvidenceReporting({ controls, scopingData, onNavigateToE
                         <th>Title</th>
                         <th>Domain</th>
                         <th>Controls</th>
-                        {groupBy === 'team' && <th>Frequency</th>}
-                        {groupBy === 'frequency' && <th>Owner Team</th>}
+                        {groupBy === 'owner' && <th>Frequency</th>}
+                        {groupBy === 'frequency' && <th>Owner</th>}
                         <th>System</th>
                         <th>Method</th>
                         <th>Status</th>
@@ -322,11 +329,11 @@ export default function EvidenceReporting({ controls, scopingData, onNavigateToE
                                 )
                               })}
                             </td>
-                            {groupBy === 'team' && (
-                              <td className="cell-frequency">{evidence.frequency || '-'}</td>
+                            {groupBy === 'owner' && (
+                              <td className="cell-frequency">{frequencyLabel(evidence.frequency) || '-'}</td>
                             )}
                             {groupBy === 'frequency' && (
-                              <td className="cell-owner">{evidence.owner || 'Unassigned'}</td>
+                              <td className="cell-owner">{evidence.ownerLabel}</td>
                             )}
                             <td className="cell-system">{evidence.collectingSystem || '-'}</td>
                             <td className="cell-method">{evidence.methodOfCollection || '-'}</td>

@@ -11,7 +11,6 @@ import { getCatalogLifecycle } from './DeprecatedBadge'
 interface Props {
   selectedId?: string
   onSelect: (id: string) => void
-  collectionInterfaces?: CollectionInterfacesFile
   erlData?: ERLFile
   frameworkNames?: FrameworkNameMap
 }
@@ -22,7 +21,6 @@ const LIST_HEIGHT = 600 // Default list height
 export default function ControlList({
   selectedId,
   onSelect,
-  collectionInterfaces,
   erlData,
   frameworkNames = {},
 }: Props) {

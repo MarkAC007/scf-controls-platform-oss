@@ -11,6 +11,10 @@ from uuid import UUID
 
 # System type and status constants for validation
 from services.system_catalog_validation import SYSTEM_TYPE_LIST
+from services.frequency_vocabulary import (
+    UI_OPTIONS as FREQUENCY_UI_OPTIONS,
+    normalize as normalize_frequency,
+)
 
 SYSTEM_TYPES = "|".join(SYSTEM_TYPE_LIST)
 SYSTEM_STATUSES = "active|inactive|deprecated"
@@ -239,16 +243,120 @@ class OrganizationLogoResponse(BaseModel):
     updated_at: Optional[datetime] = None
 
 
+# =============================================================================
+# Collection frequency validation (#783)
+# =============================================================================
+# `evidence_tracking.frequency` is a bare String(50) with no constraint, written
+# by three separate schemas. Before #783 the wizard wrote 'annually' while the
+# freshness engine only knew 'annual', so annual controls were judged against a
+# 30-day threshold. This validator is the write-path half of the fix: it accepts
+# every historical spelling, stores exactly one canonical value, and rejects
+# anything it does not recognise instead of letting it through to fail silently
+# downstream.
+#
+# A DB CHECK constraint was considered and rejected: existing rows already hold
+# arbitrary free text, so the constraint would fail the migration on real data.
+# The Alembic data migration normalises what is there; this stops new junk.
+
+
+def _validate_collection_frequency(value: Optional[str]) -> Optional[str]:
+    """Normalise a collection frequency, passing an unrecognised value through.
+
+    Deliberately lenient, and the reason matters. This field was a free-text box
+    until #783, so the column already holds strings no alias table can resolve
+    ("Monthly on the 1st", "Every 6 weeks"). Rejecting them here would be worse
+    than the bug being fixed: `updateEvidenceTracking` re-sends the whole
+    tracking object on EVERY field edit, so a 422 on `frequency` would make a
+    row with legacy free text permanently un-editable — the user could not even
+    correct the offending value, because saving the correction would resend it.
+    In batch, one such row would fail all of them in a single transaction.
+
+    Loudness lives on the read path instead, where it can't brick a write:
+    `staleness_days()` returns None for an unrecognised value rather than the
+    plausible-looking 30-day default that hid #783, and the task generator logs
+    a warning naming the record. New junk is prevented at the source — every UI
+    writer is now a closed dropdown.
+    """
+    if value is None or not value.strip():
+        return None
+    return normalize_frequency(value) or value.strip()
+
+
 # Evidence Tracking Schemas
+# =============================================================================
+# Evidence assignment (#781)
+# =============================================================================
+# "Who is responsible for this evidence" had THREE representations, and neither
+# of the two the UI wrote was the one anything downstream read:
+#
+#   1. evidence_tracking.owner              free text, written by the UI text box
+#   2. evidence_tracking.assigned_user_id   FK, read by the task generator, the
+#      evidence_tracking.owner_user_id      due-date notifier and the work queue,
+#                                           written ONLY by the bulk-import path
+#   3. the polymorphic `assignments` table  written by AssignmentPicker, read by
+#                                           nothing downstream
+#
+# So every auto-generated task was created with assigned_user_id=None, the
+# notifier skipped it at notifications.py:296, and ?assigned_to_me=true matched
+# nothing, permanently.
+#
+# assigned_user_id is now the canonical assignee and is writable here.
+# owner_user_id is the accountable owner; the generator falls back to it.
+#
+# Free-text `owner` is GONE from this schema — read and write. An earlier
+# revision kept it as a team/external label; that was overruled, and rightly:
+# leaving a second, unstructured way to answer "who owns this" is what made the
+# original defect survivable in the first place. Two answers means the one
+# nothing reads can look filled in. There is now exactly one representation of a
+# person, and it is a foreign key.
+#
+# EvidenceTrackingResponse inherits from this class, so the field disappears
+# from the API surface in both directions. The COLUMN is deliberately left in
+# place (see models.py) — dropping it would destroy team labels that never
+# resolve to a user, and that deletion is not reversible.
+#
+# The `assignments` table stays as the multi-user COLLABORATOR list — a
+# different concept, shared with controls, not a duplicate of this field.
+#
+# Both FK fields are guarded by assert_user_in_org at every write site: a user id
+# arriving in a request body must belong to the target organisation, or an editor
+# could assign work to another tenant's account and leak evidence IDs into their
+# notifications.
+#
+# KNOWN SIBLING, NOT FIXED HERE: ScopedControlUpdate has exactly the same shape
+# — free-text `owner`/`assigned_to` with no way to write
+# ScopedControl.owner_user_id / assigned_user_id, which dashboard.py:157-158
+# filters the *controls* half of the same work queue on. Tracked separately.
+
 class EvidenceTrackingBase(BaseModel):
     evidence_id: str = Field(..., min_length=1, max_length=50)
     is_tracked: Optional[bool] = False
     method_of_collection: Optional[str] = None
     collecting_system: Optional[str] = None
-    owner: Optional[str] = None
+    assigned_user_id: Optional[UUID] = Field(
+        None,
+        description=(
+            "User responsible for collecting this evidence. Becomes the assignee "
+            "on every task the generator creates for it. Must belong to the owning "
+            "organisation. Send null to unassign."
+        ),
+    )
+    owner_user_id: Optional[UUID] = Field(
+        None,
+        description=(
+            "User accountable for this evidence. Used as the task assignee when "
+            "assigned_user_id is not set. Must belong to the owning organisation. "
+            "Send null to clear."
+        ),
+    )
     frequency: Optional[str] = None
     comments: Optional[str] = None
     maturity_level: Optional[str] = Field(None, pattern=r"^L[0-5]$", description="Evidence collection maturity level (L0-L5)")
+
+    @field_validator("frequency")
+    @classmethod
+    def _normalise_frequency(cls, v: Optional[str]) -> Optional[str]:
+        return _validate_collection_frequency(v)
 
 
 class EvidenceTrackingCreate(EvidenceTrackingBase):
@@ -260,11 +368,31 @@ class EvidenceTrackingUpdate(BaseModel):
     is_tracked: Optional[bool] = None
     method_of_collection: Optional[str] = None
     collecting_system: Optional[str] = None
-    owner: Optional[str] = None
+    assigned_user_id: Optional[UUID] = Field(
+        None,
+        description=(
+            "User responsible for collecting this evidence. Becomes the assignee "
+            "on every task the generator creates for it. Must belong to the owning "
+            "organisation. Send null to unassign."
+        ),
+    )
+    owner_user_id: Optional[UUID] = Field(
+        None,
+        description=(
+            "User accountable for this evidence. Used as the task assignee when "
+            "assigned_user_id is not set. Must belong to the owning organisation. "
+            "Send null to clear."
+        ),
+    )
     frequency: Optional[str] = None
     comments: Optional[str] = None
     maturity_level: Optional[str] = Field(None, pattern=r"^L[0-5]$", description="Evidence collection maturity level (L0-L5)")
     system_id: Optional[UUID] = Field(None, description="Reference to the System that collects this evidence")
+
+    @field_validator("frequency")
+    @classmethod
+    def _normalise_frequency(cls, v: Optional[str]) -> Optional[str]:
+        return _validate_collection_frequency(v)
 
 
 class BatchEvidenceTrackingOperation(BaseModel):
@@ -273,11 +401,31 @@ class BatchEvidenceTrackingOperation(BaseModel):
     is_tracked: Optional[bool] = None
     method_of_collection: Optional[str] = None
     collecting_system: Optional[str] = None
-    owner: Optional[str] = None
+    assigned_user_id: Optional[UUID] = Field(
+        None,
+        description=(
+            "User responsible for collecting this evidence. Becomes the assignee "
+            "on every task the generator creates for it. Must belong to the owning "
+            "organisation. Send null to unassign."
+        ),
+    )
+    owner_user_id: Optional[UUID] = Field(
+        None,
+        description=(
+            "User accountable for this evidence. Used as the task assignee when "
+            "assigned_user_id is not set. Must belong to the owning organisation. "
+            "Send null to clear."
+        ),
+    )
     frequency: Optional[str] = None
     comments: Optional[str] = None
     maturity_level: Optional[str] = Field(None, pattern=r"^L[0-5]$", description="Evidence collection maturity level (L0-L5)")
     system_id: Optional[UUID] = Field(None, description="Reference to the System that collects this evidence")
+
+    @field_validator("frequency")
+    @classmethod
+    def _normalise_frequency(cls, v: Optional[str]) -> Optional[str]:
+        return _validate_collection_frequency(v)
 
 
 class BatchEvidenceTrackingRequest(BaseModel):
@@ -310,6 +458,17 @@ class EvidenceTrackingResponse(EvidenceTrackingBase):
     system_id: Optional[UUID] = None
     system: Optional["SystemSimple"] = None  # Forward reference
     file_count: int = Field(0, description="Number of non-deleted evidence files for this evidence item")
+    assigned_user: Optional["UserSimple"] = Field(
+        None,
+        description=(
+            "Resolved assignee. Present so the UI can render a name without a "
+            "second round-trip per row — the evidence list is long, and the "
+            "picker needs a label, not a bare UUID."
+        ),
+    )
+    owner_user: Optional["UserSimple"] = Field(
+        None, description="Resolved accountable owner."
+    )
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -495,6 +654,11 @@ class NotificationResponse(NotificationBase):
     is_read: bool
     read_at: Optional[datetime] = None
     created_at: datetime
+    # Human-readable key for the referenced item (e.g. "E-HRS-16"), resolved on
+    # read from the row reference_id points at. Not a stored column -- see
+    # services/notification_targets.py. None when the reference has no navigable
+    # key or the referenced row has since been deleted.
+    reference_key: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 

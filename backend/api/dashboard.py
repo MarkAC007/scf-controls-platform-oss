@@ -75,9 +75,13 @@ async def get_work_queue(
     2. Blocking (not_started / at_risk) scoped controls
     3. Stale evidence collection schedules past their next collection date
 
-    With ``assigned_to_me=true``, tasks are limited to those assigned to the
-    calling user and controls to those where the caller is the owner or
-    assignee.
+    With ``assigned_to_me=true``, every category is limited to the calling
+    user: tasks to those assigned to them, and controls and evidence schedules
+    to those where they are the owner or the assignee.
+
+    All three narrow together on purpose. The caller is one checkbox in the UI
+    with one label; a category that ignores it silently mixes other people's
+    work into a list the user believes is theirs.
     """
     today = date.today()
 
@@ -189,6 +193,17 @@ async def get_work_queue(
         .order_by(EvidenceTracking.next_collection_date.asc())
         .limit(20)
     )
+
+    if caller_id is not None:
+        # Same ownership test as the blocking-controls branch above. "Mine" has
+        # to mean one thing across the whole queue, and evidence_tracking
+        # carries the same owner/assignee pair that scoped_controls does.
+        stale_query = stale_query.where(
+            or_(
+                EvidenceTracking.owner_user_id == caller_id,
+                EvidenceTracking.assigned_user_id == caller_id,
+            )
+        )
 
     stale_result = await db.execute(stale_query)
     stale_rows = stale_result.all()

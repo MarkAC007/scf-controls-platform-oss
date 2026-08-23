@@ -27,17 +27,16 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from catalog_models import SCFCatalogControl, SCFCatalogAssessmentObjective
+from services.model_registry import cost_cents as model_cost_cents, resolve as resolve_model
 
 logger = logging.getLogger(__name__)
 
-# Reuse the same Claude model used by per-file assessment so the platform has
-# one LLM dependency. Not imported from ai_assessment_service to keep this
-# module runnable from a CLI without full FastAPI app startup.
-DEFAULT_MODEL = "claude-sonnet-4-20250514"
+# Model id and price come from services/model_registry (#782), which is
+# stdlib-only by contract and so keeps this module runnable from a CLI without
+# full FastAPI startup — the reason the pin and the rate card were copied here
+# in the first place.
+MODEL_ROLE = "artifact_type_extraction"
 MAX_OUTPUT_TOKENS = 1024
-
-INPUT_COST_PER_TOKEN = 3.0 / 1_000_000
-OUTPUT_COST_PER_TOKEN = 15.0 / 1_000_000
 
 ARTIFACT_TYPES_OUTPUT_SCHEMA = {
     "type": "array",
@@ -76,7 +75,7 @@ class ExtractionResult:
         model_id: str,
         input_tokens: int,
         output_tokens: int,
-        cost_cents: float,
+        cost_cents: Optional[float],
         error: Optional[str] = None,
     ):
         self.scf_id = scf_id
@@ -169,7 +168,7 @@ def _call_llm(system_prompt: str, user_prompt: str) -> Optional[dict]:
     try:
         client = anthropic.Anthropic(api_key=api_key)
         message = client.messages.create(
-            model=DEFAULT_MODEL,
+            model=resolve_model(MODEL_ROLE),
             max_tokens=MAX_OUTPUT_TOKENS,
             system=[{
                 "type": "text",
@@ -298,10 +297,8 @@ def extract_for_control(session: Session, scf_id: str, force: bool = False) -> E
 
     input_tokens = llm.get("input_tokens", 0)
     output_tokens = llm.get("output_tokens", 0)
-    cost_cents = round(
-        (input_tokens * INPUT_COST_PER_TOKEN + output_tokens * OUTPUT_COST_PER_TOKEN) * 100,
-        4,
-    )
+    model_id = llm.get("model") or resolve_model(MODEL_ROLE)
+    cost_cents = model_cost_cents(model_id, input_tokens, output_tokens)
 
     session.execute(
         text(
@@ -321,14 +318,16 @@ def extract_for_control(session: Session, scf_id: str, force: bool = False) -> E
     session.commit()
 
     logger.info(
-        "Extracted %d artifact type(s) for %s (cost: %.4fc, model: %s)",
-        len(artifact_types), scf_id, cost_cents, llm.get("model", DEFAULT_MODEL),
+        "Extracted %d artifact type(s) for %s (cost: %s, model: %s)",
+        len(artifact_types), scf_id,
+        f"{cost_cents:.4f}c" if cost_cents is not None else "unknown (model not priced)",
+        model_id,
     )
 
     return ExtractionResult(
         scf_id=scf_id,
         artifact_types=artifact_types,
-        model_id=llm.get("model", DEFAULT_MODEL),
+        model_id=model_id,
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         cost_cents=cost_cents,
@@ -340,7 +339,13 @@ def extract_batch(session: Session, scf_ids: list[str], force: bool = False) -> 
 
     Returns a summary dict with per-control results + aggregate totals.
     """
-    results = {"controls": [], "total_cost_cents": 0.0, "errors": 0, "skipped": 0, "extracted": 0}
+    # ``unpriced`` counts controls whose model has no declared price, so the
+    # total is never quietly short: a run that cost real money but reports 0.0
+    # is worse than one that says how much of it it could not account for.
+    results = {
+        "controls": [], "total_cost_cents": 0.0, "errors": 0, "skipped": 0,
+        "extracted": 0, "unpriced": 0,
+    }
 
     for idx, scf_id in enumerate(scf_ids, start=1):
         logger.info("[%d/%d] extracting %s", idx, len(scf_ids), scf_id)
@@ -366,7 +371,10 @@ def extract_batch(session: Session, scf_ids: list[str], force: bool = False) -> 
             results["extracted"] += 1
             status = "extracted"
 
-        results["total_cost_cents"] += r.cost_cents
+        if r.cost_cents is None:
+            results["unpriced"] += 1
+        else:
+            results["total_cost_cents"] += r.cost_cents
         results["controls"].append({
             "scf_id": r.scf_id,
             "status": status,

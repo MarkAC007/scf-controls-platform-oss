@@ -148,9 +148,14 @@ def test_assigned_to_me_filters_tasks_and_controls(client_factory):
     assert "assigned_user_id" in overdue_sql
     assert "owner_user_id" in blocking_sql
     assert "assigned_user_id" in blocking_sql
-    # Stale collections are intentionally not user-scoped.
-    assert "assigned_user_id" not in stale_sql
-    assert "owner_user_id" not in stale_sql
+    # Stale collections narrow too, on the same owner-or-assignee test as
+    # controls. This assertion used to be inverted, with a comment calling the
+    # omission intentional. It was defensible when written (2026-08-20): nothing
+    # wrote evidence_tracking.owner_user_id, so filtering on it would have
+    # emptied "My work" for every user. #781 backfilled that column and gave the
+    # UI a control that writes assigned_user_id, which is what expired it.
+    assert "assigned_user_id" in stale_sql
+    assert "owner_user_id" in stale_sql
 
 
 def test_assigned_to_me_without_db_id_falls_back_to_unfiltered(client_factory):
@@ -160,6 +165,41 @@ def test_assigned_to_me_without_db_id_falls_back_to_unfiltered(client_factory):
         f"/api/organizations/{ORG_ID}/dashboard/work-queue?assigned_to_me=true"
     )
     assert resp.status_code == 200
-    overdue_sql, blocking_sql, _ = [str(s) for s in session.statements]
+    overdue_sql, blocking_sql, stale_sql = [str(s) for s in session.statements]
     assert "assigned_user_id" not in overdue_sql
     assert "owner_user_id" not in blocking_sql
+    assert "owner_user_id" not in stale_sql
+
+
+def test_assigned_to_me_stale_rows_count_toward_total(client_factory):
+    """The filtered stale list is still aggregated, not merely filtered away."""
+    session = _FakeAsyncSession([[], [], [_stale_row(days=9)]])
+    client = client_factory(session)
+    resp = client.get(
+        f"/api/organizations/{ORG_ID}/dashboard/work-queue?assigned_to_me=true"
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["total_items"] == 1
+    assert body["stale_collections"][0]["evidence_id"] == "evidence_two"
+    assert body["stale_collections"][0]["days_overdue"] == 9
+
+
+def test_stale_filter_matches_the_blocking_filter(client_factory):
+    """"Mine" must mean one thing across the queue.
+
+    Both branches test owner OR assignee. If a later change narrows one of them
+    -- to assignee only, say -- the toggle silently acquires two meanings again,
+    which is the defect this pair of assertions exists to catch.
+    """
+    session = _FakeAsyncSession([[], [], []])
+    client = client_factory(session)
+    resp = client.get(
+        f"/api/organizations/{ORG_ID}/dashboard/work-queue?assigned_to_me=true"
+    )
+    assert resp.status_code == 200
+    _, blocking_sql, stale_sql = [str(s) for s in session.statements]
+    for sql in (blocking_sql, stale_sql):
+        assert "owner_user_id" in sql
+        assert "assigned_user_id" in sql
+        assert " OR " in sql.upper()

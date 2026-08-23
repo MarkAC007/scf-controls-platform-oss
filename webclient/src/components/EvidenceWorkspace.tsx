@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type {
   EnrichedControl,
   ScopedControlsFile,
@@ -8,47 +8,75 @@ import type {
 } from '../types'
 import EvidenceReview from './EvidenceReview'
 import EvidenceDashboardTab from './evidence/EvidenceDashboardTab'
-
-type EvidenceTab = 'workspace' | 'dashboard'
+import {
+  evidenceItemSearch,
+  pushSearch,
+  readAppLocation,
+  replaceSearch,
+  withEvidenceView,
+} from '../data/appUrl'
+import type { EvidenceView } from '../data/appUrl'
 
 interface EvidenceWorkspaceProps {
   controls: EnrichedControl[]
   scopingData: ScopedControlsFile
   onScopingDataChange: (data: ScopedControlsFile) => void
-  collectionInterfaces?: CollectionInterfacesFile
   erlData?: ERLFile
   evidenceTemplates?: EvidenceTemplatesFile
   organizationId: string
+  /** Opens the Systems Registry. Optional — see `SystemSelectStep`. */
+  onNavigateToSystems?: () => void
 }
 
 export default function EvidenceWorkspace({
   controls,
   scopingData,
   onScopingDataChange,
-  collectionInterfaces,
   erlData,
   evidenceTemplates,
   organizationId,
+  onNavigateToSystems,
 }: EvidenceWorkspaceProps) {
-  const [activeTab, setActiveTab] = useState<EvidenceTab>('dashboard')
+  // Seeded from the URL rather than defaulted (#785). Defaulting to the
+  // dashboard and correcting in an effect would flash the wrong sub-screen and,
+  // worse, mount EvidenceReview a render late — after its own "select the first
+  // item" effect had already claimed the selection a deep link asked for.
+  const [activeTab, setActiveTab] = useState<EvidenceView>(
+    () => readAppLocation(window.location.search).evidenceView,
+  )
+
+  // `replaceState`: the sub-tabs are two halves of one screen, not two places.
+  const selectTab = (tab: EvidenceView) => {
+    setActiveTab(tab)
+    replaceSearch(withEvidenceView(window.location.search, tab))
+  }
 
   const handleNavigateToEvidence = (evidenceId: string) => {
-    sessionStorage.setItem('navigate_to_evidence', evidenceId)
+    pushSearch(evidenceItemSearch(window.location.search, evidenceId))
     setActiveTab('workspace')
   }
+
+  // Back and Forward across the sub-tabs. Reads only `view`: App owns `tab` and
+  // EvidenceReview owns `item`, each with its own listener on the same event.
+  useEffect(() => {
+    const onPopState = () =>
+      setActiveTab(readAppLocation(window.location.search).evidenceView)
+    window.addEventListener('popstate', onPopState)
+    return () => window.removeEventListener('popstate', onPopState)
+  }, [])
 
   return (
     <div className="evidence-workspace">
       <div className="evidence-workspace-tabs">
         <button
           className={`evidence-workspace-tab ${activeTab === 'dashboard' ? 'active' : ''}`}
-          onClick={() => setActiveTab('dashboard')}
+          onClick={() => selectTab('dashboard')}
         >
           Dashboard
         </button>
         <button
           className={`evidence-workspace-tab ${activeTab === 'workspace' ? 'active' : ''}`}
-          onClick={() => setActiveTab('workspace')}
+          onClick={() => selectTab('workspace')}
         >
           Workspace
         </button>
@@ -60,9 +88,9 @@ export default function EvidenceWorkspace({
             controls={controls}
             scopingData={scopingData}
             onScopingDataChange={onScopingDataChange}
-            collectionInterfaces={collectionInterfaces}
             erlData={erlData}
             evidenceTemplates={evidenceTemplates}
+            onNavigateToSystems={onNavigateToSystems}
           />
         )}
 

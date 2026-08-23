@@ -408,14 +408,14 @@ export default function Dashboard({ controls, scopingData, onScopingDataChange, 
                 </div>
 
                 <div className="evidence-teams">
-                  {Object.entries(stats.evidenceByTeamCounts)
+                  {Object.entries(stats.evidenceByOwnerCounts)
                     .sort(([,a], [,b]) => b.total - a.total)
-                    .map(([team, data]) => {
+                    .map(([owner, data]) => {
                       const percentage = data.total > 0 ? Math.round((data.tracked / data.total) * 100) : 0
                       return (
-                        <div key={team} className="evidence-team-card">
+                        <div key={owner} className="evidence-team-card">
                           <div className="evidence-team-header">
-                            <span className="evidence-team-name">{team}</span>
+                            <span className="evidence-team-name">{owner}</span>
                             <span className="evidence-team-percentage">{percentage}%</span>
                           </div>
                           <div className="evidence-team-stats">

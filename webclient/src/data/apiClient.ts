@@ -783,7 +783,10 @@ export interface EvidenceTracking {
   is_tracked?: boolean | null
   method_of_collection?: string | null
   collecting_system?: string | null
-  owner?: string | null
+  assigned_user_id?: string | null
+  owner_user_id?: string | null
+  assigned_user?: { id: string; email: string; display_name?: string | null } | null
+  owner_user?: { id: string; email: string; display_name?: string | null } | null
   frequency?: string | null
   comments?: string | null
   maturity_level?: string | null
@@ -796,7 +799,14 @@ export interface EvidenceTrackingInput {
   is_tracked?: boolean | null
   method_of_collection?: string | null
   collecting_system?: string | null
-  owner?: string | null
+  /**
+   * Send a user id to assign, null to unassign, or omit the key entirely to
+   * leave the current assignee untouched. The API distinguishes all three
+   * (`exclude_unset`), which matters because this endpoint is called with the
+   * whole tracking object on every single field edit.
+   */
+  assigned_user_id?: string | null
+  owner_user_id?: string | null
   frequency?: string | null
   comments?: string | null
   maturity_level?: string | null
@@ -823,6 +833,52 @@ export async function createOrUpdateEvidenceTracking(
     {
       method: 'POST',
       body: JSON.stringify(tracking),
+    }
+  )
+}
+
+/**
+ * One item's worth of a bulk edit. `evidence_id` names the row; every other key
+ * is optional and, per the API's `exclude_unset`, an omitted key leaves that
+ * field alone. That is what makes "set the frequency on 40 items" safe: it does
+ * not also blank their assignees.
+ */
+export interface BatchEvidenceTrackingOperation extends EvidenceTrackingInput {}
+
+export interface BatchEvidenceTrackingResponse {
+  updated: number
+  created: number
+  failed: number
+  /** One message per failed operation. Partial success is the normal case. */
+  errors: string[]
+  evidence: EvidenceTracking[]
+}
+
+/**
+ * Apply the same edit to many tracking rows in one request.
+ *
+ * One request, not N: the endpoint runs the whole batch in a single transaction
+ * and reports per-operation failures rather than dying on the first one, so a
+ * bulk edit where three rows are refused still lands the other thirty-seven and
+ * can say which three. Firing N single-row requests instead would produce N
+ * round trips, N task-generation passes, and no coherent answer to "what
+ * happened?".
+ *
+ * Max 500 operations per request (enforced server-side).
+ */
+export async function batchUpdateEvidenceTracking(
+  operations: BatchEvidenceTrackingOperation[],
+  orgId?: string
+): Promise<BatchEvidenceTrackingResponse> {
+  if (!orgId) {
+    const org = await getCurrentOrganization()
+    orgId = org.id
+  }
+  return apiFetch<BatchEvidenceTrackingResponse>(
+    `/organizations/${orgId}/evidence-tracking/batch`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ operations }),
     }
   )
 }
@@ -2870,7 +2926,13 @@ export interface UpcomingEvidenceItem {
   collecting_system: string | null
   last_uploaded_at: string | null
   next_due: string | null
-  days_until_due: number
+  /**
+   * Days until the next collection is due. `null` means the evidence has
+   * NEVER been collected, so no due date exists to count towards (#788).
+   * The API used to answer -999 here and the dashboard printed it as
+   * "Overdue (999d)"; a null cannot be formatted by accident.
+   */
+  days_until_due: number | null
   is_overdue: boolean
   file_count: number
 }

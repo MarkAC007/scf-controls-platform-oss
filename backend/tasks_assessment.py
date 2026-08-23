@@ -29,17 +29,19 @@ from services.text_extraction_service import (
     extract_text_from_bytes,
     download_evidence_bytes,
 )
+from services.model_registry import cost_cents as model_cost_cents, resolve as resolve_model
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Model configuration (mirrored from ai_assessment_service.py)
+# Model configuration
 # ---------------------------------------------------------------------------
+# The comment that used to sit here said "mirrored from ai_assessment_service"
+# — and it was, including the retired pin and the rate card. Mirroring is the
+# defect; both now come from services/model_registry (#782).
 
-DEFAULT_MODEL = "claude-sonnet-4-20250514"
+MODEL_ROLE = "evidence_assessment"
 MAX_OUTPUT_TOKENS = 2048
-INPUT_COST_PER_TOKEN = 3.0 / 1_000_000
-OUTPUT_COST_PER_TOKEN = 15.0 / 1_000_000
 
 # ---------------------------------------------------------------------------
 # Sync DB session (psycopg2 pattern from tasks_research.py)
@@ -88,7 +90,7 @@ def _call_llm(system_prompt: str, user_prompt: str) -> Optional[dict]:
     try:
         client = anthropic.Anthropic(api_key=api_key)
         message = client.messages.create(
-            model=DEFAULT_MODEL,
+            model=resolve_model(MODEL_ROLE),
             max_tokens=MAX_OUTPUT_TOKENS,
             system=[{
                 "type": "text",
@@ -257,7 +259,7 @@ def assess_evidence_task(
                     "framework_version": control_context.framework_version,
                     "control_count": len(control_context.controls),
                     "extracted_text_length": len(extracted.text),
-                    "model_id": DEFAULT_MODEL,
+                    "model_id": resolve_model(MODEL_ROLE),
                     "system_prompt": system_prompt,
                     "user_prompt": user_prompt,
                 }
@@ -279,9 +281,13 @@ def assess_evidence_task(
         # Step 8: Parse and store result
         parsed = _parse_llm_response(llm_result["content"])
 
-        input_cost = llm_result.get("input_tokens", 0) * INPUT_COST_PER_TOKEN
-        output_cost = llm_result.get("output_tokens", 0) * OUTPUT_COST_PER_TOKEN
-        cost_cents = round((input_cost + output_cost) * 100, 4)
+        # Price the model that ANSWERED — see services/model_registry.cost_cents.
+        model_id = llm_result.get("model") or resolve_model(MODEL_ROLE)
+        cost_cents = model_cost_cents(
+            model_id,
+            llm_result.get("input_tokens", 0),
+            llm_result.get("output_tokens", 0),
+        )
         processing_time_ms = int((time.monotonic() - start_time) * 1000)
 
         session.execute(
@@ -307,7 +313,7 @@ def assess_evidence_task(
                 "relevance_score": parsed.get("relevance_score"),
                 "findings": json.dumps(parsed.get("findings", []), default=str),
                 "summary": parsed.get("summary", ""),
-                "model_id": llm_result.get("model", DEFAULT_MODEL),
+                "model_id": model_id,
                 "prompt_hash": prompt_hash_value,
                 "control_context_hash": control_context.context_hash,
                 "framework_version": control_context.framework_version,
@@ -324,11 +330,12 @@ def assess_evidence_task(
 
         # Step 9: Log result for App Insights
         logger.info(
-            "AI assessment complete: file=%s, status=%s, score=%s, cost=%.4f cents, time=%dms",
+            "AI assessment complete: file=%s, status=%s, score=%s, model=%s, cost=%s, time=%dms",
             evidence_file_id,
             parsed.get("status", "error"),
             parsed.get("relevance_score"),
-            cost_cents,
+            model_id,
+            f"{cost_cents:.4f} cents" if cost_cents is not None else "unknown (model not priced)",
             processing_time_ms,
             extra={
                 "custom_dimensions": {
@@ -343,7 +350,7 @@ def assess_evidence_task(
                     "output_tokens": llm_result.get("output_tokens", 0),
                     "cost_cents": cost_cents,
                     "processing_time_ms": processing_time_ms,
-                    "model_id": llm_result.get("model", DEFAULT_MODEL),
+                    "model_id": model_id,
                     "prompt_hash": prompt_hash_value,
                 }
             },

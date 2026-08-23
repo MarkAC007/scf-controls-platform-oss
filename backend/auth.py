@@ -1372,6 +1372,63 @@ async def get_accessible_org_ids(
 
 
 # =============================================================================
+# Assignability
+# =============================================================================
+
+async def is_user_in_org(user_id: UUID, org_id: UUID, db: AsyncSession) -> bool:
+    """True when ``user_id`` may be given work inside ``org_id``.
+
+    "May be given work" is deliberately the same reachability rule as
+    :func:`get_accessible_org_ids` read from the other end: a direct
+    ``OrganizationMember`` row, or an active consultant relationship. Consultants
+    are included because they can legitimately own remediation for a client org
+    even though ``GET /organizations/{id}/members`` does not list them — a guard
+    narrower than the access rule would lock a consultant out of their own work.
+    """
+    member = await db.execute(
+        select(OrganizationMember.id).where(
+            OrganizationMember.user_id == user_id,
+            OrganizationMember.organization_id == org_id,
+        ).limit(1)
+    )
+    if member.scalar_one_or_none() is not None:
+        return True
+
+    consultant = await db.execute(
+        select(ConsultantClientRelationship.id)
+        .join(ConsultantProfile, ConsultantClientRelationship.consultant_id == ConsultantProfile.id)
+        .where(
+            ConsultantProfile.user_id == user_id,
+            ConsultantClientRelationship.organization_id == org_id,
+            ConsultantClientRelationship.status == "active",
+        )
+        .limit(1)
+    )
+    return consultant.scalar_one_or_none() is not None
+
+
+async def assert_user_in_org(user_id: UUID, org_id: UUID, db: AsyncSession) -> None:
+    """Raise 404 unless ``user_id`` may be given work inside ``org_id``.
+
+    Every endpoint that accepts a user id from the caller and stores it on an
+    org-scoped row must call this. Without it, an editor can assign work to an
+    arbitrary user UUID from another tenant, and that user then receives
+    notifications and work-queue rows naming this org's evidence IDs — a
+    cross-tenant leak driven entirely by request body.
+
+    **404, not 403, and the same message either way.** A distinct "user exists
+    but is not a member" response would turn this endpoint into an oracle for
+    enumerating accounts across the whole platform. The caller cannot tell
+    whether the id is unknown or simply not theirs, which is the point.
+    """
+    if not await is_user_in_org(user_id, org_id, db):
+        raise HTTPException(
+            status_code=404,
+            detail="Assigned user not found in this organisation",
+        )
+
+
+# =============================================================================
 # Organization-scoped dependency factories
 # =============================================================================
 

@@ -49,6 +49,12 @@ EVIDENCE_TRACKING_TRACKED_FIELDS: set = {
     'method_of_collection',
     'collecting_system',
     'owner',
+    # Reassignment is a governance event — who is accountable for a piece of
+    # evidence is exactly the sort of change an auditor asks you to evidence
+    # (#781). Free-text `owner` was already tracked; the FK columns that
+    # actually drive task assignment were not.
+    'assigned_user_id',
+    'owner_user_id',
     'frequency',
     'comments',
 }

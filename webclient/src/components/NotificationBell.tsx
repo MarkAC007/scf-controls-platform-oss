@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { apiClient } from '../data/apiClient';
+import { interactiveRowProps } from '../data/interactiveRow';
 
 interface NotificationBellProps {
   onNavigateToEvidence?: (evidenceId: string) => void;
@@ -18,6 +19,7 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
   const [unreadCount, setUnreadCount] = useState(0);
   const [notifications, setNotifications] = useState<any[]>([]);
   const [showDropdown, setShowDropdown] = useState(false);
+  const [navigationError, setNavigationError] = useState<string | null>(null);
 
   useEffect(() => {
     loadNotifications();
@@ -56,36 +58,37 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
   };
 
   const handleNotificationClick = async (notification: any) => {
+    setNavigationError(null);
     // Mark as read
     if (!notification.is_read) {
       await handleMarkAsRead(notification.id);
     }
 
     try {
-      // Navigate based on reference type
-      if (notification.reference_type === 'task') {
-        // For task notifications, navigate to Tasks tab
+      // The server resolves the evidence key (E-HRS-16) for evidence and task
+      // references and returns it as reference_key. Before this existed the
+      // bell fetched /evidence-tasks to recover it, and when that row had no
+      // tasks the click did nothing at all — no navigation, no message.
+      if (notification.reference_key) {
+        onNavigateToEvidence?.(notification.reference_key);
+        setShowDropdown(false);
+
+      } else if (notification.reference_type === 'task') {
+        // A task notification with no evidence key is not about evidence.
+        // The task list is the correct destination for those.
         onNavigateToTask?.();
         setShowDropdown(false);
+
+      } else if (notification.reference_type === 'evidence') {
+        // reference_type says evidence but the server could not resolve a key,
+        // so the tracking row is gone. Say so rather than closing on nothing.
+        setNavigationError('That evidence item no longer exists.');
 
       } else if (notification.reference_type === 'comment') {
         // For comment notifications, we need to find what the comment is on
         const comments = await apiClient.get(`/comments/${notification.reference_id}/history`);
         // For now, navigate to Tasks tab (most comments will be on tasks)
         onNavigateToTask?.();
-        setShowDropdown(false);
-
-      } else if (notification.reference_type === 'evidence') {
-        // Get evidence details and navigate
-        try {
-          const tasks = await apiClient.get(`/evidence-tasks`);
-          const task = tasks.find((t: any) => t.evidence_tracking_id === notification.reference_id);
-          if (task && task.evidence_id) {
-            onNavigateToEvidence?.(task.evidence_id);
-          }
-        } catch (error) {
-          console.error('Could not navigate to evidence:', error);
-        }
         setShowDropdown(false);
 
       } else if (notification.reference_type === 'control' && notification.reference_id) {
@@ -97,10 +100,16 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
         // Catalog reconciliation applied/rolled back — show what changed
         onNavigateToChangelog?.();
         setShowDropdown(false);
+
+      } else {
+        // engagement_query and any future reference_type land here. Previously
+        // they fell past every branch, so the dropdown did not even close and
+        // the click was indistinguishable from a missed tap.
+        setNavigationError('There is nowhere to open this notification yet.');
       }
     } catch (error) {
       console.error('Navigation error:', error);
-      setShowDropdown(false);
+      setNavigationError('Could not open that item.');
     }
   };
 
@@ -132,6 +141,12 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
             )}
           </div>
 
+          {navigationError && (
+            <div className="notification-nav-error" role="alert">
+              {navigationError}
+            </div>
+          )}
+
           {notifications.length === 0 ? (
             <div className="notification-empty">
               No notifications
@@ -140,8 +155,8 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
             notifications.map((notification) => (
               <div
                 key={notification.id}
-                onClick={() => handleNotificationClick(notification)}
                 className={`notification-item ${!notification.is_read ? 'unread' : ''}`}
+                {...interactiveRowProps(() => handleNotificationClick(notification))}
               >
                 <div className="notification-item-content">
                   {!notification.is_read && (

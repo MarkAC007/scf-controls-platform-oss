@@ -13,7 +13,7 @@
  * The URL cases cover the other half: the workspace records where it is in the
  * query string, so a reload or a pasted link lands back on the same document
  * in the same mode. Deliberately parameter sync and not a router — see
- * URL_SYNCED_TAB in App.tsx.
+ * `data/appUrl.ts`, which owns the vocabulary all URL-aware screens share.
  */
 import { render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'

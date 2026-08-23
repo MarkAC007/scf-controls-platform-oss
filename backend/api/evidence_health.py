@@ -32,7 +32,8 @@ from schemas import (
 )
 from rate_limiting import rate_limit_read
 from schemas_catalog_upgrade import CatalogLifecycleBadge
-from services.validation_service import STALENESS_THRESHOLDS
+from services.validation_service import STALENESS_THRESHOLDS  # noqa: F401  (re-export kept for callers)
+from services.frequency_vocabulary import DEFAULT_STALENESS_DAYS, staleness_days
 from services import frequency_health_service
 
 logger = logging.getLogger(__name__)
@@ -53,7 +54,9 @@ class EvidenceHealthResponseBadged(EvidenceHealthResponse):
     items: List[EvidenceHealthItemBadged]
 
 # Default staleness thresholds (days) when no per-org config exists
-DEFAULT_WARNING_DAYS = 30
+#: Only used when NO frequency is configured at all. A configured-but-
+#: unrecognised frequency must not silently land here (#783).
+DEFAULT_WARNING_DAYS = DEFAULT_STALENESS_DAYS
 DEFAULT_CRITICAL_DAYS = 60
 
 
@@ -218,7 +221,7 @@ async def get_evidence_health(
         if config:
             threshold_days = config.staleness_warning_days
         elif tracking.frequency:
-            threshold_days = STALENESS_THRESHOLDS.get(tracking.frequency.lower().strip())
+            threshold_days = staleness_days(tracking.frequency)
         else:
             threshold_days = DEFAULT_WARNING_DAYS
 
@@ -344,19 +347,29 @@ async def get_upcoming_evidence(
         if eid in deprecated_eids:
             continue
         file_info = file_data.get(eid)
-        threshold_days = STALENESS_THRESHOLDS.get(
-            (tracking.frequency or "").lower().strip()
-        ) or DEFAULT_WARNING_DAYS
+        # `or DEFAULT` was the bug in #783: an unrecognised frequency resolved
+        # to a plausible-looking 30 days instead of surfacing as unknown.
+        threshold_days = staleness_days(tracking.frequency)
+        if threshold_days is None:
+            threshold_days = DEFAULT_WARNING_DAYS
 
         last_upload = file_info.latest_upload if file_info else None
         if last_upload:
             next_due = last_upload + timedelta(days=threshold_days)
             days_until_due = (next_due - now).days
+            in_window = days_until_due <= days
         else:
+            # Never collected. There is no due date, so there is no number of
+            # days until it — `None`, not a sentinel (#788). This used to be
+            # -999, which the dashboard rendered verbatim as "Overdue (999d)":
+            # the API invented a number, and the UI faithfully displayed it.
+            # `None` cannot be formatted by accident; it forces the caller to
+            # say what it means, which is "Never collected".
             next_due = None
-            days_until_due = -999  # Never uploaded = overdue
+            days_until_due = None
+            in_window = True  # nothing collected ever is always worth showing
 
-        if days_until_due <= days:
+        if in_window:
             upcoming.append({
                 "evidence_id": eid,
                 "evidence_name": getattr(tracking, "evidence_name", None),
@@ -365,11 +378,17 @@ async def get_upcoming_evidence(
                 "last_uploaded_at": last_upload.isoformat() if last_upload else None,
                 "next_due": next_due.isoformat() if next_due else None,
                 "days_until_due": days_until_due,
-                "is_overdue": days_until_due < 0,
+                "is_overdue": days_until_due is None or days_until_due < 0,
                 "file_count": file_info.file_count if file_info else 0,
             })
 
-    upcoming.sort(key=lambda x: x["days_until_due"])
+    # Never-collected first, then soonest-due. `None` used to sort naturally
+    # because it was -999; now it has to be said out loud. It sorts first
+    # because nothing collected at all is more urgent than anything overdue by
+    # a finite number of days — not because the sentinel happened to be small.
+    upcoming.sort(
+        key=lambda x: (x["days_until_due"] is not None, x["days_until_due"] or 0)
+    )
     return {"items": upcoming, "total": len(upcoming)}
 
 

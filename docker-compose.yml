@@ -166,6 +166,20 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      # Model ids for every AI path live in backend/services/model_registry.py
+      # (#782). These override that registry's defaults without a rebuild —
+      # forwarded here because a variable documented in .env.example that never
+      # reaches the container is not an override, it is a note. Unset means
+      # "use the registry default", which is the normal case.
+      SCF_AI_MODEL: ${SCF_AI_MODEL:-}
+      EVIDENCE_AI_MODEL: ${EVIDENCE_AI_MODEL:-}
+      ARTIFACT_TYPE_AI_MODEL: ${ARTIFACT_TYPE_AI_MODEL:-}
+      VENDOR_AI_MODEL: ${VENDOR_AI_MODEL:-}
+      SYSTEMS_AI_MODEL: ${SYSTEMS_AI_MODEL:-}
+      DOC_GEN_AI_MODEL: ${DOC_GEN_AI_MODEL:-}
+      CDM_INTENT_CLAUDE_MODEL: ${CDM_INTENT_CLAUDE_MODEL:-}
+      CDM_INTENT_GPT_MODEL: ${CDM_INTENT_GPT_MODEL:-}
+      CDM_INTENT_GEMINI_MODEL: ${CDM_INTENT_GEMINI_MODEL:-}
     ports:
       # Host side is remappable (BACKEND_PORT) — 8000 is a popular default and
       # may already be taken on your host.
@@ -249,6 +263,20 @@ services:
       CDM_INTENT_MAX_DOMAINS: ${CDM_INTENT_MAX_DOMAINS:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      # Model ids for every AI path live in backend/services/model_registry.py
+      # (#782). These override that registry's defaults without a rebuild —
+      # forwarded here because a variable documented in .env.example that never
+      # reaches the container is not an override, it is a note. Unset means
+      # "use the registry default", which is the normal case.
+      SCF_AI_MODEL: ${SCF_AI_MODEL:-}
+      EVIDENCE_AI_MODEL: ${EVIDENCE_AI_MODEL:-}
+      ARTIFACT_TYPE_AI_MODEL: ${ARTIFACT_TYPE_AI_MODEL:-}
+      VENDOR_AI_MODEL: ${VENDOR_AI_MODEL:-}
+      SYSTEMS_AI_MODEL: ${SYSTEMS_AI_MODEL:-}
+      DOC_GEN_AI_MODEL: ${DOC_GEN_AI_MODEL:-}
+      CDM_INTENT_CLAUDE_MODEL: ${CDM_INTENT_CLAUDE_MODEL:-}
+      CDM_INTENT_GPT_MODEL: ${CDM_INTENT_GPT_MODEL:-}
+      CDM_INTENT_GEMINI_MODEL: ${CDM_INTENT_GEMINI_MODEL:-}
       # Application Insights (telemetry)
       APPLICATIONINSIGHTS_CONNECTION_STRING: ${APPLICATIONINSIGHTS_CONNECTION_STRING:-}
     volumes:
@@ -320,15 +348,27 @@ services:
       - cg-network
     restart: unless-stopped
     # Override the inherited backend-image healthcheck (HTTP probe to :8000) —
-    # beat serves no HTTP. `pgrep` is NOT in the image (python:3.11-slim, no
-    # procps), so probe PID 1's cmdline directly: liveness = the beat process
-    # is still the container's main process.
+    # beat serves no HTTP.
+    #
+    # This used to be `grep -q beat /proc/1/cmdline`, which asserts only that
+    # PID 1's command line contains the string "beat" (#784). A command line
+    # does not change when the process behind it stops working, so a beat that
+    # had wedged or lost its broker reported healthy indefinitely while
+    # scheduled evidence collection had silently stopped.
+    #
+    # HeartbeatScheduler (backend/celery_beat_heartbeat.py) stamps a Redis key
+    # with a TTL on every scheduler tick; this probe asks whether that key is
+    # still there. If beat stops ticking, Redis expires the key and the probe
+    # starts failing on its own.
+    #
+    # start_period is 120s, not 30s: the first stamp lands on the first tick,
+    # which is after `celery -A celery_app` has imported the whole task tree.
     healthcheck:
-      test: ["CMD-SHELL", "grep -q beat /proc/1/cmdline || exit 1"]
+      test: ["CMD-SHELL", "python -m celery_beat_heartbeat"]
       interval: 30s
-      timeout: 5s
+      timeout: 10s
       retries: 3
-      start_period: 30s
+      start_period: 120s
 
   # One-shot SCF catalogue importer — "bring your own SCF Excel" install step.
   # Not part of the normal stack (profile: init), so `docker compose up` never starts it.

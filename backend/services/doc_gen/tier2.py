@@ -25,9 +25,12 @@ from .context import DomainWithControls, OrganisationContext
 from .registry import GeneratorSpec
 from .tier1 import status_label
 
+from services.model_registry import resolve as registry_resolve
+
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "claude-sonnet-4-6"
+# Model id from services/model_registry (#782); DOC_GEN_AI_MODEL still overrides.
+MODEL_ROLE = "doc_gen"
 MAX_OUTPUT_TOKENS = 16384
 
 SYSTEM_PROMPT = (
@@ -67,7 +70,7 @@ def is_mock_mode() -> bool:
 
 
 def resolve_model() -> str:
-    return os.getenv("DOC_GEN_AI_MODEL", "").strip() or DEFAULT_MODEL
+    return registry_resolve(MODEL_ROLE)
 
 
 # ---------------------------------------------------------------------------
