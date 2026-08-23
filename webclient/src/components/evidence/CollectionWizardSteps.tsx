@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { System } from '../../types'
 import { createWebhookEndpoint, testWebhookEndpoint } from '../../data/apiClient'
+import { FREQUENCY_OPTIONS, frequencyLabel } from '../../data/frequencyVocabulary'
 
 // ---- Step 1: Select System ----
 
@@ -9,15 +10,35 @@ interface SystemSelectStepProps {
   selectedSystem: System | null
   onSelect: (system: System) => void
   onNext: () => void
+  /**
+   * Opens the Systems Registry. Optional at every hop between here and `App`,
+   * so a caller that has no way to change tabs simply gets no button — see the
+   * empty state below for why that is the right failure.
+   */
+  onNavigateToSystems?: () => void
 }
 
-export function SystemSelectStep({ systems, selectedSystem, onSelect, onNext }: SystemSelectStepProps) {
+export function SystemSelectStep({
+  systems,
+  selectedSystem,
+  onSelect,
+  onNext,
+  onNavigateToSystems,
+}: SystemSelectStepProps) {
   const [query, setQuery] = useState('')
 
   const filtered = systems.filter(s =>
     s.name.toLowerCase().includes(query.toLowerCase()) ||
     (s.vendor || '').toLowerCase().includes(query.toLowerCase())
   )
+
+  // Two different situations used to share one sentence — "No systems found.
+  // Add one in the Systems tab first." — and only one of them was about adding
+  // a system. Told to an org that has systems and mistyped a search, that
+  // sentence is wrong; told to an org that has none, it is right but inert,
+  // because `Continue` is disabled and nothing here goes to the Systems tab.
+  // Step 1 was terminal either way (#789).
+  const registryIsEmpty = systems.length === 0
 
   return (
     <div className="wizard-step-content">
@@ -26,19 +47,52 @@ export function SystemSelectStep({ systems, selectedSystem, onSelect, onNext }: 
         Select the tool or platform that will send evidence to your collection point.
       </p>
 
-      <input
-        type="text"
-        className="wizard-search"
-        placeholder="Search systems..."
-        value={query}
-        onChange={e => setQuery(e.target.value)}
-        autoFocus
-      />
+      {!registryIsEmpty && (
+        <input
+          type="text"
+          className="wizard-search"
+          placeholder="Search systems..."
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          autoFocus
+        />
+      )}
 
       <div className="wizard-system-list">
-        {filtered.length === 0 && (
-          <p className="wizard-empty">No systems found. Add one in the Systems tab first.</p>
+        {registryIsEmpty && (
+          <div className="wizard-empty wizard-empty-resolvable">
+            <p>
+              This organisation has no systems registered yet. A collection point
+              belongs to the system that sends the evidence, so the registry has to
+              have one before this wizard can do anything.
+            </p>
+            {onNavigateToSystems ? (
+              <button
+                className="btn btn-primary"
+                onClick={onNavigateToSystems}
+              >
+                Open the Systems Registry
+              </button>
+            ) : (
+              <p className="muted">
+                Add one under Systems, then reopen Set Up Collection.
+              </p>
+            )}
+          </div>
         )}
+
+        {!registryIsEmpty && filtered.length === 0 && (
+          <div className="wizard-empty wizard-empty-resolvable">
+            <p>
+              None of this organisation&rsquo;s {systems.length}{' '}
+              system{systems.length === 1 ? '' : 's'} match &ldquo;{query}&rdquo;.
+            </p>
+            <button className="btn btn-secondary" onClick={() => setQuery('')}>
+              Clear the search
+            </button>
+          </div>
+        )}
+
         {filtered.map(system => (
           <button
             key={system.id}
@@ -76,14 +130,6 @@ interface ConfigureCollectionStepProps {
   onNext: () => void
 }
 
-const FREQUENCY_OPTIONS = [
-  { value: 'real_time', label: 'Real-time' },
-  { value: 'daily', label: 'Daily' },
-  { value: 'weekly', label: 'Weekly' },
-  { value: 'monthly', label: 'Monthly' },
-  { value: 'quarterly', label: 'Quarterly' },
-  { value: 'annually', label: 'Annually' },
-]
 
 export function ConfigureCollectionStep({
   collectionMethod,
@@ -430,7 +476,7 @@ endpoint:
         </div>
         <div className="wizard-summary-row">
           <span className="wizard-summary-label">Frequency</span>
-          <span>{state.frequency}</span>
+          <span>{frequencyLabel(state.frequency)}</span>
         </div>
         {state.evidenceIds.length > 0 && (
           <div className="wizard-summary-row">

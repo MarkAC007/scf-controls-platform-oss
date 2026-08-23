@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import type { EnrichedControl, ScopedControlsFile, ImplementationStatus, EvidenceMaturityLevel } from '../types'
 import { getScopedControl, getEvidenceTracking } from '../data/scopingService'
+import { evidenceOwnerLabel } from '../data/userDisplay'
 
 export interface DashboardStats {
   selectedCount: number
@@ -13,7 +14,7 @@ export interface DashboardStats {
   totalEvidence: number
   trackedEvidence: number
   evidencePercentage: number
-  evidenceByTeamCounts: Record<string, { total: number; tracked: number }>
+  evidenceByOwnerCounts: Record<string, { total: number; tracked: number }>
   frameworkStats: Array<{
     frameworkKey: string
     frameworkName: string
@@ -200,25 +201,26 @@ export function useDashboardStats(
       ? Math.round((trackedEvidence / totalEvidence) * 100)
       : 0
 
-    // Evidence by Owner Team
-    const evidenceByTeam: Record<string, { total: Set<string>; tracked: Set<string> }> = {}
+    // Evidence by owner. Keyed on the resolved owner/assignee user since #781 —
+    // the free-text "Owner Team" box this used to read is gone.
+    const evidenceByOwner: Record<string, { total: Set<string>; tracked: Set<string> }> = {}
     selectedControls.forEach(c => {
       c.artifactsResolved.forEach(artifact => {
         const tracking = getEvidenceTracking(scopingData, artifact.id)
-        const team = tracking?.owner || 'Unassigned'
-        if (!evidenceByTeam[team]) {
-          evidenceByTeam[team] = { total: new Set(), tracked: new Set() }
+        const owner = evidenceOwnerLabel(tracking)
+        if (!evidenceByOwner[owner]) {
+          evidenceByOwner[owner] = { total: new Set(), tracked: new Set() }
         }
-        evidenceByTeam[team].total.add(artifact.id)
+        evidenceByOwner[owner].total.add(artifact.id)
         if (tracking?.is_tracked) {
-          evidenceByTeam[team].tracked.add(artifact.id)
+          evidenceByOwner[owner].tracked.add(artifact.id)
         }
       })
     })
 
-    const evidenceByTeamCounts: Record<string, { total: number; tracked: number }> = {}
-    Object.entries(evidenceByTeam).forEach(([team, data]) => {
-      evidenceByTeamCounts[team] = {
+    const evidenceByOwnerCounts: Record<string, { total: number; tracked: number }> = {}
+    Object.entries(evidenceByOwner).forEach(([owner, data]) => {
+      evidenceByOwnerCounts[owner] = {
         total: data.total.size,
         tracked: data.tracked.size
       }
@@ -246,7 +248,7 @@ export function useDashboardStats(
       totalEvidence,
       trackedEvidence,
       evidencePercentage,
-      evidenceByTeamCounts,
+      evidenceByOwnerCounts,
       frameworkStats,
       evidenceMaturityDistribution
     }

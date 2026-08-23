@@ -1,10 +1,11 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import type { EvidenceMaturityLevel } from './EvidenceMaturityTypes'
 import {
   EVIDENCE_MATURITY_LEVELS,
   calculateMaturityScore,
   getMaturityGrade
 } from './EvidenceMaturityTypes'
+import { interactiveRowProps } from '../../data/interactiveRow'
 
 interface MaturityDistributionWidgetProps {
   distribution: Record<EvidenceMaturityLevel, number>
@@ -22,6 +23,16 @@ interface MaturityDistributionWidgetProps {
  * Displays a horizontal bar chart with counts at each level, overall score,
  * and maturity grade.
  *
+ * Each bar is also a disclosure (#789). `EVIDENCE_MATURITY_LEVELS` has always
+ * carried, per level, what that level looks like, what moves an item off it, how
+ * long that takes and what it buys — and none of it was reachable from here. The
+ * dashboard is where someone sees "31 items at L1" and decides whether to care,
+ * and it was the one surface that answered "what is L1?" with a bar. The advice
+ * existed; only the link to the moment of decision was missing.
+ *
+ * Rows go through `interactiveRowProps` rather than hand-rolled ARIA, so the
+ * keyboard path cannot be half-built the way `SidebarControlCard`'s was.
+ *
  * Usage:
  *   <MaturityDistributionWidget
  *     distribution={{ L0: 5, L1: 10, L2: 25, L3: 30, L4: 20, L5: 10 }}
@@ -35,6 +46,8 @@ export function MaturityDistributionWidget({
   compact = false,
   className = ''
 }: MaturityDistributionWidgetProps) {
+  const [openLevel, setOpenLevel] = useState<EvidenceMaturityLevel | null>(null)
+
   const totalItems = useMemo(() => {
     return Object.values(distribution).reduce((sum, count) => sum + count, 0)
   }, [distribution])
@@ -47,7 +60,14 @@ export function MaturityDistributionWidget({
     return getMaturityGrade(maturityScore)
   }, [maturityScore])
 
+  // Chart reads worst-last (L5 at the top); the legend reads L0 upwards. These
+  // were one array and a `.reverse()` call inside the legend's render, which
+  // mutated the array the chart above had just mapped over. It happened to be
+  // harmless only because the array was rebuilt on every render — memoise it,
+  // as everything else in this component is memoised, and the chart silently
+  // flips order on the second render. Two constants cannot do that.
   const levels: EvidenceMaturityLevel[] = ['L5', 'L4', 'L3', 'L2', 'L1', 'L0']
+  const legendLevels: EvidenceMaturityLevel[] = ['L0', 'L1', 'L2', 'L3', 'L4', 'L5']
 
   // Calculate max value for bar scaling
   const maxCount = useMemo(() => {
@@ -61,7 +81,9 @@ export function MaturityDistributionWidget({
           <h3>{title}</h3>
         </div>
         <div className="maturity-distribution-empty">
-          <span className="maturity-distribution-empty-icon">\uD83D\uDCCA</span>
+          {/* Was the seven literal characters `📊` in JSX text, which
+              renders as those characters and not as a chart. */}
+          <span className="maturity-distribution-empty-icon">{'📊'}</span>
           <p>No evidence items to analyse</p>
           <span className="maturity-distribution-empty-hint">
             Configure evidence tracking to see maturity distribution
@@ -99,38 +121,93 @@ export function MaturityDistributionWidget({
           const count = distribution[level] || 0
           const percentage = totalItems > 0 ? (count / totalItems) * 100 : 0
           const barWidth = maxCount > 0 ? (count / maxCount) * 100 : 0
+          const isOpen = openLevel === level
 
           return (
-            <div key={level} className="maturity-distribution-row">
-              <div className="maturity-distribution-label">
-                <span
-                  className="maturity-distribution-dot"
-                  style={{ backgroundColor: info.colour }}
-                />
-                <span className="maturity-distribution-level">{level}</span>
-                {!compact && (
-                  <span className="maturity-distribution-name">{info.name}</span>
-                )}
-              </div>
-              <div className="maturity-distribution-bar-container">
-                <div className="maturity-distribution-bar-track">
-                  <div
-                    className="maturity-distribution-bar-fill"
-                    style={{
-                      width: `${barWidth}%`,
-                      backgroundColor: info.colour
-                    }}
+            <div key={level} className="maturity-distribution-row-group">
+              <div
+                className={`maturity-distribution-row ${isOpen ? 'open' : ''}`}
+                aria-expanded={isOpen}
+                aria-label={`${level} ${info.name}: ${count} items. Show what this level means.`}
+                {...interactiveRowProps(() => setOpenLevel(isOpen ? null : level))}
+              >
+                <div className="maturity-distribution-label">
+                  <span
+                    className="maturity-distribution-dot"
+                    style={{ backgroundColor: info.colour }}
                   />
+                  <span className="maturity-distribution-level">{level}</span>
+                  {!compact && (
+                    <span className="maturity-distribution-name">{info.name}</span>
+                  )}
+                </div>
+                <div className="maturity-distribution-bar-container">
+                  <div className="maturity-distribution-bar-track">
+                    <div
+                      className="maturity-distribution-bar-fill"
+                      style={{
+                        width: `${barWidth}%`,
+                        backgroundColor: info.colour
+                      }}
+                    />
+                  </div>
+                </div>
+                <div className="maturity-distribution-value">
+                  <span className="maturity-distribution-count">{count}</span>
+                  {!compact && (
+                    <span className="maturity-distribution-percent">
+                      ({percentage.toFixed(0)}%)
+                    </span>
+                  )}
                 </div>
               </div>
-              <div className="maturity-distribution-value">
-                <span className="maturity-distribution-count">{count}</span>
-                {!compact && (
-                  <span className="maturity-distribution-percent">
-                    ({percentage.toFixed(0)}%)
-                  </span>
-                )}
-              </div>
+
+              {isOpen && (
+                <div className="maturity-distribution-guidance">
+                  <p className="maturity-distribution-guidance-description">
+                    {info.description}
+                  </p>
+
+                  <div className="maturity-distribution-guidance-section">
+                    <div className="maturity-distribution-guidance-label">
+                      What {level} looks like
+                    </div>
+                    <ul>
+                      {info.characteristics.map((c, i) => (
+                        <li key={i}>{c}</li>
+                      ))}
+                    </ul>
+                  </div>
+
+                  {info.upgradeActions.length > 0 && (
+                    <div className="maturity-distribution-guidance-section">
+                      <div className="maturity-distribution-guidance-label">
+                        Moving {count} item{count === 1 ? '' : 's'} off {level}
+                      </div>
+                      <ul>
+                        {info.upgradeActions.map((a, i) => (
+                          <li key={i}>{a}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {(info.timeToUpgrade || info.roiIndicator) && (
+                    <div className="maturity-distribution-guidance-footer">
+                      {info.timeToUpgrade && (
+                        <span className="maturity-distribution-guidance-time">
+                          <strong>Typically takes:</strong> {info.timeToUpgrade}
+                        </span>
+                      )}
+                      {info.roiIndicator && (
+                        <span className="maturity-distribution-guidance-roi">
+                          <strong>Pays back as:</strong> {info.roiIndicator}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )
         })}
@@ -140,7 +217,7 @@ export function MaturityDistributionWidget({
         <div className="maturity-distribution-legend">
           <div className="maturity-distribution-legend-title">Maturity Levels</div>
           <div className="maturity-distribution-legend-grid">
-            {levels.reverse().map((level) => {
+            {legendLevels.map((level) => {
               const info = EVIDENCE_MATURITY_LEVELS[level]
               return (
                 <div key={level} className="maturity-distribution-legend-item">

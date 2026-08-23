@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { apiClient } from '../data/apiClient';
 import { ModernCommentThread } from './ModernCommentThread';
+import { frequencyLabel } from '../data/frequencyVocabulary'
 
 interface Task {
   id: string;
@@ -50,23 +51,19 @@ export const TasksPage: React.FC<TasksPageProps> = ({ onNavigateToEvidence, orga
   const loadTasks = async () => {
     setLoading(true);
     try {
-      let allTasks = [];
-
-      if (view === 'my-tasks') {
-        allTasks = await apiClient.get('/evidence-tasks');
-      } else {
-        // Get all tasks
-        let url = '/evidence-tasks';
-        if (statusFilter !== 'all') {
-          url += `?status_filter=${statusFilter}`;
-        }
-        allTasks = await apiClient.get(url);
-      }
-
-      // Apply task type filter on client side
-      if (taskTypeFilter !== 'all') {
-        allTasks = allTasks.filter((t: Task) => t.task_type === taskTypeFilter);
-      }
+      // Every filter is a query param (#788). "My Tasks" previously fetched
+      // the whole organisation's tasks and applied NO user filter at all — it
+      // showed everybody's work under a heading that said it was yours — and
+      // the status dropdown was silently ignored on that view. `assigned_to_me`
+      // is resolved from the caller's token server-side.
+      const params = new URLSearchParams();
+      if (view === 'my-tasks') params.set('assigned_to_me', 'true');
+      if (statusFilter !== 'all') params.set('status_filter', statusFilter);
+      if (taskTypeFilter !== 'all') params.set('task_type', taskTypeFilter);
+      const query = params.toString();
+      const allTasks = await apiClient.get(
+        query ? `/evidence-tasks?${query}` : '/evidence-tasks'
+      );
 
       setTasks(allTasks);
     } catch (error) {
@@ -377,12 +374,12 @@ export const TasksPage: React.FC<TasksPageProps> = ({ onNavigateToEvidence, orga
                         </div>
                         {task.frequency && (
                           <div>
-                            <strong>Frequency:</strong> {task.frequency}
+                            <strong>Frequency:</strong> {frequencyLabel(task.frequency)}
                           </div>
                         )}
                         {task.owner && (
                           <div>
-                            <strong>Owner Team:</strong> {task.owner}
+                            <strong>Owner:</strong> {task.owner}
                           </div>
                         )}
                         {view === 'all-tasks' && task.assigned_user && (

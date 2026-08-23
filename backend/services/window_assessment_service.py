@@ -42,13 +42,20 @@ from services.text_extraction_service import (
     extract_text_from_bytes,
 )
 from services.validation_service import STALENESS_THRESHOLDS
+from services.frequency_vocabulary import UI_OPTIONS, normalize as normalize_frequency
+from services.model_registry import cost_cents as model_cost_cents, resolve as resolve_model
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "claude-sonnet-4-20250514"
 MAX_OUTPUT_TOKENS = 2048
-INPUT_COST_PER_TOKEN = 3.0 / 1_000_000
-OUTPUT_COST_PER_TOKEN = 15.0 / 1_000_000
+
+# Model id and price both come from services/model_registry (#782). This module
+# used to pin "claude-sonnet-4-20250514" here and carry its own copy of the
+# Sonnet rate card two lines below — the pin was retired, the API answered 404,
+# and every window assessment failed soft with status=error. The rate card
+# beside a pin is the other half of that defect: it makes a repoint silently
+# corrupt every cost figure. Neither belongs at a call site.
+MODEL_ROLE = "evidence_assessment"
 
 # Upper bound on extracted text per file (characters) so the prompt stays
 # within a reasonable token budget when a window has many files.
@@ -93,15 +100,15 @@ class _FileInWindow:
 
 
 def _resolve_frequency(tracking: Optional[EvidenceTracking]) -> tuple[str, bool]:
-    """Return (frequency, is_fallback) using STALENESS_THRESHOLDS vocabulary.
+    """Return (frequency, is_fallback) using the shared frequency vocabulary.
 
     If tracking is missing/blank/unknown, fall back to FALLBACK_FREQUENCY and
     mark is_fallback=True so the caller can surface a warning finding.
     """
     if tracking is None or not tracking.frequency:
         return FALLBACK_FREQUENCY, True
-    key = tracking.frequency.strip().lower()
-    if key in STALENESS_THRESHOLDS:
+    key = normalize_frequency(tracking.frequency)
+    if key is not None:
         return key, False
     return FALLBACK_FREQUENCY, True
 
@@ -297,25 +304,38 @@ def _compute_coverage(
     return source_coverage, artifact_type_coverage
 
 
-def _apply_sticky_review_carryover(
+def _prior_review_reference(
     session: Session,
     organization_id: UUID,
     evidence_id: str,
-    new_assessment: EvidenceWindowAssessment,
-) -> None:
-    """M4 PR 3 sticky review carryover (Decision D3).
+) -> Optional[dict]:
+    """Describe the most recent human review of *earlier* windows, as a finding.
 
-    Reviewer disposition outlives AI re-runs — without this, every nightly
-    cycle silently clobbers the human review back to not_reviewed, making
-    the audit trail meaningless. Take the most recent approved/rejected row
-    for the same (org, evidence_id) and copy its review fields onto the
-    new row.
+    Supersedes the M4 PR 3 "sticky review carryover" (Decision D3), which
+    copied ``review_status``, ``reviewed_by_user_id``, ``reviewed_at`` and
+    ``review_notes`` from the last approved/rejected row onto a brand-new
+    window assessment. That fabricated an attestation: a reviewer's approval
+    of last quarter's evidence appeared, under their name, against this
+    quarter's fresh and unexamined AI verdict. A missing attestation is
+    visibly missing; a fabricated one is indistinguishable from a real one,
+    including to the person named in it.
 
-    ``needs_revision`` is INTENTIONALLY excluded from carryover — that
-    disposition explicitly requested a re-assessment, so the fresh row must
-    start unreviewed and surface to the reviewer again.
+    D3's stated rationale — that without the carryover "every nightly cycle
+    silently clobbers the human review back to not_reviewed" — does not hold
+    at the call site. The carryover only ever ran in the branch that creates
+    a *new* window row; re-assessing an existing window takes the other
+    branch, which never touches the review block. So the carryover protected
+    nothing and fabricated in every case it fired.
 
-    Mutates ``new_assessment`` in place; returns None.
+    What replaces it is a pointer, not an inheritance. The new row keeps its
+    ``not_reviewed`` default and a NULL reviewer, so every consumer — the
+    review queue, the KSI maths, the UI badge — correctly reads it as
+    unattested. The prior disposition is surfaced as an informational
+    finding on the row instead, where a reviewer picking the item up can see
+    it without any part of the system mistaking it for a signature.
+
+    Returns the finding dict, or ``None`` when this evidence has no prior
+    approved/rejected review. Mutates nothing.
     """
     prior_reviewed = session.execute(
         select(EvidenceWindowAssessment)
@@ -327,11 +347,48 @@ def _apply_sticky_review_carryover(
         .order_by(EvidenceWindowAssessment.created_at.desc())
         .limit(1)
     ).scalar_one_or_none()
-    if prior_reviewed is not None:
-        new_assessment.review_status = prior_reviewed.review_status
-        new_assessment.reviewed_by_user_id = prior_reviewed.reviewed_by_user_id
-        new_assessment.reviewed_at = prior_reviewed.reviewed_at
-        new_assessment.review_notes = prior_reviewed.review_notes
+    if prior_reviewed is None:
+        return None
+
+    reviewed_on = (
+        prior_reviewed.reviewed_at.strftime("%Y-%m-%d")
+        if prior_reviewed.reviewed_at
+        else "an unrecorded date"
+    )
+    prior_window = "an earlier window"
+    if prior_reviewed.window_start and prior_reviewed.window_end:
+        prior_window = (
+            f"the window {prior_reviewed.window_start.strftime('%Y-%m-%d')} to "
+            f"{prior_reviewed.window_end.strftime('%Y-%m-%d')}"
+        )
+    return {
+        "category": "review",
+        "level": "info",
+        "message": (
+            f"A human reviewer marked this evidence '{prior_reviewed.review_status}' "
+            f"on {reviewed_on}, for {prior_window}. That decision does not attest "
+            f"to this window — this assessment is unreviewed."
+        ),
+        "suggestion": "Review this window on its own merits before relying on it.",
+    }
+
+
+def _compose_findings(
+    pre_findings: list[dict],
+    prior_review_note: Optional[dict],
+    llm_findings: list[dict],
+) -> list[dict]:
+    """Order a window's findings: coverage first, then provenance, then AI.
+
+    Extracted so the prior-review pointer's presence in the persisted
+    findings is unit-testable — inlining the concatenation would leave the
+    only guard on it a source-level assertion.
+    """
+    composed = list(pre_findings)
+    if prior_review_note is not None:
+        composed.append(prior_review_note)
+    composed.extend(llm_findings)
+    return composed
 
 
 def _compute_window_hash(
@@ -363,7 +420,7 @@ def _call_llm(system_prompt: str, user_prompt: str) -> Optional[dict]:
     try:
         client = anthropic.Anthropic(api_key=api_key)
         message = client.messages.create(
-            model=DEFAULT_MODEL,
+            model=resolve_model(MODEL_ROLE),
             max_tokens=MAX_OUTPUT_TOKENS,
             system=[{
                 "type": "text",
@@ -542,6 +599,7 @@ def assess_window(
         )
         return assessment
 
+    prior_review_note: Optional[dict] = None
     if assessment is None:
         assessment = EvidenceWindowAssessment(
             organization_id=organization_id,
@@ -559,8 +617,11 @@ def assess_window(
             window_hash=window_hash,
         )
 
-        _apply_sticky_review_carryover(
-            session, organization_id, evidence_id, assessment,
+        # A new window starts unreviewed. The prior human disposition is
+        # surfaced as a finding below, never copied onto this row's review
+        # block — see _prior_review_reference.
+        prior_review_note = _prior_review_reference(
+            session, organization_id, evidence_id,
         )
 
         session.add(assessment)
@@ -578,6 +639,7 @@ def assess_window(
 
     # Build pre-findings: fallback frequency + insufficient sample
     pre_findings: list[dict] = []
+
     if frequency_is_fallback:
         pre_findings.append({
             "category": "coverage",
@@ -587,7 +649,7 @@ def assess_window(
                 f"'{FALLBACK_FREQUENCY}'. Set a valid frequency via update_evidence "
                 f"to tune the window correctly."
             ),
-            "suggestion": f"Set frequency to one of: {', '.join(sorted(STALENESS_THRESHOLDS.keys()))}",
+            "suggestion": f"Set frequency to one of: {', '.join(o['value'] for o in UI_OPTIONS)}",
         })
 
     expected_files = _EXPECTED_FILES_IN_WINDOW.get(frequency_used, 1)
@@ -641,12 +703,16 @@ def assess_window(
     if not files_in_window:
         assessment.status = "insufficient_sample"
         assessment.relevance_score = Decimal("0.00")
-        assessment.findings = pre_findings or [{
-            "category": "coverage",
-            "level": "insufficient",
-            "message": "No evidence files present within the window.",
-            "suggestion": "Configure or verify the evidence collector for this evidence ID.",
-        }]
+        assessment.findings = _compose_findings(
+            pre_findings or [{
+                "category": "coverage",
+                "level": "insufficient",
+                "message": "No evidence files present within the window.",
+                "suggestion": "Configure or verify the evidence collector for this evidence ID.",
+            }],
+            prior_review_note,
+            [],
+        )
         assessment.summary = "No files in window — nothing to assess."
         assessment.prompt_hash = prompt_hash_value
         assessment.control_context_hash = control_context.context_hash
@@ -674,7 +740,9 @@ def assess_window(
     parsed = _parse_llm_response(llm["content"])
 
     # Merge pre_findings (coverage-level) with LLM findings
-    findings = list(pre_findings) + list(parsed.get("findings") or [])
+    findings = _compose_findings(
+        pre_findings, prior_review_note, list(parsed.get("findings") or []),
+    )
 
     # Window-level status: insufficient_sample wins if we set it upfront;
     # otherwise take the LLM's verdict.
@@ -682,31 +750,36 @@ def assess_window(
 
     input_tokens = llm.get("input_tokens", 0)
     output_tokens = llm.get("output_tokens", 0)
-    cost_cents = round(
-        (input_tokens * INPUT_COST_PER_TOKEN + output_tokens * OUTPUT_COST_PER_TOKEN) * 100,
-        4,
-    )
+    # Price the model that ANSWERED, not the one we asked for — they differ when
+    # an undated alias resolves to a dated snapshot, and they differ completely
+    # when an operator has set EVIDENCE_AI_MODEL. `None` when the registry has
+    # no price for it: a NULL cost reads as "unknown", a computed one reads as
+    # fact.
+    model_id = llm.get("model") or resolve_model(MODEL_ROLE)
+    cost = model_cost_cents(model_id, input_tokens, output_tokens)
 
     assessment.status = status
     rel = parsed.get("relevance_score")
     assessment.relevance_score = Decimal(str(rel)) if rel is not None else None
     assessment.findings = findings
     assessment.summary = parsed.get("summary", "")
-    assessment.model_id = llm.get("model", DEFAULT_MODEL)
+    assessment.model_id = model_id
     assessment.prompt_hash = prompt_hash_value
     assessment.control_context_hash = control_context.context_hash
     assessment.framework_version = control_context.framework_version
     assessment.input_token_count = input_tokens
     assessment.output_token_count = output_tokens
-    assessment.cost_cents = Decimal(str(cost_cents))
+    assessment.cost_cents = Decimal(str(cost)) if cost is not None else None
     assessment.processing_time_ms = int((time.monotonic() - start_time) * 1000)
     assessment.assessed_at = datetime.utcnow()
     session.commit()
 
     logger.info(
-        "Window assessment complete org=%s evidence=%s status=%s score=%s files=%d cost=%.4fc",
+        "Window assessment complete org=%s evidence=%s status=%s score=%s files=%d "
+        "model=%s cost=%s",
         organization_id, evidence_id, assessment.status, assessment.relevance_score,
-        len(files_in_window), cost_cents,
+        len(files_in_window), model_id,
+        f"{cost:.4f}c" if cost is not None else "unknown (model not priced)",
     )
     return assessment
 

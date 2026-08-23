@@ -48,10 +48,11 @@ export const EvidenceTaskList: React.FC<EvidenceTaskListProps> = ({
 
   const loadTasks = async () => {
     try {
-      // Filter tasks by evidence tracking ID
-      const allTasks = await apiClient.get('/evidence-tasks');
-      const evidenceTasks = allTasks.filter(
-        (t: any) => t.evidence_tracking_id === evidenceTrackingId
+      // Filtered in SQL, not here: this list is unpaginated, so fetching every
+      // task in the organisation to display one row's handful grew with the
+      // whole tenant (#788).
+      const evidenceTasks = await apiClient.get(
+        `/evidence-tasks?evidence_tracking_id=${encodeURIComponent(evidenceTrackingId)}`
       );
       setTasks(evidenceTasks);
     } catch (error) {

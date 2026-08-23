@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { apiClient } from '../data/apiClient';
+import { frequencyLabel } from '../data/frequencyVocabulary'
 
 interface DashboardData {
   total_tasks: number;
@@ -131,7 +132,7 @@ export const TaskDashboard: React.FC<TaskDashboardProps> = ({ onNavigateToEviden
                   <div className="task-dashboard-item-meta">
                     {task.frequency && (
                       <div>
-                        <strong>Frequency:</strong> {task.frequency}
+                        <strong>Frequency:</strong> {frequencyLabel(task.frequency)}
                       </div>
                     )}
                     {task.owner && (

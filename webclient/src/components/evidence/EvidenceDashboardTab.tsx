@@ -14,6 +14,10 @@ import {
   type UpcomingEvidenceItem,
 } from '../../data/apiClient'
 import { getScopedControl, getEvidenceTracking } from '../../data/scopingService'
+import { evidenceOwnerLabel } from '../../data/userDisplay'
+import { frequencyLabel } from '../../data/frequencyVocabulary'
+import { interactiveRowProps } from '../../data/interactiveRow'
+import { FRESHNESS_RULE, FRESHNESS_LEGEND } from '../../data/freshnessRule'
 
 // ---- Types ----
 
@@ -37,22 +41,29 @@ function HealthSummaryBar({ summary }: { summary: EvidenceHealthResponse['summar
       </div>
       <div className="ehd-summary-stat ehd-stat-green">
         <span className="ehd-summary-count">{summary.green_count}</span>
-        <span className="ehd-summary-label">Fresh ({summary.green_pct}%)</span>
+        <span className="ehd-summary-label" title={FRESHNESS_RULE.green}>
+          Fresh ({summary.green_pct}%)
+        </span>
       </div>
       <div className="ehd-summary-stat ehd-stat-amber">
         <span className="ehd-summary-count">{summary.amber_count}</span>
-        <span className="ehd-summary-label">Stale ({summary.amber_pct}%)</span>
+        <span className="ehd-summary-label" title={FRESHNESS_RULE.amber}>
+          Stale ({summary.amber_pct}%)
+        </span>
       </div>
       <div className="ehd-summary-stat ehd-stat-red">
         <span className="ehd-summary-count">{summary.red_count}</span>
-        <span className="ehd-summary-label">Critical ({summary.red_pct}%)</span>
+        <span className="ehd-summary-label" title={FRESHNESS_RULE.red}>
+          Critical ({summary.red_pct}%)
+        </span>
       </div>
       {summary.unknown_count > 0 && (
         <div className="ehd-summary-stat ehd-stat-unknown">
           <span className="ehd-summary-count">{summary.unknown_count}</span>
-          <span className="ehd-summary-label">No Data</span>
+          <span className="ehd-summary-label" title={FRESHNESS_RULE.unknown}>No Data</span>
         </div>
       )}
+      <p className="ehd-summary-legend">{FRESHNESS_LEGEND}</p>
     </div>
   )
 }
@@ -100,12 +111,12 @@ function HealthFilterBar({
   query: string
   onQueryChange: (q: string) => void
 }) {
-  const filters: { value: StatusFilter; label: string }[] = [
-    { value: 'all', label: 'All' },
-    { value: 'green', label: 'Fresh' },
-    { value: 'amber', label: 'Stale' },
-    { value: 'red', label: 'Critical' },
-    { value: 'unknown', label: 'No Data' },
+  const filters: { value: StatusFilter; label: string; title: string }[] = [
+    { value: 'all', label: 'All', title: 'Every tracked evidence item.' },
+    { value: 'green', label: 'Fresh', title: FRESHNESS_RULE.green },
+    { value: 'amber', label: 'Stale', title: FRESHNESS_RULE.amber },
+    { value: 'red', label: 'Critical', title: FRESHNESS_RULE.red },
+    { value: 'unknown', label: 'No Data', title: FRESHNESS_RULE.unknown },
   ]
 
   return (
@@ -116,6 +127,7 @@ function HealthFilterBar({
             key={f.value}
             className={`ehd-filter-tab ${filter === f.value ? 'active' : ''}`}
             onClick={() => onFilterChange(f.value)}
+            title={f.title}
           >
             {f.value !== 'all' && <StatusDot status={f.value} />}
             {f.label}
@@ -144,7 +156,9 @@ export function HealthCard({ item, onNavigateToEvidence }: { item: EvidenceHealt
   return (
     <div
       className={`ehd-card ehd-card-${item.status}${onNavigateToEvidence ? ' cursor-pointer' : ''}`}
-      onClick={() => onNavigateToEvidence?.(item.evidence_id)}
+      {...interactiveRowProps(
+        onNavigateToEvidence && (() => onNavigateToEvidence(item.evidence_id)),
+      )}
     >
       <div className="ehd-card-header">
         <StatusDot status={item.status} />
@@ -161,7 +175,7 @@ export function HealthCard({ item, onNavigateToEvidence }: { item: EvidenceHealt
           <span className="ehd-card-system">{item.collecting_system}</span>
         )}
         {item.frequency && (
-          <span className="ehd-card-freq">{item.frequency}</span>
+          <span className="ehd-card-freq">{frequencyLabel(item.frequency)}</span>
         )}
       </div>
       <div className="ehd-card-footer">
@@ -199,6 +213,10 @@ function AssessmentSummaryCard({ organizationId }: { organizationId: string }) {
   const [loading, setLoading] = useState(true)
   const [refreshLoading, setRefreshLoading] = useState(false)
   const [refreshMessage, setRefreshMessage] = useState<string | null>(null)
+  // Why items were skipped, grouped by reason (#788). The endpoint has always
+  // returned `skipped_detail`; the UI used to read only the counts, so a
+  // refresh that queued nothing said "Queued 0 of 1" and stopped there.
+  const [skippedReasons, setSkippedReasons] = useState<SkipGroup[]>([])
 
   const loadSummary = useCallback(() => {
     getWindowAssessmentSummary(organizationId)
@@ -217,6 +235,7 @@ function AssessmentSummaryCard({ organizationId }: { organizationId: string }) {
   const handleRefresh = async () => {
     setRefreshLoading(true)
     setRefreshMessage(null)
+    setSkippedReasons([])
     try {
       const result = await refreshStaleWindowAssessments(organizationId)
       if (result.queued === 0 && result.candidates === 0) {
@@ -224,6 +243,7 @@ function AssessmentSummaryCard({ organizationId }: { organizationId: string }) {
       } else {
         setRefreshMessage(`Queued ${result.queued} of ${result.candidates}`)
       }
+      setSkippedReasons(groupSkipReasons(result.skipped_detail))
       // Re-poll summary briefly so the counts catch up with the worker.
       setTimeout(loadSummary, 5000)
     } catch {
@@ -302,32 +322,85 @@ function AssessmentSummaryCard({ organizationId }: { organizationId: string }) {
           {refreshLoading ? 'Queuing...' : 'Reassess Stale Windows'}
         </button>
         {refreshMessage && (
-          <span style={{ marginLeft: 10, fontSize: '0.78rem', color: '#6366f1' }}>
-            {refreshMessage}
-          </span>
+          <span className="edt-refresh-message">{refreshMessage}</span>
+        )}
+        {skippedReasons.length > 0 && (
+          <ul className="edt-skip-reasons">
+            {skippedReasons.map(group => (
+              <li key={group.reason}>
+                <span className="edt-skip-reason">{group.reason}</span>
+                {' — '}
+                <span className="edt-skip-ids">{formatSkipIds(group.ids)}</span>
+              </li>
+            ))}
+          </ul>
         )}
       </div>
     </div>
   )
 }
 
-// ---- Team Workload Section ----
+/** One skip reason plus every evidence id it applied to (#788). */
+interface SkipGroup {
+  reason: string
+  ids: string[]
+}
 
-interface TeamWorkload {
-  team: string
+/** Ids listed per reason, capped — the signal is the reason, not the roll call. */
+const SKIP_IDS_SHOWN = 5
+
+/**
+ * Group `skipped_detail` by reason.
+ *
+ * The endpoint returns one row per skipped evidence id, and a capped refresh
+ * can skip a hundred of them for the same reason. Listing that verbatim buries
+ * the one thing the user needs — WHY — under a wall of identical strings.
+ */
+export function groupSkipReasons(
+  detail: Array<{ evidence_id: string; reason: string }> | undefined | null,
+): SkipGroup[] {
+  const byReason = new Map<string, string[]>()
+  for (const row of detail ?? []) {
+    const reason = row.reason || 'skipped'
+    const ids = byReason.get(reason)
+    if (ids) ids.push(row.evidence_id)
+    else byReason.set(reason, [row.evidence_id])
+  }
+  return [...byReason.entries()]
+    .map(([reason, ids]) => ({ reason, ids }))
+    .sort((a, b) => b.ids.length - a.ids.length)
+}
+
+/** "E-AST-01, E-AST-02 and 3 more" — never an unbounded list. */
+export function formatSkipIds(ids: string[]): string {
+  const shown = ids.slice(0, SKIP_IDS_SHOWN).join(', ')
+  const rest = ids.length - SKIP_IDS_SHOWN
+  return rest > 0 ? `${shown} and ${rest} more` : shown
+}
+
+// ---- Owner Workload Section ----
+//
+// Grouped on the resolved owner/assignee user since #781. It used to group on
+// the free-text "Owner Team" box, which nothing else in the product read — so
+// the workload shown here was whatever people had typed, not who was actually
+// on the hook. The `edt-team-*` class names are kept: they are style hooks in
+// evidence-dashboard CSS, not part of the data model.
+
+interface OwnerWorkload {
+  owner: string
   total: number
   tracked: number
   notTracked: number
 }
 
-function TeamWorkloadSection({
+function OwnerWorkloadSection({
   controls,
   scopingData,
 }: {
   controls: EnrichedControl[]
   scopingData: ScopedControlsFile
 }) {
-  const teamData = useMemo(() => {
+  const ownerData = useMemo(() => {
     const selectedControls = controls.filter(c => {
       const scoped = getScopedControl(scopingData, c.scf_id)
       return scoped?.selected
@@ -339,41 +412,41 @@ function TeamWorkloadSection({
         if (!evidenceMap.has(artifact.id)) {
           const tracking = getEvidenceTracking(scopingData, artifact.id)
           evidenceMap.set(artifact.id, {
-            owner: tracking?.owner || 'Unassigned',
+            owner: evidenceOwnerLabel(tracking),
             isTracked: tracking?.is_tracked || false,
           })
         }
       })
     })
 
-    const byTeam: Record<string, TeamWorkload> = {}
+    const byOwner: Record<string, OwnerWorkload> = {}
     evidenceMap.forEach(({ owner, isTracked }) => {
-      if (!byTeam[owner]) {
-        byTeam[owner] = { team: owner, total: 0, tracked: 0, notTracked: 0 }
+      if (!byOwner[owner]) {
+        byOwner[owner] = { owner, total: 0, tracked: 0, notTracked: 0 }
       }
-      byTeam[owner].total++
-      if (isTracked) byTeam[owner].tracked++
-      else byTeam[owner].notTracked++
+      byOwner[owner].total++
+      if (isTracked) byOwner[owner].tracked++
+      else byOwner[owner].notTracked++
     })
 
-    return Object.values(byTeam).sort((a, b) => b.total - a.total)
+    return Object.values(byOwner).sort((a, b) => b.total - a.total)
   }, [controls, scopingData])
 
-  if (teamData.length === 0) return null
+  if (ownerData.length === 0) return null
 
   return (
     <div className="edt-team-section">
-      <h3 className="edt-section-title">Team Workload</h3>
+      <h3 className="edt-section-title">Owner Workload</h3>
       <div className="edt-team-grid">
-        {teamData.map(team => {
-          const pct = team.total > 0 ? Math.round((team.tracked / team.total) * 100) : 0
+        {ownerData.map(owner => {
+          const pct = owner.total > 0 ? Math.round((owner.tracked / owner.total) * 100) : 0
           return (
-            <div key={team.team} className="edt-team-card">
-              <div className="edt-team-name">{team.team}</div>
+            <div key={owner.owner} className="edt-team-card">
+              <div className="edt-team-name">{owner.owner}</div>
               <div className="edt-team-stats">
-                <span className="edt-team-tracked">{team.tracked} tracked</span>
+                <span className="edt-team-tracked">{owner.tracked} tracked</span>
                 <span className="edt-team-sep">/</span>
-                <span className="edt-team-total">{team.total} total</span>
+                <span className="edt-team-total">{owner.total} total</span>
               </div>
               <div className="progress-bar progress-bar-small">
                 <div
@@ -486,7 +559,7 @@ export default function EvidenceDashboardTab({
         <div>
           <h2>Evidence Dashboard</h2>
           <p className="ehd-subtitle">
-            Monitor evidence freshness and team workload across your organisation
+            Monitor evidence freshness and owner workload across your organisation
           </p>
         </div>
         <button onClick={loadHealth} className="btn-secondary ehd-refresh-btn" title="Refresh">
@@ -515,7 +588,7 @@ export default function EvidenceDashboardTab({
         </div>
       </div>
 
-      <TeamWorkloadSection controls={controls} scopingData={scopingData} />
+      <OwnerWorkloadSection controls={controls} scopingData={scopingData} />
 
       {/* Due Soon */}
       {upcomingItems.length > 0 && (
@@ -541,12 +614,18 @@ export default function EvidenceDashboardTab({
                     onClick={() => onNavigateToEvidence?.(item.evidence_id)}
                   >
                     <td className="cell-id">{item.evidence_id}</td>
-                    <td>{item.frequency || '-'}</td>
+                    <td>{frequencyLabel(item.frequency) || '-'}</td>
                     <td>{item.collecting_system || '-'}</td>
                     <td>{item.last_uploaded_at ? new Date(item.last_uploaded_at).toLocaleDateString() : 'Never'}</td>
                     <td>{item.next_due ? new Date(item.next_due).toLocaleDateString() : '-'}</td>
                     <td>
-                      {item.is_overdue ? (
+                      {item.days_until_due === null ? (
+                        // Never collected: there is no due date to be late
+                        // against, so there is no day count to show (#788).
+                        // Matches "Never uploaded" in the stale list below —
+                        // one component, one way of saying "no such number".
+                        <span className="edt-badge-overdue">Never collected</span>
+                      ) : item.is_overdue ? (
                         <span className="edt-badge-overdue">Overdue ({Math.abs(item.days_until_due)}d)</span>
                       ) : (
                         <span className="edt-badge-upcoming">In {item.days_until_due}d</span>
@@ -569,7 +648,9 @@ export default function EvidenceDashboardTab({
               <div
                 key={item.evidence_id}
                 className={`edt-stale-item edt-stale-${item.status}${onNavigateToEvidence ? ' cursor-pointer' : ''}`}
-                onClick={() => onNavigateToEvidence?.(item.evidence_id)}
+                {...interactiveRowProps(
+                  onNavigateToEvidence && (() => onNavigateToEvidence(item.evidence_id)),
+                )}
               >
                 <StatusDot status={item.status} />
                 <span className="edt-stale-id">{item.evidence_id}</span>

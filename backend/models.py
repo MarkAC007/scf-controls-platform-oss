@@ -486,7 +486,15 @@ class EvidenceTracking(Base):
     is_tracked = Column(Boolean, default=False)
     method_of_collection = Column(Text)
     collecting_system = Column(String(255))
-    owner = Column(String(255))  # Legacy text field
+    # DEPRECATED (#781). Free-text owner: no longer readable or writable through
+    # the API, and no longer rendered anywhere. The column survives on purpose —
+    # it holds team labels ("Security Operations", "DevSecOps", "GRC") that by
+    # definition never resolve to a user, so `evassign001` cannot migrate them
+    # and dropping it would destroy them irreversibly. Bulk import and catalog
+    # reconciliation still carry existing values forward so a catalog upgrade
+    # does not silently bin them. Drop it in a later release once the labels are
+    # confirmed dead; until then it is inert, not live.
+    owner = Column(String(255))
     frequency = Column(String(50))
     comments = Column(Text)
     maturity_level = Column(String(2))  # Evidence collection maturity L0-L5

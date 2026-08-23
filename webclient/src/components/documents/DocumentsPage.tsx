@@ -80,11 +80,11 @@ export default function DocumentsPage({ organizationId, onOpenSettings }: Props)
   /**
    * Keep `?doc=…&mode=…` in step with what is open.
    *
-   * `replaceState`, not `pushState`: this is the only URL-aware screen in an
-   * app that otherwise selects screens from `activeTab` state, so pushing
-   * entries here would make Back mean something inside the document workspace
-   * that it means nowhere else. Replacing keeps the address bar truthful
-   * without inventing a history model for one screen out of twenty-five.
+   * `replaceState`, not `pushState`: opening a document is a change of view
+   * within this screen, not a destination. (Since #785 the evidence workspace
+   * is URL-aware too, and EvidenceReview does push — one entry per evidence
+   * item the user selects. Both screens write only their own parameters; see
+   * `data/appUrl.ts` for who owns what.)
    */
   useEffect(() => {
     const url = new URL(window.location.href)
@@ -104,10 +104,11 @@ export default function DocumentsPage({ organizationId, onOpenSettings }: Props)
   /**
    * Browser Back and Forward.
    *
-   * Nothing in this app pushes history entries, so this fires when the user
-   * returns to the app from somewhere else in their history. At that point the
-   * screen has to match the URL they came back to rather than whatever was
-   * mounted when they left.
+   * Fires when the user returns from elsewhere in their history, and — since
+   * #785 added pushed entries for evidence-item selections — when they Back
+   * through those. Either way the screen has to match the URL they arrived at
+   * rather than whatever was mounted when they left. Reads only `doc`/`mode`,
+   * which nothing outside this file writes.
    */
   useEffect(() => {
     const onPopState = () => {

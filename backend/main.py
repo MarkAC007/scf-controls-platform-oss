@@ -80,46 +80,25 @@ logging.basicConfig(
 )
 
 
-class _LogForgingSanitizer(logging.Filter):
-    """Escape CR/LF in log records to prevent log forging / log injection.
+# Attach the log-forging sanitizer to the root logger's HANDLERS (not the
+# logger itself — logger-level filters are not applied to records propagated
+# from child loggers, but handler-level filters are).
+#
+# The class moved to log_sanitizer.py so the Celery workers can attach the same
+# one (#784); it used to be defined here and therefore protected this process
+# only.
+from log_sanitizer import attach_to_handlers as _attach_log_sanitizer  # noqa: E402
 
-    User-influenced values interpolated into log messages can contain newlines
-    that inject forged log lines (CodeQL ``py/log-injection``). This filter is
-    attached to the root handlers, so every propagating module logger inherits
-    it — one defence-in-depth control instead of sanitising 60+ call sites.
-    Note: a framework-level filter mitigates the real risk but may not clear the
-    per-value CodeQL alerts, which need per-site sanitisers or a triage pass.
-    """
-
-    @staticmethod
-    def _clean(value):
-        if isinstance(value, str):
-            return value.replace("\r", "\\r").replace("\n", "\\n")
-        return value
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        if isinstance(record.msg, str):
-            record.msg = self._clean(record.msg)
-        if record.args:
-            if isinstance(record.args, dict):
-                record.args = {k: self._clean(v) for k, v in record.args.items()}
-            else:
-                record.args = tuple(self._clean(a) for a in record.args)
-        return True
-
-
-# Attach to the root logger's handlers (not the logger itself — logger-level
-# filters are not applied to records propagated from child loggers, but
-# handler-level filters are).
-_log_forging_sanitizer = _LogForgingSanitizer()
-for _root_handler in logging.getLogger().handlers:
-    _root_handler.addFilter(_log_forging_sanitizer)
+_attach_log_sanitizer()
 
 logger = logging.getLogger(__name__)
 
 # Azure Application Insights is initialized in celery_app.py (module-level).
-# celery_app.py is imported before this point via the task import chain,
-# and the setup_logging signal prevents Celery from stripping the OTel handler.
+# celery_app.py is imported before this point via the task import chain, and
+# when configure_azure_monitor() succeeds it connects Celery's setup_logging
+# signal so Celery does not strip the OTel handler. When it is not configured —
+# every local and self-hosted deployment — that signal is deliberately left
+# unconnected so Celery installs its own handlers (#784).
 
 
 @asynccontextmanager

@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { getEvidenceHealth, type EvidenceHealthResponse } from '../../data/apiClient'
+import { frequencyLabel } from '../../data/frequencyVocabulary'
 
 // ---- Types ----
 
@@ -145,7 +146,7 @@ function HealthCard({ item, onNavigateToEvidence }: { item: EvidenceHealthRespon
           <span className="ehd-card-system">{item.collecting_system}</span>
         )}
         {item.frequency && (
-          <span className="ehd-card-freq">{item.frequency}</span>
+          <span className="ehd-card-freq">{frequencyLabel(item.frequency)}</span>
         )}
       </div>
       <div className="ehd-card-footer">

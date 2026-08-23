@@ -11,6 +11,7 @@ from datetime import datetime
 from database import get_db
 from auth import require_auth, User
 from models import Notification, User as DBUser
+from services.notification_targets import resolve_reference_keys
 from schemas import (
     NotificationResponse,
     NotificationSettings,
@@ -62,6 +63,11 @@ async def list_notifications(
     result = await db.execute(query)
     notifications = result.scalars().all()
 
+    # The stored reference_id is a row UUID; the UI navigates by the evidence
+    # key (E-HRS-16). Resolved here in two batched queries rather than stored on
+    # the notification -- see services/notification_targets.py.
+    reference_keys = await resolve_reference_keys(db, notifications)
+
     notification_list = [
         {
             "id": n.id,
@@ -69,6 +75,7 @@ async def list_notifications(
             "type": n.type,
             "reference_type": n.reference_type,
             "reference_id": n.reference_id,
+            "reference_key": reference_keys.get(n.id),
             "message": n.message,
             "is_read": n.is_read,
             "read_at": n.read_at,
@@ -112,12 +119,15 @@ async def mark_notification_read(
     await db.commit()
     await db.refresh(notification)
 
+    reference_keys = await resolve_reference_keys(db, [notification])
+
     return {
         "id": notification.id,
         "user_id": notification.user_id,
         "type": notification.type,
         "reference_type": notification.reference_type,
         "reference_id": notification.reference_id,
+        "reference_key": reference_keys.get(notification.id),
         "message": notification.message,
         "is_read": notification.is_read,
         "read_at": notification.read_at,

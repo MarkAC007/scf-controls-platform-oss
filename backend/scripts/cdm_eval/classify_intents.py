@@ -29,6 +29,7 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from scripts.cdm_eval import setup_fixture
+from services.model_registry import resolve as resolve_model
 from services.cdm_intent_prompt import (  # noqa: F401  (re-exported for callers)
     MAX_DOCUMENT_CHARS,
     PROMPT_VERSION,
@@ -307,8 +308,13 @@ def _run_claude(prompt: str) -> ProviderResult:
     return ProviderResult(text=model_text, model=model_id)
 
 
-GPT_MODEL = "gpt-5.5"
-GEMINI_MODEL = "gemini-3.7-flash"
+# Same ids the runtime uses, from services/model_registry (#782) — an eval
+# harness measuring a different model than production ships is worse than no
+# harness. It already puts BACKEND_ROOT on sys.path, and the registry is
+# stdlib-only, so this costs nothing at CLI startup. Resolved per call, matching
+# services/cdm_intent.
+GPT_ROLE = "cdm_intent_gpt"
+GEMINI_ROLE = "cdm_intent_gemini"
 
 
 def _run_gpt(prompt: str) -> ProviderResult:
@@ -326,7 +332,7 @@ def _run_gpt(prompt: str) -> ProviderResult:
 
     payload = json.dumps(
         {
-            "model": GPT_MODEL,
+            "model": resolve_model(GPT_ROLE),
             "reasoning_effort": "high",
             "messages": [{"role": "user", "content": prompt}],
         }
@@ -370,7 +376,7 @@ def _run_gpt(prompt: str) -> ProviderResult:
         raise RuntimeError("gpt API envelope missing non-empty message content")
 
     model = raw.get("model")
-    model_id = model.strip() if isinstance(model, str) and model.strip() else GPT_MODEL
+    model_id = model.strip() if isinstance(model, str) and model.strip() else resolve_model(GPT_ROLE)
     return ProviderResult(text=content, model=model_id)
 
 
@@ -390,7 +396,8 @@ def _run_gemini(prompt: str) -> ProviderResult:
         }
     ).encode("utf-8")
     request = urllib.request.Request(
-        f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent",
+        f"https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{resolve_model(GEMINI_ROLE)}:generateContent",
         data=payload,
         headers={
             "x-goog-api-key": api_key,
@@ -399,8 +406,12 @@ def _run_gemini(prompt: str) -> ProviderResult:
         method="POST",
     )
     try:
-        # False positive: the URL is built only from the hardcoded Gemini model
-        # id above. The rule cannot prove the generated endpoint is constant.
+        # False positive: the only variable part of the URL is the model id,
+        # which comes from services/model_registry.resolve — a fixed default
+        # unless CDM_INTENT_GEMINI_MODEL is set, and in that case matched
+        # against ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ before it is returned, so
+        # it cannot contain a path separator or escape the models/ segment. The
+        # rule cannot prove the host is fixed.
         # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
         with urllib.request.urlopen(request, timeout=PROVIDER_TIMEOUT_SECONDS) as response:
             raw_body = response.read().decode("utf-8")
@@ -458,7 +469,7 @@ def _run_gemini(prompt: str) -> ProviderResult:
         raise RuntimeError(f"gemini API envelope missing non-empty text part{finish_detail}")
 
     model = raw.get("modelVersion")
-    model_id = model.strip() if isinstance(model, str) and model.strip() else GEMINI_MODEL
+    model_id = model.strip() if isinstance(model, str) and model.strip() else resolve_model(GEMINI_ROLE)
     return ProviderResult(text=joined, model=model_id)
 
 

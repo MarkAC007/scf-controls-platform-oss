@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from enum import IntEnum
 from typing import Optional, List
 from datetime import date, timedelta
+from services.frequency_vocabulary import normalize as normalize_frequency
 
 
 class MaturityLevel(IntEnum):
@@ -110,15 +111,25 @@ CAPABILITY_STATUS_MODIFIERS = {
 
 # Frequency impact on maturity
 # More frequent = higher confidence in process maturity
+# Keyed by CANONICAL frequency (services.frequency_vocabulary). Callers MUST
+# normalise before looking up — this map was a fifth independent declaration of
+# the frequency vocabulary before #783, and it keyed off a raw `.lower()` string,
+# so a row stored as 'annually' silently scored 0 (the same modifier as monthly)
+# instead of -2. A test asserts every canonical value has an entry.
 FREQUENCY_SCORES = {
-    "real_time": 2,    # Continuous streaming
-    "daily": 2,        # High frequency
-    "weekly": 1,       # Good frequency
-    "monthly": 0,      # Acceptable
-    "quarterly": -1,   # Low frequency, may miss issues
-    "annual": -2,      # Concerning for most evidence
-    "on_demand": -1,   # Reactive, not proactive
+    "real_time": 2,     # Continuous streaming
+    "daily": 2,         # High frequency
+    "weekly": 1,        # Good frequency
+    "biweekly": 1,      # Still a tight loop
+    "monthly": 0,       # Acceptable
+    "quarterly": -1,    # Low frequency, may miss issues
+    "semi_annual": -2,  # As concerning as annual for most evidence
+    "annual": -2,       # Concerning for most evidence
+    "on_demand": -1,    # Reactive, not proactive
 }
+
+# Cadences tight enough to support L5. Canonical values only.
+L5_FREQUENCIES = ("real_time", "daily")
 
 
 def calculate_maturity(input_data: MaturityInput) -> MaturityResult:
@@ -186,8 +197,10 @@ def calculate_maturity(input_data: MaturityInput) -> MaturityResult:
         }
 
     # Step 3: Consider frequency
-    frequency = (input_data.frequency or "").lower()
-    frequency_modifier = FREQUENCY_SCORES.get(frequency, 0)
+    # Normalise first (#783). Without this, 'annually' — the value the wizard
+    # emitted for a year — missed the map entirely and scored 0.
+    frequency = normalize_frequency(input_data.frequency)
+    frequency_modifier = FREQUENCY_SCORES.get(frequency, 0) if frequency else 0
 
     if frequency:
         factors["frequency"] = {
@@ -232,7 +245,7 @@ def calculate_maturity(input_data: MaturityInput) -> MaturityResult:
     # L5 criteria: Must be L4 AND have active status AND high frequency AND fresh data
     if (clamped_score == 4 and
         capability_status == "active" and
-        frequency in ["real_time", "daily"] and
+        frequency in L5_FREQUENCIES and
         input_data.last_collection_date and
         (date.today() - input_data.last_collection_date).days <= 7):
         clamped_score = 5

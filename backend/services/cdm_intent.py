@@ -41,6 +41,8 @@ from sqlalchemy.orm import Session
 
 from services.cdm_intent_prompt import PROMPT_VERSION, build_prompt
 
+from services.model_registry import resolve as resolve_model
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT_SECONDS = 300.0
@@ -50,12 +52,20 @@ DEFAULT_TIMEOUT_SECONDS = 300.0
 # rows the database refuses, which is a worse failure than a quieter one.
 RANK_CEILING = 3
 
-CLAUDE_MODEL = "claude-fable-5"
-GPT_MODEL = "gpt-5.5"
-# Newest non-preview Gemini in the live ListModels response (2026-08-17); the
-# pro line stops at 3.1-preview, so the current flash is the stable pin. The
-# eval harness's intent-gemini variant is the evidence for keeping or moving it.
-GEMINI_MODEL = "gemini-3.7-flash"
+# Model ids come from services/model_registry (#782) so the platform has one
+# inventory to check against provider liveness, rather than an id chosen once at
+# authoring time in each file. The rationale for each pin lives with it there.
+#
+# Resolved PER CALL, not at import. Two reasons: an override is documented as a
+# way to escape a bad default without a deploy, and resolving at import would
+# make it take effect only after the worker process is recycled — a difference
+# from the other six roles that nothing would explain at 3am. And `resolve`
+# raises on an unknown role, which at module scope turns a typo into an
+# import-time crash of the API and the Celery worker rather than a failed
+# request.
+CLAUDE_ROLE = "cdm_intent_claude"
+GPT_ROLE = "cdm_intent_gpt"
+GEMINI_ROLE = "cdm_intent_gemini"
 
 # Claude Fable 5 always reasons; the request must not carry a ``thinking``
 # block, and temperature/top_p/top_k are rejected outright. Only the token
@@ -132,7 +142,7 @@ class ClaudeIntentProvider:
         client = anthropic.Anthropic(api_key=api_key, timeout=request.timeout_s, max_retries=0)
         try:
             message = client.messages.create(
-                model=CLAUDE_MODEL,
+                model=resolve_model(CLAUDE_ROLE),
                 max_tokens=CLAUDE_MAX_TOKENS,
                 messages=[{"role": "user", "content": request.prompt}],
             )
@@ -158,7 +168,11 @@ class ClaudeIntentProvider:
         if not model_text.strip():
             raise IntentProviderError("claude returned no text content")
 
-        model_id = message.model.strip() if isinstance(message.model, str) and message.model.strip() else CLAUDE_MODEL
+        model_id = (
+            message.model.strip()
+            if isinstance(message.model, str) and message.model.strip()
+            else resolve_model(CLAUDE_ROLE)
+        )
         return IntentResponse(text=model_text, model_id=model_id)
 
 
@@ -183,7 +197,7 @@ class GptIntentProvider:
 
         payload = json.dumps(
             {
-                "model": GPT_MODEL,
+                "model": resolve_model(GPT_ROLE),
                 "reasoning_effort": "high",
                 "messages": [{"role": "user", "content": request.prompt}],
             }
@@ -228,7 +242,7 @@ class GptIntentProvider:
             raise IntentProviderError("gpt API envelope missing non-empty message content")
 
         model = raw.get("model")
-        model_id = model.strip() if isinstance(model, str) and model.strip() else GPT_MODEL
+        model_id = model.strip() if isinstance(model, str) and model.strip() else resolve_model(GPT_ROLE)
         return IntentResponse(text=content, model_id=model_id)
 
 
@@ -259,7 +273,8 @@ class GeminiIntentProvider:
             }
         ).encode("utf-8")
         http_request = urllib.request.Request(
-            f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent",
+            f"https://generativelanguage.googleapis.com/v1beta/models/"
+            f"{resolve_model(GEMINI_ROLE)}:generateContent",
             data=payload,
             headers={
                 "x-goog-api-key": api_key,
@@ -268,9 +283,13 @@ class GeminiIntentProvider:
             method="POST",
         )
         try:
-            # False positive: the URL is built only from the module constant
-            # GEMINI_MODEL on the Request object above. The rule cannot prove
-            # that this is still effectively a hardcoded destination.
+            # False positive: the only variable part of the URL on the Request
+            # object above is the model id, which comes from
+            # services/model_registry.resolve — a fixed default unless
+            # CDM_INTENT_GEMINI_MODEL is set, and in that case matched against
+            # ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ before it is returned, so it
+            # cannot contain a path separator or escape the models/ segment.
+            # The rule cannot prove the host is fixed.
             # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
             with urllib.request.urlopen(http_request, timeout=request.timeout_s) as response:
                 raw_body = response.read().decode("utf-8")
@@ -327,7 +346,9 @@ class GeminiIntentProvider:
             raise IntentProviderError(f"gemini returned no text content (finishReason={finish_reason!r})")
 
         model = raw.get("modelVersion")
-        model_id = model.strip() if isinstance(model, str) and model.strip() else GEMINI_MODEL
+        model_id = (
+            model.strip() if isinstance(model, str) and model.strip() else resolve_model(GEMINI_ROLE)
+        )
         return IntentResponse(text=model_text, model_id=model_id)
 
 

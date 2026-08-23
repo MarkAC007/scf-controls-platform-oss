@@ -1,4 +1,4 @@
-import type { ScopedControlsFile, ScopedControl, EvidenceTracking, EvidenceId } from '../types'
+import type { ScopedControlsFile, ScopedControl, EvidenceTracking, EvidenceId, UserSimple } from '../types'
 import * as api from './apiClient'
 
 /**
@@ -24,7 +24,12 @@ export async function loadScopedControls(): Promise<ScopedControlsFile | null> {
         is_tracked: item.is_tracked ?? undefined,
         method_of_collection: item.method_of_collection ?? undefined,
         collecting_system: item.collecting_system ?? undefined,
-        owner: item.owner ?? undefined,
+        assigned_user_id: item.assigned_user_id ?? undefined,
+        owner_user_id: item.owner_user_id ?? undefined,
+        // The API returns display_name as string|null; UserSimple models absent
+        // as undefined. Normalise here rather than widening the shared type.
+        assigned_user: toUserSimple(item.assigned_user),
+        owner_user: toUserSimple(item.owner_user),
         frequency: item.frequency ?? undefined,
         comments: item.comments ?? undefined
       }
@@ -120,6 +125,14 @@ function normalizeScopedControl(control: ScopedControl): Omit<ScopedControl, 'ev
   }
 }
 
+/** Narrow the API's nullable user shape onto the app-side UserSimple. */
+function toUserSimple(
+  user?: { id: string; email: string; display_name?: string | null } | null
+): UserSimple | undefined {
+  if (!user) return undefined
+  return { id: user.id, email: user.email, display_name: user.display_name ?? undefined }
+}
+
 /**
  * Normalize evidence tracking to include all fields (with null for missing ones)
  */
@@ -129,7 +142,10 @@ function normalizeEvidenceTracking(tracking: EvidenceTracking): EvidenceTracking
     is_tracked: tracking.is_tracked ?? undefined,
     method_of_collection: tracking.method_of_collection ?? undefined,
     collecting_system: tracking.collecting_system ?? undefined,
-    owner: tracking.owner ?? undefined,
+    assigned_user_id: tracking.assigned_user_id ?? undefined,
+    owner_user_id: tracking.owner_user_id ?? undefined,
+    assigned_user: tracking.assigned_user ?? undefined,
+    owner_user: tracking.owner_user ?? undefined,
     frequency: tracking.frequency ?? undefined,
     comments: tracking.comments ?? undefined
   }
@@ -280,7 +296,8 @@ export function getEvidenceTracking(
 export async function updateEvidenceTracking(
   data: ScopedControlsFile,
   evidenceId: EvidenceId,
-  tracking: EvidenceTracking
+  tracking: EvidenceTracking,
+  changedField?: keyof EvidenceTracking
 ): Promise<ScopedControlsFile> {
   try {
     // Save to API
@@ -289,7 +306,25 @@ export async function updateEvidenceTracking(
       is_tracked: tracking.is_tracked,
       method_of_collection: tracking.method_of_collection,
       collecting_system: tracking.collecting_system,
-      owner: tracking.owner,
+      // Assignment is sent ONLY when the picker is what changed (#781).
+      //
+      // This endpoint is a whole-object upsert called on every single field
+      // edit, and the API applies exclude_unset. Sending the assignee
+      // unconditionally would therefore make every keystroke a last-writer-wins
+      // overwrite of it: open this evidence item, have a colleague reassign it,
+      // type one character into Comments, and their assignment is silently
+      // reverted to whatever your tab loaded. Omitting the key leaves the stored
+      // value alone, which is the correct behaviour for every edit that is not
+      // an assignment.
+      //
+      // '' is the picker's "Unassigned" choice and must reach the API as an
+      // explicit null, not as an empty string the UUID validator would reject.
+      ...(changedField === 'assigned_user_id'
+        ? { assigned_user_id: tracking.assigned_user_id === '' ? null : tracking.assigned_user_id }
+        : {}),
+      ...(changedField === 'owner_user_id'
+        ? { owner_user_id: tracking.owner_user_id === '' ? null : tracking.owner_user_id }
+        : {}),
       frequency: tracking.frequency,
       comments: tracking.comments,
       // '' would fail the API's ^L[0-5]$ pattern; omit so the stored value is untouched

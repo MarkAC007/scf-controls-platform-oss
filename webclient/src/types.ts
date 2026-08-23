@@ -160,10 +160,14 @@ export interface ERLEntry {
   artifact_title?: string
   artifact_description?: string
   control_mappings?: ControlId[]
-  // Legacy CCF fields (for compatibility)
+  // Legacy CCF fields (for compatibility). `evidence_domain` and
+  // `evidence_title` are still read as fallbacks by `loaders.enrichControl` and
+  // `ControlScoping`. `collection_interfaces` is NOT here: the bulk evidence
+  // endpoint never emitted it — `database_stats.py` calls it a "Legacy CCF
+  // concept, not in SCF" — so every consumer was joining against a field that
+  // was always undefined and returning an empty list (#789).
   evidence_domain?: string
   evidence_title?: string
-  collection_interfaces?: string[]
 }
 
 export interface ERLFile {
@@ -304,7 +308,19 @@ export interface EvidenceTracking {
   is_tracked?: boolean
   method_of_collection?: string
   collecting_system?: string
-  owner?: string
+  /**
+   * Canonical assignee. This is the column the task generator, the due-date
+   * notifier and the work queue read; before #781 nothing in the UI could write
+   * it, so every generated task was unassigned and invisible. Empty string means
+   * "unassign" and is sent to the API as null.
+   */
+  assigned_user_id?: string | null
+  /** Accountable owner. Used as the task assignee when assigned_user_id is unset. */
+  owner_user_id?: string | null
+  /** Server-resolved assignee, for rendering a name without a second request. */
+  assigned_user?: UserSimple | null
+  /** Server-resolved accountable owner. */
+  owner_user?: UserSimple | null
   frequency?: string
   comments?: string
   maturity_level?: EvidenceMaturityLevel  // Evidence collection maturity (L0-L5)

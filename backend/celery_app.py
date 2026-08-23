@@ -13,13 +13,25 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Azure Application Insights — initialize at module level so the OpenTelemetry
 # logging handler is attached to the root logger BEFORE Celery starts.
-# The setup_logging signal below prevents Celery from stripping this handler.
+# The setup_logging signal below prevents Celery from stripping this handler,
+# but ONLY when that handler actually exists — see _OTEL_LOGGING_ACTIVE.
 # ---------------------------------------------------------------------------
+
+#: True only when configure_azure_monitor() ran to completion and therefore
+#: left a handler on the root logger.
+#:
+#: This is deliberately keyed on the OUTCOME, not on the intent. Guarding on
+#: `_appinsights_conn` being set would still suppress Celery's logging setup
+#: when the azure package is missing from the image or the connection string is
+#: malformed — exactly the moments when you most need the logs to explain why.
+_OTEL_LOGGING_ACTIVE = False
+
 _appinsights_conn = os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING", "")
 if _appinsights_conn:
     try:
         from azure.monitor.opentelemetry import configure_azure_monitor
         configure_azure_monitor(connection_string=_appinsights_conn)
+        _OTEL_LOGGING_ACTIVE = True
         logger.info("Azure Application Insights configured")
     except Exception as e:
         logger.warning("Failed to configure Application Insights: %s", e)
@@ -28,13 +40,12 @@ if _appinsights_conn:
 CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/1")
 CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/1")
 
-# For rediss:// (TLS) URLs, Celery requires ssl_cert_reqs parameter
-def _fix_rediss_url(url: str) -> str:
-    """Append ssl_cert_reqs=CERT_NONE for ElastiCache TLS connections."""
-    if url.startswith("rediss://") and "ssl_cert_reqs" not in url:
-        sep = "&" if "?" in url else "?"
-        return f"{url}{sep}ssl_cert_reqs=CERT_NONE"
-    return url
+# For rediss:// (TLS) URLs, Celery requires ssl_cert_reqs parameter.
+# Lives in redis_url.py so the beat healthcheck — which deliberately does not
+# import this module — normalises identically. Without that, the probe would
+# verify certificates against an endpoint beat itself connects to with
+# verification off, and fail the handshake against a healthy scheduler (#784).
+from redis_url import fix_rediss_url as _fix_rediss_url  # noqa: E402
 
 CELERY_BROKER_URL = _fix_rediss_url(CELERY_BROKER_URL)
 CELERY_RESULT_BACKEND = _fix_rediss_url(CELERY_RESULT_BACKEND)
@@ -271,6 +282,36 @@ celery_app.conf.update(
 )
 
 
+# ---------------------------------------------------------------------------
+# Beat liveness (#784).
+#
+# Set here rather than as a `-S` flag on the command line because beat is
+# started from five places: docker-compose.yml, terraform-aws/ecs-celery.tf,
+# terraform-aws/scripts/user-data.sh, terraform-gcp/cloud-run-celery.tf and
+# terraform-azure/container-apps.tf. Configuration travels with the app; a CLI
+# flag has to be remembered five times.
+#
+# An explicit `-S`/`--scheduler` still overrides this — correct precedence for
+# an operator, and the reason ecs-celery.tf had to drop the
+# `--scheduler=celery.beat:PersistentScheduler` it used to pass. Left in place,
+# that one line would have excluded production from this fix. If you add a
+# `--scheduler` flag anywhere, you are opting that deployment out of beat
+# liveness; tests/test_celery_observability.py fails the build if you do.
+#
+# The CLASS, not a "module.Class" string: celery resolves the string form with
+# kombu's symbol_by_name, which uses plain importlib and — unlike the
+# `import_from_cwd` that `-A celery_app` gets — does NOT put the working
+# directory on the path. A string here therefore starts beat only where
+# PYTHONPATH already contains the backend dir. The image sets PYTHONPATH=/app
+# so containers were safe, but `celery -A celery_app beat` run straight from
+# backend/ would have died with ModuleNotFoundError. symbol_by_name returns a
+# non-string unchanged, so passing the class is both supported and immune.
+# ---------------------------------------------------------------------------
+from celery_beat_scheduler import HeartbeatScheduler  # noqa: E402
+
+celery_app.conf.beat_scheduler = HeartbeatScheduler
+
+
 def get_celery_app() -> Celery:
     """
     Get the Celery application instance.
@@ -303,15 +344,83 @@ celery_app.Task = BaseTask
 
 
 # ---------------------------------------------------------------------------
-# Prevent Celery from overriding the OpenTelemetry logging handler.
-# Connecting to setup_logging tells Celery to skip its own logging config.
-# We apply the --loglevel setting ourselves so Celery log level still works.
+# Prevent Celery from overriding the OpenTelemetry logging handler — but only
+# when there IS one (#784).
+#
+# The mechanism here is easy to misread: merely having a receiver connected to
+# `setup_logging` is what tells Celery to skip its own logging configuration.
+# The receiver's body is irrelevant to that decision. So connecting this
+# unconditionally meant that on every deployment without Application Insights —
+# which is every local, docker-compose and self-hosted install — Celery skipped
+# its setup, nothing else attached a handler to root, and Python fell back to
+# `logging.lastResort`: stderr, WARNING and above, no formatter.
+#
+# The visible symptom was that `--loglevel=info` was accepted and did nothing.
+# Every INFO line the tasks emit — which collector ran, which evidence was
+# assessed, which window was refreshed — was discarded, and the only trace a
+# scheduled job left behind was its absence.
+#
+# Registering conditionally hands the default case back to Celery, which is
+# strictly better than a hand-rolled StreamHandler: it installs Celery's own
+# task-aware formatter, so lines carry the task name and id.
 # ---------------------------------------------------------------------------
 from celery.signals import setup_logging  # noqa: E402
+from log_sanitizer import attach_to_handlers as _attach_log_sanitizer  # noqa: E402
 
 
-@setup_logging.connect
 def _preserve_otel_logging(loglevel=None, **kwargs):
-    """Skip Celery's logging setup to preserve the OpenTelemetry handler."""
+    """Skip Celery's logging setup to preserve the OpenTelemetry handler.
+
+    Connected only when `_OTEL_LOGGING_ACTIVE` — see above.
+    """
     if loglevel is not None:
         logging.root.setLevel(loglevel)
+    # Celery emits after_setup_logger / after_setup_task_logger only inside the
+    # `if not receivers:` branch of Logging.setup_logging_subsystem — i.e. only
+    # when nothing is connected to setup_logging. Connecting THIS receiver is
+    # what suppresses them, so on Azure (the only place App Insights is set)
+    # the worker would otherwise still have no CR/LF filter: precisely the gap
+    # the block below claims to close. Attach it here too; the OTel handler is
+    # already on root by this point.
+    _attach_log_sanitizer()
+
+
+if _OTEL_LOGGING_ACTIVE:
+    setup_logging.connect(_preserve_otel_logging)
+else:
+    logger.debug(
+        "Application Insights not configured — leaving Celery's own logging "
+        "setup in place so --loglevel is honoured."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Log-forging defence for the worker processes.
+#
+# `main.py` has attached a CR/LF-escaping filter to the root handlers since the
+# py/log-injection remediation, but the Celery worker does not import `main` —
+# so the worker never had it. That was invisible while the worker's INFO
+# logging was being thrown away; re-enabling that logging above is what makes
+# it matter, so it is fixed here rather than deferred.
+#
+# after_setup_logger / after_setup_task_logger fire AFTER Celery has installed
+# its own handlers, which is when there is something to attach to. Both are
+# needed: Celery gives task loggers their own handler.
+#
+# These cover the NO-App-Insights path only. Celery sends them from inside the
+# `if not receivers:` branch of Logging.setup_logging_subsystem, so they are
+# silent exactly when `_preserve_otel_logging` is connected — which is why that
+# receiver attaches the filter itself. Both paths are asserted by
+# tests/test_celery_observability.py::TestSanitizerReachesTheWorker.
+# ---------------------------------------------------------------------------
+from celery.signals import after_setup_logger, after_setup_task_logger  # noqa: E402
+
+
+@after_setup_logger.connect
+def _sanitize_worker_logger(logger=None, **kwargs):
+    _attach_log_sanitizer(logger)
+
+
+@after_setup_task_logger.connect
+def _sanitize_task_logger(logger=None, **kwargs):
+    _attach_log_sanitizer(logger)

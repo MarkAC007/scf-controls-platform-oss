@@ -1,12 +1,16 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
+import {
+  pushSearch,
+  readAppLocation,
+  replaceSearch,
+  withEvidenceItem,
+} from '../data/appUrl'
 import type {
   EnrichedControl,
   ScopedControlsFile,
   EvidenceTracking,
   EvidenceId,
   OwnerTeam,
-  CollectionInterfacesFile,
-  CollectionInterface,
   ERLFile,
   EvidenceMaturityLevel,
   CollectionGuidanceResponse,
@@ -19,15 +23,20 @@ import {
   getEvidenceTracking,
   updateEvidenceTracking as updateEvidenceTrackingInData
 } from '../data/scopingService'
-import { getSystems, getEvidenceSuggestions, submitRecipeFeedback } from '../data/apiClient'
-import type { System, EvidenceSuggestionsResponse } from '../types'
+import { getSystems, getEvidenceSuggestions, submitRecipeFeedback, getOrgMembers } from '../data/apiClient'
+import type { System, EvidenceSuggestionsResponse, UserSimple } from '../types'
 import { AssignmentPicker } from './AssignmentPicker'
 import { ModernCommentThread } from './ModernCommentThread'
 import { EvidenceTaskList } from './EvidenceTaskList'
 import { MaturityBadge, MaturityStepper, MaturityAdvisoryCard } from './maturity'
-import { RecipeCard, RecipeConfidenceBadge, EvidenceTemplateGuidance, EvidenceFileUpload, EvidenceFileList, CollectionWizard } from './evidence'
+import { RecipeCard, RecipeConfidenceBadge, EvidenceTemplateGuidance, EvidenceFileUpload, EvidenceFileList, CollectionWizard, EvidenceAssigneeSelect, UntrackedUploadNotice, EvidenceBulkActionsBar } from './evidence'
+import type { BulkActionResult } from './evidence/EvidenceBulkActionsBar'
+import { batchUpdateEvidenceTracking } from '../data/apiClient'
+import type { BatchEvidenceTrackingOperation } from '../data/apiClient'
 import { WindowReviewPanel } from './evidence/WindowReviewPanel'
 import { ScfReference } from './provenance/ScfReference'
+import { frequencyOptionsFor } from '../data/frequencyVocabulary'
+import { interactiveRowProps } from '../data/interactiveRow'
 
 // M4 (#574) — gate the per-window review panel mount on the build-time flag.
 // When unset (default), the panel is not rendered and the legacy per-file
@@ -39,23 +48,42 @@ interface EvidenceReviewProps {
   controls: EnrichedControl[]
   scopingData: ScopedControlsFile
   onScopingDataChange: (data: ScopedControlsFile) => void
-  collectionInterfaces?: CollectionInterfacesFile
   erlData?: ERLFile
   evidenceTemplates?: EvidenceTemplatesFile
+  /** Opens the Systems Registry. Optional — see `SystemSelectStep`. */
+  onNavigateToSystems?: () => void
 }
 
 type ViewMode = 'control' | 'evidence'
 
-export default function EvidenceReview({ controls, scopingData, onScopingDataChange, collectionInterfaces = {}, erlData = {}, evidenceTemplates = {} }: EvidenceReviewProps) {
+export default function EvidenceReview({ controls, scopingData, onScopingDataChange, erlData = {}, evidenceTemplates = {}, onNavigateToSystems }: EvidenceReviewProps) {
   const [viewMode, setViewMode] = useState<ViewMode>('evidence')
   const [selectedId, setSelectedId] = useState<string | undefined>(undefined)
-  const [selectedEvidenceId, setSelectedEvidenceId] = useState<EvidenceId | undefined>(undefined)
+  // Seeded from the URL in the initialiser, not corrected in an effect (#785).
+  // That ordering is the whole trick: the "select the first item" effect below
+  // only fires when nothing is selected, so a deep-linked item wins simply by
+  // already being there. The previous code needed a sessionStorage flag to
+  // suppress that effect, which is why the flag had two jobs and one of them
+  // was invisible.
+  const [selectedEvidenceId, setSelectedEvidenceId] = useState<EvidenceId | undefined>(
+    () => readAppLocation(window.location.search).evidenceItem ?? undefined,
+  )
   const [query, setQuery] = useState('')
   const [domainFilter, setDomainFilter] = useState<string>('all')
   const [saving, setSaving] = useState(false)
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Evidence-tracking saves debounce PER EVIDENCE ITEM. They used to share
+  // `saveTimeoutRef` with the control-level save, so picking an assignee on one
+  // evidence row and touching any field on another within 300 ms cancelled the
+  // first save outright — while local state already showed it applied, and the
+  // sync effect's `!saving` gate stopped the server value correcting it. That
+  // was tolerable for debounced typing; it is not tolerable for a dropdown
+  // whose value decides who a collection task belongs to (#781).
+  const evidenceSaveTimeoutsRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
+  const pendingEvidenceSavesRef = useRef(0)
   const [localEvidenceState, setLocalEvidenceState] = useState<Record<EvidenceId, EvidenceTracking>>({})
   const [systems, setSystems] = useState<System[]>([]) // Systems from registry for picker
+  const [orgMembers, setOrgMembers] = useState<UserSimple[]>([]) // Org members for the assignee picker (#781)
   const [suggestions, setSuggestions] = useState<EvidenceSuggestionsResponse | null>(null)
   const [loadingSuggestions, setLoadingSuggestions] = useState(false)
   const [collectionGuidance, setCollectionGuidance] = useState<CollectionGuidanceResponse | null>(null)
@@ -63,6 +91,13 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
   const [feedbackSubmitted, setFeedbackSubmitted] = useState<string | null>(null)
   const [fileListRefreshTrigger, setFileListRefreshTrigger] = useState(0)
   const [showCollectionWizard, setShowCollectionWizard] = useState(false)
+  // Bulk selection is deliberately separate from `selectedEvidenceId`: one is
+  // "which item am I reading" and the other is "which items am I about to
+  // change". Collapsing them would make opening an item to check something
+  // silently change what the next bulk action hits.
+  const [bulkSelection, setBulkSelection] = useState<Set<EvidenceId>>(new Set())
+  const [bulkBusy, setBulkBusy] = useState(false)
+  const [bulkResult, setBulkResult] = useState<BulkActionResult | null>(null)
 
   // Filter to only selected controls with artifacts
   const selectedControls = useMemo(() => {
@@ -77,19 +112,6 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
     return selectedControls.filter(control =>
       control.artifactsResolved.some(artifact => artifact.id === evidenceId)
     )
-  }
-
-  // Helper function to get collection interfaces for an evidence item
-  const getCollectionMethodsForEvidence = (evidenceId: EvidenceId): { id: string; ci: CollectionInterface }[] => {
-    const erlEntry = erlData[evidenceId]
-    if (!erlEntry?.collection_interfaces) return []
-
-    return erlEntry.collection_interfaces
-      .map(ciId => {
-        const ci = collectionInterfaces[ciId]
-        return ci ? { id: ciId, ci } : null
-      })
-      .filter((item): item is { id: string; ci: CollectionInterface } => item !== null)
   }
 
   // Get all unique evidence items from selected controls
@@ -124,20 +146,34 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
     return Array.from(domainSet).sort()
   }, [uniqueEvidenceItems])
 
-  // Check for navigation request from task dashboard
+  // Back and Forward across evidence selections — the traversal #785 asked for.
+  //
+  // Reads only `item`; App owns `tab` and EvidenceWorkspace owns `view`. The
+  // truthiness guard matters: Backing out of the workspace entirely lands on a
+  // URL with no `item`, and this component is unmounting on that same tick.
+  // Blanking the selection there would be a write nobody reads.
+  //
+  // No filter reset here, unlike the sessionStorage handler this replaces. That
+  // one ran on a component that could already be mounted behind a filter; now
+  // every in-app arrival mounts this component fresh with empty filters, and
+  // the entries a user Backs through were all selected under whatever filter is
+  // currently set, so the target is on screen by construction.
   useEffect(() => {
-    const navigateToEvidence = sessionStorage.getItem('navigate_to_evidence')
-    if (navigateToEvidence) {
-      // Switch to evidence view mode
-      setViewMode('evidence')
-      // Clear filters so the target item is not hidden
-      setQuery('')
-      setDomainFilter('all')
-      // Set the selected evidence
-      setSelectedEvidenceId(navigateToEvidence)
-      // Note: sessionStorage is cleared by the auto-select guard below
-      console.log(`Navigated to evidence: ${navigateToEvidence}`)
+    const onPopState = () => {
+      const item = readAppLocation(window.location.search).evidenceItem
+      if (item) setSelectedEvidenceId(item)
     }
+    window.addEventListener('popstate', onPopState)
+    return () => window.removeEventListener('popstate', onPopState)
+  }, [])
+
+  // A user selection is a place, so it gets a history entry. The seed from the
+  // URL and the auto-select below deliberately do not come through here —
+  // neither is something the user asked for, and pushing an entry for either
+  // would make the first press of Back a no-op.
+  const selectEvidence = useCallback((evidenceId: EvidenceId) => {
+    setSelectedEvidenceId(evidenceId)
+    pushSearch(withEvidenceItem(window.location.search, evidenceId))
   }, [])
 
   // Scroll the active evidence card into view when selection changes
@@ -163,6 +199,22 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
     if (scopingData.organizationId) {
       loadSystems()
     }
+  }, [scopingData.organizationId])
+
+  // Load organisation members for the assignee picker (#781).
+  // Fetched once per org rather than once per evidence row — the evidence list
+  // routinely runs to several hundred entries.
+  useEffect(() => {
+    const orgId = scopingData.organizationId
+    if (!orgId) return
+    const loadMembers = async () => {
+      try {
+        setOrgMembers(await getOrgMembers(orgId))
+      } catch (error) {
+        console.error('Failed to load organisation members:', error)
+      }
+    }
+    loadMembers()
   }, [scopingData.organizationId])
 
   // Load suggestions when evidence item is selected
@@ -248,15 +300,17 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
       if (!selectedId && selectedControls.length > 0) {
         setSelectedId(selectedControls[0].scf_id)
       }
-    } else {
-      // Don't auto-select if we have a navigation request pending
-      const hasNavigation = sessionStorage.getItem('navigate_to_evidence')
-      if (hasNavigation) {
-        sessionStorage.removeItem('navigate_to_evidence')
-        return
-      }
-      if (!selectedEvidenceId && uniqueEvidenceItems.length > 0) {
-        setSelectedEvidenceId(uniqueEvidenceItems[0].id)
+    } else if (uniqueEvidenceItems.length > 0) {
+      // A URL can name an item this organisation does not have: a stale
+      // bookmark, a typo, an id copied from another tenant. Falling back to the
+      // first item beats rendering a detail panel about nothing, and
+      // `replaceSearch` keeps the address bar honest about where the user
+      // actually ended up rather than about where they asked to go.
+      const known = uniqueEvidenceItems.some(item => item.id === selectedEvidenceId)
+      if (!selectedEvidenceId || !known) {
+        const fallback = uniqueEvidenceItems[0].id
+        setSelectedEvidenceId(fallback)
+        replaceSearch(withEvidenceItem(window.location.search, fallback))
       }
     }
   }, [viewMode, selectedControls, selectedId, uniqueEvidenceItems, selectedEvidenceId])
@@ -358,10 +412,12 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
 
   // Cleanup timeout on unmount
   useEffect(() => {
+    const evidenceTimeouts = evidenceSaveTimeoutsRef.current
     return () => {
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current)
       }
+      Object.values(evidenceTimeouts).forEach(clearTimeout)
     }
   }, [])
 
@@ -405,23 +461,121 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
       [evidenceId]: updatedTracking
     }))
 
-    // Clear any existing timeout
-    if (saveTimeoutRef.current) {
-      clearTimeout(saveTimeoutRef.current)
+    // Clear only THIS evidence item's pending save — see evidenceSaveTimeoutsRef.
+    const existingTimeout = evidenceSaveTimeoutsRef.current[evidenceId]
+    if (existingTimeout) {
+      clearTimeout(existingTimeout)
+    } else {
+      pendingEvidenceSavesRef.current += 1
     }
 
     // Debounce the API call
     setSaving(true)
-    saveTimeoutRef.current = setTimeout(async () => {
+    evidenceSaveTimeoutsRef.current[evidenceId] = setTimeout(async () => {
+      delete evidenceSaveTimeoutsRef.current[evidenceId]
       try {
-        const updated = await updateEvidenceTrackingInData({ ...scopingData }, evidenceId, updatedTracking)
+        const updated = await updateEvidenceTrackingInData(
+          { ...scopingData }, evidenceId, updatedTracking, field
+        )
         onScopingDataChange(updated)
       } catch (error) {
         console.error('Failed to update evidence tracking:', error)
       } finally {
-        setSaving(false)
+        // Only drop the saving flag once every in-flight row has finished, or
+        // the sync effect reinstates the server's stale copy over rows still
+        // waiting to save.
+        pendingEvidenceSavesRef.current -= 1
+        if (pendingEvidenceSavesRef.current <= 0) {
+          pendingEvidenceSavesRef.current = 0
+          setSaving(false)
+        }
       }
     }, 300)
+  }
+
+  // ---- Bulk actions over the evidence list (#789) --------------------------
+
+  const toUserSimple = (
+    user: { id: string; email: string; display_name?: string | null } | null | undefined,
+  ): UserSimple | null => (user ? { ...user, display_name: user.display_name ?? undefined } : null)
+
+
+  const toggleBulkSelection = (evidenceId: EvidenceId) => {
+    setBulkSelection(prev => {
+      const next = new Set(prev)
+      if (next.has(evidenceId)) next.delete(evidenceId)
+      else next.add(evidenceId)
+      return next
+    })
+  }
+
+  /**
+   * Apply one field change to every selected item in a single request.
+   *
+   * `patch` carries ONLY the field being changed. The API's `exclude_unset`
+   * means an omitted key is left alone, so a bulk frequency change cannot also
+   * blank forty assignees — which is the whole reason this sends a narrow patch
+   * rather than the current tracking object the single-row path sends.
+   *
+   * Local state is updated from the server's response rather than optimistically:
+   * a partial failure has to leave the refused rows showing what they actually
+   * are, and the response says which those were.
+   */
+  const applyBulk = async (patch: Omit<BatchEvidenceTrackingOperation, 'evidence_id'>) => {
+    const ids = Array.from(bulkSelection)
+    if (ids.length === 0 || !scopingData.organizationId) return
+
+    setBulkBusy(true)
+    setBulkResult(null)
+    try {
+      const response = await batchUpdateEvidenceTracking(
+        ids.map(evidence_id => ({ evidence_id, ...patch })),
+        scopingData.organizationId,
+      )
+
+      const merged = { ...(scopingData.evidence_tracking || {}) }
+      for (const row of response.evidence) {
+        merged[row.evidence_id] = {
+          ...(merged[row.evidence_id] || {}),
+          id: row.id,
+          is_tracked: row.is_tracked ?? undefined,
+          method_of_collection: row.method_of_collection ?? undefined,
+          collecting_system: row.collecting_system ?? undefined,
+          assigned_user_id: row.assigned_user_id ?? null,
+          owner_user_id: row.owner_user_id ?? null,
+          // `display_name` is `string | null` on the wire and `string | undefined`
+          // in the UI type. Normalise here rather than widening UserSimple: null
+          // means "no display name" everywhere it is read, and the one place
+          // that difference matters is `userLabel`'s falsy check.
+          assigned_user: toUserSimple(row.assigned_user),
+          owner_user: toUserSimple(row.owner_user),
+          frequency: row.frequency ?? undefined,
+          comments: row.comments ?? undefined,
+          maturity_level: (row.maturity_level as EvidenceTracking['maturity_level']) ?? undefined,
+        }
+      }
+      setLocalEvidenceState(merged)
+      onScopingDataChange({ ...scopingData, evidence_tracking: merged })
+
+      setBulkResult({
+        updated: response.updated,
+        created: response.created,
+        failed: response.failed,
+        errors: response.errors,
+      })
+    } catch (error) {
+      // A request that never reached the API is still a failure the user has to
+      // be told about; reporting nothing is what makes bulk edits untrustworthy.
+      console.error('Bulk evidence tracking update failed:', error)
+      setBulkResult({
+        updated: 0,
+        created: 0,
+        failed: ids.length,
+        errors: [error instanceof Error ? error.message : 'The request failed.'],
+      })
+    } finally {
+      setBulkBusy(false)
+    }
   }
 
   // Show message if no controls are selected
@@ -520,6 +674,28 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
           </select>
         </div>
 
+        {viewMode === 'evidence' && (
+          <EvidenceBulkActionsBar
+            selectedCount={bulkSelection.size}
+            visibleCount={filteredEvidenceItems.length}
+            allVisibleSelected={
+              filteredEvidenceItems.length > 0 &&
+              filteredEvidenceItems.every(item => bulkSelection.has(item.id))
+            }
+            members={orgMembers}
+            busy={bulkBusy}
+            result={bulkResult}
+            onSelectAllVisible={() =>
+              setBulkSelection(new Set(filteredEvidenceItems.map(item => item.id)))
+            }
+            onClear={() => setBulkSelection(new Set())}
+            onDismissResult={() => setBulkResult(null)}
+            onSetTracked={(tracked: boolean) => applyBulk({ is_tracked: tracked })}
+            onSetFrequency={(frequency: string) => applyBulk({ frequency })}
+            onAssign={(userId: string) => applyBulk({ assigned_user_id: userId || null })}
+          />
+        )}
+
         <div className="list">
           {viewMode === 'control' ? (
             /* Control-First View */
@@ -535,7 +711,7 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
               <div
                 key={control.scf_id}
                 className={`evidence-card-modern ${selectedId === control.scf_id ? 'active' : ''}`}
-                onClick={() => setSelectedId(control.scf_id)}
+                {...interactiveRowProps(() => setSelectedId(control.scf_id))}
               >
                 <div className="evidence-card-header">
                   <span className="badge-modern">{control.scf_id}</span>
@@ -559,12 +735,31 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
               const tracking = localEvidenceState[evidenceItem.id] || {}
               const isTracked = tracking.is_tracked || false
 
+              const bulkSelected = bulkSelection.has(evidenceItem.id)
+
               return (
+                /*
+                  The checkbox sits OUTSIDE the card, not inside it. The card
+                  takes a button role from the shared helper, and a checkbox
+                  nested inside that role is both invalid and unreachable — the
+                  outer role swallows it. Two siblings keep both operable.
+
+                  (The role is not spelled out literally: interactiveRow.usage
+                  asserts on this file's source and would read a comment as a
+                  hand-rolled contract.)
+                */
+                <div key={evidenceItem.id} className="evidence-card-select-row">
+                  <input
+                    type="checkbox"
+                    className="evidence-card-select"
+                    checked={bulkSelected}
+                    onChange={() => toggleBulkSelection(evidenceItem.id)}
+                    aria-label={`Select ${evidenceItem.id} for bulk actions`}
+                  />
                 <div
-                  key={evidenceItem.id}
                   data-evidence-id={evidenceItem.id}
-                  className={`evidence-card-modern ${selectedEvidenceId === evidenceItem.id ? 'active' : ''}`}
-                  onClick={() => setSelectedEvidenceId(evidenceItem.id)}
+                  className={`evidence-card-modern ${selectedEvidenceId === evidenceItem.id ? 'active' : ''} ${bulkSelected ? 'bulk-selected' : ''}`}
+                  {...interactiveRowProps(() => selectEvidence(evidenceItem.id))}
                 >
                   <div className="evidence-card-header">
                     <span className="badge-modern">{evidenceItem.id}</span>
@@ -587,6 +782,7 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
                       </span>
                     )}
                   </div>
+                </div>
                 </div>
               )
             })
@@ -869,31 +1065,33 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
 
                           <div className="form-row">
                             <div className="form-group">
-                              <label>Owner Team</label>
-                              <select
-                                value={tracking.owner || ''}
-                                onChange={e => updateEvidenceTracking(artifact.id, 'owner', e.target.value)}
-                                className="form-control"
-                              >
-                                <option value="">Select Team...</option>
-                                <option value="Software Engineering">Software Engineering</option>
-                                <option value="Security Operations">Security Operations</option>
-                                <option value="DevSecOps">DevSecOps</option>
-                                <option value="Cyber Security">Cyber Security</option>
-                                <option value="GRC">GRC</option>
-                              </select>
-                            </div>
-
-                            <div className="form-group">
                               <label>Frequency</label>
-                              <input
-                                type="text"
+                              <select
                                 value={tracking.frequency || ''}
                                 onChange={e => updateEvidenceTracking(artifact.id, 'frequency', e.target.value)}
-                                placeholder="e.g., Monthly, Quarterly, Annual"
                                 className="form-control"
-                              />
+                              >
+                                <option value="">Not set</option>
+                                {frequencyOptionsFor(tracking.frequency).map(opt => (
+                                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                ))}
+                              </select>
                             </div>
+                          </div>
+
+                          {/* #781 — the assignee the task generator actually reads. The
+                              free-text "Owner Team" dropdown that used to sit
+                              above this is gone: one concept, one control. */}
+                          <div className="form-row">
+                            <EvidenceAssigneeSelect
+                              id={`assignee-${artifact.id}`}
+                              value={tracking.assigned_user_id}
+                              resolved={tracking.assigned_user}
+                              members={orgMembers}
+                              onChange={userId =>
+                                updateEvidenceTracking(artifact.id, 'assigned_user_id', userId)
+                              }
+                            />
                           </div>
 
                           <div className="form-group">
@@ -1060,6 +1258,13 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
                         <span className="container-title">Your Evidence Files</span>
                       </div>
                       <div className="container-content">
+                        {!isTracked && (
+                          <UntrackedUploadNotice
+                            onStartTracking={() =>
+                              updateEvidenceTracking(evidenceItem.id, 'is_tracked', true)
+                            }
+                          />
+                        )}
                         <EvidenceFileUpload
                           orgId={scopingData.organizationId}
                           evidenceId={selectedEvidenceId}
@@ -1229,31 +1434,33 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
 
                       <div className="form-row">
                         <div className="form-group">
-                          <label>Owner Team</label>
-                          <select
-                            value={tracking.owner || ''}
-                            onChange={e => updateEvidenceTracking(evidenceItem.id, 'owner', e.target.value)}
-                            className="form-control"
-                          >
-                            <option value="">Select Team...</option>
-                            <option value="Software Engineering">Software Engineering</option>
-                            <option value="Security Operations">Security Operations</option>
-                            <option value="DevSecOps">DevSecOps</option>
-                            <option value="Cyber Security">Cyber Security</option>
-                            <option value="GRC">GRC</option>
-                          </select>
-                        </div>
-
-                        <div className="form-group">
                           <label>Frequency</label>
-                          <input
-                            type="text"
+                          <select
                             value={tracking.frequency || ''}
                             onChange={e => updateEvidenceTracking(evidenceItem.id, 'frequency', e.target.value)}
-                            placeholder="e.g., Monthly, Quarterly, Annual"
                             className="form-control"
-                          />
+                          >
+                            <option value="">Not set</option>
+                            {frequencyOptionsFor(tracking.frequency).map(opt => (
+                              <option key={opt.value} value={opt.value}>{opt.label}</option>
+                            ))}
+                          </select>
                         </div>
+                      </div>
+
+                      {/* #781 — the assignee the task generator actually reads. The
+                          free-text "Owner Team" dropdown that used to sit above
+                          this is gone: one concept, one control. */}
+                      <div className="form-row">
+                        <EvidenceAssigneeSelect
+                          id={`assignee-${evidenceItem.id}`}
+                          value={tracking.assigned_user_id}
+                          resolved={tracking.assigned_user}
+                          members={orgMembers}
+                          onChange={userId =>
+                            updateEvidenceTracking(evidenceItem.id, 'assigned_user_id', userId)
+                          }
+                        />
                       </div>
 
                       <div className="form-group">
@@ -1275,6 +1482,8 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
                       evidenceId={selectedEvidenceId}
                       evidenceTemplates={evidenceTemplates}
                       orgId={scopingData.organizationId}
+                      erlData={erlData}
+                      tracking={getEvidenceTracking(scopingData, selectedEvidenceId)}
                     />
                   </ScfReference>
 
@@ -1303,6 +1512,7 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
                               organizationId={scopingData.organizationId}
                               assignableType="evidence"
                               assignableId={evidenceDbId}
+                              label="Collaborators"
                               onAssignmentChange={() => {
                                 // Optional: trigger data refresh
                               }}
@@ -1346,6 +1556,7 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
         <CollectionWizard
           orgId={scopingData.organizationId}
           onClose={() => setShowCollectionWizard(false)}
+          onNavigateToSystems={onNavigateToSystems}
         />
       )}
     </div>

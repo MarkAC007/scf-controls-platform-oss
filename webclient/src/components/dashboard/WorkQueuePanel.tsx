@@ -5,6 +5,7 @@ import type {
   BlockingControlItem,
   StaleCollectionItem,
 } from '../../data/apiClient'
+import { interactiveRowProps } from '../../data/interactiveRow'
 
 interface WorkQueuePanelProps {
   orgId?: string
@@ -85,7 +86,9 @@ export default function WorkQueuePanel({
                   <div
                     key={item.task_id}
                     className="wq-item"
-                    onClick={() => onNavigateToEvidence?.(item.evidence_id)}
+                    {...interactiveRowProps(
+                      onNavigateToEvidence && (() => onNavigateToEvidence(item.evidence_id)),
+                    )}
                   >
                     <div className="wq-item-left">
                       <span className="wq-item-id">{item.evidence_id}</span>
@@ -111,7 +114,9 @@ export default function WorkQueuePanel({
                   <div
                     key={item.scf_id}
                     className="wq-item"
-                    onClick={() => onNavigateToControl?.(item.scf_id)}
+                    {...interactiveRowProps(
+                      onNavigateToControl && (() => onNavigateToControl(item.scf_id)),
+                    )}
                   >
                     <div className="wq-item-left">
                       <span className="wq-item-id">{item.scf_id}</span>
@@ -137,7 +142,9 @@ export default function WorkQueuePanel({
                   <div
                     key={item.evidence_id}
                     className="wq-item"
-                    onClick={() => onNavigateToEvidence?.(item.evidence_id)}
+                    {...interactiveRowProps(
+                      onNavigateToEvidence && (() => onNavigateToEvidence(item.evidence_id)),
+                    )}
                   >
                     <div className="wq-item-left">
                       <span className="wq-item-id">{item.evidence_id}</span>
