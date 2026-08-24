@@ -7168,6 +7168,55 @@ textarea.form-control{
   color: #d97706;
 }
 
+/* Integrity badges (#57).
+   Light-mode reds are #b91c1c rather than --destructive (#ef4444): the latter is
+   3.76:1 on white and fails WCAG AA. Dark mode uses the token, which passes on
+   the dark surface. */
+.integrity-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+  cursor: help;
+}
+
+.integrity-badge-infected {
+  background: rgba(185, 28, 28, 0.12);
+  color: #b91c1c;
+}
+
+.integrity-badge-mismatch {
+  background: rgba(180, 83, 9, 0.12);
+  color: #b45309;
+}
+
+.integrity-badge-unreadable {
+  background: var(--muted, #f1f5f9);
+  color: #b45309;
+}
+
+.integrity-badge-pending {
+  background: var(--muted, #f1f5f9);
+  color: var(--muted-foreground, #64748b);
+  font-weight: 500;
+}
+
+[data-theme="dark"] .integrity-badge-infected {
+  background: rgba(239, 68, 68, 0.2);
+  color: var(--destructive);
+}
+
+[data-theme="dark"] .integrity-badge-mismatch,
+[data-theme="dark"] .integrity-badge-unreadable {
+  background: rgba(245, 158, 11, 0.18);
+  color: #fbbf24;
+}
+
 .evidence-files-approve-btn,
 .evidence-files-reject-btn {
   padding: 4px 10px;
@@ -21258,6 +21307,39 @@ textarea.form-control{
   color: var(--muted);
 }
 
+/*
+ * Coverage age is the headline; the upload date sits under it. Both are muted
+ * text — the point of the split is that they are different facts, not that one
+ * of them is an alarm. The colour of the card already carries the alarm.
+ */
+.ehd-card-subfooter {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 2px;
+  font-size: 0.7rem;
+  color: var(--muted);
+  opacity: 0.85;
+}
+
+/*
+ * Whether the coverage date is a preparer's claim or the upload date standing
+ * in for one. Deliberately quiet: it qualifies the number beside it rather
+ * than competing with it. No colour coding — a proxy is not an error, and
+ * painting it amber would put a second traffic light on a card that has one.
+ */
+.ehd-card-basis {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 9999px;
+  font-size: 0.65rem;
+  white-space: nowrap;
+}
+
+.ehd-basis-upload_date {
+  font-style: italic;
+}
+
 .ehd-card-validation {
   margin-top: 8px;
   font-size: 0.75rem;
@@ -28181,4 +28263,189 @@ textarea.form-control{
 @media (max-width: 900px) {
   .doc-editor { height: auto; min-height: 0; }
   .doc-editor-host-wrap { min-height: 20rem; }
+}
+
+/* ===========================================================================
+   Preparer assertions (#786, #802)
+   ---------------------------------------------------------------------------
+   Two surfaces: the capture panel beside the upload drop zone, and the
+   read-back panel in the preview modal.
+
+   The one visual rule that carries meaning rather than taste: "not asserted"
+   is rendered as an explicit, muted, italic label — never as an empty cell. A
+   blank reads as a rendering fault or an oversight; the muted label reads as
+   what it is, a claim nobody made. Every colour is stated for both themes
+   because a single value cannot clear 4.5:1 against a white card and a dark
+   one at the same time.
+   =========================================================================== */
+
+.preparer-assertions {
+  margin-bottom: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.preparer-assertions-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.preparer-assertions-toggle:hover {
+  background: var(--field-bg);
+  border-radius: 8px;
+}
+
+.preparer-assertions-caret {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.preparer-assertions-title {
+  font-weight: 600;
+}
+
+.preparer-assertions-hint {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.preparer-assertions-body {
+  padding: 4px 12px 12px;
+  border-top: 1px solid var(--border);
+}
+
+.preparer-assertions-intro {
+  margin: 10px 0 14px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.preparer-assertions-group {
+  border: none;
+  margin: 0 0 14px;
+  padding: 0;
+}
+
+.preparer-assertions-group legend {
+  padding: 0;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.preparer-assertions-note {
+  margin: 4px 0 10px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.preparer-assertions-errors {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+  font-weight: 500;
+  /* #b91c1c is 6.47:1 on the light surface; --destructive (#ef4444) is 3.76:1
+     and fails AA. Dark mode uses the token, which is #ffb4ab there and passes. */
+  color: #b91c1c;
+}
+
+[data-theme="dark"] .preparer-assertions-errors {
+  color: var(--destructive);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .preparer-assertions-errors {
+    color: var(--destructive);
+  }
+}
+
+/* ---- Read-back panel in the preview modal ---- */
+
+.preparer-panel {
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+}
+
+.preparer-panel-header {
+  margin-bottom: 10px;
+}
+
+.preparer-panel-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.preparer-panel-subtitle {
+  display: block;
+  margin-top: 2px;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+.preparer-panel-section {
+  padding: 6px 0;
+}
+
+.preparer-panel-section + .preparer-panel-section {
+  border-top: 1px dashed var(--border);
+}
+
+.preparer-panel-row {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  padding: 3px 0;
+  font-size: 12.5px;
+}
+
+.preparer-panel-label {
+  flex: 0 0 132px;
+  color: var(--muted);
+}
+
+.preparer-panel-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+/* Prose fields — a population description or a SQL filter is not a one-liner,
+   and truncating it to an ellipsis hides the part that makes it testable. */
+.preparer-panel-value--wrap {
+  white-space: normal;
+  overflow: visible;
+  line-height: 1.45;
+}
+
+.preparer-panel-value--unasserted {
+  font-style: italic;
+  color: var(--muted);
+}
+
+/* ---- Row chip in the file list ---- */
+
+.evidence-files-period {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
 }

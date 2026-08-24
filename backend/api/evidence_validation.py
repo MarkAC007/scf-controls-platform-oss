@@ -12,7 +12,7 @@ Endpoints:
 import logging
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select, and_, func, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,6 +24,13 @@ from schemas import (
     EvidenceValidationSummary,
 )
 from services.validation_service import run_validation
+from services.audit_service import (
+    create_audit_entry,
+    detect_action_source,
+    get_client_ip,
+    get_request_id,
+    get_user_agent,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +88,7 @@ async def revalidate_file(
     org_id: UUID,
     evidence_id: str,
     file_id: UUID,
+    request: Request,
     membership: OrgMembership = Depends(require_org_role("editor")),
     db: AsyncSession = Depends(get_db),
 ):
@@ -106,10 +114,41 @@ async def revalidate_file(
     if evidence_file.is_deleted:
         raise HTTPException(status_code=410, detail="Evidence file has been deleted")
 
+    # Read the outgoing verdict with an explicit query rather than through
+    # `evidence_file.validation_result`: that relationship is lazy, and touching
+    # a lazy attribute on an AsyncSession raises MissingGreenlet.
+    previous_status = (
+        await db.execute(
+            select(EvidenceValidationResult.status).where(
+                EvidenceValidationResult.evidence_file_id == file_id
+            )
+        )
+    ).scalar_one_or_none()
+
     validation_result = await run_validation(
         db=db,
         evidence_file=evidence_file,
         validation_source="manual_upload",
+    )
+
+    # Revalidation overwrites the stored verdict in place — it is an upsert, so
+    # the previous result is gone the moment this commits. Without a row here,
+    # a reviewer could re-run validation until a file came out clean and nothing
+    # would record that it had ever come out otherwise, or that anyone had asked.
+    await create_audit_entry(
+        db=db,
+        organization_id=org_id,
+        entity_type="evidence_file",
+        entity_id=file_id,
+        action="update",
+        changed_by_user_id=UUID(membership.user.db_id),
+        field_name="validation_status",
+        old_value=str(previous_status) if previous_status is not None else None,
+        new_value=str(getattr(validation_result, "status", None)),
+        ip_address=get_client_ip(request),
+        user_agent=get_user_agent(request),
+        action_source=detect_action_source(request),
+        request_id=get_request_id(request),
     )
 
     await db.commit()

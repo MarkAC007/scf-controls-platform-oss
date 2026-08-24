@@ -24,6 +24,7 @@ from models import EvidenceFile, EvidenceTracking, EvidenceValidationResult
 from catalog_models import SCFCatalogEvidence
 from services.storage_service import ALLOWED_CONTENT_TYPES
 from services.frequency_vocabulary import STALENESS_DAYS, normalize as normalize_frequency, staleness_days
+from services.collection_date import collection_date_from
 
 logger = logging.getLogger(__name__)
 
@@ -228,19 +229,41 @@ async def _rule_freshness(
             "message": f"Unknown frequency '{tracking.frequency}' — freshness check skipped",
         }
 
+    # Age is measured from what the file *covers*, not from when it arrived
+    # (#57). A Q1 access review uploaded in July is not a fresh file, and the
+    # upload date said it was. Where nothing was asserted the upload date is
+    # still the only signal, so it stands in — and the message says which was
+    # used, because "42d old" means something different in each case.
     uploaded_at = evidence_file.uploaded_at or datetime.utcnow()
-    age_days = (datetime.utcnow() - uploaded_at).days
+    covers_through = collection_date_from(
+        getattr(evidence_file, "effective_period_end", None),
+        uploaded_at=uploaded_at,
+    )
+    # Counted in date space. `datetime - datetime` truncates toward zero, so a
+    # file uploaded at 18:00 yesterday read as 0d old until 18:00 today.
+    age_days = (datetime.utcnow().date() - covers_through).days
+    basis = (
+        "covering period ended"
+        if getattr(evidence_file, "effective_period_end", None) is not None
+        else "uploaded"
+    )
 
     if age_days <= threshold_days:
         return {
             "rule": "freshness",
             "level": "valid",
-            "message": f"File is {age_days}d old (threshold: {threshold_days}d for {frequency} collection)",
+            "message": (
+                f"File is {age_days}d old ({basis} {covers_through}; "
+                f"threshold: {threshold_days}d for {frequency} collection)"
+            ),
         }
     return {
         "rule": "freshness",
         "level": "warning",
-        "message": f"File is {age_days}d old — stale for {frequency} collection (threshold: {threshold_days}d)",
+        "message": (
+            f"File is {age_days}d old ({basis} {covers_through}) — stale for "
+            f"{frequency} collection (threshold: {threshold_days}d)"
+        ),
     }
 
 

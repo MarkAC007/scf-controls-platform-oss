@@ -302,13 +302,17 @@ export async function updateOrganizationSettings(
   orgId: string,
   settings: Partial<OrganizationSettingsResponse>
 ): Promise<OrganizationSettingsResponse> {
-  return apiFetch<OrganizationSettingsResponse>(
+  const updated = await apiFetch<OrganizationSettingsResponse>(
     `/organizations/${orgId}/settings`,
     {
       method: 'PATCH',
       body: JSON.stringify(settings),
     }
   )
+  // `name` here is persisted to organizations.name, so the cached organization
+  // record from getCurrentOrganization() is now stale.
+  clearCurrentOrganizationCache()
+  return updated
 }
 
 // Organization Logo
@@ -364,6 +368,28 @@ export async function deleteOrganizationLogo(orgId: string): Promise<void> {
 }
 
 /**
+ * Cached resolution of the current organization (issue #811).
+ *
+ * Nearly every org-scoped function below calls getCurrentOrganization() purely
+ * to turn the stored org id into an id it can put in a URL, so a single cold
+ * page load fanned out into one identical GET /organizations/{id} per data
+ * fetch (five on the Dashboard, three on Control Scoping). These call sites are
+ * plain async functions, not hooks, so React Query cannot dedupe them — the
+ * cache has to live where the call is made.
+ *
+ * The promise is stored before it resolves, so concurrent callers share one
+ * in-flight request; the TTL bounds staleness for long-lived sessions. Keyed by
+ * org id, so switching org never serves the previous org's record.
+ */
+const CURRENT_ORG_TTL_MS = 60_000
+let currentOrgCache: { orgId: string; fetchedAt: number; promise: Promise<Organization> } | null = null
+
+/** Drop the cached current organization, forcing the next read to refetch. */
+export function clearCurrentOrganizationCache() {
+  currentOrgCache = null
+}
+
+/**
  * Get the current organization.
  *
  * Reads from localStorage (managed by OrganizationContext).
@@ -386,7 +412,21 @@ export async function getCurrentOrganization(): Promise<Organization> {
     localStorage.setItem(ORG_STORAGE_KEY, orgId)
   }
 
-  return getOrganization(orgId)
+  const cached = currentOrgCache
+  if (cached && cached.orgId === orgId && Date.now() - cached.fetchedAt < CURRENT_ORG_TTL_MS) {
+    return cached.promise
+  }
+
+  const requestedOrgId = orgId
+  const promise = getOrganization(requestedOrgId).catch((err) => {
+    // Never cache a failure: the next caller must be free to retry.
+    if (currentOrgCache?.orgId === requestedOrgId) {
+      currentOrgCache = null
+    }
+    throw err
+  })
+  currentOrgCache = { orgId: requestedOrgId, fetchedAt: Date.now(), promise }
+  return promise
 }
 
 /**
@@ -397,6 +437,7 @@ export async function getCurrentOrganization(): Promise<Organization> {
  */
 export function setCurrentOrganization(orgId: string) {
   localStorage.setItem(ORG_STORAGE_KEY, orgId)
+  clearCurrentOrganizationCache()
 }
 
 /**
@@ -2627,6 +2668,40 @@ export async function upsertScopePreferences(orgId: string, active_frameworks: s
 // Evidence Files API (Issues #325, #327)
 // ---------------------------------------------------------------------------
 
+/**
+ * Preparer assertions (#786, #802) — what a *person* claims the artefact is
+ * evidence of, as opposed to what the server measured about the bytes.
+ *
+ * Every field is nullable and stays that way. `null` means **not asserted**,
+ * which is the true state of most evidence in most tenants and must render
+ * differently from an asserted value — never as a blank that reads like an
+ * oversight, and never defaulted from `uploaded_at`.
+ */
+export interface PreparerAssertions {
+  /** First day the evidence actually covers. A 2023 access review uploaded today covers 2023. */
+  effective_period_start: string | null
+  /** Last day the evidence actually covers. Asserted with the start or not at all. */
+  effective_period_end: string | null
+  /** The denominator. Without it a file count is not a coverage statement. */
+  population_size: number | null
+  population_source: string | null
+  /** The numerator. */
+  sample_size: number | null
+  sample_method: string | null
+  sample_basis: string | null
+  /** Information Produced by the Entity — the most-failed area in Big 4 testing. */
+  ipe_source_system: string | null
+  ipe_query_or_filter: string | null
+  ipe_extracted_by_user_id: string | null
+  ipe_extracted_at: string | null
+  ipe_completeness_check: string | null
+}
+
+/** The same fields as a capture payload: every one optional, none defaulted. */
+export type PreparerAssertionsInput = Partial<{
+  [K in keyof PreparerAssertions]: PreparerAssertions[K]
+}>
+
 export interface EvidenceFileUploadUrlRequest {
   filename: string
   content_type: string
@@ -2638,14 +2713,22 @@ export interface EvidenceFileUploadUrlResponse {
   fields: Record<string, string>
   s3_key: string
   expires_in: number
+  /**
+   * Opaque signed ticket binding this key to the org, evidence item and user.
+   * Pass it back verbatim on confirm — the backend refuses a key that arrives
+   * without a matching ticket. Null only when the deployment has no signing
+   * secret configured, in which case confirm will refuse anyway.
+   */
+  upload_ticket: string | null
 }
 
-export interface EvidenceFileConfirmRequest {
+export interface EvidenceFileConfirmRequest extends PreparerAssertionsInput {
   s3_key: string
   sha256_hash?: string
+  upload_ticket?: string | null
 }
 
-export interface EvidenceFileResponse {
+export interface EvidenceFileResponse extends PreparerAssertions {
   id: string
   organization_id: string
   evidence_id: string
@@ -2653,8 +2736,19 @@ export interface EvidenceFileResponse {
   s3_key: string
   content_type: string
   file_size_bytes: number
+  /** What the uploader claimed before upload. Never overwritten. */
   sha256_hash: string | null
   classification: string
+  scan_status: string
+  /** What the server measured over the stored bytes. */
+  computed_sha256: string | null
+  hash_verification_status: string
+  hash_verified_at: string | null
+  /**
+   * Short label for the UI: 'infected' | 'hash_mismatch' | 'unreadable' |
+   * 'not_yet_scanned', or null when there is nothing to flag.
+   */
+  integrity_badge: string | null
   uploaded_by_user_id: string | null
   uploaded_at: string
   expires_at: string | null
@@ -2884,6 +2978,12 @@ interface EvidenceHealthItem {
   frequency: string | null
   last_file_uploaded_at: string | null
   days_since_upload: number | null
+  /** Latest date this evidence claims to cover. Drives the traffic light. */
+  coverage_through: string | null
+  /** Days since `coverage_through`. The staleness measure, not `days_since_upload`. */
+  days_since_coverage: number | null
+  /** `asserted_period` when a preparer said so; `upload_date` when it is a proxy. */
+  staleness_basis: 'asserted_period' | 'upload_date'
   staleness_threshold_days: number | null
   status: 'green' | 'amber' | 'red' | 'unknown'
   file_count: number

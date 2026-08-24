@@ -59,14 +59,12 @@ import { OIDC_ENABLED } from './data/authToken'
 import CatalogOnboarding from './components/CatalogOnboarding'
 import { getCatalogStatus } from './data/apiClient'
 import {
-  DEFAULT_TAB,
   SYNCED_TABS,
   evidenceItemSearch,
   pushSearch,
-  readAppLocation,
+  readTabFromUrl,
   replaceSearch,
-  withTab,
-  withoutTab,
+  searchForTab,
 } from './data/appUrl'
 import InviteAcceptance from './components/InviteAcceptance'
 import OrgSwitcher from './components/OrgSwitcher'
@@ -75,27 +73,18 @@ import type { ClientSummary, ConsultantInvite } from './types'
 type Tab = 'dashboard' | 'capability-posture' | 'library' | 'scoping' | 'evidence' | 'mapping-matrix' | 'tasks' | 'systems' | 'users' | 'consultant-portal' | 'risk-register' | 'vendors' | 'settings' | 'webhooks' | 'audit-log' | 'engagements' | 'cdm' | 'document-map' | 'documents' | 'platform-catalog' | 'platform-tenants' | 'catalog-changelog'
 
 /**
- * The screens whose location is reflected in the URL — see `data/appUrl.ts`,
- * which owns the vocabulary; this file only decides when to write it.
+ * Screen selection lives in `activeTab`; `data/appUrl.ts` owns the vocabulary
+ * that mirrors it into the address bar, and this file decides when to write.
  *
- * This app selects screens from `activeTab` state; `react-router-dom` is a
- * dependency that drives nothing, and giving it the wheel would touch all
- * twenty-two screens above. So this does the narrow thing the document and
- * evidence workspaces actually need — survive a reload, and be linkable — and
- * leaves every other screen's behaviour exactly as it was.
+ * `react-router-dom` is a dependency that drives nothing, and giving it the
+ * wheel would touch all twenty-two screens below. So `?tab=` names the screen
+ * instead — every destination the sidebar offers, so that each one survives a
+ * reload, can be bookmarked and can be sent to a colleague (#810). The bare
+ * path stays the dashboard's address.
  *
- * A `tab` parameter naming anything else is ignored rather than honoured. That
- * is the point: honouring arbitrary values would quietly turn this into a
- * router for screens nobody has checked, several of which read one-shot
- * navigation signals out of sessionStorage and would arrive without them.
- * Evidence joined the list in #785 precisely because that change removed its
- * one-shot signal; the URL now carries what sessionStorage used to.
+ * A `tab` naming anything `SYNCED_TABS` does not list is ignored rather than
+ * honoured, and normalised off the URL on arrival.
  */
-
-/** The tab the query string asks for, or the app's usual landing screen. */
-function readTabFromUrl(): Tab {
-  return readAppLocation(window.location.search).tab ?? DEFAULT_TAB
-}
 
 function AppContent() {
   const { isAuthenticated, authReady, user, isPlatformAdmin } = useAuth()
@@ -148,9 +137,9 @@ function AppContent() {
   const [selectedId, setSelectedId] = useState<string | undefined>(undefined)
   // One-shot "navigate me to this control" signal for ControlScoping.
   const [controlNavTarget, setControlNavTarget] = useState<string | undefined>(undefined)
-  // Seeded from the URL, but only ever with `documents` — see URL_SYNCED_TAB.
-  // For every other entry point this returns 'dashboard', which is what the
-  // literal default returned before.
+  // Seeded from the URL: every sidebar destination is addressable, so a reload
+  // or a pasted link lands on the screen it names rather than the dashboard
+  // (#810). An unrecognised `?tab=` still resolves to the dashboard.
   const [activeTab, setActiveTab] = useState<Tab>(readTabFromUrl)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   // OSS onboarding: null = not yet checked, false = empty (show upload gate), true = seeded
@@ -359,35 +348,39 @@ function AppContent() {
     }
   }, [activeTab, isAuthenticated, isConsultant, loadConsultantDataInternal])
 
-  // Keep `?tab=` in step with the two linkable workspaces, and only with them.
-  // `replaceState` rather than `pushState`: changing tab is changing screen,
-  // not visiting a destination the user expects to reverse one step at a time.
-  // The single thing that does push is selecting an evidence item, in
-  // EvidenceReview — that is the traversal #785 asked for.
+  // Keep `?tab=` in step with the active screen. `searchForTab` returns null
+  // whenever the URL already agrees, which is what keeps this from racing the
+  // three components that own other parameters on the same URL — DocumentsPage
+  // has `doc`/`mode`, EvidenceWorkspace has `view`, EvidenceReview has `item`.
+  //
+  // `pushState`, not `replaceState` (the question #785 left open, #810 closed).
+  // Choosing a destination in the sidebar is a place the user went, and the
+  // browser's Back button is how anyone expects to leave a place they went;
+  // with `replaceState` the app wrote a history it then refused to let anyone
+  // walk. It is only *within* a screen that replacing still applies — the
+  // evidence auto-select correcting its own `item`, say — and those writers
+  // are elsewhere and unchanged.
+  //
+  // The exception is the first pass. Whatever the address bar arrived with is
+  // normalised then — an unknown `?tab=`, a stale `item` — and a correction to
+  // a URL the user never chose is not somewhere to go Back to. Replacing it
+  // also keeps the entry the user actually arrived on at the top of the stack,
+  // so Back still leaves the app rather than bouncing off a rewritten entry.
+  const tabUrlNormalised = useRef(false)
   useEffect(() => {
-    const search = window.location.search
-    const synced = SYNCED_TABS.find((tab) => tab === activeTab)
-    // Returning early matters: three other components own parameters on this
-    // same URL — DocumentsPage has `doc`/`mode`, EvidenceWorkspace has `view`,
-    // EvidenceReview has `item` — and a blind rewrite here would race all of
-    // them. Leaving a synced tab takes that tab's own parameters with it; a
-    // `doc` or an `item` left behind would reopen on the next reload.
-    let next: string | null = null
-    if (synced) {
-      if (readAppLocation(search).tab !== synced) next = withTab(search, synced)
-    } else if (new URLSearchParams(search).has('tab')) {
-      next = withoutTab(search)
+    const next = searchForTab(window.location.search, activeTab)
+    if (next !== null) {
+      if (tabUrlNormalised.current) pushSearch(next)
+      else replaceSearch(next)
     }
-    if (next === null) return
-    replaceSearch(next)
+    tabUrlNormalised.current = true
   }, [activeTab])
 
-  // Browser Back and Forward. Confined to the synced tabs on purpose: this acts
-  // when the URL names one, or when we are leaving one, and otherwise leaves
-  // `activeTab` alone so the other screens behave exactly as they did before
-  // any of this existed. It reads only `tab` — EvidenceWorkspace and
-  // EvidenceReview each listen for the same event and read only their own
-  // parameter, so the three never contend.
+  // Browser Back and Forward. This acts when the URL names a synced tab, or
+  // when we are leaving one for the dashboard, and otherwise leaves `activeTab`
+  // alone. It reads only `tab` — EvidenceWorkspace and EvidenceReview each
+  // listen for the same event and read only their own parameter, so the three
+  // never contend.
   useEffect(() => {
     const onPopState = () => {
       const fromUrl = readTabFromUrl()

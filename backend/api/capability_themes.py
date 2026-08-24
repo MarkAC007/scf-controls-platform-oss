@@ -39,6 +39,7 @@ from api.ksi_scoring import (
     compute_ic,
     compute_kps,
 )
+from services.assurance_policy import get_assurance_policy
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +78,111 @@ def _compute_posture_percentage(posture: CapabilityThemePosture, scoped: int) ->
 # Issue #549, Phase 1 — multi-axis scoring wiring
 
 
-_EVIDENCE_METRICS_SQL = text("""
+# ---------------------------------------------------------------------------
+# The attestation predicate (#787).
+#
+# An AI relevance verdict is, at best, a management review control — the control
+# type auditors scrutinise hardest, and the one that requires evidence that a
+# named human investigated and dispositioned each exception. A score with no
+# human disposition behind it does not meet that bar.
+#
+# When an organisation sets `require_evidence_attestation`, an unattested
+# verdict stops contributing to the evidence-quality axis. It is important that
+# it *degrades* rather than *disappears*: the evidence still exists, the control
+# still has it, and dropping the row would swap one wrong number
+# (unearned quality) for another (missing coverage). So an unattested verdict
+# reads as `unassessed` and carries no relevance score — which is exactly what
+# it is: evidence nobody has yet said anything about.
+#
+# Each fragment below is the pair of expressions for one tier, in the two
+# states. The `attested_only=False` strings are byte-for-byte what shipped
+# before this change; `test_attestation_gate.py` pins that with a hash, because
+# "this refactor is a no-op for everyone who has not opted in" is a promise that
+# has to be checkable rather than asserted.
+# ---------------------------------------------------------------------------
+
+#: Per-file tier: the human disposition lives on `evidence_files.review_status`.
+_FILE_STATUS_OPEN = "COALESCE(ea.status, 'unassessed') AS assessment_status"
+_FILE_STATUS_ATTESTED = (
+    "CASE WHEN ef.review_status = 'approved' "
+    "THEN COALESCE(ea.status, 'unassessed') ELSE 'unassessed' END AS assessment_status"
+)
+# The un-gated form carries no explicit alias because the column it selects is
+# already called `relevance_score` — and because keeping it means the shipped
+# SQL string is byte-identical, not merely equivalent.
+_FILE_SCORE_OPEN = "ea.relevance_score"
+_FILE_SCORE_ATTESTED = (
+    "CASE WHEN ef.review_status = 'approved' THEN ea.relevance_score END"
+    " AS relevance_score"
+)
+
+#: Window tier: the disposition lives on `evidence_window_assessments`.
+#: Note this yields 'unassessed' rather than NULL, so `has_window` stays true
+#: and the row remains evidence-level. An unattested window must not silently
+#: fall back to the per-file verdict underneath it — that would route around
+#: the gate rather than apply it.
+_WINDOW_STATUS_OPEN = "ewa.status AS window_status"
+_WINDOW_STATUS_ATTESTED = (
+    "CASE WHEN ewa.review_status = 'approved' THEN ewa.status "
+    "ELSE 'unassessed' END AS window_status"
+)
+_WINDOW_SCORE_OPEN = "ewa.relevance_score AS window_relevance"
+_WINDOW_SCORE_ATTESTED = (
+    "CASE WHEN ewa.review_status = 'approved' THEN ewa.relevance_score END"
+    " AS window_relevance"
+)
+
+#: The mixed tier — a window verdict where one exists, the per-file verdict
+#: underneath it where one does not. Both halves need gating, or an unattested
+#: file becomes the answer for evidence that simply has no window yet.
+_MIXED_STATUS_OPEN = (
+    "COALESCE(ws.window_status, ea.status, 'unassessed') AS assessment_status"
+)
+_MIXED_STATUS_ATTESTED = (
+    "COALESCE(ws.window_status, CASE WHEN ef.review_status = 'approved' "
+    "THEN ea.status END, 'unassessed') AS assessment_status"
+)
+_MIXED_SCORE_OPEN = (
+    "COALESCE(ws.window_relevance, ea.relevance_score) AS relevance_score"
+)
+_MIXED_SCORE_ATTESTED = (
+    "COALESCE(ws.window_relevance, CASE WHEN ef.review_status = 'approved' "
+    "THEN ea.relevance_score END) AS relevance_score"
+)
+
+#: Composite tier: a composite is a projection of windows, so it cannot be more
+#: attested than the windows it folded in. Every id in `included_window_ids`
+#: must resolve to an approved window.
+#:
+#: The `jsonb_array_length(...) > 0` guard is not decoration: `NOT EXISTS` over
+#: an empty set is vacuously true, so without it a composite with no provenance
+#: at all would be the *easiest* row in the system to attest.
+_COMPOSITE_ATTESTED_PREDICATE = """
+              AND jsonb_array_length(cac.included_window_ids) > 0
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM jsonb_array_elements_text(cac.included_window_ids) AS w(id)
+                  LEFT JOIN evidence_window_assessments ewa2
+                         ON ewa2.id = w.id::uuid
+                  WHERE ewa2.id IS NULL
+                     OR ewa2.review_status <> 'approved'
+              )"""
+
+
+def _build_per_file_sql(attested_only: bool = False) -> "text":
+    """Legacy per-file EQ metrics, optionally gated on human attestation."""
+    status = _FILE_STATUS_ATTESTED if attested_only else _FILE_STATUS_OPEN
+    score = _FILE_SCORE_ATTESTED if attested_only else _FILE_SCORE_OPEN
+    # Verified false positive. The template is a module-level literal and every
+    # interpolated fragment is one of the module-private constants above,
+    # selected by a boolean. No string crosses this function's boundary --
+    # `test_metrics_builders_take_no_string_parameters` enforces that -- so
+    # there is no path by which caller input reaches the statement. The only
+    # value that varies at runtime, :org_id, stays a bind parameter.
+    # (The suppression must sit on the line immediately above the call --
+    # semgrep does not look further back than one line.)
+    # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+    return text(f"""
     WITH evidence_control_map AS (
         SELECT
             ce.evidence_id,
@@ -100,8 +205,8 @@ _EVIDENCE_METRICS_SQL = text("""
         SELECT
             ef.evidence_id,
             ef.id AS file_id,
-            COALESCE(ea.status, 'unassessed') AS assessment_status,
-            ea.relevance_score
+            {status},
+            {score}
         FROM evidence_files ef
         LEFT JOIN evidence_assessments ea ON ea.evidence_file_id = ef.id
         WHERE ef.organization_id = :org_id
@@ -124,6 +229,10 @@ _EVIDENCE_METRICS_SQL = text("""
 """)
 
 
+_EVIDENCE_METRICS_SQL = _build_per_file_sql()
+_EVIDENCE_METRICS_SQL_ATTESTED = _build_per_file_sql(attested_only=True)
+
+
 # ---------------------------------------------------------------------------
 # Window-aware variant (M1a).
 #
@@ -137,7 +246,22 @@ _EVIDENCE_METRICS_SQL = text("""
 # what the user sees in the new windowed UX.
 # ---------------------------------------------------------------------------
 
-_EVIDENCE_METRICS_WINDOW_AWARE_SQL = text("""
+def _build_window_aware_sql(attested_only: bool = False) -> "text":
+    """Window-preferring EQ metrics, optionally gated on human attestation."""
+    wstatus = _WINDOW_STATUS_ATTESTED if attested_only else _WINDOW_STATUS_OPEN
+    wscore = _WINDOW_SCORE_ATTESTED if attested_only else _WINDOW_SCORE_OPEN
+    status = _MIXED_STATUS_ATTESTED if attested_only else _MIXED_STATUS_OPEN
+    score = _MIXED_SCORE_ATTESTED if attested_only else _MIXED_SCORE_OPEN
+    # Verified false positive. The template is a module-level literal and every
+    # interpolated fragment is one of the module-private constants above,
+    # selected by a boolean. No string crosses this function's boundary --
+    # `test_metrics_builders_take_no_string_parameters` enforces that -- so
+    # there is no path by which caller input reaches the statement. The only
+    # value that varies at runtime, :org_id, stays a bind parameter.
+    # (The suppression must sit on the line immediately above the call --
+    # semgrep does not look further back than one line.)
+    # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+    return text(f"""
     WITH evidence_control_map AS (
         SELECT
             ce.evidence_id,
@@ -159,8 +283,8 @@ _EVIDENCE_METRICS_WINDOW_AWARE_SQL = text("""
     window_status AS (
         SELECT DISTINCT ON (ewa.evidence_id)
             ewa.evidence_id,
-            ewa.status AS window_status,
-            ewa.relevance_score AS window_relevance
+            {wstatus},
+            {wscore}
         FROM evidence_window_assessments ewa
         WHERE ewa.organization_id = :org_id
           AND ewa.status NOT IN ('pending', 'processing', 'error')
@@ -171,8 +295,8 @@ _EVIDENCE_METRICS_WINDOW_AWARE_SQL = text("""
             ef.evidence_id,
             ef.id AS file_id,
             -- Prefer window_status; fall back to per-file assessment
-            COALESCE(ws.window_status, ea.status, 'unassessed') AS assessment_status,
-            COALESCE(ws.window_relevance, ea.relevance_score) AS relevance_score,
+            {status},
+            {score},
             ws.window_status IS NOT NULL AS has_window
         FROM evidence_files ef
         LEFT JOIN evidence_assessments ea ON ea.evidence_file_id = ef.id
@@ -222,6 +346,10 @@ _EVIDENCE_METRICS_WINDOW_AWARE_SQL = text("""
 """)
 
 
+_EVIDENCE_METRICS_WINDOW_AWARE_SQL = _build_window_aware_sql()
+_EVIDENCE_METRICS_WINDOW_AWARE_SQL_ATTESTED = _build_window_aware_sql(attested_only=True)
+
+
 # ---------------------------------------------------------------------------
 # Composite-aware variant (M3 PR 3, #575).
 #
@@ -254,7 +382,9 @@ _COMPOSITE_TERMINAL_STATUSES = (
 )
 
 
-def _build_composite_aware_sql(window_enabled: bool) -> "text":
+def _build_composite_aware_sql(
+    window_enabled: bool, attested_only: bool = False
+) -> "text":
     """Construct the composite-aware metrics SQL.
 
     Precedence resolved per scf_id:
@@ -275,13 +405,21 @@ def _build_composite_aware_sql(window_enabled: bool) -> "text":
     # mirrors the legacy SQL. We keep them as distinct CTE bodies rather
     # than parameterising at runtime — clearer to read, and the planner
     # is happier with stable SQL strings.
+    wstatus = _WINDOW_STATUS_ATTESTED if attested_only else _WINDOW_STATUS_OPEN
+    wscore = _WINDOW_SCORE_ATTESTED if attested_only else _WINDOW_SCORE_OPEN
+    mixed_status = _MIXED_STATUS_ATTESTED if attested_only else _MIXED_STATUS_OPEN
+    mixed_score = _MIXED_SCORE_ATTESTED if attested_only else _MIXED_SCORE_OPEN
+    file_status = _FILE_STATUS_ATTESTED if attested_only else _FILE_STATUS_OPEN
+    file_score = _FILE_SCORE_ATTESTED if attested_only else _FILE_SCORE_OPEN
+    composite_gate = _COMPOSITE_ATTESTED_PREDICATE if attested_only else ""
+
     if window_enabled:
-        fallback_cte = """
+        fallback_cte = f"""
         window_status AS (
             SELECT DISTINCT ON (ewa.evidence_id)
                 ewa.evidence_id,
-                ewa.status AS window_status,
-                ewa.relevance_score AS window_relevance
+                {wstatus},
+                {wscore}
             FROM evidence_window_assessments ewa
             WHERE ewa.organization_id = :org_id
               AND ewa.status NOT IN ('pending', 'processing', 'error')
@@ -291,8 +429,8 @@ def _build_composite_aware_sql(window_enabled: bool) -> "text":
             SELECT
                 ef.evidence_id,
                 ef.id AS file_id,
-                COALESCE(ws.window_status, ea.status, 'unassessed') AS assessment_status,
-                COALESCE(ws.window_relevance, ea.relevance_score) AS relevance_score,
+                {mixed_status},
+                {mixed_score},
                 ws.window_status IS NOT NULL AS has_window
             FROM evidence_files ef
             LEFT JOIN evidence_assessments ea ON ea.evidence_file_id = ef.id
@@ -325,13 +463,13 @@ def _build_composite_aware_sql(window_enabled: bool) -> "text":
         )
         """
     else:
-        fallback_cte = """
+        fallback_cte = f"""
         org_evidence AS (
             SELECT
                 ef.evidence_id,
                 ef.id AS file_id,
-                COALESCE(ea.status, 'unassessed') AS assessment_status,
-                ea.relevance_score
+                {file_status},
+                {file_score}
             FROM evidence_files ef
             LEFT JOIN evidence_assessments ea ON ea.evidence_file_id = ef.id
             WHERE ef.organization_id = :org_id
@@ -372,7 +510,7 @@ def _build_composite_aware_sql(window_enabled: bool) -> "text":
             WHERE cac.organization_id = :org_id
               AND cac.composite_status IN (
                   'sufficient', 'partial', 'insufficient', 'insufficient_sample'
-              )
+              ){composite_gate}
         ),
         -- Per-theme aggregation from composites: count distinct controls per
         -- bucket. Each composite row contributes once per theme it maps to.
@@ -444,6 +582,12 @@ def _build_composite_aware_sql(window_enabled: bool) -> "text":
 
 _EVIDENCE_METRICS_COMPOSITE_AWARE_SQL = _build_composite_aware_sql(window_enabled=False)
 _EVIDENCE_METRICS_COMPOSITE_AWARE_WINDOW_SQL = _build_composite_aware_sql(window_enabled=True)
+_EVIDENCE_METRICS_COMPOSITE_AWARE_SQL_ATTESTED = _build_composite_aware_sql(
+    window_enabled=False, attested_only=True
+)
+_EVIDENCE_METRICS_COMPOSITE_AWARE_WINDOW_SQL_ATTESTED = _build_composite_aware_sql(
+    window_enabled=True, attested_only=True
+)
 
 
 def _window_ksi_enabled() -> bool:
@@ -461,28 +605,63 @@ def _composite_ksi_enabled() -> bool:
     return os.getenv("ENABLE_COMPOSITE_KSI", "false").lower() == "true"
 
 
-async def _fetch_evidence_metrics_per_theme(db: AsyncSession, org_id: UUID) -> dict:
-    """Return {theme_code: row} of evidence aggregates for an org.
+def _select_evidence_metrics_sql(
+    composite_enabled: bool, window_enabled: bool, attested_only: bool
+) -> "text":
+    """Pick the evidence-metrics SQL for a (tier, attestation) combination.
 
-    Single source of truth for the evidence-posture SQL; used by both the
-    legacy /evidence-posture endpoint and the new multi-axis wiring.
+    Split out from _fetch_evidence_metrics_per_theme so the tier-selection
+    matrix can be asserted without a database — the eight variants differ
+    only in which columns they gate, and a mis-wired pair would otherwise
+    only show up as a silently wrong KSI in production.
 
     Tier selection (M3 spec §5):
       * ENABLE_COMPOSITE_KSI=true → composite-aware SQL (composite > window
         if ENABLE_WINDOW_ASSESSMENT_KSI=true, else composite > per-file).
       * else if ENABLE_WINDOW_ASSESSMENT_KSI=true → window-aware SQL.
       * else → legacy per-file SQL (default; identical to pre-M1a behaviour).
+
+    attested_only comes from the org's assurance policy, not the
+    environment: it is a per-customer assurance choice, not a rollout flag.
     """
-    if _composite_ksi_enabled():
-        sql = (
-            _EVIDENCE_METRICS_COMPOSITE_AWARE_WINDOW_SQL
-            if _window_ksi_enabled()
+    if composite_enabled:
+        if window_enabled:
+            return (
+                _EVIDENCE_METRICS_COMPOSITE_AWARE_WINDOW_SQL_ATTESTED
+                if attested_only
+                else _EVIDENCE_METRICS_COMPOSITE_AWARE_WINDOW_SQL
+            )
+        return (
+            _EVIDENCE_METRICS_COMPOSITE_AWARE_SQL_ATTESTED
+            if attested_only
             else _EVIDENCE_METRICS_COMPOSITE_AWARE_SQL
         )
-    elif _window_ksi_enabled():
-        sql = _EVIDENCE_METRICS_WINDOW_AWARE_SQL
-    else:
-        sql = _EVIDENCE_METRICS_SQL
+    if window_enabled:
+        return (
+            _EVIDENCE_METRICS_WINDOW_AWARE_SQL_ATTESTED
+            if attested_only
+            else _EVIDENCE_METRICS_WINDOW_AWARE_SQL
+        )
+    return _EVIDENCE_METRICS_SQL_ATTESTED if attested_only else _EVIDENCE_METRICS_SQL
+
+
+async def _fetch_evidence_metrics_per_theme(db: AsyncSession, org_id: UUID) -> dict:
+    """Return {theme_code: row} of evidence aggregates for an org.
+
+    Single source of truth for the evidence-posture SQL; used by both the
+    legacy /evidence-posture endpoint and the new multi-axis wiring.
+
+    When the org has opted into require_evidence_attestation, an AI verdict
+    on a file no human has approved is read as 'unassessed' rather than
+    dropped: the file still counts toward coverage, it just stops lending
+    the quality axis a signal nobody signed for.
+    """
+    policy = await get_assurance_policy(db, org_id)
+    sql = _select_evidence_metrics_sql(
+        composite_enabled=_composite_ksi_enabled(),
+        window_enabled=_window_ksi_enabled(),
+        attested_only=policy.require_evidence_attestation,
+    )
     result = await db.execute(sql, {"org_id": str(org_id)})
     return {row.theme_code: row for row in result.all()}
 

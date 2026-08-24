@@ -36,16 +36,24 @@ describe('readAppLocation', () => {
     expect(readAppLocation('?tab=evidence').tab).toBe('evidence')
   })
 
-  // The allow-list is closed on purpose: several screens read one-shot
-  // navigation signals out of sessionStorage and would arrive without them.
-  it('ignores a tab naming any other screen', () => {
-    for (const rejected of ['scoping', 'tasks', 'settings', 'users', 'cdm']) {
+  // The allow-list holds every sidebar destination (#810) and nothing else: a
+  // `tab` naming no screen lands on the dashboard rather than on a blank one.
+  it('ignores a tab naming no screen', () => {
+    for (const rejected of ['nonsense', 'dashboard', 'Documents', '../admin', '']) {
       expect(readAppLocation(`?tab=${rejected}`).tab).toBeNull()
     }
   })
 
-  it('exposes exactly two synced tabs', () => {
-    expect([...SYNCED_TABS]).toEqual(['documents', 'evidence'])
+  it('honours every destination the sidebar offers', () => {
+    // The walk that proves this against the nav itself is in
+    // `appUrl.destinations.test.tsx`; this pins the ones with parameters of
+    // their own, which the rest of this file goes on to exercise.
+    expect(SYNCED_TABS).toContain('scoping')
+    expect(SYNCED_TABS).toContain('tasks')
+    expect(SYNCED_TABS).toContain('settings')
+    expect(SYNCED_TABS).toContain('users')
+    expect(SYNCED_TABS).toContain('cdm')
+    expect(SYNCED_TABS).not.toContain(DEFAULT_TAB)
   })
 
   it('defaults the evidence view when none is named', () => {
@@ -147,10 +155,13 @@ describe('writers', () => {
 
   it('round-trips a deep link built from a documents URL', () => {
     // Navigating to evidence from the document workspace: the item link must
-    // win, and App's writer effect deletes `doc`/`mode` when the tab changes.
-    const location = readAppLocation(`?${evidenceItemSearch('?tab=documents&doc=DOC-1', 'E-AST-01')}`)
+    // win, and setting the tab takes `doc`/`mode` off the URL with the screen
+    // they belonged to.
+    const next = evidenceItemSearch('?tab=documents&doc=DOC-1', 'E-AST-01')
+    const location = readAppLocation(`?${next}`)
     expect(location.tab).toBe('evidence')
     expect(location.evidenceItem).toBe('E-AST-01')
+    expect(new URLSearchParams(next).get('doc')).toBeNull()
   })
 
   it('escapes an id that would otherwise break the query string', () => {

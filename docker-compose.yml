@@ -122,6 +122,11 @@ services:
       SCF_MIGRATE_ACK: ${SCF_MIGRATE_ACK:-}
       # Authentication (set these in .env file - REQUIRED)
       API_KEY: ${API_KEY}
+      # Signing secret for evidence download links and upload tickets (#57).
+      # Falls back to API_KEY when unset. With neither, the backend refuses to
+      # mint or accept either — browser download links disappear and confirm
+      # rejects every upload, rather than accepting signatures anyone could forge.
+      DOWNLOAD_TOKEN_SECRET: ${DOWNLOAD_TOKEN_SECRET:-}
       # Self-hosted single-tenant mode: when truthy (see .env.example), grants the
       # master API_KEY admin on the single org. Leave UNSET for multi-tenant/SaaS. (#662)
       OSS_SINGLE_TENANT: ${OSS_SINGLE_TENANT:-}
@@ -155,9 +160,29 @@ services:
       AZURE_STORAGE_ACCOUNT_NAME: ${AZURE_STORAGE_ACCOUNT_NAME:-}
       AZURE_STORAGE_ACCOUNT_KEY: ${AZURE_STORAGE_ACCOUNT_KEY:-}
       EVIDENCE_CONTAINER: ${EVIDENCE_CONTAINER:-evidence}
+      # Malware scanning (#217, #57). The service reads these at call time and
+      # they were never forwarded, so an operator setting them in .env got
+      # nothing. Both the backend (webhook inbox) and the worker (browser
+      # uploads and the backlog sweep) scan, so both need them. With
+      # MALWARE_SCAN_ENABLED true and no reachable clamd, scans record an error
+      # verdict rather than a clean one — the platform does not claim a file is
+      # safe because it failed to look.
+      MALWARE_SCAN_ENABLED: ${MALWARE_SCAN_ENABLED:-true}
+      CLAMD_HOST: ${CLAMD_HOST:-localhost}
+      CLAMD_PORT: ${CLAMD_PORT:-3310}
       # CDM document placement (optional — see .env.example). The API needs the
       # provider setting to report classification state; the keys are used by
       # the consolidation recompute path. Off by default.
+      # Assurance/KSI feature flags (#787). Absent from this list until now,
+      # which meant setting them in .env did nothing: compose has no
+      # `env_file` here, so a variable that is not forwarded explicitly never
+      # reaches the container and the flag reads as its "false" default.
+      # ENABLE_PER_WINDOW_REVIEW switches the review path from per-file to
+      # per-window; the two KSI flags select which assessment tier the EQ axis
+      # reads. All default off — today's behaviour.
+      ENABLE_PER_WINDOW_REVIEW: ${ENABLE_PER_WINDOW_REVIEW:-false}
+      ENABLE_WINDOW_ASSESSMENT_KSI: ${ENABLE_WINDOW_ASSESSMENT_KSI:-false}
+      ENABLE_COMPOSITE_KSI: ${ENABLE_COMPOSITE_KSI:-false}
       # ENABLE_CDM is the module master switch read by cdm_tenancy/cdm APIs.
       ENABLE_CDM: ${ENABLE_CDM:-false}
       CDM_INTENT_PROVIDER: ${CDM_INTENT_PROVIDER:-disabled}
@@ -251,11 +276,33 @@ services:
       AZURE_STORAGE_ACCOUNT_NAME: ${AZURE_STORAGE_ACCOUNT_NAME:-}
       AZURE_STORAGE_ACCOUNT_KEY: ${AZURE_STORAGE_ACCOUNT_KEY:-}
       EVIDENCE_CONTAINER: ${EVIDENCE_CONTAINER:-evidence}
+      # Malware scanning (#217, #57). The service reads these at call time and
+      # they were never forwarded, so an operator setting them in .env got
+      # nothing. Both the backend (webhook inbox) and the worker (browser
+      # uploads and the backlog sweep) scan, so both need them. With
+      # MALWARE_SCAN_ENABLED true and no reachable clamd, scans record an error
+      # verdict rather than a clean one — the platform does not claim a file is
+      # safe because it failed to look.
+      MALWARE_SCAN_ENABLED: ${MALWARE_SCAN_ENABLED:-true}
+      CLAMD_HOST: ${CLAMD_HOST:-localhost}
+      CLAMD_PORT: ${CLAMD_PORT:-3310}
+      # Evidence integrity verification (#57). The sweep flag is read by
+      # celery_app at import, so beat, worker and backend all carry it; the
+      # batch size bounds how many files one tick hands to the verifier.
+      EVIDENCE_INTEGRITY_SWEEP_ENABLED: ${EVIDENCE_INTEGRITY_SWEEP_ENABLED:-true}
+      EVIDENCE_INTEGRITY_SWEEP_BATCH: ${EVIDENCE_INTEGRITY_SWEEP_BATCH:-}
       # AI Assessment (Anthropic Claude)
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       # CDM document placement (optional — see .env.example). The worker runs
       # the classify/backfill tasks, so it needs the provider setting and the
       # selected provider's key. Off by default.
+      # Assurance/KSI feature flags (#787) — same three as the backend. The
+      # worker imports the same api modules through the doc-gen and
+      # assessment task paths, so a flag set on one service and not the other
+      # produces two different answers for the same organization.
+      ENABLE_PER_WINDOW_REVIEW: ${ENABLE_PER_WINDOW_REVIEW:-false}
+      ENABLE_WINDOW_ASSESSMENT_KSI: ${ENABLE_WINDOW_ASSESSMENT_KSI:-false}
+      ENABLE_COMPOSITE_KSI: ${ENABLE_COMPOSITE_KSI:-false}
       # ENABLE_CDM is the module master switch read by the tenancy resolver.
       ENABLE_CDM: ${ENABLE_CDM:-false}
       CDM_INTENT_PROVIDER: ${CDM_INTENT_PROVIDER:-disabled}
@@ -332,6 +379,10 @@ services:
       # Update poller opt-out (default ON). Beat reads this at import time to
       # decide whether to schedule the daily update-check-daily entry.
       SCF_UPDATE_CHECK: ${SCF_UPDATE_CHECK:-true}
+      # Evidence integrity backlog sweep (#57). Read at import time for the
+      # same reason: beat is what decides whether the hourly entry exists at
+      # all, so setting this only on the worker would have no effect.
+      EVIDENCE_INTEGRITY_SWEEP_ENABLED: ${EVIDENCE_INTEGRITY_SWEEP_ENABLED:-true}
       # OIDC / bundled identity provider (optional — mirrors the backend service).
       OIDC_ISSUER: ${OIDC_ISSUER:-}
       OIDC_DISCOVERY_URL: ${OIDC_DISCOVERY_URL:-}

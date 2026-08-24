@@ -16,6 +16,13 @@ import {
 import { getScopedControl, getEvidenceTracking } from '../../data/scopingService'
 import { evidenceOwnerLabel } from '../../data/userDisplay'
 import { frequencyLabel } from '../../data/frequencyVocabulary'
+import {
+  basisLabel,
+  basisTitle,
+  coverageLabel,
+  stalenessSortKey,
+  uploadLabel,
+} from '../../data/evidenceFreshness'
 import { interactiveRowProps } from '../../data/interactiveRow'
 import { FRESHNESS_RULE, FRESHNESS_LEGEND } from '../../data/freshnessRule'
 
@@ -146,12 +153,11 @@ function HealthFilterBar({
 }
 
 export function HealthCard({ item, onNavigateToEvidence }: { item: EvidenceHealthResponse['items'][0]; onNavigateToEvidence?: (evidenceId: string) => void }) {
-  const freshnessLabel =
-    item.days_since_upload !== null
-      ? item.days_since_upload === 0
-        ? 'Today'
-        : `${item.days_since_upload}d ago`
-      : 'Never'
+  // Coverage first, arrival second. The status colour follows coverage age, so
+  // leading with the upload date produced red cards captioned "Today".
+  const coverage = coverageLabel(item)
+  const upload = uploadLabel(item)
+  const basis = basisLabel(item)
 
   return (
     <div
@@ -179,14 +185,28 @@ export function HealthCard({ item, onNavigateToEvidence }: { item: EvidenceHealt
         )}
       </div>
       <div className="ehd-card-footer">
-        <span className="ehd-card-freshness">
-          Last upload: <strong>{freshnessLabel}</strong>
+        <span className="ehd-card-freshness" data-testid="ehd-coverage">
+          Covers to: <strong>{coverage}</strong>
+          {basis && (
+            <span
+              className={`ehd-card-basis ehd-basis-${item.staleness_basis}`}
+              title={basisTitle(item) ?? undefined}
+              data-testid="ehd-basis"
+            >
+              {basis}
+            </span>
+          )}
         </span>
         {item.staleness_threshold_days !== null && (
           <span className="ehd-card-threshold">
             Threshold: {item.staleness_threshold_days}d
           </span>
         )}
+      </div>
+      <div className="ehd-card-subfooter">
+        <span className="ehd-card-upload" data-testid="ehd-upload">
+          Last upload: {upload}
+        </span>
       </div>
       {item.latest_validation_status && (
         <div className={`ehd-card-validation ehd-val-${item.latest_validation_status}`}>
@@ -507,7 +527,7 @@ export default function EvidenceDashboardTab({
     if (!data) return []
     return data.items
       .filter(i => i.status === 'amber' || i.status === 'red')
-      .sort((a, b) => (b.days_since_upload ?? 999) - (a.days_since_upload ?? 999))
+      .sort((a, b) => stalenessSortKey(b) - stalenessSortKey(a))
   }, [data])
 
   const filteredItems = useMemo(() => {
@@ -655,8 +675,16 @@ export default function EvidenceDashboardTab({
                 <StatusDot status={item.status} />
                 <span className="edt-stale-id">{item.evidence_id}</span>
                 {item.evidence_name && <span className="edt-stale-name">{item.evidence_name}</span>}
-                <span className="edt-stale-age">
-                  {item.days_since_upload !== null ? `${item.days_since_upload}d overdue` : 'Never uploaded'}
+                {/*
+                  This used to read "{days_since_upload}d overdue", which was
+                  wrong twice over: the number was days since the file arrived,
+                  not days past due, and it was the wrong measure now that
+                  status follows coverage. Say what the number is.
+                */}
+                <span className="edt-stale-age" data-testid="edt-stale-age">
+                  {item.days_since_coverage !== null
+                    ? `Covers to ${coverageLabel(item)}`
+                    : 'No coverage'}
                 </span>
               </div>
             ))}

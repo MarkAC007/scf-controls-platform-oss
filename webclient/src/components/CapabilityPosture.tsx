@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react'
 import { useCapabilityThemes, useCapabilityThemeEvidencePosture } from '../hooks/useCapabilityThemes'
+import { useScopedControlsStats } from '../hooks/useScopedControlsQuery'
 import ThemeCard from './capability-posture/ThemeCard'
 import ThemeDetail from './capability-posture/ThemeDetail'
 import { formatAxisPercent } from './capability-posture/axisHelpers'
@@ -12,6 +13,12 @@ interface CapabilityPostureProps {
 export default function CapabilityPosture({ organizationId }: CapabilityPostureProps) {
   const { data, isLoading, error } = useCapabilityThemes(organizationId)
   const { data: evidenceData } = useCapabilityThemeEvidencePosture(organizationId)
+  // #808: the scoped headline must be the DISTINCT in-scope control count. A
+  // control legitimately maps to several capability themes, so summing the
+  // per-theme scoped counts counts it once per theme and overstates scope.
+  // `scoped-controls/stats.in_scope` is the same authoritative figure the GRC
+  // Dashboard reports; the per-theme `X of Y scoped` cards stay as they are.
+  const { data: scopedStats } = useScopedControlsStats(organizationId)
   const [selectedTheme, setSelectedTheme] = useState<string | null>(null)
 
   const themes = data?.themes ?? []
@@ -27,14 +34,12 @@ export default function CapabilityPosture({ organizationId }: CapabilityPostureP
 
   const aggregateStats = useMemo(() => {
     if (themes.length === 0) return null
-    let totalScoped = 0
     let totalControls = 0
     let totalAtRisk = 0
     let compositeSum = 0
     let compositeCount = 0
 
     for (const t of themes) {
-      totalScoped += t.scoped_controls
       totalControls += t.total_controls
       totalAtRisk += t.posture.at_risk
       if (t.composite_score !== null) {
@@ -45,7 +50,6 @@ export default function CapabilityPosture({ organizationId }: CapabilityPostureP
 
     return {
       overallKps: compositeCount > 0 ? compositeSum / compositeCount : null,
-      totalScoped,
       totalControls,
       totalAtRisk,
     }
@@ -89,7 +93,9 @@ export default function CapabilityPosture({ organizationId }: CapabilityPostureP
               <div className="kpi-card-header">
                 <span className="kpi-label">SCOPED CONTROLS</span>
               </div>
-              <div className="kpi-value">{aggregateStats.totalScoped}</div>
+              <div className="kpi-value" data-testid="cp-scoped-controls">
+                {scopedStats ? scopedStats.in_scope : '—'}
+              </div>
             </div>
             {aggregateStats.totalAtRisk > 0 && (
               <div className="kpi-card">

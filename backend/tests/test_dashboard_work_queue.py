@@ -203,3 +203,187 @@ def test_stale_filter_matches_the_blocking_filter(client_factory):
         assert "owner_user_id" in sql
         assert "assigned_user_id" in sql
         assert " OR " in sql.upper()
+
+
+# ---------------------------------------------------------------------------
+# #809 -- one lapsed collection window, one queue entry
+# ---------------------------------------------------------------------------
+
+#: The evidence ids production returned under BOTH "Overdue evidence" and
+#: "Stale collections" on 2026-08-23 (org 6a1dad6d), in render order. Kept
+#: verbatim so the fixture is the reported defect rather than a paraphrase of
+#: it: 19 ids, 100% overlap, badge 58 against 39 items of real work.
+DOUBLE_COUNTED_EVIDENCE_IDS = [
+    "E-AST-12", "E-CRY-01", "E-TPM-01", "E-GOV-13", "E-RSK-01",
+    "E-RSK-03", "E-NET-01", "E-AST-01", "E-AST-02", "E-GOV-10",
+    "E-AAT-06", "E-NET-02", "E-NET-03", "E-RSK-04", "E-WEB-01",
+    "E-END-03", "E-AST-04", "E-AST-27", "E-CPL-01",
+]
+
+
+def _overdue_row_for(evidence_id: str, days: int) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=uuid4(),
+        title=f"Collect Evidence: {evidence_id}",
+        due_date=date.today() - timedelta(days=days),
+        priority="medium",
+        evidence_id=evidence_id,
+    )
+
+
+def _stale_row_for(evidence_id: str, days: int) -> SimpleNamespace:
+    return SimpleNamespace(
+        evidence_id=evidence_id,
+        next_collection_date=date.today() - timedelta(days=days),
+    )
+
+
+def _section_ids(body: dict) -> dict:
+    """Every section's user-visible item ids, keyed by section name."""
+    return {
+        "overdue_evidence": [i["evidence_id"] for i in body["overdue_evidence"]],
+        "blocking_controls": [i["scf_id"] for i in body["blocking_controls"]],
+        "stale_collections": [i["evidence_id"] for i in body["stale_collections"]],
+    }
+
+
+def _assert_sections_disjoint(body: dict) -> None:
+    sections = _section_ids(body)
+    for left, right in (
+        ("overdue_evidence", "stale_collections"),
+        ("overdue_evidence", "blocking_controls"),
+        ("blocking_controls", "stale_collections"),
+    ):
+        shared = set(sections[left]) & set(sections[right])
+        assert not shared, (
+            f"{len(shared)} id(s) appear in both '{left}' and '{right}': "
+            f"{sorted(shared)}"
+        )
+
+
+def test_stale_collections_exclude_evidence_that_already_has_an_overdue_task(
+    client_factory,
+):
+    """No evidence id may appear under two headings.
+
+    ``evidence_tracking.next_collection_date`` is written in exactly one place
+    -- ``task_generator.generate_task_for_tracking`` -- to the same value as the
+    ``due_date`` of the task created on the very next line. A lapsed schedule
+    with a live task therefore satisfies both predicates by construction, which
+    is why the two sections came back byte-identical in production.
+
+    The exclusion is a correlated ``NOT EXISTS`` in the stale query, so the SQL
+    is where an in-process suite can observe it. It must be a subquery and not
+    a post-filter over the fetched overdue page: section 1 is capped at 20 rows,
+    and filtering against that page alone would let overdue item 21 onwards
+    reappear under the other heading.
+    """
+    session = _FakeAsyncSession([[], [], []])
+    client = client_factory(session)
+    resp = client.get(f"/api/organizations/{ORG_ID}/dashboard/work-queue")
+    assert resp.status_code == 200
+
+    stale_sql = " ".join(str(session.statements[2]).split())
+    assert "NOT (EXISTS" in stale_sql, (
+        "stale-collections query does not exclude anything; it will re-report "
+        f"every overdue task's evidence a second time:\n{stale_sql}"
+    )
+    assert "FROM evidence_collection_tasks" in stale_sql
+    assert (
+        "evidence_collection_tasks.evidence_tracking_id = evidence_tracking.id"
+        in stale_sql
+    ), "the EXISTS is not correlated to the outer tracking row"
+    assert "evidence_collection_tasks.due_date <" in stale_sql
+    assert "evidence_collection_tasks.status !=" in stale_sql
+
+
+def test_stale_exclusion_narrows_with_assigned_to_me(client_factory):
+    """The exclusion narrows exactly as section 1 does.
+
+    Under ``assigned_to_me`` section 1 only carries tasks assigned to the
+    caller. If the exclusion stayed unfiltered, a tracking row the caller owns
+    whose overdue task belongs to somebody else would vanish from both sections
+    instead of appearing in exactly one -- silently dropped work, which is the
+    opposite failure to the double count and just as wrong.
+    """
+    session = _FakeAsyncSession([[], [], []])
+    client = client_factory(session)
+    resp = client.get(
+        f"/api/organizations/{ORG_ID}/dashboard/work-queue?assigned_to_me=true"
+    )
+    assert resp.status_code == 200
+
+    stale_sql = " ".join(str(session.statements[2]).split())
+    exists_clause = stale_sql.split("NOT (EXISTS", 1)[1]
+    assert "evidence_collection_tasks.assigned_user_id =" in exists_clause
+
+
+def test_badge_counts_the_distinct_union_not_the_sum_of_sections(client_factory):
+    """The badge is ``len(union of item ids)``, never ``sum(len(section))``.
+
+    Fed the production payload verbatim -- the same 19 evidence ids under both
+    evidence headings plus 20 genuinely distinct blocking controls -- the badge
+    must read 39, the count of things a person actually has to do, not 58.
+
+    Scripted with the overlap still present on purpose. The ``NOT EXISTS`` above
+    is what keeps it from arising, but a count that is only correct while every
+    section happens to be disjoint is a count that breaks the next time somebody
+    adds a section. This asserts the arithmetic independently of the predicate.
+    """
+    overdue_rows = [
+        _overdue_row_for(evidence_id, 2 if index < 10 else 1)
+        for index, evidence_id in enumerate(DOUBLE_COUNTED_EVIDENCE_IDS)
+    ]
+    stale_rows = [
+        _stale_row_for(evidence_id, 2 if index < 10 else 1)
+        for index, evidence_id in enumerate(DOUBLE_COUNTED_EVIDENCE_IDS)
+    ]
+    blocking_rows = [
+        SimpleNamespace(
+            scf_id=f"GOV-{index:02d}",
+            implementation_status="not_started",
+            updated_at=datetime.now() - timedelta(days=30),
+        )
+        for index in range(20)
+    ]
+
+    session = _FakeAsyncSession([overdue_rows, blocking_rows, stale_rows])
+    client = client_factory(session)
+    resp = client.get(f"/api/organizations/{ORG_ID}/dashboard/work-queue")
+    assert resp.status_code == 200
+    body = resp.json()
+
+    sections = _section_ids(body)
+    expected = (
+        {("evidence", i) for i in sections["overdue_evidence"]}
+        | {("control", i) for i in sections["blocking_controls"]}
+        | {("evidence", i) for i in sections["stale_collections"]}
+    )
+    assert len(expected) == 39
+    assert body["total_items"] == len(expected)
+    assert body["total_items"] != sum(len(ids) for ids in sections.values())
+
+
+def test_disjoint_sections_render_each_item_once(client_factory):
+    """The end state a user sees: 19 overdue, 20 blocking, nothing repeated."""
+    overdue_rows = [
+        _overdue_row_for(evidence_id, 2 if index < 10 else 1)
+        for index, evidence_id in enumerate(DOUBLE_COUNTED_EVIDENCE_IDS)
+    ]
+    blocking_rows = [
+        SimpleNamespace(
+            scf_id=f"GOV-{index:02d}",
+            implementation_status="not_started",
+            updated_at=datetime.now() - timedelta(days=30),
+        )
+        for index in range(20)
+    ]
+
+    session = _FakeAsyncSession([overdue_rows, blocking_rows, []])
+    client = client_factory(session)
+    resp = client.get(f"/api/organizations/{ORG_ID}/dashboard/work-queue")
+    assert resp.status_code == 200
+    body = resp.json()
+
+    _assert_sections_disjoint(body)
+    assert body["total_items"] == 39

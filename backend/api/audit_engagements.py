@@ -762,6 +762,11 @@ async def _fetch_evidence_by_scf(db: AsyncSession, org_id: UUID, scf_ids: set) -
             EvidenceFile.filename,
             EvidenceFile.uploaded_at,
             EvidenceFile.review_status,
+            # The window test prefers what the preparer asserted this evidence
+            # covers over when it happened to be uploaded (#786). Not selecting
+            # these would silently put every artifact back on the upload proxy.
+            EvidenceFile.effective_period_start,
+            EvidenceFile.effective_period_end,
         ).where(
             and_(
                 EvidenceFile.organization_id == org_id,
@@ -771,12 +776,17 @@ async def _fetch_evidence_by_scf(db: AsyncSession, org_id: UUID, scf_ids: set) -
         )
     )
     files_by_evidence_id: dict = {}
-    for fid, evidence_id, filename, uploaded_at, review_status in file_result.fetchall():
+    for (
+        fid, evidence_id, filename, uploaded_at, review_status,
+        period_start, period_end,
+    ) in file_result.fetchall():
         files_by_evidence_id.setdefault(evidence_id, []).append({
             "id": fid,
             "filename": filename,
             "uploaded_at": uploaded_at,
             "review_status": review_status,
+            "effective_period_start": period_start,
+            "effective_period_end": period_end,
         })
 
     evidence_by_scf: dict = {}

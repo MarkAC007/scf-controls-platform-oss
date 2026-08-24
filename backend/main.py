@@ -58,6 +58,7 @@ from api import (
     audit_log,
     scope_preferences,
     capability_themes,
+    features,
     webhook_endpoints,
     evidence_inbox,
     evidence_validation,
@@ -393,6 +394,7 @@ app.include_router(dashboard.router, prefix="/api")  # GRC Dashboard work queue
 app.include_router(audit_log.router, prefix="/api")  # Audit trail (SOC 2 Type II)
 app.include_router(scope_preferences.router, prefix="/api")  # Audit scope preferences (Issue #362)
 app.include_router(capability_themes.router, prefix="/api")  # KSI capability themes (Epic #317)
+app.include_router(features.router, prefix="/api")  # Runtime feature flags (#787)
 app.include_router(evidence_files.router, prefix="/api")  # Evidence S3 file uploads (Issue #324)
 app.include_router(webhook_endpoints.router, prefix="/api")  # Webhook endpoint management (Issue #214)
 app.include_router(evidence_inbox.router, prefix="/api")  # Evidence inbox ingestion (Issue #214)

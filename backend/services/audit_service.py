@@ -68,6 +68,22 @@ EVIDENCE_FILE_TRACKED_FIELDS: set = {
     'sha256_hash',
     'classification',
     'is_deleted',
+    # Preparer assertions (#786, #802). Tracked because they are the fields an
+    # auditor is most likely to ask about after the fact — "was the period
+    # always 1 Jan to 31 Mar, or did someone widen it when the sample came up
+    # short?" is exactly the question an audit trail exists to answer.
+    'effective_period_start',
+    'effective_period_end',
+    'population_size',
+    'population_source',
+    'sample_size',
+    'sample_method',
+    'sample_basis',
+    'ipe_source_system',
+    'ipe_query_or_filter',
+    'ipe_extracted_by_user_id',
+    'ipe_extracted_at',
+    'ipe_completeness_check',
 }
 
 # Per-window review fields (M4 PR 2, #574 — ISC-15).
@@ -482,3 +498,29 @@ def detect_action_source(request: Request) -> str:
 def get_request_id(request: Request) -> Optional['UUID']:
     """Read the middleware-generated request_id from request state."""
     return getattr(request.state, "audit_request_id", None)
+
+
+def get_client_ip(request: Request) -> Optional[str]:
+    """Best-effort client IP for an audit row, honouring the reverse proxy.
+
+    `X-Forwarded-For` is a list and the left-most entry is the originating
+    client; the platform sits behind a proxy in every deployment shape it
+    supports, so reading `request.client.host` alone records the load balancer.
+
+    Truncated to `audit_log.ip_address`'s 45 characters (IPv6 with a scope id is
+    the worst case) rather than risking a write failure on a long or malicious
+    header — a clipped address in the audit trail beats no audit row at all.
+    """
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        first = forwarded.split(",")[0].strip()
+        if first:
+            return first[:45]
+    client = getattr(request, "client", None)
+    host = getattr(client, "host", None)
+    return host[:45] if host else None
+
+
+def get_user_agent(request: Request) -> Optional[str]:
+    """The requesting client's User-Agent, or None. `audit_log.user_agent` is Text."""
+    return request.headers.get("user-agent")

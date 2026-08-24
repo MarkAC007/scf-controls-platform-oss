@@ -26,7 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth import require_org_role, OrgMembership
 from database import get_db
-from models import EvidenceTracking, EvidenceWindowAssessment
+from models import EvidenceFile, EvidenceTracking, EvidenceWindowAssessment
 from tasks_window_assessment import assess_window_task
 from schemas import (
     EvidenceWindowAssessmentResponse,
@@ -41,7 +41,14 @@ from services.audit_service import (
     detect_action_source,
     WINDOW_ASSESSMENT_TRACKED_FIELDS,
 )
+from services.assurance_policy import get_assurance_policy
 from services.notifications import create_evidence_rejected_notifications
+from services.review_workflow import (
+    SOD_REFUSAL_DETAIL,
+    reviewer_is_sole_uploader,
+    transition_allowed,
+    transition_error,
+)
 
 
 # Valid review statuses per ISC-11. ``not_reviewed`` permitted to allow
@@ -434,11 +441,20 @@ async def refresh_stale_window_assessments(
     legacy per-file review path when ``ENABLE_PER_WINDOW_REVIEW`` is on.
 
     Valid ``review_status`` values: ``approved``, ``rejected``,
-    ``needs_revision``, ``not_reviewed``. Transitions are unrestricted
-    (any → any) and idempotent. Audit log captures `old → new`.
+    ``needs_revision``, ``not_reviewed``. Re-sending the current status is
+    idempotent. Audit log captures `old → new`.
+
+    Transitions are constrained (#803): a rejection cannot become an
+    approval in one step — route it through ``needs_revision`` so the
+    re-assessment is on the record.
+
+    Where the organization has set ``require_reviewer_independence``, a
+    reviewer who is the *sole* uploader of the files in the window is
+    refused.
 
     422 on invalid ``review_status``. 404 if the EWA row is missing or
-    belongs to a different organization.
+    belongs to a different organization. 409 on a disallowed transition.
+    403 on a segregation-of-duties refusal.
     """,
 )
 async def review_window_assessment(
@@ -476,10 +492,43 @@ async def review_window_assessment(
     if not ewa:
         raise HTTPException(status_code=404, detail="Window assessment not found")
 
+    # D9 — constrained transitions, for every org. This is not a policy
+    # opt-in: an audit trail in which a rejection becomes an approval with
+    # no step in between records that a decision changed without recording
+    # that anything was reconsidered.
+    if not transition_allowed(ewa.review_status, body.review_status):
+        raise HTTPException(
+            status_code=409,
+            detail=transition_error(ewa.review_status, body.review_status),
+        )
+
+    reviewer_id = UUID(membership.user.db_id)
+
+    # D8 — segregation of duties, opt-in per org. Only an approval is
+    # gated: sending your own evidence back for revision, or rejecting it,
+    # takes nothing on trust, and blocking it would just leave
+    # single-handed teams unable to withdraw a mistake.
+    policy = await get_assurance_policy(db, org_id)
+    if policy.require_reviewer_independence and body.review_status == "approved":
+        file_ids = [str(f) for f in (ewa.file_ids or [])]
+        if file_ids:
+            uploader_rows = await db.execute(
+                select(EvidenceFile.uploaded_by_user_id).where(
+                    and_(
+                        EvidenceFile.organization_id == org_id,
+                        EvidenceFile.id.in_(file_ids),
+                    )
+                )
+            )
+            if reviewer_is_sole_uploader(
+                uploader_rows.scalars().all(), reviewer_id
+            ):
+                raise HTTPException(status_code=403, detail=SOD_REFUSAL_DETAIL)
+
     old_values = {f: getattr(ewa, f) for f in WINDOW_ASSESSMENT_TRACKED_FIELDS}
 
     ewa.review_status = body.review_status
-    ewa.reviewed_by_user_id = UUID(membership.user.db_id)
+    ewa.reviewed_by_user_id = reviewer_id
     ewa.reviewed_at = datetime.utcnow()
     ewa.review_notes = body.review_notes
 

@@ -11,12 +11,12 @@ Endpoints:
 """
 import hashlib
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 from typing import Dict, List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, Query
-from sqlalchemy import select, func as sa_func, and_
+from sqlalchemy import Date, Integer, select, func as sa_func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth import require_org_role, OrgMembership
@@ -57,7 +57,46 @@ class EvidenceHealthResponseBadged(EvidenceHealthResponse):
 #: Only used when NO frequency is configured at all. A configured-but-
 #: unrecognised frequency must not silently land here (#783).
 DEFAULT_WARNING_DAYS = DEFAULT_STALENESS_DAYS
-DEFAULT_CRITICAL_DAYS = 60
+
+# `DEFAULT_CRITICAL_DAYS = 60` used to live here and was read by nothing —
+# removed rather than left as a constant that looks like configuration. The
+# amber/red split is derived (1.5x the warning threshold, see
+# `_calculate_status`), so a second independent number could only ever
+# disagree with it. `EvidenceHealthConfig.staleness_critical_days` is the same
+# dead number in the database; see the tombstone on that model.
+
+
+
+def latest_coverage_expr():
+    """The newest date any of an evidence record's files *claims to cover*.
+
+    ``COALESCE(effective_period_end, uploaded_at::date)`` — the preparer's
+    asserted period end where there is one, and the upload date standing in for
+    it where there is not.
+
+    This lives in one function because two endpoints need it and they used to
+    disagree: the dashboard's traffic light and the upcoming-deadlines list
+    anchored on different dates, so a record could be amber on one screen and
+    not due for weeks on the other (#57). Two copies of a rule is how that
+    happened; one copy is the fix.
+    """
+    return sa_func.max(
+        sa_func.coalesce(
+            EvidenceFile.effective_period_end,
+            sa_func.cast(EvidenceFile.uploaded_at, Date),
+        )
+    )
+
+
+def any_asserted_expr():
+    """Whether *any* of the files carried an asserted period.
+
+    Drives the `staleness_basis` disclosure: a reader needs to know whether the
+    coverage date is a claim someone made or the upload date wearing its hat.
+    """
+    return sa_func.max(
+        sa_func.cast(EvidenceFile.effective_period_end.isnot(None), Integer)
+    )
 
 
 def _calculate_status(
@@ -138,10 +177,22 @@ async def get_evidence_health(
     }
 
     # 3. Get latest evidence file per evidence_id
+    #
+    # Two dates come back, and they answer different questions. `latest_upload`
+    # is when the newest file arrived — still shown, because a reader wants it.
+    # `latest_coverage` is the newest date any file *claims to cover*: the
+    # preparer-asserted effective period end where one exists (#786), and the
+    # upload date only where nothing was asserted.
+    #
+    # The traffic light is computed from `latest_coverage`. Uploading a report
+    # about last quarter does not make this quarter's control fresh, and the
+    # dashboard said otherwise for as long as it anchored on arrival.
     latest_files_subq = (
         select(
             EvidenceFile.evidence_id,
             sa_func.max(EvidenceFile.uploaded_at).label("latest_upload"),
+            latest_coverage_expr().label("latest_coverage"),
+            any_asserted_expr().label("any_asserted"),
             sa_func.count(EvidenceFile.id).label("file_count"),
         )
         .where(
@@ -216,7 +267,15 @@ async def get_evidence_health(
         eid = tracking.evidence_id
         file_info = file_data.get(eid)
 
-        # Determine threshold
+        # Determine threshold.
+        #
+        # TOMBSTONE — the per-item override outranks the frequency vocabulary,
+        # and has no UI or API to set it (#789 audit lane). It is reachable only
+        # by writing a row into `evidence_health_config` directly, which is how
+        # support would apply a one-off exception, and is left in place for
+        # exactly that. What it must NOT become is a self-serve setting that
+        # quietly beats the cadence an organisation configured — if that is ever
+        # wanted, it needs a UI that says out loud which number is winning.
         config = config_map.get(eid)
         if config:
             threshold_days = config.staleness_warning_days
@@ -225,17 +284,28 @@ async def get_evidence_health(
         else:
             threshold_days = DEFAULT_WARNING_DAYS
 
-        # Calculate days since last upload
+        # Calculate days since last upload, and — separately — days since the
+        # evidence stops claiming to cover anything. The status follows the
+        # second; the first is reported because a reader still wants to know
+        # when the file turned up.
         days_since = None
+        days_since_coverage = None
         last_upload = None
+        coverage_through = None
+        staleness_basis = "upload_date"
         file_count = 0
         if file_info:
             last_upload = file_info.latest_upload
             file_count = file_info.file_count
             if last_upload:
                 days_since = (now - last_upload).days
+            coverage_through = file_info.latest_coverage
+            if file_info.any_asserted:
+                staleness_basis = "asserted_period"
+            if coverage_through:
+                days_since_coverage = (now.date() - coverage_through).days
 
-        status = _calculate_status(days_since, threshold_days)
+        status = _calculate_status(days_since_coverage, threshold_days)
 
         catalog_meta = catalog_meta_by_eid.get(eid)
         catalog_status = catalog_meta.status if catalog_meta is not None else None
@@ -253,6 +323,9 @@ async def get_evidence_health(
             frequency=tracking.frequency,
             last_file_uploaded_at=last_upload,
             days_since_upload=days_since,
+            coverage_through=coverage_through,
+            days_since_coverage=days_since_coverage,
+            staleness_basis=staleness_basis,
             staleness_threshold_days=threshold_days,
             status=status,
             file_count=file_count,
@@ -311,6 +384,10 @@ async def get_upcoming_evidence(
         select(
             EvidenceFile.evidence_id,
             sa_func.max(EvidenceFile.uploaded_at).label("latest_upload"),
+            # Same reasoning as the dashboard query above: a deadline counted
+            # from when a file arrived rather than from what it covers is late
+            # by the whole reporting gap, every cycle (#786).
+            latest_coverage_expr().label("latest_coverage"),
             sa_func.count(EvidenceFile.id).label("file_count"),
         )
         .where(
@@ -354,9 +431,18 @@ async def get_upcoming_evidence(
             threshold_days = DEFAULT_WARNING_DAYS
 
         last_upload = file_info.latest_upload if file_info else None
-        if last_upload:
-            next_due = last_upload + timedelta(days=threshold_days)
-            days_until_due = (next_due - now).days
+        coverage_through = file_info.latest_coverage if file_info else None
+        if coverage_through:
+            # The cadence runs from the end of the period the evidence covers,
+            # not from the moment the paperwork landed.
+            #
+            # Counted in whole days between two *dates*. Subtracting a datetime
+            # from a midnight-anchored one truncates toward zero, so anything
+            # computed after midnight came out a day short — a due date that
+            # reads as one day nearer than it is, all afternoon, every day.
+            due_date = coverage_through + timedelta(days=threshold_days)
+            next_due = datetime.combine(due_date, time.min)
+            days_until_due = (due_date - now.date()).days
             in_window = days_until_due <= days
         else:
             # Never collected. There is no due date, so there is no number of

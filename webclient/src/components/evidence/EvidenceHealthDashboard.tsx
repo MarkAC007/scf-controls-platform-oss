@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { getEvidenceHealth, type EvidenceHealthResponse } from '../../data/apiClient'
 import { frequencyLabel } from '../../data/frequencyVocabulary'
+import { basisLabel, basisTitle, coverageLabel, uploadLabel } from '../../data/evidenceFreshness'
 
 // ---- Types ----
 
@@ -119,12 +120,11 @@ function HealthFilterBar({
 }
 
 function HealthCard({ item, onNavigateToEvidence }: { item: EvidenceHealthResponse['items'][0]; onNavigateToEvidence?: (evidenceId: string) => void }) {
-  const freshnessLabel =
-    item.days_since_upload !== null
-      ? item.days_since_upload === 0
-        ? 'Today'
-        : `${item.days_since_upload}d ago`
-      : 'Never'
+  // Coverage first, arrival second. The status colour follows coverage age, so
+  // leading with the upload date produced red cards captioned "Today".
+  const coverage = coverageLabel(item)
+  const upload = uploadLabel(item)
+  const basis = basisLabel(item)
 
   return (
     <div
@@ -150,14 +150,28 @@ function HealthCard({ item, onNavigateToEvidence }: { item: EvidenceHealthRespon
         )}
       </div>
       <div className="ehd-card-footer">
-        <span className="ehd-card-freshness">
-          Last upload: <strong>{freshnessLabel}</strong>
+        <span className="ehd-card-freshness" data-testid="ehd-coverage">
+          Covers to: <strong>{coverage}</strong>
+          {basis && (
+            <span
+              className={`ehd-card-basis ehd-basis-${item.staleness_basis}`}
+              title={basisTitle(item) ?? undefined}
+              data-testid="ehd-basis"
+            >
+              {basis}
+            </span>
+          )}
         </span>
         {item.staleness_threshold_days !== null && (
           <span className="ehd-card-threshold">
             Threshold: {item.staleness_threshold_days}d
           </span>
         )}
+      </div>
+      <div className="ehd-card-subfooter">
+        <span className="ehd-card-upload" data-testid="ehd-upload">
+          Last upload: {upload}
+        </span>
       </div>
       {item.latest_validation_status && (
         <div className={`ehd-card-validation ehd-val-${item.latest_validation_status}`}>

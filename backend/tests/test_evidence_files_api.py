@@ -13,10 +13,42 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from services.preparer_assertions import PREPARER_ASSERTION_FIELDS  # noqa: E402
+from evidence_mocks import unasserted  # noqa: E402
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def signing_secret(monkeypatch):
+    """Give every test in this module a real signing secret.
+
+    Download tokens and upload tickets both refuse to sign or verify without
+    one — an unsigned HMAC is forgeable from public knowledge, so the services
+    fail closed rather than pretend. The module-level cache is cleared on the
+    way in and out so this leaks into nothing else.
+    """
+    import services.download_token as dt
+
+    monkeypatch.setenv("DOWNLOAD_TOKEN_SECRET", "test-signing-secret")
+    monkeypatch.setattr(dt, "_SECRET", None)
+    yield
+    monkeypatch.setattr(dt, "_SECRET", None)
+
+
+def make_ticket(org_id, evidence_id, membership, s3_key):
+    """Mint the upload ticket that confirm_upload now requires."""
+    from services.upload_ticket import mint_upload_ticket
+
+    return mint_upload_ticket(
+        object_key=s3_key,
+        org_id=str(org_id),
+        evidence_id=evidence_id,
+        user_id=str(UUID(membership.user.db_id)),
+    )
+
 
 @pytest.fixture
 def mock_env(monkeypatch):
@@ -59,12 +91,18 @@ def mock_db():
     db.commit = AsyncMock()
     db.refresh = AsyncMock()
     db.execute = AsyncMock()
+    # Default every lookup to "found nothing". A MagicMock result would hand
+    # back a MagicMock row, and callers that compare it to a date — the
+    # collection-date stamp, for one — blow up on a comparison rather than
+    # taking the empty branch the test intended.
+    db.execute.return_value.scalar_one_or_none = MagicMock(return_value=None)
     return db
 
 
 # ---------------------------------------------------------------------------
 # Upload URL tests
 # ---------------------------------------------------------------------------
+
 
 class TestGetUploadUrl:
     """Tests for POST /evidence/{evidence_id}/files/upload-url"""
@@ -152,10 +190,11 @@ class TestConfirmUpload:
     """Tests for POST /evidence/{evidence_id}/files/confirm"""
 
     @pytest.mark.asyncio
+    @patch("api.evidence_files.enqueue_integrity_verification")
     @patch("api.evidence_files.run_validation", new_callable=AsyncMock)
     @patch("api.evidence_files.log_entity_changes", new_callable=AsyncMock)
     @patch("api.evidence_files.tag_evidence_object")
-    async def test_creates_evidence_file_record(self, mock_tag, mock_audit, mock_validation, membership, mock_db, org_id):
+    async def test_creates_evidence_file_record(self, mock_tag, mock_audit, mock_validation, mock_enqueue, membership, mock_db, org_id):
         from api.evidence_files import confirm_upload
         from schemas import EvidenceFileConfirmRequest
 
@@ -165,6 +204,7 @@ class TestConfirmUpload:
         request = EvidenceFileConfirmRequest(
             s3_key=s3_key,
             sha256_hash="a" * 64,
+            upload_ticket=make_ticket(org_id, "ERL-001", membership, s3_key),
         )
 
         # Mock the refresh to populate the ORM object
@@ -172,6 +212,13 @@ class TestConfirmUpload:
             obj.id = uuid4()
             obj.uploaded_at = datetime.utcnow()
             obj.classification = "internal"
+            obj.scan_status = "clean"
+            obj.scan_details = None
+            obj.computed_sha256 = None
+            obj.hash_verification_status = "pending"
+            obj.hash_verified_at = None
+            obj.hash_verification_details = None
+            unasserted(obj)
             obj.is_deleted = False
             obj.file_size_bytes = 0
             obj.expires_at = None
@@ -200,6 +247,10 @@ class TestConfirmUpload:
         assert result.sha256_hash == "a" * 64
         mock_db.add.assert_called_once()
         mock_audit.assert_called_once()
+        # The record is only a claim until the server has hashed the object it
+        # points at. If nothing enqueues the verification, every browser upload
+        # sits at `pending` until the hourly sweep happens to notice it.
+        mock_enqueue.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_rejects_cross_org_s3_key(self, membership, mock_db, org_id):
@@ -225,11 +276,12 @@ class TestConfirmUpload:
     @pytest.mark.asyncio
     @patch("api.evidence_files._to_response")
     @patch("api.evidence_files._safe_download_url", return_value=None)
+    @patch("api.evidence_files.enqueue_integrity_verification")
     @patch("api.evidence_files.run_validation", new_callable=AsyncMock)
     @patch("api.evidence_files.log_entity_changes", new_callable=AsyncMock)
     @patch("api.evidence_files.tag_evidence_object")
     async def test_continues_when_s3_tagging_fails(
-        self, mock_tag, mock_audit, mock_validation, mock_dl_url, mock_response, membership, mock_db, org_id
+        self, mock_tag, mock_audit, mock_validation, mock_enqueue, mock_dl_url, mock_response, membership, mock_db, org_id
     ):
         """Tagging failure is non-fatal — confirm should still create the DB record."""
         from api.evidence_files import confirm_upload
@@ -238,8 +290,10 @@ class TestConfirmUpload:
         mock_tag.side_effect = Exception("S3 error")
         mock_response.return_value = MagicMock()
 
+        s3_key = f"evidence/{org_id}/2026/02/abc_report.pdf"
         request = EvidenceFileConfirmRequest(
-            s3_key=f"evidence/{org_id}/2026/02/abc_report.pdf",
+            s3_key=s3_key,
+            upload_ticket=make_ticket(org_id, "ERL-001", membership, s3_key),
         )
 
         # Mock DB async methods
@@ -303,6 +357,13 @@ class TestListEvidenceFiles:
         mock_file.file_size_bytes = 1024
         mock_file.sha256_hash = "a" * 64
         mock_file.classification = "internal"
+        mock_file.scan_status = "clean"
+        mock_file.scan_details = None
+        mock_file.computed_sha256 = None
+        mock_file.hash_verification_status = "pending"
+        mock_file.hash_verified_at = None
+        mock_file.hash_verification_details = None
+        unasserted(mock_file)
         mock_file.uploaded_by_user_id = user_id
         mock_file.uploaded_at = datetime.utcnow()
         mock_file.expires_at = None
@@ -374,6 +435,11 @@ class TestGetEvidenceFile:
         mock_file.classification = "internal"
         mock_file.scan_status = "clean"
         mock_file.scan_details = None
+        mock_file.computed_sha256 = None
+        mock_file.hash_verification_status = "pending"
+        mock_file.hash_verified_at = None
+        mock_file.hash_verification_details = None
+        unasserted(mock_file)
         mock_file.uploaded_by_user_id = user_id
         mock_file.uploaded_at = datetime.utcnow()
         mock_file.expires_at = None
@@ -441,6 +507,67 @@ class TestGetEvidenceFile:
         assert exc_info.value.status_code == 404
 
 
+class TestResponseReportsIntegrityState:
+    """`_to_response` must echo what is stored, not the schema defaults.
+
+    Before this PR the builder simply never passed `scan_status` or
+    `scan_details`, so pydantic filled in its default and every file in every
+    listing reported `"pending"` — quarantined ones included.
+    """
+
+    @pytest.mark.asyncio
+    async def test_reports_stored_scan_and_hash_state(self, membership, mock_db, org_id, user_id):
+        from api.evidence_files import get_evidence_file
+
+        file_id = uuid4()
+        mock_file = MagicMock()
+        mock_file.id = file_id
+        mock_file.organization_id = org_id
+        mock_file.evidence_id = "ERL-001"
+        mock_file.filename = "report.pdf"
+        mock_file.s3_key = f"quarantine/{org_id}/{file_id}_report.pdf"
+        mock_file.content_type = "application/pdf"
+        mock_file.file_size_bytes = 1024
+        mock_file.sha256_hash = "a" * 64
+        mock_file.classification = "internal"
+        mock_file.scan_status = "infected"
+        mock_file.scan_details = {"signature": "Eicar-Test-Signature"}
+        mock_file.computed_sha256 = "b" * 64
+        mock_file.hash_verification_status = "mismatch"
+        mock_file.hash_verified_at = datetime.utcnow()
+        mock_file.hash_verification_details = {"asserted_sha256": "a" * 64}
+        unasserted(mock_file)
+        mock_file.uploaded_by_user_id = user_id
+        mock_file.uploaded_at = datetime.utcnow()
+        mock_file.expires_at = None
+        mock_file.is_deleted = False
+        mock_file.uploaded_by = membership.user
+        mock_file.review_status = "pending"
+        mock_file.reviewed_by_user_id = None
+        mock_file.reviewed_at = None
+        mock_file.review_notes = None
+        mock_file.reviewed_by = None
+
+        mock_result = MagicMock()
+        mock_result.unique.return_value.scalar_one_or_none.return_value = mock_file
+        mock_db.execute.return_value = mock_result
+
+        result = await get_evidence_file(
+            org_id=org_id,
+            evidence_id="ERL-001",
+            file_id=file_id,
+            membership=membership,
+            db=mock_db,
+        )
+
+        assert result.scan_status == "infected"
+        assert result.scan_details == {"signature": "Eicar-Test-Signature"}
+        assert result.computed_sha256 == "b" * 64
+        assert result.hash_verification_status == "mismatch"
+        # Severity order: infected outranks the mismatch it also has.
+        assert result.integrity_badge == "infected"
+
+
 # ---------------------------------------------------------------------------
 # Delete file tests
 # ---------------------------------------------------------------------------
@@ -464,6 +591,13 @@ class TestDeleteEvidenceFile:
         mock_file.file_size_bytes = 1024
         mock_file.sha256_hash = None
         mock_file.classification = "internal"
+        mock_file.scan_status = "clean"
+        mock_file.scan_details = None
+        mock_file.computed_sha256 = None
+        mock_file.hash_verification_status = "pending"
+        mock_file.hash_verified_at = None
+        mock_file.hash_verification_details = None
+        unasserted(mock_file)
         mock_file.uploaded_by_user_id = user_id
         mock_file.uploaded_at = datetime.utcnow()
         mock_file.expires_at = None
@@ -547,73 +681,217 @@ class TestDeleteEvidenceFile:
 class TestDownloadTokenAuth:
     """Tests for download endpoint token-based auth (browser navigation support)."""
 
+    @staticmethod
+    def _file(org_id, scan_status="clean"):
+        mock_file = MagicMock()
+        mock_file.id = uuid4()
+        mock_file.organization_id = org_id
+        mock_file.s3_key = f"evidence/{org_id}/2026/02/abc_report.pdf"
+        mock_file.filename = "report.pdf"
+        mock_file.content_type = "application/pdf"
+        mock_file.scan_status = scan_status
+        return mock_file
+
+    @staticmethod
+    def _request():
+        req = MagicMock()
+        req.headers = {}
+        req.client = None
+        return req
+
     @pytest.mark.asyncio
+    @patch("api.evidence_files.create_audit_entry", new_callable=AsyncMock)
     @patch("api.evidence_files.download_blob_stream")
-    async def test_valid_token_grants_access(self, mock_stream, mock_db, org_id):
+    async def test_valid_token_grants_access(self, mock_stream, mock_audit, mock_db, org_id, user_id):
         """A valid HMAC token + expires pair should authenticate the download."""
         from api.evidence_files import download_evidence_file
         from services.download_token import generate_download_token
 
         file_id = uuid4()
+        token, expires = generate_download_token(str(file_id), str(org_id), str(user_id))
 
-        # Generate a valid token
-        token, expires = generate_download_token(str(file_id), str(org_id))
-
-        # Mock the DB to return a file
-        mock_file = MagicMock()
-        mock_file.s3_key = f"evidence/{org_id}/2026/02/abc_report.pdf"
-        mock_file.filename = "report.pdf"
-        mock_file.content_type = "application/pdf"
         mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = mock_file
+        mock_result.scalar_one_or_none.return_value = self._file(org_id)
         mock_db.execute.return_value = mock_result
-
-        # Mock blob stream
         mock_stream.return_value = iter([b"chunk"])
-
-        # Build a mock request with NO auth header
-        mock_request = MagicMock()
-        mock_request.headers = {}
 
         result = await download_evidence_file(
             org_id=org_id,
             evidence_id="ERL-001",
             file_id=file_id,
-            request=mock_request,
+            request=self._request(),
             disposition="inline",
             token=token,
             expires=expires,
             db=mock_db,
         )
 
-        # Should succeed — StreamingResponse returned
         assert result.status_code == 200
         assert result.media_type == "application/pdf"
 
     @pytest.mark.asyncio
-    async def test_expired_token_returns_401(self, mock_db, org_id):
-        """An expired token should return 401."""
+    @patch("api.evidence_files.create_audit_entry", new_callable=AsyncMock)
+    @patch("api.evidence_files.download_blob_stream")
+    async def test_signed_url_download_is_attributed_to_the_bound_user(
+        self, mock_stream, mock_audit, mock_db, org_id, user_id
+    ):
+        """A browser download writes a custody row naming the user the link was minted for.
+
+        This is the whole point of putting the user id in the token: before it,
+        the one handler that sees every evidence read could not say who was
+        reading, so "who has seen this evidence?" had no answer.
+        """
         from api.evidence_files import download_evidence_file
         from services.download_token import generate_download_token
 
         file_id = uuid4()
+        token, expires = generate_download_token(str(file_id), str(org_id), str(user_id))
 
-        # Generate a token with 0 TTL (already expired)
-        token, expires = generate_download_token(str(file_id), str(org_id), ttl_seconds=0)
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = self._file(org_id)
+        mock_db.execute.return_value = mock_result
+        mock_stream.return_value = iter([b"chunk"])
 
-        # Ensure it's expired
-        import time
-        time.sleep(1)
+        await download_evidence_file(
+            org_id=org_id,
+            evidence_id="ERL-001",
+            file_id=file_id,
+            request=self._request(),
+            disposition="inline",
+            token=token,
+            expires=expires,
+            db=mock_db,
+        )
 
-        mock_request = MagicMock()
-        mock_request.headers = {}
+        mock_audit.assert_awaited_once()
+        kwargs = mock_audit.await_args.kwargs
+        assert kwargs["action"] == "download"
+        assert kwargs["entity_type"] == "evidence_file"
+        assert kwargs["changed_by_user_id"] == user_id
+
+    @pytest.mark.asyncio
+    @patch("api.evidence_files.create_audit_entry", new_callable=AsyncMock)
+    @patch("api.evidence_files.download_blob_stream")
+    @patch("api.evidence_files.require_org_role")
+    async def test_bearer_download_is_attributed_to_the_authenticated_user(
+        self, mock_require, mock_stream, mock_audit, mock_db, org_id, user_id, membership
+    ):
+        """The Bearer branch keeps the membership it resolves instead of discarding it."""
+        from api.evidence_files import download_evidence_file
+
+        checker = AsyncMock(return_value=membership)
+        mock_require.return_value = checker
+
+        file_id = uuid4()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = self._file(org_id)
+        mock_db.execute.return_value = mock_result
+        mock_stream.return_value = iter([b"chunk"])
+
+        request = self._request()
+        request.headers = {"authorization": "Bearer abc123"}
+
+        await download_evidence_file(
+            org_id=org_id,
+            evidence_id="ERL-001",
+            file_id=file_id,
+            request=request,
+            disposition="inline",
+            token=None,
+            expires=None,
+            db=mock_db,
+        )
+
+        mock_audit.assert_awaited_once()
+        kwargs = mock_audit.await_args.kwargs
+        assert kwargs["action"] == "download"
+        assert kwargs["changed_by_user_id"] == UUID(membership.user.db_id)
+
+    @pytest.mark.asyncio
+    @patch("api.evidence_files.create_audit_entry", new_callable=AsyncMock)
+    @patch("api.evidence_files.download_blob_stream")
+    async def test_infected_file_is_never_served(
+        self, mock_stream, mock_audit, mock_db, org_id, user_id
+    ):
+        """A quarantined file is refused before storage is touched."""
+        from api.evidence_files import download_evidence_file
+        from services.download_token import generate_download_token
+
+        file_id = uuid4()
+        token, expires = generate_download_token(str(file_id), str(org_id), str(user_id))
+
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = self._file(org_id, scan_status="infected")
+        mock_db.execute.return_value = mock_result
 
         with pytest.raises(Exception) as exc_info:
             await download_evidence_file(
                 org_id=org_id,
                 evidence_id="ERL-001",
                 file_id=file_id,
-                request=mock_request,
+                request=self._request(),
+                disposition="inline",
+                token=token,
+                expires=expires,
+                db=mock_db,
+            )
+        assert exc_info.value.status_code == 403
+        mock_stream.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("api.evidence_files.create_audit_entry", new_callable=AsyncMock)
+    @patch("api.evidence_files.download_blob_stream")
+    async def test_pending_scan_is_still_served(
+        self, mock_stream, mock_audit, mock_db, org_id, user_id
+    ):
+        """An unscanned file stays downloadable — only `infected` is withheld.
+
+        Pins the product decision: the never-scanned backlog is the platform's
+        debt, and withholding those files would punish customers for it.
+        """
+        from api.evidence_files import download_evidence_file
+        from services.download_token import generate_download_token
+
+        file_id = uuid4()
+        token, expires = generate_download_token(str(file_id), str(org_id), str(user_id))
+
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = self._file(org_id, scan_status="pending")
+        mock_db.execute.return_value = mock_result
+        mock_stream.return_value = iter([b"chunk"])
+
+        result = await download_evidence_file(
+            org_id=org_id,
+            evidence_id="ERL-001",
+            file_id=file_id,
+            request=self._request(),
+            disposition="inline",
+            token=token,
+            expires=expires,
+            db=mock_db,
+        )
+        assert result.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_expired_token_returns_401(self, mock_db, org_id, user_id):
+        """An expired token should return 401."""
+        from api.evidence_files import download_evidence_file
+        from services.download_token import generate_download_token
+
+        file_id = uuid4()
+        token, expires = generate_download_token(
+            str(file_id), str(org_id), str(user_id), ttl_seconds=0
+        )
+
+        import time
+        time.sleep(1)
+
+        with pytest.raises(Exception) as exc_info:
+            await download_evidence_file(
+                org_id=org_id,
+                evidence_id="ERL-001",
+                file_id=file_id,
+                request=self._request(),
                 disposition="inline",
                 token=token,
                 expires=expires,
@@ -622,26 +900,21 @@ class TestDownloadTokenAuth:
         assert exc_info.value.status_code == 401
 
     @pytest.mark.asyncio
-    async def test_tampered_token_returns_401(self, mock_db, org_id):
+    async def test_tampered_token_returns_401(self, mock_db, org_id, user_id):
         """A tampered token should return 401."""
         from api.evidence_files import download_evidence_file
         from services.download_token import generate_download_token
 
         file_id = uuid4()
-
-        # Generate a valid token then tamper with it
-        token, expires = generate_download_token(str(file_id), str(org_id))
-        tampered_token = "0000" + token[4:]
-
-        mock_request = MagicMock()
-        mock_request.headers = {}
+        token, expires = generate_download_token(str(file_id), str(org_id), str(user_id))
+        tampered_token = token[:-4] + "0000"
 
         with pytest.raises(Exception) as exc_info:
             await download_evidence_file(
                 org_id=org_id,
                 evidence_id="ERL-001",
                 file_id=file_id,
-                request=mock_request,
+                request=self._request(),
                 disposition="inline",
                 token=tampered_token,
                 expires=expires,
@@ -649,74 +922,207 @@ class TestDownloadTokenAuth:
             )
         assert exc_info.value.status_code == 401
 
-    @pytest.mark.asyncio
-    async def test_no_auth_returns_401(self, mock_db, org_id):
-        """No Bearer and no token should return 401."""
-        from api.evidence_files import download_evidence_file
-
-        mock_request = MagicMock()
-        mock_request.headers = {}
-
-        with pytest.raises(Exception) as exc_info:
-            await download_evidence_file(
-                org_id=org_id,
-                evidence_id="ERL-001",
-                file_id=uuid4(),
-                request=mock_request,
-                disposition="inline",
-                token=None,
-                expires=None,
-                db=mock_db,
-            )
-        assert exc_info.value.status_code == 401
-
 
 # ---------------------------------------------------------------------------
-# Download token service unit tests
+# Download token service tests
 # ---------------------------------------------------------------------------
 
 class TestDownloadTokenService:
     """Tests for services/download_token.py."""
 
-    def test_generate_returns_token_and_expires(self):
+    def test_generate_returns_user_bound_token_and_expires(self):
         from services.download_token import generate_download_token
-        token, expires = generate_download_token("file-1", "org-1")
-        assert isinstance(token, str)
-        assert len(token) == 64  # SHA256 hex digest
+        token, expires = generate_download_token("file-1", "org-1", "user-1")
+        assert token.startswith("user-1.")
+        assert len(token.split(".", 1)[1]) == 64  # SHA256 hex digest
         assert isinstance(expires, int)
         assert expires > 0
 
-    def test_verify_valid_token(self):
+    def test_verify_returns_the_bound_user_id(self):
         from services.download_token import generate_download_token, verify_download_token
-        token, expires = generate_download_token("file-1", "org-1")
-        assert verify_download_token("file-1", "org-1", token, expires) is True
+        token, expires = generate_download_token("file-1", "org-1", "user-1")
+        assert verify_download_token("file-1", "org-1", token, expires) == "user-1"
 
     def test_verify_rejects_expired(self):
         from services.download_token import generate_download_token, verify_download_token
         import time
-        token, expires = generate_download_token("file-1", "org-1", ttl_seconds=0)
+        token, expires = generate_download_token("file-1", "org-1", "user-1", ttl_seconds=0)
         time.sleep(1)
-        assert verify_download_token("file-1", "org-1", token, expires) is False
+        assert verify_download_token("file-1", "org-1", token, expires) is None
 
     def test_verify_rejects_tampered(self):
         from services.download_token import generate_download_token, verify_download_token
-        token, expires = generate_download_token("file-1", "org-1")
-        assert verify_download_token("file-1", "org-1", "bad" + token[3:], expires) is False
+        token, expires = generate_download_token("file-1", "org-1", "user-1")
+        assert verify_download_token("file-1", "org-1", token[:-4] + "0000", expires) is None
 
     def test_verify_rejects_wrong_file_id(self):
         from services.download_token import generate_download_token, verify_download_token
-        token, expires = generate_download_token("file-1", "org-1")
-        assert verify_download_token("file-2", "org-1", token, expires) is False
+        token, expires = generate_download_token("file-1", "org-1", "user-1")
+        assert verify_download_token("file-2", "org-1", token, expires) is None
 
     def test_verify_rejects_wrong_org_id(self):
         from services.download_token import generate_download_token, verify_download_token
-        token, expires = generate_download_token("file-1", "org-1")
-        assert verify_download_token("file-1", "org-2", token, expires) is False
+        token, expires = generate_download_token("file-1", "org-1", "user-1")
+        assert verify_download_token("file-1", "org-2", token, expires) is None
+
+    def test_verify_rejects_a_swapped_user_id(self):
+        """The user id is covered by the MAC, not merely carried alongside it."""
+        from services.download_token import generate_download_token, verify_download_token
+        token, expires = generate_download_token("file-1", "org-1", "user-1")
+        digest = token.split(".", 1)[1]
+        assert verify_download_token("file-1", "org-1", f"user-2.{digest}", expires) is None
+
+    def test_verify_rejects_a_token_with_no_user_part(self):
+        """The pre-#57 two-part token format is not accepted."""
+        from services.download_token import verify_download_token
+        import hmac, hashlib, time
+        expires = int(time.time()) + 900
+        legacy = hmac.new(
+            b"test-signing-secret",
+            f"file-1:org-1:{expires}".encode(),
+            hashlib.sha256,
+        ).hexdigest()
+        assert verify_download_token("file-1", "org-1", legacy, expires) is None
+
+    def test_no_secret_refuses_to_sign_or_verify(self, monkeypatch):
+        """With no signing secret an HMAC is forgeable from public knowledge."""
+        import services.download_token as dt
+
+        monkeypatch.delenv("DOWNLOAD_TOKEN_SECRET", raising=False)
+        monkeypatch.delenv("API_KEY", raising=False)
+        monkeypatch.setattr(dt, "_SECRET", None)
+        monkeypatch.setattr(dt, "_WARNED_NO_SECRET", False)
+
+        assert dt.generate_download_token("file-1", "org-1", "user-1") is None
+        assert dt.verify_download_token("file-1", "org-1", "user-1.deadbeef", 9999999999) is None
 
 
 # ---------------------------------------------------------------------------
-# Helper function tests
+# Upload ticket tests
 # ---------------------------------------------------------------------------
+
+class TestUploadTicket:
+    """Tests for services/upload_ticket.py — the confirm-endpoint gate."""
+
+    ARGS = ("evidence/org-1/2026/02/abc_report.pdf", "org-1", "ERL-001", "user-1")
+
+    def test_round_trip(self):
+        from services.upload_ticket import mint_upload_ticket, verify_upload_ticket
+        ticket = mint_upload_ticket(*self.ARGS)
+        assert verify_upload_ticket(ticket, *self.ARGS) is True
+
+    @pytest.mark.parametrize("index,replacement", [
+        (0, "evidence/org-1/2026/02/somebody_elses_file.pdf"),
+        (1, "org-2"),
+        (2, "ERL-999"),
+        (3, "user-2"),
+    ])
+    def test_every_bound_field_is_covered(self, index, replacement):
+        """Each of key, org, evidence item and user is inside the MAC."""
+        from services.upload_ticket import mint_upload_ticket, verify_upload_ticket
+        ticket = mint_upload_ticket(*self.ARGS)
+        altered = list(self.ARGS)
+        altered[index] = replacement
+        assert verify_upload_ticket(ticket, *altered) is False
+
+    def test_rejects_missing_and_malformed(self):
+        from services.upload_ticket import verify_upload_ticket
+        for bad in (None, "", "no-dot", "notanint.abcdef", ".", "123."):
+            assert verify_upload_ticket(bad, *self.ARGS) is False
+
+    def test_rejects_expired(self):
+        from services.upload_ticket import mint_upload_ticket, verify_upload_ticket
+        import time
+        ticket = mint_upload_ticket(*self.ARGS, ttl_seconds=0)
+        time.sleep(1)
+        assert verify_upload_ticket(ticket, *self.ARGS) is False
+
+    def test_no_secret_refuses(self, monkeypatch):
+        import services.download_token as dt
+        from services.upload_ticket import mint_upload_ticket, verify_upload_ticket
+
+        monkeypatch.delenv("DOWNLOAD_TOKEN_SECRET", raising=False)
+        monkeypatch.delenv("API_KEY", raising=False)
+        monkeypatch.setattr(dt, "_SECRET", None)
+        assert mint_upload_ticket(*self.ARGS) is None
+        assert verify_upload_ticket("1.abc", *self.ARGS) is False
+
+
+# ---------------------------------------------------------------------------
+# Confirm-upload ticket enforcement
+# ---------------------------------------------------------------------------
+
+class TestConfirmUploadTicketEnforcement:
+    """The confirm endpoint must refuse a key it did not itself hand out."""
+
+    @pytest.mark.asyncio
+    async def test_rejects_missing_ticket(self, membership, mock_db, org_id):
+        from api.evidence_files import confirm_upload
+        from schemas import EvidenceFileConfirmRequest
+
+        request = EvidenceFileConfirmRequest(
+            s3_key=f"evidence/{org_id}/2026/02/abc_report.pdf",
+        )
+        with pytest.raises(Exception) as exc_info:
+            await confirm_upload(
+                org_id=org_id,
+                evidence_id="ERL-001",
+                request=request,
+                http_request=MagicMock(),
+                membership=membership,
+                db=mock_db,
+            )
+        assert exc_info.value.status_code == 403
+        mock_db.add.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_rejects_a_ticket_minted_for_a_different_object(self, membership, mock_db, org_id):
+        """The old prefix check let any editor claim any object in their own org."""
+        from api.evidence_files import confirm_upload
+        from schemas import EvidenceFileConfirmRequest
+
+        someone_elses_key = f"evidence/{org_id}/2026/02/xyz_payroll.pdf"
+        my_key = f"evidence/{org_id}/2026/02/abc_report.pdf"
+
+        request = EvidenceFileConfirmRequest(
+            s3_key=someone_elses_key,
+            upload_ticket=make_ticket(org_id, "ERL-001", membership, my_key),
+        )
+        with pytest.raises(Exception) as exc_info:
+            await confirm_upload(
+                org_id=org_id,
+                evidence_id="ERL-001",
+                request=request,
+                http_request=MagicMock(),
+                membership=membership,
+                db=mock_db,
+            )
+        assert exc_info.value.status_code == 403
+        mock_db.add.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_rejects_a_ticket_for_a_different_evidence_item(self, membership, mock_db, org_id):
+        from api.evidence_files import confirm_upload
+        from schemas import EvidenceFileConfirmRequest
+
+        s3_key = f"evidence/{org_id}/2026/02/abc_report.pdf"
+        request = EvidenceFileConfirmRequest(
+            s3_key=s3_key,
+            upload_ticket=make_ticket(org_id, "ERL-004", membership, s3_key),
+        )
+        with pytest.raises(Exception) as exc_info:
+            await confirm_upload(
+                org_id=org_id,
+                evidence_id="ERL-011",
+                request=request,
+                http_request=MagicMock(),
+                membership=membership,
+                db=mock_db,
+            )
+        assert exc_info.value.status_code == 403
+        mock_db.add.assert_not_called()
+
+
 
 class TestGuessContentType:
     """Tests for _guess_content_type helper."""
@@ -794,6 +1200,13 @@ class TestReviewEvidenceFile410Gating:
         f.file_size_bytes = 1024
         f.sha256_hash = None
         f.classification = "internal"
+        f.scan_status = "clean"
+        f.scan_details = None
+        f.computed_sha256 = None
+        f.hash_verification_status = "pending"
+        f.hash_verified_at = None
+        f.hash_verification_details = None
+        unasserted(f)
         f.uploaded_by_user_id = user_id
         f.uploaded_at = datetime.utcnow()
         f.expires_at = None
@@ -808,11 +1221,19 @@ class TestReviewEvidenceFile410Gating:
         f.reviewed_by = None
         return f
 
+    # #787: the review path now resolves the org assurance policy. These
+    # cases are about the 410 gating, not the policy, so pin it to the
+    # default — an AsyncMock session would otherwise hand back a truthy
+    # MagicMock row and trip segregation of duties.
     @pytest.mark.asyncio
+    @patch("api.evidence_files.get_assurance_policy", new_callable=AsyncMock)
     @patch("api.evidence_files.log_entity_changes", new_callable=AsyncMock)
     async def test_flag_off_returns_legacy_200(
-        self, mock_audit, membership, mock_db, org_id, user_id, monkeypatch,
+        self, mock_audit, mock_policy, membership, mock_db, org_id, user_id,
+        monkeypatch,
     ):
+        from services.assurance_policy import DEFAULT_ASSURANCE_POLICY
+        mock_policy.return_value = DEFAULT_ASSURANCE_POLICY
         """Case (a): flag false → legacy review path unchanged."""
         from api.evidence_files import review_evidence_file
         from schemas import EvidenceFileReviewRequest
@@ -846,11 +1267,19 @@ class TestReviewEvidenceFile410Gating:
         assert ef.review_status == "approved"
         mock_audit.assert_called_once()
 
+    # #787: the review path now resolves the org assurance policy. These
+    # cases are about the 410 gating, not the policy, so pin it to the
+    # default — an AsyncMock session would otherwise hand back a truthy
+    # MagicMock row and trip segregation of duties.
     @pytest.mark.asyncio
+    @patch("api.evidence_files.get_assurance_policy", new_callable=AsyncMock)
     @patch("api.evidence_files.log_entity_changes", new_callable=AsyncMock)
     async def test_flag_on_no_window_returns_legacy_200(
-        self, mock_audit, membership, mock_db, org_id, user_id, monkeypatch,
+        self, mock_audit, mock_policy, membership, mock_db, org_id, user_id,
+        monkeypatch,
     ):
+        from services.assurance_policy import DEFAULT_ASSURANCE_POLICY
+        mock_policy.return_value = DEFAULT_ASSURANCE_POLICY
         """Case (b): flag on but no window assessment exists → legacy 200."""
         from api.evidence_files import review_evidence_file
         from schemas import EvidenceFileReviewRequest

@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import { NotificationBell } from './NotificationBell'
 import UserProfileDropdown from './UserProfileDropdown'
@@ -44,6 +45,13 @@ export default function Header({
   // Org-uploaded logo takes precedence over the deploy-time default
   const logoSrc = orgLogoUrl || appLogo
 
+  // A logo that fails to load degrades to the wordmark alone. Without this the
+  // header rendered the browser's broken-image icon on every route (#807).
+  const [logoBroken, setLogoBroken] = useState(false)
+  useEffect(() => {
+    setLogoBroken(false)
+  }, [logoSrc])
+
   const showOrgSwitcher = isConsultant && clientOrgIds && clientOrgIds.length > 0
 
   return (
@@ -72,7 +80,9 @@ export default function Header({
           </svg>
         </button>
         <div className="brand">
-          {logoSrc && <img src={logoSrc} alt="Logo" />}
+          {logoSrc && !logoBroken && (
+            <img src={logoSrc} alt="Logo" onError={() => setLogoBroken(true)} />
+          )}
           <div className="brand-title">{appTitle}</div>
         </div>
       </div>

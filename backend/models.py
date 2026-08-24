@@ -272,7 +272,19 @@ class Organization(Base):
     created_by_consultant = relationship("ConsultantProfile", foreign_keys=[created_by_consultant_id])
     risk_profile = relationship("OrganizationRiskProfile", back_populates="organization", uselist=False, cascade="all, delete-orphan")
     vendors = relationship("Vendor", back_populates="organization", cascade="all, delete-orphan")
-    audit_logs = relationship("AuditLog", back_populates="organization", cascade="all, delete-orphan")
+    # audit_log is append-only at the database level (revision
+    # auditappendonly1): its DELETE trigger permits a row to go only when its
+    # organization has already gone. Without passive_deletes the ORM would
+    # helpfully delete the children first, while the parent is still very much
+    # there — exactly the shape the trigger refuses — and every delete-org path
+    # would start failing. The FK is already ON DELETE CASCADE, so deferring to
+    # it is both the correct semantics and one fewer full table load.
+    audit_logs = relationship(
+        "AuditLog",
+        back_populates="organization",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
     evidence_files = relationship("EvidenceFile", back_populates="organization", cascade="all, delete-orphan")
     evidence_validation_results = relationship("EvidenceValidationResult", back_populates="organization", cascade="all, delete-orphan")
     evidence_assessments = relationship("EvidenceAssessment", back_populates="organization", cascade="all, delete-orphan")
@@ -1997,7 +2009,12 @@ class AuditLog(Base):
     field_name = Column(String(100), nullable=True)
     old_value = Column(Text, nullable=True)
     new_value = Column(Text, nullable=True)
-    changed_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=False)
+    # Nullable since revision auditlognull01, which made the column match its
+    # own ON DELETE SET NULL: deleting a user must not destroy the record of
+    # what they did. The model kept saying nullable=False, so an autogenerate
+    # would have emitted an alter_column reverting it -- and the append-only
+    # trigger's one permitted UPDATE is exactly that anonymisation.
+    changed_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     changed_at = Column(DateTime(timezone=True), server_default=func.now())
     ip_address = Column(String(45), nullable=True)
     user_agent = Column(Text, nullable=True)
@@ -2039,6 +2056,62 @@ class EvidenceFile(Base):
     scan_status = Column(String(20), default="pending", server_default="pending", nullable=False)
     scan_details = Column(JSONB, nullable=True)  # {"engine": "clamav", "signature": "...", "message": "..."}
 
+    # Server-side integrity verification (#57).
+    #
+    # `sha256_hash` above is the uploader's *claim* and is never overwritten —
+    # replacing a wrong claim with the right answer would erase the only record
+    # that the claim was ever wrong. These four columns hold what the server
+    # itself measured over the bytes it fetched back out of storage, and how
+    # that measurement relates to the claim. See
+    # services/evidence_integrity_service.py for the state vocabulary.
+    computed_sha256 = Column(String(64), nullable=True)
+    hash_verification_status = Column(String(20), default="pending", server_default="pending", nullable=False)
+    hash_verified_at = Column(DateTime(timezone=False), nullable=True)
+    hash_verification_details = Column(JSONB, nullable=True)
+
+    # ------------------------------------------------------------------
+    # Preparer assertions (#786, #802)
+    # ------------------------------------------------------------------
+    #
+    # Facts only the preparer knows, asserted at upload. Everything above this
+    # block is either measured by the server or derived from the object itself;
+    # everything in it is a claim a person made about what the artefact *is*.
+    #
+    # **Every column is nullable, and that is load-bearing.** Back-filling any
+    # of them — most temptingly `effective_period_*` from `uploaded_at` — would
+    # manufacture an assertion no preparer ever made, and would do it in the one
+    # place where the whole point is that a human took responsibility for the
+    # claim. "Not asserted" has to stay visibly distinct from "asserted",
+    # including in the UI, which is why nothing here carries a server_default.
+
+    # The window the evidence actually covers, as distinct from when it happened
+    # to be uploaded (#786). A 2023 access review dragged in this morning is
+    # fresh by upload date and three years stale by effective period.
+    effective_period_start = Column(Date, nullable=True)
+    effective_period_end = Column(Date, nullable=True)
+
+    # What the artefact was drawn from (#802). "E-HRS-16 has 2 files" is not a
+    # conclusion: two of two joiners and two of four hundred are different
+    # findings, and without a declared population neither is expressible.
+    population_size = Column(Integer, nullable=True)
+    population_source = Column(Text, nullable=True)
+
+    # How it was drawn (#802). Sampling adequacy is unassessable without these,
+    # and an unassessable sample supports nothing.
+    sample_size = Column(Integer, nullable=True)
+    sample_method = Column(String(100), nullable=True)
+    sample_basis = Column(Text, nullable=True)
+
+    # Information Produced by the Entity (#802) — completeness and accuracy of
+    # IPE is the most-failed area in Big 4 testing. For a system-generated
+    # export the auditor asks who ran it, against which system, on what filter,
+    # on what date, and how anyone knows the extract is complete.
+    ipe_source_system = Column(String(255), nullable=True)
+    ipe_query_or_filter = Column(Text, nullable=True)
+    ipe_extracted_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    ipe_extracted_at = Column(DateTime(timezone=False), nullable=True)
+    ipe_completeness_check = Column(Text, nullable=True)
+
     # Lifecycle
     uploaded_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     uploaded_at = Column(DateTime(timezone=False), default=datetime.utcnow, server_default=func.now(), nullable=False)
@@ -2058,6 +2131,7 @@ class EvidenceFile(Base):
     uploaded_by = relationship("User", foreign_keys=[uploaded_by_user_id])
     deleted_by = relationship("User", foreign_keys=[deleted_by_user_id])
     reviewed_by = relationship("User", foreign_keys=[reviewed_by_user_id])
+    ipe_extracted_by = relationship("User", foreign_keys=[ipe_extracted_by_user_id])
     validation_result = relationship("EvidenceValidationResult", back_populates="evidence_file", uselist=False, cascade="all, delete-orphan")
 
     def __repr__(self):
@@ -2168,6 +2242,23 @@ class EvidenceHealthConfig(Base):
 
     Allows organisations to override default staleness thresholds
     for specific evidence items. Used by the Evidence Health Dashboard (#220).
+
+    TOMBSTONE (#789 audit lane) — this table has a read path and no write path.
+    Nothing in the API or the UI creates a row; the only way one exists is a
+    direct INSERT. That is deliberate for now: it gives support a lever for a
+    one-off exception without promising self-serve threshold editing, which is
+    a product decision nobody has taken.
+
+    Two things follow, and both are load-bearing:
+
+    * ``staleness_critical_days`` is read by nothing at all. The amber/red split
+      is derived (1.5x the warning threshold, ``evidence_health._calculate_status``),
+      so this column can only ever disagree with the code. Do not start reading
+      it without deciding which of the two wins.
+    * ``staleness_warning_days`` outranks the frequency vocabulary when a row
+      exists. Anyone building the missing write path has to surface that — an
+      override that silently beats the cadence an organisation configured is
+      exactly the class of bug #783 was about.
     """
     __tablename__ = "evidence_health_config"
     __table_args__ = (
@@ -2215,6 +2306,13 @@ class EvidenceAssessment(Base):
     # Audit trail (frozen inference chain)
     model_id = Column(String(100), nullable=True)  # e.g. "claude-sonnet-4-6"
     prompt_hash = Column(String(64), nullable=True)  # SHA-256 of the full prompt
+    # Which prompt template produced this verdict. The hash above proves a
+    # specific prompt was used; it cannot tell an auditor *which release* of
+    # the template that was, and it cannot be searched for "every verdict
+    # produced before we fixed the prompt". Nullable because rows written
+    # before this column existed have no knowable version — writing a guess
+    # into an audit trail is worse than writing nothing.
+    prompt_version = Column(String(16), nullable=True)  # services.assessment_prompts.PROMPT_VERSION
     control_context_hash = Column(String(64), nullable=True)  # SHA-256 of assembled control context
     framework_version = Column(String(50), nullable=True)  # SCF catalog version used
     input_token_count = Column(Integer, nullable=True)
@@ -2285,6 +2383,8 @@ class EvidenceWindowAssessment(Base):
     # Audit trail (frozen inference chain)
     model_id = Column(String(100), nullable=True)
     prompt_hash = Column(String(64), nullable=True)
+    # See EvidenceAssessment.prompt_version — same rationale, same nullability.
+    prompt_version = Column(String(16), nullable=True)
     control_context_hash = Column(String(64), nullable=True)
     framework_version = Column(String(50), nullable=True)
     window_hash = Column(String(64), nullable=True)
@@ -3081,3 +3181,61 @@ class DocGenSettings(Base):
 
     def __repr__(self):
         return f"<DocGenSettings(org={self.organization_id}, enabled={self.enabled})>"
+
+
+class OrganizationAssurancePolicy(Base):
+    """Per-organisation assurance rules (#787, #803).
+
+    Two rules share this record because they are two halves of one question:
+    *does a human stand behind this evidence, and is that human independent of
+    the person who produced it?* An attestation gate without independence is a
+    rubber stamp; independence without a gate is a rule about a signature nobody
+    is required to give.
+
+    **Both default to off, and an absent row reads as both-off.** That is
+    deliberate, not timidity: self-review is entirely legitimate in a two-person
+    company and disqualifying in a regulated one (#803), so this cannot be a
+    hard rule without making the product unusable at one end or useless as
+    assurance at the other. It is a policy, and the customer sets it.
+
+    The absent-row default also means shipping this table moves no existing
+    organisation's KSI score, without a backfill that could miss a tenant.
+    """
+
+    __tablename__ = "organization_assurance_policies"
+
+    organization_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+
+    #: When true, an AI verdict counts toward evidence posture only once a named
+    #: human has dispositioned it. Unattested verdicts are not deleted from the
+    #: picture — the evidence still exists and still counts as evidence — they
+    #: simply stop contributing a *quality* signal they have not earned.
+    require_evidence_attestation = Column(
+        Boolean, nullable=False, default=False, server_default="false",
+    )
+
+    #: When true, the sole uploader of a window's files may not be the person
+    #: who reviews it. Enforced per item at the review endpoint, because
+    #: ``require_org_role`` takes an organisation and a role and by construction
+    #: never sees the entity being acted on.
+    require_reviewer_independence = Column(
+        Boolean, nullable=False, default=False, server_default="false",
+    )
+
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False,
+    )
+
+    organization = relationship("Organization")
+
+    def __repr__(self):
+        return (
+            f"<OrganizationAssurancePolicy(org={self.organization_id}, "
+            f"attestation={self.require_evidence_attestation}, "
+            f"independence={self.require_reviewer_independence})>"
+        )

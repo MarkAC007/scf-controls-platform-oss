@@ -22,6 +22,8 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from evidence_mocks import unasserted  # noqa: E402
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -72,6 +74,12 @@ def _make_evidence_file(file_id, org_id, user_id, uploaded_by_user):
     f.file_size_bytes = 1024
     f.sha256_hash = None
     f.classification = "internal"
+    f.scan_status = "clean"
+    f.scan_details = None
+    f.computed_sha256 = None
+    f.hash_verification_status = "pending"
+    f.hash_verified_at = None
+    f.hash_verification_details = None
     f.uploaded_by_user_id = user_id
     f.uploaded_at = datetime.utcnow()
     f.expires_at = None
@@ -82,6 +90,9 @@ def _make_evidence_file(file_id, org_id, user_id, uploaded_by_user):
     f.reviewed_at = None
     f.review_notes = None
     f.reviewed_by = None
+    # Nothing asserted — the state almost every existing file is in, and the
+    # only one these notification tests care about.
+    unasserted(f)
     return f
 
 
@@ -133,15 +144,23 @@ class TestEvidenceFileRejectedTrigger:
         assert kwargs["evidence_id"] == "ERL-001"
         assert kwargs["rejected_by_user_id"] == user_id
 
+    # #787: pin the assurance policy to the default — this test approves a
+    # file the reviewer uploaded, which segregation of duties would refuse if
+    # the AsyncMock session's truthy MagicMock row were read as a policy.
     @pytest.mark.asyncio
     @pytest.mark.parametrize("status", ["approved", "needs_revision"])
+    @patch("api.evidence_files.get_assurance_policy", new_callable=AsyncMock)
     @patch("api.evidence_files.create_evidence_rejected_notifications", new_callable=AsyncMock)
     @patch("api.evidence_files.log_entity_changes", new_callable=AsyncMock)
     async def test_non_rejected_review_does_not_notify(
-        self, mock_audit, mock_notify, status, membership, mock_db, org_id, user_id, monkeypatch,
+        self, mock_audit, mock_notify, mock_policy, status, membership, mock_db,
+        org_id, user_id, monkeypatch,
     ):
         from api.evidence_files import review_evidence_file
         from schemas import EvidenceFileReviewRequest
+        from services.assurance_policy import DEFAULT_ASSURANCE_POLICY
+
+        mock_policy.return_value = DEFAULT_ASSURANCE_POLICY
 
         monkeypatch.setenv("ENABLE_PER_WINDOW_REVIEW", "false")
         file_id = uuid4()
