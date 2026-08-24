@@ -29159,3 +29159,85 @@ textarea.form-control{
   opacity: 0.7;
   font-style: italic;
 }
+
+/* ============================================================================
+   Task ownership (#822 phase 4)
+
+   A task inherits its evidence item's accountable team unless it names its
+   own. Both states are ordinary, so neither is styled as an alarm — the
+   Inherited and Override pills differ in colour only enough to be told apart,
+   and the words carry the meaning so a monochrome or colour-blind reader
+   loses nothing.
+   ========================================================================= */
+
+.task-owning-team {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.task-owning-team-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.task-owning-team-resolved {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.task-owning-team-hint {
+  margin: 0;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.task-owning-team-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.task-owning-team-name {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.task-owning-team-none {
+  font-style: italic;
+}
+
+.task-owning-team-person {
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.task-owning-team-pill {
+  padding: 1px 7px;
+  border-radius: var(--badge-radius);
+  border: 1px solid var(--border);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.task-owning-team-pill-inherited {
+  background: var(--secondary);
+  color: var(--muted);
+}
+
+.task-owning-team-pill-override {
+  background: var(--surface-lowest);
+  color: var(--text);
+}

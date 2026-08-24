@@ -62,7 +62,7 @@ export default function TeamListFilters({
 
   /** Only functions that actually have a team — the rest would filter to nothing. */
   const usedFunctions = useMemo(() => {
-    const withTeams = new Set(teams.map(team => team.function_id))
+    const withTeams = new Set(teams.flatMap(team => team.function_ids ?? [team.function_id]))
     return functions
       .filter(fn => withTeams.has(fn.id))
       .sort((a, b) => {
@@ -76,7 +76,7 @@ export default function TeamListFilters({
   const selectableTeams = useMemo(() => {
     const scoped = functionId === ALL
       ? teams
-      : teams.filter(team => team.function_id === functionId)
+      : teams.filter(team => (team.function_ids ?? [team.function_id]).includes(functionId))
     return [...scoped].sort((a, b) => a.name.localeCompare(b.name))
   }, [teams, functionId])
 

@@ -10,11 +10,16 @@ from datetime import date as DateType
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, or_
+from sqlalchemy import select, and_
 
 from database import get_db
 from auth import require_org_viewer, OrgMembership
 from models import EvidenceCollectionTask, ScopedControl, EvidenceTracking
+from services.responsibility import my_item_filter, my_task_filter
+from services.team_assignments import (
+    CONTROL_ASSIGNMENT_SPEC,
+    EVIDENCE_ASSIGNMENT_SPEC,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +33,12 @@ router = APIRouter(tags=["dashboard"])
 class OverdueEvidenceItem(BaseModel):
     task_id: str
     evidence_id: str
+    #: The parent evidence item's UUID (#822 phase 4). ``evidence_id`` beside
+    #: it is the human-facing reference, which is not a key -- so without this
+    #: a client holding an overdue row cannot ask who owns it. A task that
+    #: inherits its team (``owning_team_id IS NULL``, the common case) resolves
+    #: ownership entirely through the parent, and this is the only handle on it.
+    evidence_tracking_id: str
     title: Optional[str] = None
     due_date: DateType
     days_overdue: int
@@ -104,6 +115,21 @@ async def get_work_queue(
     All three narrow together on purpose. The caller is one checkbox in the UI
     with one label; a category that ignores it silently mixes other people's
     work into a list the user believes is theirs.
+
+    #822 phase 4 widens what "the calling user" resolves to, without widening
+    it silently. "Mine" is now the ownership chain the notifier uses: the
+    explicit owner or assignee, and -- **only when there is no explicit owner
+    or assignee at all** -- the accountable team's primary and delegate. An
+    item that still names a person stays that person's alone, so an
+    organisation that has created no teams sees precisely the queue it sees
+    today, and marking a team accountable never quietly adds an already-owned
+    item to two more people's lists.
+
+    Tier 3 is deliberately absent from every branch. Falling a *queue* through
+    to "every org admin" would put every unowned item in the organisation on
+    the list of everyone able to fix that, which is the unfiltered view with
+    extra steps. Tier 3 stays the last resort for telling somebody an item has
+    no owner, which is a notification, not a queue.
     """
     today = date.today()
 
@@ -123,6 +149,7 @@ async def get_work_queue(
             EvidenceCollectionTask.due_date,
             EvidenceCollectionTask.priority,
             EvidenceTracking.evidence_id,
+            EvidenceTracking.id.label("evidence_tracking_id"),
         )
         .join(
             EvidenceTracking,
@@ -139,9 +166,7 @@ async def get_work_queue(
         .limit(20)
     )
     if caller_id is not None:
-        overdue_query = overdue_query.where(
-            EvidenceCollectionTask.assigned_user_id == caller_id
-        )
+        overdue_query = overdue_query.where(my_task_filter(caller_id))
 
     overdue_result = await db.execute(overdue_query)
     overdue_rows = overdue_result.all()
@@ -150,6 +175,7 @@ async def get_work_queue(
         OverdueEvidenceItem(
             task_id=str(row.id),
             evidence_id=row.evidence_id,
+            evidence_tracking_id=str(row.evidence_tracking_id),
             title=row.title,
             due_date=row.due_date,
             days_overdue=(today - row.due_date).days,
@@ -179,9 +205,13 @@ async def get_work_queue(
     )
     if caller_id is not None:
         blocking_query = blocking_query.where(
-            or_(
-                ScopedControl.owner_user_id == caller_id,
-                ScopedControl.assigned_user_id == caller_id,
+            my_item_filter(
+                CONTROL_ASSIGNMENT_SPEC,
+                ScopedControl.id,
+                organization_id=org_id,
+                user_id=caller_id,
+                owner_column=ScopedControl.owner_user_id,
+                assignee_column=ScopedControl.assigned_user_id,
             )
         )
 
@@ -219,9 +249,7 @@ async def get_work_queue(
         # Narrow the exclusion the same way section 1 is narrowed. Without this,
         # a row the caller owns whose overdue task is assigned to somebody else
         # would be hidden from both sections instead of shown in exactly one.
-        overdue_task_exists = overdue_task_exists.where(
-            EvidenceCollectionTask.assigned_user_id == caller_id
-        )
+        overdue_task_exists = overdue_task_exists.where(my_task_filter(caller_id))
 
     stale_query = (
         select(
@@ -245,9 +273,13 @@ async def get_work_queue(
         # to mean one thing across the whole queue, and evidence_tracking
         # carries the same owner/assignee pair that scoped_controls does.
         stale_query = stale_query.where(
-            or_(
-                EvidenceTracking.owner_user_id == caller_id,
-                EvidenceTracking.assigned_user_id == caller_id,
+            my_item_filter(
+                EVIDENCE_ASSIGNMENT_SPEC,
+                EvidenceTracking.id,
+                organization_id=org_id,
+                user_id=caller_id,
+                owner_column=EvidenceTracking.owner_user_id,
+                assignee_column=EvidenceTracking.assigned_user_id,
             )
         )
 

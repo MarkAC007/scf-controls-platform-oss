@@ -31,7 +31,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, Tuple
 
-from sqlalchemy import and_, literal, select
+from sqlalchemy import and_, literal, or_, select
 
 from models import (
     ControlTeamAssignment,
@@ -168,7 +168,7 @@ def team_assignment_filter(
     if team_id is None and function_id is None:
         return None
 
-    from models import Team  # local: avoids a circular import at module load
+    from models import Function, Team  # local: avoids a circular import at module load
 
     stmt = select(literal(1)).select_from(spec.model)
     conditions = [
@@ -190,7 +190,10 @@ def team_assignment_filter(
                 Team.organization_id == spec.model.organization_id,
             ),
         )
-        conditions.append(Team.function_id == function_id)
+        conditions.append(or_(
+            Team.function_id == function_id,
+            Team.functions.any(Function.id == function_id),
+        ))
 
     return stmt.where(and_(*conditions)).exists()
 

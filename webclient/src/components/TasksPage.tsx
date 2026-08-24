@@ -1,7 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { apiClient } from '../data/apiClient';
 import { ModernCommentThread } from './ModernCommentThread';
 import { frequencyLabel } from '../data/frequencyVocabulary'
+import { useOrgMemberTypes } from '../hooks/useOrgMemberTypes';
+import { useTaskTeamOwnership } from '../hooks/useTaskTeamOwnership';
+import TaskOwningTeamBadge from './TaskOwningTeamBadge';
 
 interface Task {
   id: string;
@@ -14,6 +17,8 @@ interface Task {
   due_date: string;
   status: string;
   assigned_user_id?: string;
+  /** Null or absent means the task inherits its evidence item's team (#822 §6). */
+  owning_team_id?: string | null;
   completed_date?: string;
   completion_notes?: string;
   dependencies?: string[];
@@ -40,6 +45,7 @@ export const TasksPage: React.FC<TasksPageProps> = ({ onNavigateToEvidence, orga
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [taskTypeFilter, setTaskTypeFilter] = useState<string>('all');
+  const [owningTeamFilter, setOwningTeamFilter] = useState<string>('all');
   const [editingTask, setEditingTask] = useState<string | null>(null);
   const [editStatus, setEditStatus] = useState<string>('');
   const [editNotes, setEditNotes] = useState<string>('');
@@ -148,13 +154,46 @@ export const TasksPage: React.FC<TasksPageProps> = ({ onNavigateToEvidence, orga
     return 'days-ok';
   };
 
+  /* -- Owning team (#822 phase 4) ------------------------------------------
+   *
+   * Resolved once for the whole list, never per row: a task inherits its
+   * evidence item's accountable team unless it names its own, and asking each
+   * row would be the N+1 phase 3 already had to unpick.
+   * --------------------------------------------------------------------- */
+  const {
+    ownershipFor,
+    resolved: ownershipResolved,
+    teams,
+    error: ownershipError,
+  } = useTaskTeamOwnership(organizationId, tasks);
+  const { memberTypeOf } = useOrgMemberTypes(organizationId);
+
+  /**
+   * The tasks actually shown.
+   *
+   * ``null`` is a third state and it carries weight: the user has asked for
+   * one team and we cannot yet say which tasks that team owns. It is NOT an
+   * empty list — that would read as "this team has no work" — and it is
+   * emphatically not the unfiltered list, which would present everybody's
+   * work under a heading naming one team. Both are the same class of defect
+   * as an assignment field no query consumes.
+   */
+  const visibleTasks: Task[] | null = useMemo(() => {
+    if (owningTeamFilter === 'all') return tasks;
+    if (!ownershipResolved) return null;
+    return tasks.filter(task => ownershipFor(task).team?.id === owningTeamFilter);
+  }, [tasks, owningTeamFilter, ownershipResolved, ownershipFor]);
+
   const stats = {
-    total: tasks.length,
-    not_started: tasks.filter(t => t.status === 'not_started').length,
-    in_progress: tasks.filter(t => t.status === 'in_progress').length,
-    completed: tasks.filter(t => t.status === 'completed').length,
-    overdue: tasks.filter(t => new Date(t.due_date) < new Date() && t.status !== 'completed').length
+    total: visibleTasks?.length,
+    not_started: visibleTasks?.filter(t => t.status === 'not_started').length,
+    in_progress: visibleTasks?.filter(t => t.status === 'in_progress').length,
+    completed: visibleTasks?.filter(t => t.status === 'completed').length,
+    overdue: visibleTasks?.filter(t => new Date(t.due_date) < new Date() && t.status !== 'completed').length
   };
+
+  /** An unanswered count is a dash, not a zero. Zero is a claim. */
+  const statValue = (value: number | undefined) => (value === undefined ? '—' : value);
 
   return (
     <div className="tasks-page">
@@ -184,23 +223,23 @@ export const TasksPage: React.FC<TasksPageProps> = ({ onNavigateToEvidence, orga
       {/* Stats */}
       <div className="tasks-stats-grid">
         <div className="tasks-stat-card">
-          <div className="tasks-stat-value text-blue">{stats.total}</div>
+          <div className="tasks-stat-value text-blue">{statValue(stats.total)}</div>
           <div className="tasks-stat-label">Total Tasks</div>
         </div>
         <div className="tasks-stat-card">
-          <div className="tasks-stat-value text-blue">{stats.not_started}</div>
+          <div className="tasks-stat-value text-blue">{statValue(stats.not_started)}</div>
           <div className="tasks-stat-label">Not Started</div>
         </div>
         <div className="tasks-stat-card">
-          <div className="tasks-stat-value text-orange">{stats.in_progress}</div>
+          <div className="tasks-stat-value text-orange">{statValue(stats.in_progress)}</div>
           <div className="tasks-stat-label">In Progress</div>
         </div>
         <div className="tasks-stat-card">
-          <div className="tasks-stat-value text-red">{stats.overdue}</div>
+          <div className="tasks-stat-value text-red">{statValue(stats.overdue)}</div>
           <div className="tasks-stat-label">Overdue</div>
         </div>
         <div className="tasks-stat-card">
-          <div className="tasks-stat-value text-green">{stats.completed}</div>
+          <div className="tasks-stat-value text-green">{statValue(stats.completed)}</div>
           <div className="tasks-stat-label">Completed</div>
         </div>
       </div>
@@ -237,22 +276,65 @@ export const TasksPage: React.FC<TasksPageProps> = ({ onNavigateToEvidence, orga
             <option value="issue">Issue</option>
           </select>
         </div>
+
+        {/* Owning team (#822 phase 4). Includes tasks that INHERIT the team
+            from their evidence item, which is most of them — a filter that
+            matched only explicit overrides would answer a question nobody
+            asked and report a team as owning almost nothing. */}
+        <div className="tasks-filter-group">
+          <label htmlFor="tasks-owning-team-filter">Owning team:</label>
+          <select
+            id="tasks-owning-team-filter"
+            value={owningTeamFilter}
+            onChange={(e) => setOwningTeamFilter(e.target.value)}
+            className="tasks-filter-select"
+            aria-label="Filter tasks by owning team"
+          >
+            <option value="all">All Teams</option>
+            {teams
+              .filter(team => team.is_active)
+              .map(team => (
+                <option key={team.id} value={team.id}>
+                  {team.name}
+                </option>
+              ))}
+          </select>
+        </div>
       </div>
+
+      {/* Team ownership could not be read, and a team filter is riding on it.
+          Said out loud rather than swallowed: the list below is narrowed by
+          something that failed. */}
+      {ownershipError && owningTeamFilter !== 'all' && (
+        <div className="error-banner">
+          <span>Could not read team ownership: {ownershipError}</span>
+        </div>
+      )}
 
       {/* Task List */}
       {loading ? (
         <div className="tasks-loading">Loading tasks...</div>
-      ) : tasks.length === 0 ? (
+      ) : visibleTasks === null ? (
+        /* A team filter is active and ownership has not been resolved. Neither
+           the unfiltered list nor an empty one is honest here — the first
+           shows other teams' work under this team's name, the second says
+           this team has none. Say what is actually true instead. */
+        <div className="tasks-loading">Resolving team ownership…</div>
+      ) : visibleTasks.length === 0 ? (
         <div className="tasks-empty-state">
           <div className="tasks-empty-icon">📋</div>
           <h3>No Tasks Found</h3>
           <p>
-            {statusFilter !== 'all' ? 'Try changing the filter' : 'Tasks will appear here when evidence collection is scheduled'}
+            {owningTeamFilter !== 'all'
+              ? 'No tasks are owned by that team — directly or inherited from their evidence item.'
+              : statusFilter !== 'all'
+                ? 'Try changing the filter'
+                : 'Tasks will appear here when evidence collection is scheduled'}
           </p>
         </div>
       ) : (
         <div className="tasks-list-container">
-          {tasks.map((task) => {
+          {visibleTasks.map((task) => {
             const daysUntilDue = getDaysUntilDue(task.due_date);
             const isOverdue = daysUntilDue < 0 && task.status !== 'completed';
             const isEditing = editingTask === task.id;
@@ -382,6 +464,13 @@ export const TasksPage: React.FC<TasksPageProps> = ({ onNavigateToEvidence, orga
                             <strong>Owner:</strong> {task.owner}
                           </div>
                         )}
+                        <div>
+                          <TaskOwningTeamBadge
+                            ownership={ownershipFor(task)}
+                            memberType={memberTypeOf(ownershipFor(task).team?.person_user_id)}
+                            resolved={ownershipResolved}
+                          />
+                        </div>
                         {view === 'all-tasks' && task.assigned_user && (
                           <div>
                             <strong>Assigned To:</strong>{' '}

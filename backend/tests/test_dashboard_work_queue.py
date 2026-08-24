@@ -36,6 +36,10 @@ def _overdue_row(days: int = 3) -> SimpleNamespace:
         due_date=date.today() - timedelta(days=days),
         priority="high",
         evidence_id="evidence_one",
+        # #822 phase 4: the parent's UUID travels with the row so a client can
+        # resolve inherited ownership. evidence_id beside it is the
+        # human-facing reference, which is not a key.
+        evidence_tracking_id=uuid4(),
     )
 
 
@@ -228,6 +232,7 @@ def _overdue_row_for(evidence_id: str, days: int) -> SimpleNamespace:
         due_date=date.today() - timedelta(days=days),
         priority="medium",
         evidence_id=evidence_id,
+        evidence_tracking_id=uuid4(),
     )
 
 

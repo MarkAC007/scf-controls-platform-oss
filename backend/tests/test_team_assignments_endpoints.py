@@ -1,4 +1,4 @@
-"""Contract tests for the team-assignment API surface (#822 phase 3).
+"""Contract tests for the team-assignment API surface (#822 phases 3 and 4).
 
 Deliberately database-free, matching ``test_teams_api.py``. Everything here is
 read off the router's own dependency graph and the request schema, so it pins
@@ -8,8 +8,12 @@ Postgres-backed behaviour lives in ``test_team_assignments.py``.
 
 What is pinned, and why each matters:
 
-* the endpoint set is exactly the three in phase-3 scope — a fourth route here
-  is scope creep into phase 5;
+* the endpoint set is exactly the four now in scope — the three phase 3
+  defined, plus the batch assign phase 4 adds so that a bulk operation can
+  emit one aggregate notification instead of one per item. The original point
+  of this assertion is preserved below as
+  ``test_no_risk_or_vendor_routes_have_appeared``: risk and vendor routes are
+  phase-5 scope and must not turn up early;
 * **teams grant no permissions.** RBAC is ``organization_members.role`` and
   nothing else: admin for every mutation, viewer for every read, exactly the
   tiering phase 1 established. There is no team admin;
@@ -34,11 +38,15 @@ from services.team_assignments import TEAM_ASSIGNMENT_TYPE_KEYS  # noqa: E402
 
 ASSIGNMENTS = "/organizations/{org_id}/team-assignments"
 ASSIGNMENT = ASSIGNMENTS + "/{assignment_id}"
+BATCH = ASSIGNMENTS + "/batch"
 
-#: The phase-3 endpoint set and the minimum organisation role each demands.
+#: The endpoint set and the minimum organisation role each demands. The batch
+#: route is phase 4's; it demands admin like every other mutation here, because
+#: assigning fifty items is the same governance act as assigning one.
 EXPECTED_ROUTES = {
     ("GET", ASSIGNMENTS): "viewer",
     ("POST", ASSIGNMENTS): "admin",
+    ("POST", BATCH): "admin",
     ("DELETE", ASSIGNMENT): "admin",
 }
 
@@ -73,9 +81,21 @@ def _min_org_role(route) -> object:
 # Endpoint set and authorisation
 # ---------------------------------------------------------------------------
 
-def test_exactly_the_phase_three_endpoints_exist():
-    """No more, no fewer. Risk and vendor routes would be phase-5 scope creep."""
+def test_exactly_the_expected_endpoints_exist():
+    """No more, no fewer."""
     assert set(_routes()) == set(EXPECTED_ROUTES)
+
+
+def test_no_risk_or_vendor_routes_have_appeared():
+    """Phase 5's scope, kept out of phases 3 and 4.
+
+    Risks and vendors join by being registered in ``TEAM_ASSIGNMENT_TYPES``,
+    which is what makes them a registry entry rather than a route — so a route
+    naming either is a sign somebody special-cased what the registry exists to
+    generalise.
+    """
+    for (method, path) in _routes():
+        assert "risk" not in path and "vendor" not in path, f"{method} {path}"
 
 
 @pytest.mark.parametrize(("method", "path"), sorted(EXPECTED_ROUTES))

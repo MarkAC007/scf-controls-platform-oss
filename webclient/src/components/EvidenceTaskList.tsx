@@ -1,11 +1,18 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { apiClient } from '../data/apiClient';
 import { TaskCreationModal } from './TaskCreationModal';
 import { TaskEditModal } from './TaskEditModal';
 import { ModernCommentThread } from './ModernCommentThread';
+import { useOrgMemberTypes } from '../hooks/useOrgMemberTypes';
+import { useTaskTeamOwnership } from '../hooks/useTaskTeamOwnership';
+import TaskOwningTeamBadge from './TaskOwningTeamBadge';
 
 interface Task {
   id: string;
+  /** Present on the API payload; the edit modal needs it to resolve inheritance. */
+  evidence_tracking_id?: string;
+  /** Null or absent means the task inherits this evidence item's team (#822 §6). */
+  owning_team_id?: string | null;
   due_date: string;
   status: string;
   task_type: string;
@@ -41,6 +48,32 @@ export const EvidenceTaskList: React.FC<EvidenceTaskListProps> = ({
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
+
+  /* Owning team (#822 phase 4). Every task here belongs to one evidence item,
+     so the parent is known without asking the payload for it — but the
+     payload's own value wins where it has one, so a task that was moved keeps
+     resolving against the item it actually belongs to. */
+  const ownableTasks = useMemo(
+    () =>
+      tasks.map(task => ({
+        id: task.id,
+        evidence_tracking_id: task.evidence_tracking_id ?? evidenceTrackingId,
+        owning_team_id: task.owning_team_id ?? null,
+      })),
+    [tasks, evidenceTrackingId]
+  );
+  const { ownershipFor, resolved: ownershipResolved } = useTaskTeamOwnership(
+    organizationId,
+    ownableTasks
+  );
+  const { memberTypeOf } = useOrgMemberTypes(organizationId);
+
+  const ownershipOf = (task: Task) =>
+    ownershipFor({
+      id: task.id,
+      evidence_tracking_id: task.evidence_tracking_id ?? evidenceTrackingId,
+      owning_team_id: task.owning_team_id ?? null,
+    });
 
   useEffect(() => {
     loadTasks();
@@ -194,6 +227,16 @@ export const EvidenceTaskList: React.FC<EvidenceTaskListProps> = ({
                           <strong>Assigned:</strong> {task.assigned_user.display_name || task.assigned_user.email}
                         </div>
                       )}
+                      {/* Rendered whether or not anybody is assigned. An
+                          unassigned task is not an unowned one — its evidence
+                          item's accountable team has it — and saying so here
+                          is what stops "nobody is on this" being read off a
+                          blank space. */}
+                      <TaskOwningTeamBadge
+                        ownership={ownershipOf(task)}
+                        memberType={memberTypeOf(ownershipOf(task).team?.person_user_id)}
+                        resolved={ownershipResolved}
+                      />
                     </div>
 
                     {/* Action Buttons */}

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { apiClient } from '../data/apiClient';
 import { withContractorSuffix } from './ContractorBadge';
 import { useOrgMemberTypes } from '../hooks/useOrgMemberTypes';
+import TaskOwningTeamField from './TaskOwningTeamField';
 
 interface User {
   id: string;
@@ -51,6 +52,14 @@ export const TaskEditModal: React.FC<TaskEditModalProps> = ({
   const [status, setStatus] = useState(task.status || 'not_started');
   const [dueDate, setDueDate] = useState(task.due_date || '');
   const [assignedUserId, setAssignedUserId] = useState(task.assigned_user_id || '');
+  // Tri-state, and the empty string is NOT one of its values: null means
+  // inherit from the evidence item and a team id means override (#822 §6).
+  // Normalising an absent key to null rather than to '' matters — a server
+  // that has not shipped the column yet must read as inheriting, which is the
+  // truth, and not as an override onto a team called ''.
+  const [owningTeamId, setOwningTeamId] = useState<string | null>(
+    task.owning_team_id ?? null
+  );
   const [members, setMembers] = useState<User[]>([]);
 
   // The assignee picker names a person, so it says when that person is an
@@ -90,7 +99,12 @@ export const TaskEditModal: React.FC<TaskEditModalProps> = ({
         priority: priority,
         status: status,
         due_date: dueDate,
-        assigned_user_id: assignedUserId || null
+        assigned_user_id: assignedUserId || null,
+        // Always sent, including as null. Null is a value here, not an
+        // omission: returning an overriding task to inheriting is a thing a
+        // user must be able to do, so the field cannot be one the client only
+        // sends when it is set.
+        owning_team_id: owningTeamId
       });
 
       onTaskUpdated();
@@ -217,6 +231,20 @@ export const TaskEditModal: React.FC<TaskEditModalProps> = ({
               ))}
             </select>
           </div>
+
+          {/* Owning team — inherit from the evidence item, or override it */}
+          {task.evidence_tracking_id && (
+            <div className="task-modal-form-group">
+              <TaskOwningTeamField
+                organizationId={organizationId}
+                evidenceTrackingId={String(task.evidence_tracking_id)}
+                value={owningTeamId}
+                onChange={setOwningTeamId}
+                disabled={loading}
+                idPrefix={`task-${task.id}`}
+              />
+            </div>
+          )}
 
           {/* Action Buttons */}
           <div className="task-modal-actions">

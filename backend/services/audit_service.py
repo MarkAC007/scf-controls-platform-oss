@@ -194,6 +194,7 @@ TEAM_TRACKED_FIELDS: set = {
     'name',
     'description',
     'function_id',
+    'function_ids',
     # Archiving is the only "delete" a team gets (#822), so the is_active flip
     # IS the deletion record. It has to be tracked or the audit trail cannot
     # answer when a team stopped being used.
@@ -226,6 +227,16 @@ EVIDENCE_TEAM_ASSIGNMENT_TRACKED_FIELDS: frozenset = frozenset({
     'evidence_tracking_id',
     'team_id',
     'is_accountable',
+})
+
+#: #822 phase 4. A task's team is an *inherited* ownership override, not a
+#: join-table row, so its audit trail lives on the task rather than on an
+#: assignment entity. Only the ownership columns are tracked here: the rest of
+#: a task's PATCH (title, due date, notes) has never been audited and this
+#: change is not the place to start doing it.
+EVIDENCE_TASK_OWNERSHIP_TRACKED_FIELDS: frozenset = frozenset({
+    'owning_team_id',
+    'assigned_user_id',
 })
 
 

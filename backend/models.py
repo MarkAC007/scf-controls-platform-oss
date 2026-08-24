@@ -9,7 +9,7 @@ as of v4.0.0. The scf_id field replaces the former ccf_id field.
 from datetime import datetime
 from enum import Enum
 from typing import Optional, List, Tuple
-from sqlalchemy import Column, String, Boolean, Text, Date, ForeignKey, ForeignKeyConstraint, DateTime, JSON, Integer, Numeric, UniqueConstraint, Index, BigInteger, Float, LargeBinary, CheckConstraint, Computed, SmallInteger
+from sqlalchemy import Column, String, Boolean, Text, Date, ForeignKey, ForeignKeyConstraint, DateTime, JSON, Integer, Numeric, UniqueConstraint, Index, BigInteger, Float, LargeBinary, CheckConstraint, Computed, SmallInteger, Table
 from sqlalchemy.dialects.postgresql import UUID, JSONB, ARRAY, TSVECTOR
 from sqlalchemy.sql import func, text
 from sqlalchemy.orm import relationship
@@ -554,7 +554,17 @@ class EvidenceTracking(Base):
     owner_user = relationship("User", foreign_keys=[owner_user_id])
     created_by = relationship("User", foreign_keys=[created_by_user_id])
     updated_by = relationship("User", foreign_keys=[updated_by_user_id])
-    collection_tasks = relationship("EvidenceCollectionTask", back_populates="evidence_tracking", cascade="all, delete-orphan")
+    #: Explicit foreign_keys/primaryjoin: EvidenceCollectionTask reaches this
+    #: table by two separate foreign keys (evidence_tracking_id, and the
+    #: composite organization_id + evidence_tracking_id added in #822 phase 4),
+    #: which SQLAlchemy cannot choose between on its own.
+    collection_tasks = relationship(
+        "EvidenceCollectionTask",
+        primaryjoin="EvidenceTracking.id == EvidenceCollectionTask.evidence_tracking_id",
+        foreign_keys="[EvidenceCollectionTask.evidence_tracking_id]",
+        back_populates="evidence_tracking",
+        cascade="all, delete-orphan",
+    )
     system = relationship("System", back_populates="evidence_tracking")
 
     def __repr__(self):
@@ -626,11 +636,69 @@ class CommentHistory(Base):
 
 
 class EvidenceCollectionTask(Base):
-    """EvidenceCollectionTask model - tracks evidence lifecycle tasks."""
+    """EvidenceCollectionTask model - tracks evidence lifecycle tasks.
+
+    A task **inherits** ownership rather than owning it (#822 §6). It is an
+    ``ON DELETE CASCADE`` child of an evidence item that already carries team
+    ownership, and it is atomic — one title, one due date, one status, one
+    doer — so there is deliberately no ``task_team_assignments`` join table.
+    ``owning_team_id`` is a nullable override for the case that motivates it:
+    ``task_type`` spans ``setup``, ``collection`` and ``review``, which on a
+    single evidence item are routinely different functions.
+
+    * ``owning_team_id IS NULL`` — inherit from the parent evidence item.
+    * ``owning_team_id`` set — override, for the setup/collect/review split.
+
+    ``organization_id`` is denormalised beside ``owning_team_id`` so that two
+    composite foreign keys can force the parent evidence item and the team to
+    belong to the same organisation. Before it, this table had no organisation
+    column at all: tenancy was only transitive through ``evidence_tracking``,
+    which left no composite foreign key available and nothing in the database
+    stopping a task from naming another tenant's team.
+
+    Both halves are needed. With only the team-side check, a row could name
+    another tenant's ``evidence_tracking_id`` while setting
+    ``organization_id`` to the caller's own org, and the team check would pass.
+    """
     __tablename__ = "evidence_collection_tasks"
+    __table_args__ = (
+        #: The parent evidence item belongs to this organisation. CASCADE
+        #: matches the single-column foreign key on evidence_tracking_id —
+        #: deleting an evidence item already takes its tasks with it.
+        ForeignKeyConstraint(
+            ['organization_id', 'evidence_tracking_id'],
+            ['evidence_tracking.organization_id', 'evidence_tracking.id'],
+            name='fk_evidence_collection_tasks_evidence_org', ondelete='CASCADE',
+        ),
+        #: And so does the team. The live constraint carries
+        #: ``ON DELETE SET NULL (owning_team_id)`` — the PostgreSQL 15 column
+        #: list — because deleting a team must return its tasks to inheriting
+        #: from the evidence item, never delete them, and a bare SET NULL
+        #: would try to null the NOT NULL ``organization_id`` alongside it and
+        #: leave the team undeletable.
+        #:
+        #: That action cannot be declared here: SQLAlchemy validates
+        #: ``ondelete`` against a fixed list and rejects the column form, so
+        #: the migration emits this constraint as raw DDL and this declaration
+        #: exists for the ORM's benefit — it is what tells SQLAlchemy the two
+        #: columns reach ``teams`` together. Alembic autogenerate does not
+        #: compare referential actions, so the omission produces no phantom
+        #: diff; a ``create_all`` development database would get NO ACTION
+        #: here, one of several ways that fallback already diverges from the
+        #: migrated schema (it cannot seed ``functions`` either).
+        ForeignKeyConstraint(
+            ['organization_id', 'owning_team_id'],
+            ['teams.organization_id', 'teams.id'],
+            name='fk_evidence_collection_tasks_team_org',
+        ),
+        Index('ix_evidence_collection_tasks_owning_team_id', 'owning_team_id'),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     evidence_tracking_id = Column(UUID(as_uuid=True), ForeignKey("evidence_tracking.id", ondelete="CASCADE"), nullable=False)
+    #: Denormalised from the parent evidence item — the column the composite
+    #: foreign keys above join through. Set it explicitly on every insert.
+    organization_id = Column(UUID(as_uuid=True), nullable=False)
 
     # Task classification
     task_type = Column(String(50), default='collection')  # 'feasibility', 'setup', 'collection', 'review', 'documentation', 'issue'
@@ -642,6 +710,10 @@ class EvidenceCollectionTask(Base):
     due_date = Column(Date, nullable=False)
     status = Column(String(50), default='not_started')  # 'not_started', 'in_progress', 'completed'
     assigned_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+    #: NULL means inherit the parent evidence item's team, which is the common
+    #: case. Constrained by fk_evidence_collection_tasks_team_org above, not by
+    #: a foreign key of its own.
+    owning_team_id = Column(UUID(as_uuid=True), nullable=True)
 
     # Completion tracking
     completed_date = Column(Date)
@@ -654,8 +726,23 @@ class EvidenceCollectionTask(Base):
     created_at = Column(DateTime(timezone=False), server_default=func.now())
 
     # Relationships
-    evidence_tracking = relationship("EvidenceTracking", back_populates="collection_tasks")
+    evidence_tracking = relationship(
+        "EvidenceTracking",
+        primaryjoin="EvidenceCollectionTask.evidence_tracking_id == EvidenceTracking.id",
+        foreign_keys="[EvidenceCollectionTask.evidence_tracking_id]",
+        back_populates="collection_tasks",
+    )
     assigned_user = relationship("User", back_populates="assigned_tasks")
+    #: viewonly: writes go through owning_team_id, which the composite foreign
+    #: key validates against organization_id. Letting the ORM set the team via
+    #: this relationship would leave organization_id untouched and the write
+    #: would be rejected by the constraint.
+    owning_team = relationship(
+        "Team",
+        primaryjoin="EvidenceCollectionTask.owning_team_id == Team.id",
+        foreign_keys="[EvidenceCollectionTask.owning_team_id]",
+        viewonly=True,
+    )
 
     def __repr__(self):
         return f"<EvidenceCollectionTask(type={self.task_type}, title={self.title}, status={self.status})>"
@@ -3281,6 +3368,13 @@ class OrganizationAssurancePolicy(Base):
 # Functions, Teams and Team Membership (#822 phase 1)
 # =============================================================================
 
+team_functions = Table(
+    "team_functions",
+    Base.metadata,
+    Column("team_id", UUID(as_uuid=True), ForeignKey("teams.id", ondelete="CASCADE"), primary_key=True),
+    Column("function_id", UUID(as_uuid=True), ForeignKey("functions.id", ondelete="RESTRICT"), primary_key=True),
+)
+
 class Function(Base):
     """Platform-static business function a team can be aligned to.
 
@@ -3304,14 +3398,19 @@ class Function(Base):
     is_active = Column(Boolean, nullable=False, default=True,
                        server_default=text('true'))
 
-    teams = relationship("Team", back_populates="function")
+    primary_teams = relationship("Team", back_populates="function")
+    teams = relationship("Team", secondary=team_functions, back_populates="functions")
 
     def __repr__(self):
         return f"<Function(key={self.key}, name={self.name}, active={self.is_active})>"
 
 
 class Team(Base):
-    """Organisation-scoped team, aligned to exactly one platform function.
+    """Organisation-scoped team serving one or more platform functions.
+
+    ``function_id`` remains the required primary function for compatibility
+    and gives the database a simple at-least-one guarantee. ``functions`` is
+    the complete set and is stored in ``team_functions``.
 
     ``uq_teams_org_id`` looks redundant beside the primary key and is not: it
     is the foreign-key target that lets :class:`TeamMember` prove its
@@ -3349,7 +3448,8 @@ class Team(Base):
                                 ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
     organization = relationship("Organization")
-    function = relationship("Function", back_populates="teams")
+    function = relationship("Function", back_populates="primary_teams")
+    functions = relationship("Function", secondary=team_functions, back_populates="teams")
     created_by = relationship("User", foreign_keys=[created_by_user_id])
     updated_by = relationship("User", foreign_keys=[updated_by_user_id])
     #: Explicit foreign_keys/primaryjoin: TeamMember reaches this table by two

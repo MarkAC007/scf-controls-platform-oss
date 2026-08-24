@@ -620,6 +620,13 @@ class EvidenceCollectionTaskBase(BaseModel):
 class EvidenceCollectionTaskCreate(EvidenceCollectionTaskBase):
     evidence_tracking_id: UUID
     assigned_user_id: Optional[UUID] = None
+    #: The team that owns the task, or ``None`` to inherit the accountable team
+    #: from the parent evidence item (#822 §6). ``None`` is the right default
+    #: and the common case: a task created without a team is not unowned, it is
+    #: inheriting. ``organization_id`` is NOT accepted alongside it -- it is
+    #: denormalised from the parent, and the composite foreign key checks the
+    #: team belongs to that same organisation.
+    owning_team_id: Optional[UUID] = None
 
 
 class EvidenceCollectionTaskUpdate(BaseModel):
@@ -634,12 +641,29 @@ class EvidenceCollectionTaskUpdate(BaseModel):
     assigned_user_id: Optional[UUID] = None
     dependencies: Optional[List[UUID]] = None
     attachments: Optional[List[Dict[str, str]]] = None
+    #: The team that owns the task, or ``None`` to clear an override and go
+    #: back to inheriting the parent evidence item's accountable team.
+    #:
+    #: ``None`` here is LOAD-BEARING and is not the same as omitting the field.
+    #: Every other optional above uses the ``if x is not None`` idiom, which
+    #: reads as the house style -- but that idiom cannot express "clear it",
+    #: because it treats an explicit ``null`` and an absent key identically.
+    #: An override would then be a one-way door: settable, never removable.
+    #: The endpoint therefore consults ``model_fields_set`` for THIS field
+    #: only. Do not "tidy" it into the surrounding pattern.
+    owning_team_id: Optional[UUID] = None
 
 
 class EvidenceCollectionTaskResponse(EvidenceCollectionTaskBase):
     id: UUID
     evidence_tracking_id: UUID
     assigned_user_id: Optional[UUID] = None
+    #: ``None`` means the task inherits its evidence item's accountable team,
+    #: which is the common case and is not the same as "no team".
+    #: Returned on every task read so a client can tell an override from an
+    #: inheritance -- without it the two are indistinguishable on screen, and
+    #: the column is written but never read.
+    owning_team_id: Optional[UUID] = None
     completed_date: Optional[date] = None
     auto_generated: bool
     created_at: datetime
@@ -4231,6 +4255,13 @@ class TeamBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     description: Optional[str] = None
     function_id: UUID
+    function_ids: Optional[List[UUID]] = Field(None, min_length=1)
+
+    @model_validator(mode="after")
+    def primary_function_is_served(self):
+        if self.function_ids is not None and self.function_id not in self.function_ids:
+            raise ValueError("function_ids must include function_id")
+        return self
 
 
 class TeamCreate(TeamBase):
@@ -4242,6 +4273,7 @@ class TeamUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=255)
     description: Optional[str] = None
     function_id: Optional[UUID] = None
+    function_ids: Optional[List[UUID]] = Field(None, min_length=1)
     is_active: Optional[bool] = None
 
 
@@ -4298,6 +4330,7 @@ class TeamResponse(TeamBase):
     created_by_user_id: Optional[UUID] = None
     updated_by_user_id: Optional[UUID] = None
     function: Optional[FunctionSimple] = None
+    functions: List[FunctionSimple] = Field(default_factory=list)
     member_count: int = 0
 
     model_config = ConfigDict(from_attributes=True)
@@ -4394,6 +4427,62 @@ class TeamAssignmentMapResponse(BaseModel):
     type: str
     total: int
     accountable_only: bool
+    assignments: Dict[UUID, List[TeamAssignmentResponse]] = Field(default_factory=dict)
+
+
+#: Cap on one batch assignment. Matches the evidence-tracking batch endpoint,
+#: which is the volume this exists to serve -- #800's bulk actions.
+MAX_TEAM_ASSIGNMENT_BATCH = 500
+
+
+class TeamAssignmentBatchCreate(BaseModel):
+    """Assign **one team** to many items in a single transaction (#822 phase 4).
+
+    One team, not many: "assign these fifty controls to Security Operations"
+    is the operation people actually perform, and it is the one that must not
+    produce fifty notifications. A many-teams-to-many-items body would be a
+    generic write endpoint wearing a batch's clothes, with no aggregate message
+    that could honestly summarise it.
+
+    As with :class:`TeamAssignmentCreate`, ``organization_id`` is absent by
+    design and derived from the path.
+    """
+    type: str = Field(
+        ...,
+        pattern=f"^({TEAM_ASSIGNMENT_TYPES_PATTERN})$",
+        description="Which kind of item is being assigned",
+    )
+    team_id: UUID
+    item_ids: List[UUID] = Field(
+        ...,
+        min_length=1,
+        max_length=MAX_TEAM_ASSIGNMENT_BATCH,
+        description="The items to assign to this team",
+    )
+    is_accountable: bool = Field(
+        False,
+        description=(
+            "Make this team accountable for every item in the batch. Any "
+            "incumbent on each item is demoted to consulted in the same "
+            "transaction."
+        ),
+    )
+
+
+class TeamAssignmentBatchResponse(BaseModel):
+    """What a batch assignment did, and who heard about it.
+
+    ``notified`` is on the response on purpose. The whole point of the batch
+    endpoint is that assigning fifty items produces **one** notification per
+    recipient rather than fifty, and a number a caller (and a test) can read
+    is what stops that quietly regressing to per-item.
+    """
+    type: str
+    team_id: UUID
+    created: int
+    updated: int
+    demoted: int
+    notified: int
     assignments: Dict[UUID, List[TeamAssignmentResponse]] = Field(default_factory=dict)
 
 
