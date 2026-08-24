@@ -39,6 +39,7 @@ from services.audit_service import log_entity_changes, detect_action_source, get
 from services.email_service import send_invitation_email
 from services.subscription import get_user_subscription, can_invite_member
 from services import org_invite as org_invite_service
+from services.org_utils import MEMBER_TYPES, invalid_member_type_detail
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +79,7 @@ async def list_organization_members(
             "organization_id": member.organization_id,
             "user_id": member.user_id,
             "role": member.role,
+            "member_type": member.member_type,
             "joined_at": member.joined_at,
             "user": {
                 "id": user.id,
@@ -136,6 +138,10 @@ async def add_organization_member(
         "organization_id": member.organization_id,
         "user_id": member.user_id,
         "role": member.role,
+        # Not settable on create -- the column default ('internal') decides it,
+        # and the refresh above is what put it on the instance. Reclassifying
+        # somebody is the PATCH's job, where it gets audited.
+        "member_type": member.member_type,
         "joined_at": member.joined_at,
         "user": {
             "id": user.id,
@@ -149,18 +155,43 @@ async def add_organization_member(
 async def update_member_role(
     org_id: UUID,
     user_id: UUID,
-    role: str,
     request: Request,
+    role: Optional[str] = Query(None, description="New role: admin, editor, or viewer"),
+    member_type: Optional[str] = Query(
+        None,
+        description="New employment type: internal or external_contractor",
+    ),
     membership: OrgMembership = Depends(require_org_role("admin")),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Update a member's role in an organization.
+    Update a member's role and/or employment type in an organization.
     Requires: admin role.
+
+    Both fields are optional query parameters and at least one must be given.
+    Only what is supplied is applied, so reclassifying somebody as a contractor
+    does not reset the role they were granted, and vice versa.
+
+    `role` stays a query parameter rather than moving into a request body: the
+    live web client already calls this as `?role=admin`, and restructuring it
+    would break that caller for no gain. The function name is unchanged for the
+    same reason -- it is the OpenAPI operationId.
+
+    `member_type` is a label, not a grant. Authorisation is decided entirely by
+    `role`; nothing reads member_type to allow or deny anything (#822
+    invariant 4).
     """
+    if role is None and member_type is None:
+        raise HTTPException(status_code=400, detail="Provide role, member_type, or both")
+
     # Validate role
-    if role not in ['admin', 'editor', 'viewer']:
+    if role is not None and role not in ['admin', 'editor', 'viewer']:
         raise HTTPException(status_code=400, detail="Invalid role. Must be admin, editor, or viewer")
+
+    # Validate member_type against the same vocabulary the CHECK constraint
+    # enforces, so a bad value is a 400 here rather than a 500 from Postgres.
+    if member_type is not None and member_type not in MEMBER_TYPES:
+        raise HTTPException(status_code=400, detail=invalid_member_type_detail())
 
     # Get membership
     result = await db.execute(
@@ -176,8 +207,12 @@ async def update_member_role(
     # Capture old values for audit trail
     old_values = {f: getattr(member, f) for f in ORG_MEMBER_TRACKED_FIELDS if hasattr(member, f)}
 
-    # Update role
-    member.role = role
+    # Apply only what was supplied. A caller sending member_type alone must not
+    # have their role silently rewritten to whatever a default would have been.
+    if role is not None:
+        member.role = role
+    if member_type is not None:
+        member.member_type = member_type
 
     # Capture new values and log changes
     new_values = {f: getattr(member, f) for f in ORG_MEMBER_TRACKED_FIELDS if hasattr(member, f)}
@@ -203,6 +238,7 @@ async def update_member_role(
         "organization_id": member.organization_id,
         "user_id": member.user_id,
         "role": member.role,
+        "member_type": member.member_type,
         "joined_at": member.joined_at,
         "user": {
             "id": user.id,
@@ -356,7 +392,10 @@ async def invite_user_to_organization(
     Enforces domain validation and subscription limits.
     """
     current_user = membership.user
-    logger.info(f"Invite request: org={org_id}, email={invite_data.email}, role={invite_data.role}")
+    logger.info(
+        f"Invite request: org={org_id}, email={invite_data.email}, "
+        f"role={invite_data.role}, member_type={invite_data.member_type}"
+    )
 
     # Load organisation
     result = await db.execute(select(Organization).where(Organization.id == org_id))
@@ -369,6 +408,7 @@ async def invite_user_to_organization(
             inviter_email=current_user.email,
             email=invite_data.email,
             role=invite_data.role,
+            member_type=invite_data.member_type,
             message=invite_data.message,
             db=db,
         )
@@ -404,6 +444,7 @@ async def invite_user_to_organization(
         organization_name=org.name,
         email=invite.email,
         role=invite.role,
+        member_type=invite.member_type,
         status=invite.status,
         invite_token=invite.invite_token,
         expires_at=invite.expires_at,
@@ -431,6 +472,7 @@ async def list_organization_invites(
             organization_name=org.name if org else "Unknown",
             email=inv.email,
             role=inv.role,
+            member_type=inv.member_type,
             status=inv.status,
             invite_token=None,  # Don't expose tokens in list view
             expires_at=inv.expires_at,

@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { apiClient } from '../data/apiClient';
+import { ContractorBadge } from './ContractorBadge';
+import { useOrgMemberTypes } from '../hooks/useOrgMemberTypes';
 
 interface User {
   id: string;
@@ -38,6 +40,11 @@ export const AssignmentPicker: React.FC<AssignmentPickerProps> = ({
   const [loading, setLoading] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
   const [assignments, setAssignments] = useState(currentAssignments);
+
+  // Contractor labelling for both halves of this control: the people already
+  // assigned, and the people you could assign next. Everyone stays assignable
+  // — this says who somebody is, not whether they may be picked.
+  const { memberTypeOf } = useOrgMemberTypes(organizationId);
 
   useEffect(() => {
     loadOrganizationMembers();
@@ -115,6 +122,11 @@ export const AssignmentPicker: React.FC<AssignmentPickerProps> = ({
         {assignments.map((assignment: any) => (
           <span key={assignment.id} className="assignment-picker-tag">
             {assignment.user?.display_name || assignment.user?.email || 'Unknown'}
+            <ContractorBadge
+              className="contractor-badge-inline"
+              memberType={memberTypeOf(assignment.user_id)}
+              personName={assignment.user?.display_name || assignment.user?.email}
+            />
             <button
               onClick={() => handleUnassign(assignment.id)}
               disabled={loading}
@@ -150,6 +162,11 @@ export const AssignmentPicker: React.FC<AssignmentPickerProps> = ({
               >
                 <span className="assignment-picker-dropdown-name">
                   {member.display_name || 'No name'}
+                  <ContractorBadge
+                    className="contractor-badge-inline"
+                    memberType={memberTypeOf(member.id)}
+                    personName={member.display_name || member.email}
+                  />
                 </span>
                 <span className="assignment-picker-dropdown-email">
                   {member.email}

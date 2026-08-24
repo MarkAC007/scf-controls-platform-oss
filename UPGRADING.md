@@ -70,6 +70,72 @@ Add `--yes` to skip the confirmation prompt (for unattended runs).
 
 ### Version-specific notes
 
+- **Internal vs external-contractor membership (migrations `orgmembertype1`
+  and `invitemembertype1`).** This release records, per organisation, whether a
+  member is permanent staff or an external contractor, so that "is any control
+  owned by a contractor?" becomes a question the platform can answer. Both
+  migrations are applied by phase 4 of the upgrade like any other; there is
+  nothing extra to run.
+
+  They are **schema-only and additive**:
+
+  - `organization_members` gains `member_type VARCHAR(30) NOT NULL DEFAULT
+    'internal'`, a CHECK restricting it to `'internal'` or
+    `'external_contractor'`, and an index on `(organization_id, member_type)`.
+  - `organization_invites` gains the same column and the same CHECK, so an
+    invitation carries the employment type through to the membership it
+    creates. It gets no index — invites are fetched by token or by
+    organisation, never filtered by employment type.
+  - **Every existing member becomes `internal`.** That is the safe default, not
+    a judgement: the platform has no basis for inferring who is a contractor,
+    so nothing is guessed. An admin marks contractors explicitly afterwards,
+    from the member's row in User Management or on the invitation.
+  - **Nothing else is touched.** Existing roles, assignments and permissions are
+    unchanged, and `consultant_invites` is deliberately left alone — the
+    consultant portal is a separate relationship from organisation membership.
+  - **`member_type` grants and removes nothing.** Access control remains on the
+    organisation role (admin / editor / viewer). Marking somebody a contractor
+    makes their status *visible* — a badge wherever they appear as an owner,
+    assignee or team member, and a filter on the controls and evidence lists —
+    it does not restrict what they can do. Only an org **admin** may set it.
+
+  Expect both migrations to be fast: two `ALTER TABLE ... ADD COLUMN` with a
+  constant default, which Postgres 11+ applies without rewriting the table,
+  regardless of how many members you have.
+
+  **Downgrade** drops both columns and their constraints, discarding which
+  members were marked as contractors. Roles and memberships themselves survive.
+  As always, prefer restore-from-backup over a downgrade — see §4.
+
+- **New tables for teams and functions (migration `teamsfunctions1`).** This
+  release adds organisation structure: business **functions**, **teams**, and
+  **team members**. The migration chains from `auditappendonly1` and is applied
+  by phase 4 of the upgrade like any other — there is nothing extra to run.
+
+  It is **schema-only and additive**:
+
+  - It creates three new tables — `functions`, `teams` and `team_members` — and
+    seeds `functions` with the fourteen platform-defined business functions
+    (Governance, Risk & Compliance; Security Operations; Legal; and so on). The
+    seeded rows use fixed ids, so a given function has the same id in every
+    environment.
+  - **No existing table or row is altered.** No column is added to, renamed in,
+    or dropped from anything you already have.
+  - **No teams are created for you.** Nothing is inferred from existing owner
+    fields; every organisation starts with zero teams and an admin creates them
+    when they are ready. An organisation that never creates a team is entirely
+    unaffected by this release.
+  - **Every existing per-user assignment keeps working unchanged.** Teams do not
+    replace assignment and they grant no permissions — access control remains on
+    the organisation role (admin / editor / viewer).
+
+  Expect the migration to be fast: three empty tables and fourteen seed rows,
+  regardless of how large your database is.
+
+  **Downgrade** drops the three tables (`team_members`, `teams`, `functions`)
+  and everything in them. As always, prefer restore-from-backup over a downgrade
+  — see §4.
+
 - **Postgres host publish is now loopback-only.** `docker-compose.yml` publishes
   postgres on `127.0.0.1:5432` instead of all interfaces — the app is unaffected
   (it uses the internal Docker network), but if you connected to the database

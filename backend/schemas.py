@@ -15,9 +15,16 @@ from services.frequency_vocabulary import (
     UI_OPTIONS as FREQUENCY_UI_OPTIONS,
     normalize as normalize_frequency,
 )
+from services.team_assignments import TEAM_ASSIGNMENT_TYPE_KEYS
+from services.org_utils import MEMBER_TYPES
 
 SYSTEM_TYPES = "|".join(SYSTEM_TYPE_LIST)
 SYSTEM_STATUSES = "active|inactive|deprecated"
+#: Rendered into every member_type Pydantic pattern (#822 phase 2), the same
+#: way SYSTEM_TYPES and TEAM_ASSIGNMENT_TYPES_PATTERN are, so the accepted
+#: values cannot drift from the vocabulary the endpoints validate against or
+#: from the CHECK constraints on organization_members and organization_invites.
+MEMBER_TYPES_PATTERN = "|".join(sorted(MEMBER_TYPES))
 
 
 # =============================================================================
@@ -532,6 +539,11 @@ class OrganizationMemberResponse(OrganizationMemberBase):
     id: UUID
     organization_id: UUID
     user_id: UUID
+    #: #822 phase 2. Declared on the response rather than on
+    #: OrganizationMemberBase on purpose: Base is also the parent of
+    #: OrganizationMemberCreate, and a required field there would reject every
+    #: existing POST body. Read path only, and purely additive.
+    member_type: str = Field(..., pattern=f"^({MEMBER_TYPES_PATTERN})$")
     joined_at: datetime
     user: Optional[UserSimple] = None
 
@@ -886,6 +898,15 @@ class OrgInviteCreate(BaseModel):
     """Request schema for creating an organisation member invitation."""
     email: str = Field(..., min_length=5, max_length=255, description="Invitee email address")
     role: str = Field(default="viewer", description="Role to assign: admin, editor, or viewer")
+    #: #822 phase 2. Defaulted rather than required, matching how `role` defaults
+    #: to "viewer" on this schema: an invite that says nothing means internal, so
+    #: every existing caller keeps working and gets the same answer the column
+    #: default would have given it.
+    member_type: str = Field(
+        default="internal",
+        pattern=f"^({MEMBER_TYPES_PATTERN})$",
+        description="Employment type to assign on acceptance",
+    )
     message: Optional[str] = Field(None, max_length=1000, description="Optional personal message")
 
 
@@ -896,6 +917,9 @@ class OrgInviteResponse(BaseModel):
     organization_name: str
     email: str
     role: str
+    #: What acceptance will actually grant. Visible on the pending invite so an
+    #: admin reviewing the list does not have to accept one to find out.
+    member_type: str = Field(..., pattern=f"^({MEMBER_TYPES_PATTERN})$")
     status: str
     invite_token: Optional[str] = Field(None, description="Token for acceptance (only shown on creation)")
     expires_at: datetime
@@ -4168,3 +4192,233 @@ class CDMComputeMappingsStatusResponse(BaseModel):
     ready: bool
     successful: Optional[bool] = None
     result: Optional[Dict[str, Any]] = None
+
+
+# =============================================================================
+# Functions, Teams and Team Membership (#822 phase 1)
+# =============================================================================
+
+#: The three membership roles ``team_members.membership_role`` accepts. Kept as
+#: one literal so the Pydantic pattern and the router's promotion logic cannot
+#: drift apart from the model's ``ck_team_members_membership_role`` check.
+TEAM_MEMBERSHIP_ROLES = "primary|delegate|member"
+
+
+class FunctionSimple(BaseModel):
+    """Thin function reference for nesting inside a team."""
+    id: UUID
+    key: str
+    name: str
+    is_active: bool
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class FunctionResponse(FunctionSimple):
+    """A platform-static business function.
+
+    Read-only by design: there is deliberately no FunctionCreate/Update. The
+    fourteen rows are fixed literals seeded by migration ``teamsfunctions1``,
+    so a team pointed at a function means the same thing in every deployment.
+    """
+    description: Optional[str] = None
+    display_order: Optional[int] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TeamBase(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    description: Optional[str] = None
+    function_id: UUID
+
+
+class TeamCreate(TeamBase):
+    pass
+
+
+class TeamUpdate(BaseModel):
+    """Partial team update. Every field optional; unset fields are untouched."""
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
+    description: Optional[str] = None
+    function_id: Optional[UUID] = None
+    is_active: Optional[bool] = None
+
+
+class TeamMemberBase(BaseModel):
+    membership_role: str = Field(..., pattern=f"^({TEAM_MEMBERSHIP_ROLES})$")
+
+
+class TeamMemberCreate(TeamMemberBase):
+    user_id: UUID
+
+
+class TeamMemberUpdate(BaseModel):
+    """Role change for an existing team member.
+
+    Required, not optional: this endpoint exists only to change the role, and
+    an empty body should be a 422 rather than a silent no-op.
+    """
+    membership_role: str = Field(..., pattern=f"^({TEAM_MEMBERSHIP_ROLES})$")
+
+
+class TeamMemberResponse(TeamMemberBase):
+    id: UUID
+    team_id: UUID
+    organization_id: UUID
+    user_id: UUID
+    added_at: datetime
+    added_by_user_id: Optional[UUID] = None
+    user: Optional[UserSimple] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TeamHealth(BaseModel):
+    """Advisory state of a team. Never a gate.
+
+    Every one of these conditions is legal — a team with no members and no
+    primary is exactly what a team looks like the instant it is created. The
+    UI renders badges from this; the API never refuses a write because of it.
+    """
+    has_primary: bool
+    has_delegate: bool
+    has_members: bool
+    member_count: int
+    function_is_active: bool
+    warnings: List[str] = Field(default_factory=list)
+
+
+class TeamResponse(TeamBase):
+    id: UUID
+    organization_id: UUID
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+    created_by_user_id: Optional[UUID] = None
+    updated_by_user_id: Optional[UUID] = None
+    function: Optional[FunctionSimple] = None
+    member_count: int = 0
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TeamDetailResponse(TeamResponse):
+    """Single-team view: the team, its roster, and its advisory health."""
+    members: List[TeamMemberResponse] = Field(default_factory=list)
+    health: TeamHealth
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# =============================================================================
+# Team assignment of controls and evidence (#822 phase 3)
+# =============================================================================
+
+#: The assignable types, joined into the Pydantic pattern from the dispatch
+#: registry itself rather than restated here — the same trick SYSTEM_TYPES uses
+#: above. When phase 5 adds ``risk`` and ``vendor`` to the registry, the
+#: request schema and the OpenAPI enum follow with no edit to this file, and
+#: there is no way for the accepted values to drift from what is dispatchable.
+TEAM_ASSIGNMENT_TYPES_PATTERN = "|".join(TEAM_ASSIGNMENT_TYPE_KEYS)
+
+
+class TeamAssignmentMemberSummary(BaseModel):
+    """One accountable member of an assigned team, embedded in the badge payload.
+
+    Present so that rendering "Security Operations (Ana Ruiz)" on a row of the
+    controls list needs no follow-up request. The whole reason this endpoint is
+    bulk is defeated if the client then fetches a roster per team.
+    """
+    user_id: UUID
+    membership_role: str
+    user: Optional[UserSimple] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TeamAssignmentTeamSummary(BaseModel):
+    """The assigned team, with just enough to render a badge.
+
+    Not ``TeamResponse``: that carries created/updated audit columns and a
+    member count that would each cost a join, on a payload that is repeated
+    once per assignment across a page of hundreds of rows.
+
+    ``primary`` and ``delegate`` are both nullable. A team with neither is
+    exactly what every team looks like the moment it is created, so this is a
+    normal state and never an error.
+    """
+    id: UUID
+    name: str
+    is_active: bool
+    function_id: UUID
+    function: Optional[FunctionSimple] = None
+    primary: Optional[TeamAssignmentMemberSummary] = None
+    delegate: Optional[TeamAssignmentMemberSummary] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TeamAssignmentResponse(BaseModel):
+    """One team's assignment to one control or evidence item.
+
+    ``item_id`` is the generic name for what the underlying table calls
+    ``scoped_control_id`` or ``evidence_tracking_id``. The client indexes on it
+    without knowing which table the row came from, which is what lets one
+    component render the badge for every assignable type.
+    """
+    id: UUID
+    type: str
+    item_id: UUID
+    team_id: UUID
+    organization_id: UUID
+    is_accountable: bool
+    assigned_at: datetime
+    assigned_by_user_id: Optional[UUID] = None
+    team: Optional[TeamAssignmentTeamSummary] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TeamAssignmentMapResponse(BaseModel):
+    """The bulk read: assignments for a whole page, already keyed by item id.
+
+    A map rather than a list, deliberately. The controls list renders hundreds
+    of rows and the accountable-team badge sits on that hot path; fetching per
+    row is an N+1 measured in seconds. Returning ``{item_id: [assignment, ...]}``
+    means the client neither calls per row nor indexes the response itself — it
+    looks up ``assignments[control.id]`` and renders.
+
+    JSON object keys are strings, so the client keys on the item's UUID string.
+    """
+    type: str
+    total: int
+    accountable_only: bool
+    assignments: Dict[UUID, List[TeamAssignmentResponse]] = Field(default_factory=dict)
+
+
+class TeamAssignmentCreate(BaseModel):
+    """Assign a team to an item, optionally as the accountable one.
+
+    Note what is *not* here: ``organization_id``. It is derived from the path
+    and the authenticated membership, never read from the body. A caller able
+    to name the organisation a row is filed under could point one tenant's team
+    at another tenant's control, and the composite foreign keys would have
+    nothing to disagree with.
+    """
+    type: str = Field(
+        ...,
+        pattern=f"^({TEAM_ASSIGNMENT_TYPES_PATTERN})$",
+        description="Which kind of item is being assigned",
+    )
+    item_id: UUID = Field(
+        ..., description="The scoped control or evidence tracking record id",
+    )
+    team_id: UUID
+    is_accountable: bool = Field(
+        False,
+        description=(
+            "Make this the accountable team. Any incumbent is demoted to "
+            "consulted in the same transaction."
+        ),
+    )

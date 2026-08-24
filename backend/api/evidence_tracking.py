@@ -29,6 +29,12 @@ from services.audit_service import (
     EVIDENCE_TRACKING_TRACKED_FIELDS,
 )
 from services.task_generator import generate_task_for_tracking
+from services.team_assignments import (
+    EVIDENCE_ASSIGNMENT_SPEC,
+    accountable_owner_filter,
+    team_assignment_filter,
+)
+from services.org_utils import MEMBER_TYPES, invalid_member_type_detail
 
 logger = logging.getLogger(__name__)
 
@@ -209,12 +215,16 @@ async def list_evidence_tracking(
     org_id: UUID,
     membership: OrgMembership = Depends(require_org_role("viewer")),
     system_id: Optional[UUID] = Query(None, description="Filter by collecting system"),
+    team_id: Optional[UUID] = Query(None, description="Filter to evidence this team is assigned to (accountable or consulted)"),
+    function_id: Optional[UUID] = Query(None, description="Filter to evidence assigned to any team aligned to this function"),
+    accountable_owner_type: Optional[str] = Query(None, description="Filter to items whose accountable team's primary owner has this member_type: internal or external_contractor"),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Get all evidence tracking records for an organization.
     Requires: viewer role or higher.
-    Optionally filter by system_id to find evidence collected by a specific system.
+    Optionally filter by system_id to find evidence collected by a specific system,
+    and by team_id / function_id to find evidence a team or function is assigned to.
     """
     # Organization existence verified by require_org_role
 
@@ -228,6 +238,49 @@ async def list_evidence_tracking(
     # Apply optional system_id filter
     if system_id is not None:
         query = query.where(EvidenceTracking.system_id == system_id)
+
+    # Apply team / function filters (#822 phase 3)
+    #
+    # Same EXISTS, same "any assigned team" semantics as the controls list --
+    # one helper serves both so the two lists cannot answer the same question
+    # differently.
+    #
+    # This endpoint is NOT paginated: it returns every row for the org. So the
+    # argument that a client-side filter would silently filter one page does
+    # not apply here. Filtering server-side anyway, for two reasons. The two
+    # lists must agree on what "assigned to GRC" means, and one shared helper
+    # is how that stays true. And an unpaginated list is exactly the one you
+    # least want to ship whole to a browser to have most of it discarded --
+    # this pushes the discarding into an indexed semi-join.
+    assignment_filter = team_assignment_filter(
+        EVIDENCE_ASSIGNMENT_SPEC,
+        EvidenceTracking.id,
+        organization_id=org_id,
+        team_id=team_id,
+        function_id=function_id,
+    )
+    if assignment_filter is not None:
+        query = query.where(assignment_filter)
+
+    # Apply the accountable-owner filter (#822 phase 2)
+    #
+    # The same helper the controls list uses, so "evidence owned by a
+    # contractor" and "controls owned by a contractor" mean the same chain:
+    # accountable team -> that team's primary -> that person's member_type.
+    if accountable_owner_type is not None and accountable_owner_type not in MEMBER_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=invalid_member_type_detail("accountable_owner_type"),
+        )
+
+    owner_filter = accountable_owner_filter(
+        EVIDENCE_ASSIGNMENT_SPEC,
+        EvidenceTracking.id,
+        organization_id=org_id,
+        accountable_owner_type=accountable_owner_type,
+    )
+    if owner_filter is not None:
+        query = query.where(owner_filter)
 
     result = await db.execute(query)
     tracking = result.scalars().all()

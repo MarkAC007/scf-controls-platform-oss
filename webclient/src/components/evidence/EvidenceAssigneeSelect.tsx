@@ -1,5 +1,6 @@
-import type { UserSimple } from '../../types'
+import type { MemberType, UserSimple } from '../../types'
 import { userLabel } from '../../data/userDisplay'
+import { ContractorBadge, withContractorSuffix } from '../ContractorBadge'
 
 /**
  * Assignee picker for an evidence tracking row (#781).
@@ -34,6 +35,15 @@ export interface EvidenceAssigneeSelectProps {
    */
   resolved?: UserSimple | null
   id?: string
+  /**
+   * Per-organisation internal/contractor lookup (#822 phase 2), supplied by
+   * the screen rather than resolved here: this component is rendered more than
+   * once per screen and each instance fetching the same membership list would
+   * be one request per assignee picker for an answer that never differs.
+   *
+   * Optional, so a caller that has not wired it renders exactly as before.
+   */
+  memberTypeOf?: (userId: string | null | undefined) => MemberType | undefined
 }
 
 export function EvidenceAssigneeSelect({
@@ -43,8 +53,10 @@ export function EvidenceAssigneeSelect({
   label = 'Assignee',
   resolved,
   id,
+  memberTypeOf,
 }: EvidenceAssigneeSelectProps) {
   const current = value || ''
+  const typeOf = (userId: string | null | undefined) => memberTypeOf?.(userId)
   const knownIds = new Set(members.map(m => m.id))
 
   // The stored assignee may not be in `members`: they can have left the org, be
@@ -67,9 +79,23 @@ export function EvidenceAssigneeSelect({
       : userLabel(orphan)
     : ''
 
+  // An <option> can hold only text, so the badge cannot live against each
+  // name in the list — it goes beside the field label, describing whoever is
+  // currently assigned, and the options carry the same word as a suffix.
+  const currentLabel = current
+    ? userLabel(members.find(m => m.id === current) ?? orphan ?? { id: current, email: current })
+    : null
+
   return (
     <div className="form-group">
-      <label htmlFor={id}>{label}</label>
+      <label htmlFor={id}>
+        {label}
+        <ContractorBadge
+          className="contractor-badge-inline"
+          memberType={typeOf(current)}
+          personName={currentLabel}
+        />
+      </label>
       <select
         id={id}
         value={current}
@@ -79,12 +105,12 @@ export function EvidenceAssigneeSelect({
         <option value="">Unassigned</option>
         {members.map(member => (
           <option key={member.id} value={member.id}>
-            {userLabel(member)}
+            {withContractorSuffix(userLabel(member), typeOf(member.id))}
           </option>
         ))}
         {orphan && (
           <option key={orphan.id} value={orphan.id}>
-            {orphanLabel}
+            {withContractorSuffix(orphanLabel, typeOf(orphan.id))}
           </option>
         )}
       </select>

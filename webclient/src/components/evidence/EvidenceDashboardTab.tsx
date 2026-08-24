@@ -14,7 +14,9 @@ import {
   type UpcomingEvidenceItem,
 } from '../../data/apiClient'
 import { getScopedControl, getEvidenceTracking } from '../../data/scopingService'
-import { evidenceOwnerLabel } from '../../data/userDisplay'
+import { evidenceOwnerLabel, evidenceOwnerUserId } from '../../data/userDisplay'
+import { ContractorBadge } from '../ContractorBadge'
+import { useOrgMemberTypes } from '../../hooks/useOrgMemberTypes'
 import { frequencyLabel } from '../../data/frequencyVocabulary'
 import {
   basisLabel,
@@ -408,31 +410,44 @@ export function formatSkipIds(ids: string[]): string {
 
 interface OwnerWorkload {
   owner: string
+  /**
+   * The user behind ``owner``, or null when the card covers evidence with more
+   * than one owner of that name or nobody at all (#822 phase 2). Cards key off
+   * the display label, so the id is only trustworthy when it is unanimous.
+   */
+  ownerUserId: string | null
   total: number
   tracked: number
   notTracked: number
 }
 
 function OwnerWorkloadSection({
+  organizationId,
   controls,
   scopingData,
 }: {
+  organizationId: string
   controls: EnrichedControl[]
   scopingData: ScopedControlsFile
 }) {
+  const { memberTypeOf } = useOrgMemberTypes(organizationId)
   const ownerData = useMemo(() => {
     const selectedControls = controls.filter(c => {
       const scoped = getScopedControl(scopingData, c.scf_id)
       return scoped?.selected
     })
 
-    const evidenceMap = new Map<EvidenceId, { owner: string; isTracked: boolean }>()
+    const evidenceMap = new Map<
+      EvidenceId,
+      { owner: string; ownerUserId: string | null; isTracked: boolean }
+    >()
     selectedControls.forEach(control => {
       control.artifactsResolved.forEach(artifact => {
         if (!evidenceMap.has(artifact.id)) {
           const tracking = getEvidenceTracking(scopingData, artifact.id)
           evidenceMap.set(artifact.id, {
             owner: evidenceOwnerLabel(tracking),
+            ownerUserId: evidenceOwnerUserId(tracking),
             isTracked: tracking?.is_tracked || false,
           })
         }
@@ -440,13 +455,22 @@ function OwnerWorkloadSection({
     })
 
     const byOwner: Record<string, OwnerWorkload> = {}
-    evidenceMap.forEach(({ owner, isTracked }) => {
+    // A card whose evidence resolves to two different users of the same name
+    // drops its id rather than picking one: a wrong contractor label on a
+    // named person is worse than no label.
+    const conflicted = new Set<string>()
+    evidenceMap.forEach(({ owner, ownerUserId, isTracked }) => {
       if (!byOwner[owner]) {
-        byOwner[owner] = { owner, total: 0, tracked: 0, notTracked: 0 }
+        byOwner[owner] = { owner, ownerUserId, total: 0, tracked: 0, notTracked: 0 }
+      } else if (byOwner[owner].ownerUserId !== ownerUserId) {
+        conflicted.add(owner)
       }
       byOwner[owner].total++
       if (isTracked) byOwner[owner].tracked++
       else byOwner[owner].notTracked++
+    })
+    conflicted.forEach(owner => {
+      byOwner[owner].ownerUserId = null
     })
 
     return Object.values(byOwner).sort((a, b) => b.total - a.total)
@@ -462,7 +486,14 @@ function OwnerWorkloadSection({
           const pct = owner.total > 0 ? Math.round((owner.tracked / owner.total) * 100) : 0
           return (
             <div key={owner.owner} className="edt-team-card">
-              <div className="edt-team-name">{owner.owner}</div>
+              <div className="edt-team-name">
+                {owner.owner}
+                <ContractorBadge
+                  className="contractor-badge-inline"
+                  memberType={memberTypeOf(owner.ownerUserId)}
+                  personName={owner.owner}
+                />
+              </div>
               <div className="edt-team-stats">
                 <span className="edt-team-tracked">{owner.tracked} tracked</span>
                 <span className="edt-team-sep">/</span>
@@ -608,7 +639,11 @@ export default function EvidenceDashboardTab({
         </div>
       </div>
 
-      <OwnerWorkloadSection controls={controls} scopingData={scopingData} />
+      <OwnerWorkloadSection
+        organizationId={organizationId}
+        controls={controls}
+        scopingData={scopingData}
+      />
 
       {/* Due Soon */}
       {upcomingItems.length > 0 && (

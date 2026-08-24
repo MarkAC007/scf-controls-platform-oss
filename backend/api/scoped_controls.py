@@ -32,6 +32,12 @@ from auth import require_org_role, OrgMembership
 from services.audit_service import log_entity_changes, get_request_id, detect_action_source, SCOPED_CONTROL_TRACKED_FIELDS
 from services.notifications import create_control_ready_for_review_notifications
 from services.scoping_service import bulk_scope_frameworks, bulk_unscope_frameworks
+from services.team_assignments import (
+    CONTROL_ASSIGNMENT_SPEC,
+    accountable_owner_filter,
+    team_assignment_filter,
+)
+from services.org_utils import MEMBER_TYPES, invalid_member_type_detail
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +149,9 @@ async def list_scoped_controls_paginated(
     framework: Optional[str] = Query(None, description="Filter by framework mapping"),
     control_weighting: Optional[int] = Query(None, ge=0, le=10, description="Filter by control weighting (0-10)"),
     search: Optional[str] = Query(None, description="Search control name/description/ID"),
+    team_id: Optional[UUID] = Query(None, description="Filter to controls this team is assigned to (accountable or consulted)"),
+    function_id: Optional[UUID] = Query(None, description="Filter to controls assigned to any team aligned to this function"),
+    accountable_owner_type: Optional[str] = Query(None, description="Filter to items whose accountable team's primary owner has this member_type: internal or external_contractor"),
     limit: int = Query(50, ge=1, le=200, description="Max results per page"),
     offset: int = Query(0, ge=0, description="Pagination offset"),
 ):
@@ -227,6 +236,52 @@ async def list_scoped_controls_paginated(
                 SCFCatalogControl.scf_id.ilike(search_term),
             )
         )
+
+    # Apply team / function filters (#822 phase 3)
+    #
+    # Placed before the count so `total` counts what the page shows. A filter
+    # applied after this line would paginate a footer that disagreed with its
+    # own rows.
+    #
+    # Semantics are ANY assigned team, not accountable-only: #822 gives
+    # consulted teams visibility of the item and withholds only the routine
+    # notification, so a team's list is everything it is on, not just what it
+    # owns. Both filters together intersect.
+    #
+    # This is an EXISTS, so a control with several assigned teams stays one
+    # row. It correlates on ScopedControl.id, which the LEFT JOIN leaves NULL
+    # for a catalog control the org has never scoped -- such a control has no
+    # scoped row to hang an assignment off and is correctly excluded.
+    assignment_filter = team_assignment_filter(
+        CONTROL_ASSIGNMENT_SPEC,
+        ScopedControl.id,
+        organization_id=org_id,
+        team_id=team_id,
+        function_id=function_id,
+    )
+    if assignment_filter is not None:
+        query = query.where(assignment_filter)
+
+    # Apply the accountable-owner filter (#822 phase 2)
+    #
+    # The contractor half of member_type: which controls is an external
+    # contractor actually on the hook for. Shares one helper with the evidence
+    # list so the two cannot disagree about who "owns" an item. Also before the
+    # count, for the same reason as above.
+    if accountable_owner_type is not None and accountable_owner_type not in MEMBER_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=invalid_member_type_detail("accountable_owner_type"),
+        )
+
+    owner_filter = accountable_owner_filter(
+        CONTROL_ASSIGNMENT_SPEC,
+        ScopedControl.id,
+        organization_id=org_id,
+        accountable_owner_type=accountable_owner_type,
+    )
+    if owner_filter is not None:
+        query = query.where(owner_filter)
 
     # Get total count for pagination
     count_subquery = query.subquery()

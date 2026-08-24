@@ -145,6 +145,10 @@ ORGANIZATION_TRACKED_FIELDS: set = {
 
 ORG_MEMBER_TRACKED_FIELDS: set = {
     'role',
+    # #822 phase 2. The endpoint diffs the membership against this set, so a
+    # member_type change that is not listed here still writes an audit row --
+    # one with an empty diff. Present here, the change is actually recorded.
+    'member_type',
 }
 
 SYSTEM_TRACKED_FIELDS: set = {
@@ -185,6 +189,44 @@ API_KEY_TRACKED_FIELDS: set = {
     'last_used_at',
     # NEVER include: key_hash, plaintext key value
 }
+
+TEAM_TRACKED_FIELDS: set = {
+    'name',
+    'description',
+    'function_id',
+    # Archiving is the only "delete" a team gets (#822), so the is_active flip
+    # IS the deletion record. It has to be tracked or the audit trail cannot
+    # answer when a team stopped being used.
+    'is_active',
+}
+
+TEAM_MEMBER_TRACKED_FIELDS: set = {
+    'team_id',
+    'user_id',
+    # Who holds 'primary' on a team is an accountability fact, and a promotion
+    # silently demotes the incumbent -- both sides of that swap are logged.
+    'membership_role',
+}
+
+#: Which team is accountable for a control is the answer to "who owns access
+#: management?" -- a question auditors ask directly (#822). Assigning, demoting
+#: and unassigning are all governance events, and a promotion silently clears
+#: the incumbent's flag, so both sides of that swap are logged.
+#:
+#: frozenset, not set: these are read on every write and shared across
+#: requests, and `log_entity_changes` takes them as a filter. A mutable module
+#: global here would be a cross-request footgun for no benefit.
+CONTROL_TEAM_ASSIGNMENT_TRACKED_FIELDS: frozenset = frozenset({
+    'scoped_control_id',
+    'team_id',
+    'is_accountable',
+})
+
+EVIDENCE_TEAM_ASSIGNMENT_TRACKED_FIELDS: frozenset = frozenset({
+    'evidence_tracking_id',
+    'team_id',
+    'is_accountable',
+})
 
 
 # ---------------------------------------------------------------------------

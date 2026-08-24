@@ -22,6 +22,14 @@ interface SidebarControlCardProps {
   statusBadge?: string | null
   /** Optional catalog lifecycle fields — renders a deprecated badge when retired */
   lifecycle?: CatalogLifecycleFields
+  /**
+   * Name of the team accountable for this control, from the list's batch-loaded
+   * assignment map (Issue #822). A plain string, never an id to resolve: this
+   * card renders inside a virtualised list and must not fetch anything.
+   * ``null`` means teams own it but none is accountable; ``undefined`` means
+   * the column is not in use on this screen.
+   */
+  accountableTeam?: string | null
 }
 
 function SidebarControlCardComponent({
@@ -34,6 +42,7 @@ function SidebarControlCardComponent({
   scopeBadge,
   statusBadge,
   lifecycle,
+  accountableTeam,
 }: SidebarControlCardProps) {
   return (
     <div style={style}>
@@ -70,6 +79,13 @@ function SidebarControlCardComponent({
             )}
           </div>
           <div className="sidebar-card-name">{controlName}</div>
+          {accountableTeam !== undefined && (
+            <div className="sidebar-card-team">
+              {accountableTeam ?? (
+                <span className="sidebar-card-team-empty">No accountable team</span>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -85,7 +101,8 @@ export const SidebarControlCard = memo(SidebarControlCardComponent, (prev, next)
     prev.checkbox?.checked === next.checkbox?.checked &&
     prev.scopeBadge?.inScope === next.scopeBadge?.inScope &&
     prev.statusBadge === next.statusBadge &&
-    prev.lifecycle?.catalog_status === next.lifecycle?.catalog_status
+    prev.lifecycle?.catalog_status === next.lifecycle?.catalog_status &&
+    prev.accountableTeam === next.accountableTeam
   )
 })
 

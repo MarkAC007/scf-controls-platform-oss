@@ -72,6 +72,8 @@ from api import (
     catalog_upgrade_admin,
     catalog_reconciliation,
     oidc_auth,
+    teams,
+    team_assignments,
 )
 
 # Configure logging
@@ -383,6 +385,8 @@ app.include_router(evidence_tasks.router)
 app.include_router(notifications.router)
 app.include_router(consultant.router, prefix="/api")  # Consultant Portal
 app.include_router(risk_assessments.router, prefix="/api")  # Risk Register
+app.include_router(teams.router, prefix="/api")  # Functions and Teams (#822 phase 1)
+app.include_router(team_assignments.router, prefix="/api")  # Team assignment of controls and evidence (#822 phase 3)
 app.include_router(risk_profiles.router, prefix="/api")  # Risk Profile Config
 app.include_router(custom_risks.router, prefix="/api")  # Custom Risk Definitions
 app.include_router(admin.router, prefix="/api")  # Platform Admin Toolkit
