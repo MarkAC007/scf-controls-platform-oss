@@ -175,6 +175,10 @@ async def generate_task_for_tracking(
 
     task = EvidenceCollectionTask(
         evidence_tracking_id=evidence.id,
+        # Denormalised from the parent evidence item (#822 §6) — the column the
+        # composite foreign keys join through to keep a task's team inside its
+        # own tenant.
+        organization_id=evidence.organization_id,
         due_date=next_due,
         status='not_started',
         assigned_user_id=assigned_user_id,

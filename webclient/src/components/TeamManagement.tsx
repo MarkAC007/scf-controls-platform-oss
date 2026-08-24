@@ -3,8 +3,7 @@
  *
  * Renders beside UserManagement on the Users screen because a team is a
  * statement about people, not about the platform's settings. Teams are
- * grouped under the platform's fourteen static business functions; each team
- * belongs to exactly one.
+ * grouped under its primary business function; each team may serve several.
  *
  * Teams grant no permissions. Nothing here gates a capability on membership
  * and nothing here should ever start to: authorisation is entirely
@@ -106,7 +105,7 @@ export default function TeamManagement({ organizationId }: TeamManagementProps) 
   const [showCreateForm, setShowCreateForm] = useState(false)
   const [newName, setNewName] = useState('')
   const [newDescription, setNewDescription] = useState('')
-  const [newFunctionId, setNewFunctionId] = useState('')
+  const [newFunctionIds, setNewFunctionIds] = useState<string[]>([])
   const [isCreating, setIsCreating] = useState(false)
 
   const loadAll = useCallback(async () => {
@@ -193,18 +192,19 @@ export default function TeamManagement({ organizationId }: TeamManagementProps) 
 
   const handleCreate = async (e: FormEvent) => {
     e.preventDefault()
-    if (!newName.trim() || !newFunctionId) return
+    if (!newName.trim() || newFunctionIds.length === 0) return
     try {
       setIsCreating(true)
       const created = await createTeam(organizationId, {
         name: newName.trim(),
         description: newDescription.trim(),
-        function_id: newFunctionId,
+        function_id: newFunctionIds[0],
+        function_ids: newFunctionIds,
       })
       toast.success(`Team "${created.name}" created`)
       setNewName('')
       setNewDescription('')
-      setNewFunctionId('')
+      setNewFunctionIds([])
       setShowCreateForm(false)
       await loadAll()
       setExpandedTeamId(created.id)
@@ -321,7 +321,9 @@ export default function TeamManagement({ organizationId }: TeamManagementProps) 
   }
 
   const renderWarnings = (team: TeamDetail) => {
-    const fn = functionsById.get(team.function_id)
+    const servedFunctions = (team.function_ids ?? [team.function_id])
+      .map(functionId => functionsById.get(functionId))
+      .filter((fn): fn is OrgFunction => Boolean(fn))
     const hasPrimary = Boolean(memberWithRole(team, 'primary'))
     const badges: TeamWarning[] = []
     if (team.members.length === 0) {
@@ -338,7 +340,7 @@ export default function TeamManagement({ organizationId }: TeamManagementProps) 
         title: 'No one is named primary for this team, so nobody is answerable for its work.',
       })
     }
-    if (fn && !fn.is_active) {
+    if (servedFunctions.some(fn => !fn.is_active)) {
       badges.push({
         key: 'function-inactive',
         label: 'Function inactive',
@@ -355,6 +357,33 @@ export default function TeamManagement({ organizationId }: TeamManagementProps) 
     return (
       <div className="team-detail">
         {team.description && <p className="team-detail-description">{team.description}</p>}
+
+        <div className="team-create-field">
+          <label htmlFor={`team-functions-${team.id}`}>Business functions</label>
+          <select
+            id={`team-functions-${team.id}`}
+            multiple
+            value={team.function_ids ?? [team.function_id]}
+            aria-label={`Business functions for ${team.name}`}
+            onChange={event => {
+              const functionIds = Array.from(event.currentTarget.selectedOptions, option => option.value)
+              if (functionIds.length === 0) return
+              void updateTeam(organizationId, team.id, {
+                function_id: functionIds.includes(team.function_id) ? team.function_id : functionIds[0],
+                function_ids: functionIds,
+              }).then(() => refreshTeam(team.id)).catch((err: any) => {
+                toast.error(err?.message || 'Failed to update business functions')
+              })
+            }}
+          >
+            {sortedFunctions.map(fn => (
+              <option key={fn.id} value={fn.id} disabled={!fn.is_active}>{fn.name}</option>
+            ))}
+          </select>
+          <span className="team-add-hint">
+            Select one or more. The current primary remains primary unless you remove it.
+          </span>
+        </div>
 
         {(team.health?.warnings?.length ?? 0) > 0 && (
           <ul className="team-health-warnings">
@@ -588,20 +617,23 @@ export default function TeamManagement({ organizationId }: TeamManagementProps) 
             />
           </div>
           <div className="team-create-field">
-            <label htmlFor="team-function">Business function</label>
+            <label htmlFor="team-function">Business functions</label>
             <select
               id="team-function"
-              value={newFunctionId}
-              onChange={e => setNewFunctionId(e.target.value)}
+              multiple
+              value={newFunctionIds}
+              onChange={e => setNewFunctionIds(
+                Array.from(e.currentTarget.selectedOptions, option => option.value)
+              )}
               required
             >
-              <option value="">Select a function…</option>
               {sortedFunctions.map(fn => (
                 <option key={fn.id} value={fn.id} disabled={!fn.is_active}>
                   {fn.name}{fn.is_active ? '' : ' (inactive)'}
                 </option>
               ))}
             </select>
+            <span className="team-add-hint">Select one or more functions.</span>
           </div>
           <div className="team-create-field team-create-field-wide">
             <label htmlFor="team-description">Description</label>
@@ -617,7 +649,7 @@ export default function TeamManagement({ organizationId }: TeamManagementProps) 
             <button
               type="submit"
               className="btn-team-primary"
-              disabled={isCreating || !newName.trim() || !newFunctionId}
+              disabled={isCreating || !newName.trim() || newFunctionIds.length === 0}
             >
               {isCreating ? 'Creating…' : 'Create team'}
             </button>

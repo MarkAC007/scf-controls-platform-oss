@@ -23,7 +23,7 @@ from typing import List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy import and_, case, func, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -88,7 +88,26 @@ def _function_snapshot(fn: Function) -> dict:
     }
 
 
+def _served_functions(team: Team) -> List[Function]:
+    """Plural alignment, with the legacy primary as a safe compatibility floor."""
+    functions = list(getattr(team, "functions", ()) or ())
+    primary = getattr(team, "function", None)
+    if primary and (
+        not functions
+        or all(getattr(fn, "id", None) != getattr(primary, "id", None) for fn in functions)
+    ):
+        functions.insert(0, primary)
+    return functions
+
+
+def _team_audit_snapshot(team: Team) -> dict:
+    values = {f: getattr(team, f) for f in TEAM_TRACKED_FIELDS if hasattr(team, f)}
+    values["function_ids"] = [str(fn.id) for fn in _served_functions(team)]
+    return values
+
+
 def _team_payload(team: Team, member_count: int) -> dict:
+    functions = _served_functions(team)
     return {
         "id": team.id,
         "organization_id": team.organization_id,
@@ -101,6 +120,8 @@ def _team_payload(team: Team, member_count: int) -> dict:
         "created_by_user_id": team.created_by_user_id,
         "updated_by_user_id": team.updated_by_user_id,
         "function": _function_snapshot(team.function) if team.function else None,
+        "function_ids": [fn.id for fn in functions],
+        "functions": [_function_snapshot(fn) for fn in functions],
         "member_count": member_count,
     }
 
@@ -114,7 +135,8 @@ def _team_health(team: Team, members: List[TeamMember]) -> dict:
     """
     has_primary = any(m.membership_role == "primary" for m in members)
     has_delegate = any(m.membership_role == "delegate" for m in members)
-    function_is_active = bool(team.function and team.function.is_active)
+    functions = _served_functions(team)
+    function_is_active = bool(functions) and all(fn.is_active for fn in functions)
 
     warnings: List[str] = []
     if not members:
@@ -161,7 +183,7 @@ async def _load_team(
         # to take row locks through the joined-in eager load as well.
         query = query.with_for_update(of=Team)
     else:
-        query = query.options(selectinload(Team.function))
+        query = query.options(selectinload(Team.function), selectinload(Team.functions))
 
     team = (await db.execute(query)).scalar_one_or_none()
     if team is None:
@@ -208,6 +230,20 @@ async def _require_function(db: AsyncSession, function_id: UUID) -> Function:
     if fn is None:
         raise HTTPException(status_code=404, detail="Function not found")
     return fn
+
+
+async def _require_functions(db: AsyncSession, function_ids: List[UUID]) -> List[Function]:
+    """Resolve a non-empty, duplicate-free set of platform functions."""
+    unique_ids = list(dict.fromkeys(function_ids))
+    if not unique_ids:
+        raise HTTPException(status_code=422, detail="A team must serve at least one function")
+    functions = list((await db.execute(
+        select(Function).where(Function.id.in_(unique_ids))
+    )).scalars().all())
+    if len(functions) != len(unique_ids):
+        raise HTTPException(status_code=404, detail="One or more functions were not found")
+    by_id = {fn.id: fn for fn in functions}
+    return [by_id[function_id] for function_id in unique_ids]
 
 
 async def _require_org_member(db: AsyncSession, org_id: UUID, user_id: UUID) -> None:
@@ -360,12 +396,15 @@ async def list_teams(
     """
     query = select(Team).where(Team.organization_id == org_id)
     if function_id is not None:
-        query = query.where(Team.function_id == function_id)
+        query = query.where(or_(
+            Team.function_id == function_id,
+            Team.functions.any(Function.id == function_id),
+        ))
     if not include_inactive:
         query = query.where(Team.is_active.is_(True))
 
     result = await db.execute(
-        query.options(selectinload(Team.function)).order_by(Team.name)
+        query.options(selectinload(Team.function), selectinload(Team.functions)).order_by(Team.name)
     )
     teams = list(result.scalars().all())
     if not teams:
@@ -403,15 +442,17 @@ async def create_team(
     The team is born empty — no members, no primary. That is a legal state and
     is reported through ``health.warnings``, not refused.
     """
-    await _require_function(db, team_data.function_id)
+    function_ids = team_data.function_ids or [team_data.function_id]
+    functions = await _require_functions(db, function_ids)
 
     actor_id = _actor_id(membership)
     team = Team(
         organization_id=org_id,
         created_by_user_id=actor_id,
         updated_by_user_id=actor_id,
-        **team_data.model_dump(),
+        **team_data.model_dump(exclude={"function_ids"}),
     )
+    team.functions = functions
     db.add(team)
     await _flush_mapping_conflicts(db, {
         "uq_teams_org_name": (
@@ -420,7 +461,7 @@ async def create_team(
         ),
     })
 
-    new_values = {f: getattr(team, f) for f in TEAM_TRACKED_FIELDS if hasattr(team, f)}
+    new_values = _team_audit_snapshot(team)
     await log_entity_changes(
         db=db, organization_id=org_id, entity_type="team",
         entity_id=team.id, action="create", changed_by_user_id=actor_id,
@@ -471,11 +512,19 @@ async def update_team(
     """
     team = await _load_team(db, org_id, team_id)
     updates = team_data.model_dump(exclude_unset=True)
+    old_values = _team_audit_snapshot(team)
 
-    if "function_id" in updates and updates["function_id"] is not None:
-        await _require_function(db, updates["function_id"])
-
-    old_values = {f: getattr(team, f) for f in TEAM_TRACKED_FIELDS if hasattr(team, f)}
+    requested_function_ids = updates.pop("function_ids", None)
+    if requested_function_ids is not None:
+        functions = await _require_functions(db, requested_function_ids)
+        primary_id = updates.get("function_id", team.function_id)
+        if primary_id not in requested_function_ids:
+            raise HTTPException(status_code=422, detail="function_ids must include function_id")
+        team.functions = functions
+    elif "function_id" in updates and updates["function_id"] is not None:
+        primary = await _require_function(db, updates["function_id"])
+        if all(fn.id != primary.id for fn in team.functions):
+            team.functions.append(primary)
 
     for field, value in updates.items():
         setattr(team, field, value)
@@ -488,7 +537,7 @@ async def update_team(
         ),
     })
 
-    new_values = {f: getattr(team, f) for f in TEAM_TRACKED_FIELDS if hasattr(team, f)}
+    new_values = _team_audit_snapshot(team)
     await log_entity_changes(
         db=db, organization_id=org_id, entity_type="team",
         entity_id=team.id, action="update", changed_by_user_id=_actor_id(membership),

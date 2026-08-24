@@ -50,6 +50,8 @@ from database import get_db
 from models import Function, Team, TeamMember, User
 from schemas import (
     SuccessResponse,
+    TeamAssignmentBatchCreate,
+    TeamAssignmentBatchResponse,
     TeamAssignmentCreate,
     TeamAssignmentMapResponse,
     TeamAssignmentResponse,
@@ -59,6 +61,7 @@ from services.audit_service import (
     get_request_id,
     log_entity_changes,
 )
+from services.notifications import create_bulk_team_assignment_notifications
 from services.owner_resolution import ACCOUNTABLE_MEMBERSHIP_ROLES
 from services.team_assignments import (
     TEAM_ASSIGNMENT_TYPE_KEYS,
@@ -614,6 +617,148 @@ async def create_team_assignment(
             return assignment
     # Unreachable short of the row vanishing between commit and read.
     raise HTTPException(status_code=500, detail="Assignment could not be read back")
+
+
+@router.post(
+    "/organizations/{org_id}/team-assignments/batch",
+    response_model=TeamAssignmentBatchResponse,
+    status_code=200,
+)
+async def batch_create_team_assignments(
+    org_id: UUID,
+    payload: TeamAssignmentBatchCreate,
+    request: Request,
+    membership: OrgMembership = Depends(require_org_role("admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Assign one team to many items, in one transaction, with **one** aggregate
+    notification per recipient (#822 phase 4, volume control 2).
+
+    Requires: admin role — admin of the *organisation*, as everywhere else in
+    this module. Team membership confers no authority.
+
+    This endpoint exists because the naive shape of bulk assignment is the
+    single POST in a client-side loop, and that produces one notification per
+    item: assigning fifty controls to a team pages its primary and delegate
+    fifty times each. What the team needs to know is *"50 controls assigned to
+    Security Operations"* — one message, once. See
+    :func:`~services.notifications.create_bulk_team_assignment_notifications`.
+
+    It is also atomic where the loop is not. Fifty separate requests can fail
+    at request thirty and leave an operator with no idea which half landed;
+    here either every item is assigned or none is, and the accountable
+    demotions ride in the same transaction as the promotions they make way for.
+
+    Semantics per item are exactly the single POST's, so there is one
+    definition of "assign a team":
+
+    * A team already assigned to an item has its ``is_accountable`` updated
+      rather than being rejected as a duplicate — that is what makes
+      "promote these to accountable" one request.
+    * ``is_accountable`` demotes each item's incumbent to consulted, item by
+      item, before the promoting write, so the partial unique index never sees
+      two accountable rows for one item.
+
+    Duplicate ids in ``item_ids`` are collapsed. A client that sends the same
+    control twice means it once, and counting it twice would put a wrong
+    number in the message every recipient reads.
+    """
+    spec = _require_spec(payload.type)
+    actor_id = _actor_id(membership)
+
+    # Collapse duplicates but keep the caller's order, so the audit trail and
+    # any error message read in the order the operator selected things.
+    item_ids: List[UUID] = list(dict.fromkeys(payload.item_ids))
+
+    team = await _require_team(db, org_id, payload.team_id)
+
+    created = updated = demoted_count = 0
+
+    for item_id in item_ids:
+        # Same lock, same order of operations as the single POST. Taking it per
+        # item rather than once for the batch is what keeps a batch and a
+        # concurrent single assignment on the same item serialised against each
+        # other; the batch holds each lock until it commits.
+        await _require_item(db, spec, org_id, item_id, for_update=True)
+
+        existing = (await db.execute(
+            select(spec.model).where(
+                and_(
+                    spec.item_column == item_id,
+                    spec.model.team_id == payload.team_id,
+                )
+            )
+        )).scalar_one_or_none()
+
+        demoted = None
+        if payload.is_accountable:
+            demoted = await _claim_accountable(
+                db, spec, item_id, payload.team_id,
+            )
+
+        if existing is not None:
+            old_values = _tracked(spec, existing)
+            existing.is_accountable = payload.is_accountable
+            row, action = existing, "update"
+            updated += 1
+        else:
+            old_values = {}
+            row = spec.model(**{
+                spec.item_id_field: item_id,
+                "team_id": payload.team_id,
+                # Derived from the path, never from the body.
+                "organization_id": org_id,
+                "is_accountable": payload.is_accountable,
+                "assigned_by_user_id": actor_id,
+            })
+            db.add(row)
+            action = "create"
+            created += 1
+
+        await _flush_mapping_conflicts(db, spec)
+
+        if demoted is not None:
+            demoted_count += 1
+            await _audit(
+                db, spec, request, org_id=org_id, entity_id=demoted.id,
+                action="update", actor_id=actor_id,
+                old_values={"is_accountable": True},
+                new_values={"is_accountable": False},
+            )
+
+        await _audit(
+            db, spec, request, org_id=org_id, entity_id=row.id,
+            action=action, actor_id=actor_id,
+            old_values=old_values, new_values=_tracked(spec, row),
+        )
+
+    await db.commit()
+
+    # After the commit, and outside it. A notification is a side effect of an
+    # assignment that has already happened; a mail or notification failure must
+    # not roll back the assignment itself.
+    notified = await create_bulk_team_assignment_notifications(
+        db,
+        organization_id=org_id,
+        team_id=payload.team_id,
+        team_name=team.name,
+        item_type=spec.type_key,
+        item_ids=item_ids,
+        actor_user_id=actor_id,
+    )
+
+    keyed = await _load_assignment_map(db, spec, org_id, item_ids=item_ids)
+
+    return TeamAssignmentBatchResponse(
+        type=spec.type_key,
+        team_id=payload.team_id,
+        created=created,
+        updated=updated,
+        demoted=demoted_count,
+        notified=notified,
+        assignments=keyed,
+    )
 
 
 @router.delete(

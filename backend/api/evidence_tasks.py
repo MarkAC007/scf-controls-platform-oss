@@ -1,7 +1,7 @@
 """
 Evidence Collection Tasks API endpoints - manage evidence collection tasks and dashboard.
 """
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, Request, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_, text
 from sqlalchemy.orm import selectinload
@@ -12,8 +12,15 @@ from datetime import date, datetime
 from database import get_db
 from user_display import user_label as _user_label
 from auth import require_auth, get_accessible_org_ids, verify_org_membership, assert_user_in_org, User
-from models import EvidenceCollectionTask, EvidenceTracking, User as DBUser
+from models import EvidenceCollectionTask, EvidenceTracking, Team, User as DBUser
+from services.audit_service import (
+    EVIDENCE_TASK_OWNERSHIP_TRACKED_FIELDS,
+    detect_action_source,
+    get_request_id,
+    log_entity_changes,
+)
 from services.collection_date import advance_last_collection_date
+from services.responsibility import my_task_filter
 from schemas import (
     EvidenceCollectionTaskCreate,
     EvidenceCollectionTaskUpdate,
@@ -30,9 +37,11 @@ router = APIRouter(
 # ---------------------------------------------------------------------------
 # Tenancy helpers
 #
-# Evidence collection tasks have no organization column of their own — they
-# inherit tenancy from the parent EvidenceTracking row, so every single-resource
-# route has to resolve that parent before it can authorise the caller.
+# Evidence collection tasks carry `organization_id` since #822 phase 4, but it
+# is denormalised from the parent EvidenceTracking row and the composite
+# foreign key is what keeps the two in step. These helpers still authorise
+# against the parent, so the authorisation decision reads the column the
+# constraint is anchored on rather than a copy of it.
 # ---------------------------------------------------------------------------
 
 async def _resolve_task_access(
@@ -196,7 +205,13 @@ async def list_evidence_tasks(
             # Authenticated but not persisted (API-key service identity): no
             # task can be assigned to a row that does not exist.
             return []
-        filters.append(EvidenceCollectionTask.assigned_user_id == UUID(current_user.db_id))
+        # Not `assigned_user_id == me` any more (#822 phase 4). A task whose
+        # owner resolves only through a team must appear in that team's
+        # people's queue -- otherwise `owning_team_id` is a column written and
+        # never read, which is the defect #822 exists to fix. `my_task_filter`
+        # is the notification resolution chain as SQL, tier 1 exclusivity
+        # included: a task assigned to somebody stays theirs alone.
+        filters.append(my_task_filter(UUID(current_user.db_id)))
     if overdue_only:
         filters.append(
             and_(
@@ -244,6 +259,10 @@ async def list_evidence_tasks(
             "due_date": task.due_date,
             "status": task.status,
             "assigned_user_id": task.assigned_user_id,
+            # NULL means "inherit the evidence item's accountable team", which
+            # is not the same as "no team" -- the UI has to be able to tell
+            # them apart to render the inherited badge.
+            "owning_team_id": task.owning_team_id,
             "completed_date": task.completed_date,
             "completion_notes": task.completion_notes,
             "dependencies": task.dependencies,
@@ -297,11 +316,46 @@ async def create_evidence_task(
             raise HTTPException(status_code=404, detail="Assigned user not found")
 
     # Create task with enhanced fields
+    # #822 phase 4. The create schema accepts an owning team, so the create
+    # path has to write it -- a field the API accepts and silently drops is
+    # the same defect as a column nothing reads, just one layer up. Validated
+    # exactly as the PATCH path validates it, and for the same reason: the
+    # composite foreign key `fk_evidence_collection_tasks_team_org` already
+    # makes a cross-tenant team unrepresentable, so this lookup buys a 400 the
+    # caller can act on instead of a 500 from a constraint violation.
+    if task_data.owning_team_id is not None:
+        owning_team = (await db.execute(
+            select(Team).where(
+                and_(
+                    Team.id == task_data.owning_team_id,
+                    Team.organization_id == evidence.organization_id,
+                )
+            )
+        )).scalar_one_or_none()
+        if owning_team is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Owning team not found in this organisation",
+            )
+        if not owning_team.is_active:
+            raise HTTPException(
+                status_code=400,
+                detail="Owning team is archived and cannot take new work",
+            )
+
     task = EvidenceCollectionTask(
         evidence_tracking_id=task_data.evidence_tracking_id,
+        # Denormalised from the parent, never from the caller (#822 §6). The
+        # composite foreign key checks the two agree, so a request that named
+        # another tenant's evidence item could not smuggle its own org in here
+        # — but taking it from the request would still be asking the client a
+        # question the parent already answers.
+        organization_id=evidence.organization_id,
         due_date=task_data.due_date,
         status=task_data.status,
         assigned_user_id=task_data.assigned_user_id,
+        # `None` means inherit the parent evidence item's accountable team.
+        owning_team_id=task_data.owning_team_id,
         task_type=task_data.task_type,
         title=task_data.title,
         description=task_data.description,
@@ -321,6 +375,7 @@ async def create_evidence_task(
         "due_date": task.due_date,
         "status": task.status,
         "assigned_user_id": task.assigned_user_id,
+        "owning_team_id": task.owning_team_id,
         "completed_date": task.completed_date,
         "completion_notes": task.completion_notes,
         "auto_generated": task.auto_generated,
@@ -337,11 +392,46 @@ async def create_evidence_task(
 async def update_evidence_task(
     task_id: UUID,
     task_update: EvidenceCollectionTaskUpdate,
+    # Defaulted rather than required. FastAPI injects this from the annotation
+    # and ignores the default, so served requests always carry provenance; the
+    # default exists because this endpoint is also called directly, and adding
+    # a required positional argument would have been a breaking change to a
+    # signature #822 says to extend additively.
+    request: Request = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_auth)
 ):
-    """Update an evidence collection task."""
+    """Update an evidence collection task.
+
+    #822 phase 4 extends this with ``owning_team_id`` — the task's team
+    override. **Additive**: every existing field keeps the contract it had, and
+    a caller that does not send ``owning_team_id`` leaves it exactly as it was.
+
+    ``owning_team_id`` needs care that no other field on this model needs,
+    because ``null`` is a *meaningful value* rather than an absence:
+
+    * **omitted** — leave the override as it stands.
+    * **null** — clear the override, so the task inherits its parent evidence
+      item's accountable team. This is the common case and the default state.
+    * **a team id** — override, for the setup / collection / review split,
+      which on one evidence item is routinely three different functions.
+
+    The ``if x is not None`` idiom the rest of this function uses cannot
+    express that, so this one field is read from ``model_fields_set``. Doing it
+    the other way round — a sentinel default — would change the OpenAPI schema
+    every existing client is generated from.
+
+    **Requires editor**, as it already did, which is #822's permission for
+    assigning items to teams. Team membership is not consulted in the
+    authorisation decision anywhere in this function: a team is an ownership
+    label, and being somebody's primary must not grant a capability their org
+    role denies.
+    """
     task = await _resolve_task_access(task_id, current_user, db, "editor")
+    actor_id = UUID(current_user.db_id) if current_user.db_id else None
+    old_ownership = {
+        f: getattr(task, f) for f in EVIDENCE_TASK_OWNERSHIP_TRACKED_FIELDS
+    }
 
     # Reassignment had no validation at all before #781 — any UUID was accepted
     # and written straight to the column. Resolve the owning org from the parent
@@ -365,7 +455,43 @@ async def update_evidence_task(
             raise HTTPException(status_code=404, detail="Task not found")
         await assert_user_in_org(task_update.assigned_user_id, task_org_id, db)
 
+    # `model_fields_set` distinguishes an omitted field from an explicit null;
+    # see the docstring. Everything below this block keeps the `is not None`
+    # contract it has always had.
+    owning_team_supplied = 'owning_team_id' in task_update.model_fields_set
+    if owning_team_supplied and task_update.owning_team_id is not None:
+        # The composite foreign key `fk_evidence_collection_tasks_team_org`
+        # already makes a cross-tenant team unrepresentable, so this lookup is
+        # not the isolation control — it is the difference between a 400 the
+        # caller can act on and a 500 from a constraint violation. A team from
+        # another organisation is reported as not found rather than as
+        # forbidden: its existence is not this caller's to learn.
+        team = (await db.execute(
+            select(Team).where(
+                and_(
+                    Team.id == task_update.owning_team_id,
+                    Team.organization_id == task.organization_id,
+                )
+            )
+        )).scalar_one_or_none()
+        if team is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Owning team not found in this organisation",
+            )
+        if not team.is_active:
+            # Archived teams keep their historical assignments (that is the
+            # point of archiving rather than deleting) but must not collect
+            # new ones, or an org tidying up its structure would silently
+            # route fresh work to a team it has stood down.
+            raise HTTPException(
+                status_code=400,
+                detail="Owning team is archived and cannot take new work",
+            )
+
     # Update fields
+    if owning_team_supplied:
+        task.owning_team_id = task_update.owning_team_id
     if task_update.due_date is not None:
         task.due_date = task_update.due_date
     if task_update.status is not None:
@@ -389,6 +515,27 @@ async def update_evidence_task(
     if task_update.attachments is not None:
         task.attachments = task_update.attachments
 
+    # Every assignment mutation is auditable (#822). Team membership is
+    # mutable and unversioned, so without this the question "who owned this
+    # task in March?" has no answer -- today's membership silently overwrites
+    # March's. `log_entity_changes` emits nothing when nothing changed, so a
+    # PATCH that only edits the title writes no ownership audit rows.
+    await log_entity_changes(
+        db=db,
+        organization_id=task.organization_id,
+        entity_type='evidence_collection_task',
+        entity_id=task.id,
+        action='update',
+        changed_by_user_id=actor_id,
+        old_values=old_ownership,
+        new_values={
+            f: getattr(task, f) for f in EVIDENCE_TASK_OWNERSHIP_TRACKED_FIELDS
+        },
+        tracked_fields=EVIDENCE_TASK_OWNERSHIP_TRACKED_FIELDS,
+        action_source=detect_action_source(request) if request else None,
+        request_id=get_request_id(request) if request else None,
+    )
+
     await db.commit()
     await db.refresh(task)
 
@@ -406,6 +553,7 @@ async def update_evidence_task(
         "due_date": task.due_date,
         "status": task.status,
         "assigned_user_id": task.assigned_user_id,
+        "owning_team_id": task.owning_team_id,
         "completed_date": task.completed_date,
         "completion_notes": task.completion_notes,
         "auto_generated": task.auto_generated,
@@ -466,6 +614,7 @@ async def complete_evidence_task(
         "due_date": task.due_date,
         "status": task.status,
         "assigned_user_id": task.assigned_user_id,
+        "owning_team_id": task.owning_team_id,
         "completed_date": task.completed_date,
         "completion_notes": task.completion_notes,
         "auto_generated": task.auto_generated,
@@ -483,7 +632,14 @@ async def get_my_dashboard(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_auth)
 ):
-    """Get current user's task dashboard with counts and upcoming tasks."""
+    """Get current user's task dashboard with counts and upcoming tasks.
+
+    "Mine" here means the same thing it means to the notifier (#822 phase 4):
+    assigned to me, or -- when nobody is assigned -- owned by a team I am the
+    primary or delegate of. A person who is told about a task by email and
+    then cannot find it on their own dashboard has been given a notification
+    system, not an ownership model.
+    """
     empty_dashboard = {
         "total_tasks": 0,
         "not_started": 0,
@@ -504,10 +660,12 @@ async def get_my_dashboard(
     user_id = UUID(current_user.db_id)
 
     # Get all tasks for user
+    mine = my_task_filter(user_id)
+
     result = await db.execute(
         select(EvidenceCollectionTask)
         .join(EvidenceTracking, EvidenceCollectionTask.evidence_tracking_id == EvidenceTracking.id)
-        .where(EvidenceCollectionTask.assigned_user_id == user_id)
+        .where(mine)
         .where(EvidenceTracking.organization_id.in_(accessible_org_ids))
     )
     all_tasks = result.scalars().all()
@@ -525,7 +683,7 @@ async def get_my_dashboard(
         .join(EvidenceTracking, EvidenceCollectionTask.evidence_tracking_id == EvidenceTracking.id)
         .where(
             and_(
-                EvidenceCollectionTask.assigned_user_id == user_id,
+                mine,
                 EvidenceCollectionTask.status != 'completed',
                 EvidenceCollectionTask.due_date >= date.today(),
                 EvidenceTracking.organization_id.in_(accessible_org_ids)

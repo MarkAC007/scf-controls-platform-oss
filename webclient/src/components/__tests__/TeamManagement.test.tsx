@@ -322,7 +322,7 @@ describe('TeamManagement membership and archiving', () => {
     )
   })
 
-  it('creates a team against a required function', async () => {
+  it('creates a team against one or more required functions', async () => {
     const user = userEvent.setup()
     primeLoad([])
     mockCreate.mockResolvedValue(team({ id: 'team-new', name: 'Incident Response' }) as Team)
@@ -331,7 +331,7 @@ describe('TeamManagement membership and archiving', () => {
 
     await user.click(await screen.findByRole('button', { name: 'New team' }))
     await user.type(screen.getByLabelText('Team name'), 'Incident Response')
-    await user.selectOptions(screen.getByLabelText('Business function'), FUNCTION_ID)
+    await user.selectOptions(screen.getByLabelText('Business functions'), FUNCTION_ID)
     await user.click(screen.getByRole('button', { name: 'Create team' }))
 
     await waitFor(() =>
@@ -339,7 +339,32 @@ describe('TeamManagement membership and archiving', () => {
         name: 'Incident Response',
         description: '',
         function_id: FUNCTION_ID,
+        function_ids: [FUNCTION_ID],
       })
     )
+  })
+
+  it('sends every selected function while keeping the first as primary', async () => {
+    const user = userEvent.setup()
+    const opsFn = fn({ id: 'fn-ops', key: 'ops', name: 'Operations', display_order: 2 })
+    primeLoad([], [fn(), opsFn])
+    mockCreate.mockResolvedValue(team({ id: 'team-new' }) as Team)
+
+    render(<TeamManagement organizationId={ORG_ID} />)
+
+    await user.click(await screen.findByRole('button', { name: 'New team' }))
+    await user.type(screen.getByLabelText('Team name'), 'Platform')
+    await user.selectOptions(
+      screen.getByLabelText('Business functions'),
+      [FUNCTION_ID, 'fn-ops']
+    )
+    await user.click(screen.getByRole('button', { name: 'Create team' }))
+
+    await waitFor(() => expect(mockCreate).toHaveBeenCalledWith(ORG_ID, {
+      name: 'Platform',
+      description: '',
+      function_id: FUNCTION_ID,
+      function_ids: [FUNCTION_ID, 'fn-ops'],
+    }))
   })
 })

@@ -408,12 +408,18 @@ class TestRecipientResolution:
         mock_result.scalars.return_value.first.return_value = tracking
         mock_db.execute.return_value = mock_result
 
-        notification = await create_evidence_rejected_notifications(
+        # #822 phase 4: this now returns the number of notifications written
+        # rather than a Notification-or-None, because one event can reach the
+        # accountable team's primary and delegate as well as the assignee. The
+        # behaviour being pinned is unchanged — the reviewer who rejected the
+        # item is not notified about their own rejection, and with nobody else
+        # to tell, nothing is written.
+        created = await create_evidence_rejected_notifications(
             mock_db,
             organization_id=org_id,
             evidence_id="ERL-001",
             rejected_by_user_id=reviewer,
         )
 
-        assert notification is None
+        assert created == 0
         mock_db.add.assert_not_called()

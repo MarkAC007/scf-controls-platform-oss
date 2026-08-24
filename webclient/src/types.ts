@@ -1815,11 +1815,13 @@ export interface OrgMemberSummary {
  */
 export type TeamMembershipRole = 'primary' | 'delegate' | 'member'
 
-/** Mirror of backend ``Team``: organisation-scoped, aligned to one function. */
+/** Mirror of backend ``Team``: organisation-scoped, serving one or more functions. */
 export interface Team {
   id: string
   organization_id: string
   function_id: string
+  function_ids?: string[]
+  functions?: OrgFunction[]
   name: string
   description: string | null
   is_active: boolean
@@ -1852,11 +1854,12 @@ export interface TeamDetail extends Team {
   health: TeamHealth
 }
 
-/** Request body for creating a team. A function is required; there is exactly one. */
+/** Request body for creating a team. The primary function must be in function_ids. */
 export interface TeamCreate {
   name: string
   description: string
   function_id: string
+  function_ids?: string[]
 }
 
 /** Request body for editing or archiving a team. */
@@ -1864,6 +1867,7 @@ export interface TeamUpdate {
   name?: string
   description?: string
   function_id?: string
+  function_ids?: string[]
   is_active?: boolean
 }
 
@@ -1973,4 +1977,75 @@ export interface TeamAssignmentCreate {
   item_id: string
   team_id: string
   is_accountable?: boolean
+}
+
+/* ============================================================================
+ * Team ownership of evidence collection tasks (Issue #822, phase 4)
+ *
+ * A task does NOT co-own. Phase 3 gave controls and evidence a join table
+ * because those are genuinely owned by several teams at once; a task is
+ * atomic — one title, one due date, one status, one doer — so it carries a
+ * single nullable ``owning_team_id`` and inherits when that is null.
+ *
+ * The tri-state is the whole feature and it must survive into the UI:
+ *
+ *   * ``owning_team_id === null`` — inherit from the parent evidence item.
+ *     The common case, and the one that costs the user nothing. A screen that
+ *     renders this as an empty box has thrown the information away: the task
+ *     IS owned, by whoever owns its evidence item, and the user needs to be
+ *     told who that is before deciding whether to override it.
+ *   * ``owning_team_id`` set — override. The case that motivated the column:
+ *     ``setup``, ``collection`` and ``review`` on one evidence item are
+ *     routinely different functions.
+ *
+ * There is no third "unowned" value. A task whose evidence item has no
+ * accountable team is still inheriting — it is inheriting nothing, which is
+ * a warning about the evidence item, not a state of the task.
+ * ========================================================================= */
+
+/**
+ * Where a task's owning team came from.
+ *
+ * ``'task'`` — the task overrides. ``'evidence'`` — the task inherits its
+ * evidence item's accountable team. ``null`` — nothing owns it, because the
+ * evidence item has no accountable team either, which is the state that makes
+ * ownership evaporate and so is always accompanied by a warning.
+ */
+export type TaskOwningTeamSource = 'task' | 'evidence' | null
+
+/**
+ * Just enough of a team to name it, say what function it serves, and name the
+ * person answerable on it.
+ *
+ * Deliberately a narrower shape than ``TeamAssignmentTeam`` because the two
+ * sources of a task's team carry different amounts: the inherited team
+ * arrives nested inside the parent's assignment payload with its primary and
+ * delegate, while an overriding team is looked up by id. Rather than pretend
+ * the second is as rich as the first, both are reduced to this and the
+ * unknown fields are honestly null.
+ */
+export interface TaskOwningTeamSummary {
+  id: string
+  name: string
+  is_active: boolean
+  function_name: string | null
+  /** Display name of the primary, or the delegate when there is no primary. */
+  person_name: string | null
+  /** The user behind ``person_name``, so a contractor badge can be resolved. */
+  person_user_id: string | null
+  /**
+   * Whether anybody holds ``primary`` or ``delegate`` on this team.
+   *
+   * ``false`` is a permanent, legal steady state — the partial unique index
+   * caps each role at one but cannot require one to exist — so it is a
+   * warning and never a loading artifact. ``null`` means genuinely not known
+   * yet, which is not the same claim and must not be rendered as a warning.
+   */
+  has_owner: boolean | null
+}
+
+/** A task's resolved ownership: which team, and whether it was inherited. */
+export interface TaskTeamOwnership {
+  team: TaskOwningTeamSummary | null
+  source: TaskOwningTeamSource
 }

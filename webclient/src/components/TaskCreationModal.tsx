@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { apiClient } from '../data/apiClient';
 import { withContractorSuffix } from './ContractorBadge';
 import { useOrgMemberTypes } from '../hooks/useOrgMemberTypes';
+import TaskOwningTeamField from './TaskOwningTeamField';
 
 interface User {
   id: string;
@@ -46,6 +47,11 @@ export const TaskCreationModal: React.FC<TaskCreationModalProps> = ({
   const [priority, setPriority] = useState('medium');
   const [dueDate, setDueDate] = useState('');
   const [assignedUserId, setAssignedUserId] = useState('');
+  // Null, not '': a new task inherits its evidence item's accountable team
+  // unless the operator deliberately splits it off (#822 §6). Creating tasks
+  // that all override onto whatever the picker happened to default to is the
+  // failure this default exists to avoid.
+  const [owningTeamId, setOwningTeamId] = useState<string | null>(null);
   const [members, setMembers] = useState<User[]>([]);
 
   // The assignee picker names a person, so it says when that person is an
@@ -99,6 +105,7 @@ export const TaskCreationModal: React.FC<TaskCreationModalProps> = ({
         due_date: dueDate,
         status: 'not_started',
         assigned_user_id: assignedUserId || null,
+        owning_team_id: owningTeamId,
         dependencies: [],
         attachments: []
       });
@@ -223,6 +230,18 @@ export const TaskCreationModal: React.FC<TaskCreationModalProps> = ({
                 </option>
               ))}
             </select>
+          </div>
+
+          {/* Owning team — inherit from the evidence item, or override it */}
+          <div className="task-modal-form-group">
+            <TaskOwningTeamField
+              organizationId={organizationId}
+              evidenceTrackingId={evidenceTrackingId}
+              value={owningTeamId}
+              onChange={setOwningTeamId}
+              disabled={loading}
+              idPrefix="new-task"
+            />
           </div>
 
           {/* Task Type Help Text */}
