@@ -74,6 +74,28 @@ async def get_work_queue(
     1. Overdue evidence collection tasks
     2. Blocking (not_started / at_risk) scoped controls
     3. Stale evidence collection schedules past their next collection date
+       for which no overdue collection task exists
+
+    Categories 1 and 3 are two readings of one underlying fact and used to
+    overlap completely (#809). ``evidence_tracking.next_collection_date`` is
+    written in exactly one place -- ``task_generator.generate_task_for_tracking``
+    -- to the same value as the ``due_date`` of the task it creates on the same
+    line, so every lapsed schedule with a live task was reported twice, once per
+    heading, with identical ids in identical order.
+
+    They are kept as separate sections but their membership is now disjoint,
+    and the split carries a meaning a reader can act on:
+
+    * **Overdue evidence** -- the collection window has lapsed and there IS an
+      open task to work. The unit of work is the task; complete it.
+    * **Stale collections** -- the window has lapsed and there is NO open task.
+      Nothing is queued to fix it, so the unit of work is to find out why
+      (an unrecognised frequency, a tracking row nobody generated against) and
+      get a task onto it.
+
+    An evidence item can satisfy only one of those by construction, which is
+    what makes ``total_items`` below a real count rather than a sum of
+    overlapping sets.
 
     With ``assigned_to_me=true``, every category is limited to the calling
     user: tasks to those assigned to them, and controls and evidence schedules
@@ -178,6 +200,29 @@ async def get_work_queue(
     # ------------------------------------------------------------------
     # 3. Stale evidence collections
     # ------------------------------------------------------------------
+    # The exact population of section 1, expressed as a correlated subquery:
+    # "this tracking row already has an open collection task that is past due".
+    # Excluding it here is what makes the two evidence sections disjoint (#809).
+    #
+    # It is a NOT EXISTS rather than a post-filter against the evidence_ids
+    # fetched above because section 1 is capped at 20 rows. Filtering against
+    # that page would let overdue item 21 onwards reappear under the other
+    # heading -- the same double count, just further down the list.
+    overdue_task_exists = select(EvidenceCollectionTask.id).where(
+        and_(
+            EvidenceCollectionTask.evidence_tracking_id == EvidenceTracking.id,
+            EvidenceCollectionTask.due_date < today,
+            EvidenceCollectionTask.status != "completed",
+        )
+    )
+    if caller_id is not None:
+        # Narrow the exclusion the same way section 1 is narrowed. Without this,
+        # a row the caller owns whose overdue task is assigned to somebody else
+        # would be hidden from both sections instead of shown in exactly one.
+        overdue_task_exists = overdue_task_exists.where(
+            EvidenceCollectionTask.assigned_user_id == caller_id
+        )
+
     stale_query = (
         select(
             EvidenceTracking.evidence_id,
@@ -188,6 +233,7 @@ async def get_work_queue(
                 EvidenceTracking.organization_id == org_id,
                 EvidenceTracking.next_collection_date < today,
                 EvidenceTracking.is_tracked == True,  # noqa: E712
+                ~overdue_task_exists.correlate(EvidenceTracking).exists(),
             )
         )
         .order_by(EvidenceTracking.next_collection_date.asc())
@@ -220,7 +266,18 @@ async def get_work_queue(
     # ------------------------------------------------------------------
     # Build response
     # ------------------------------------------------------------------
-    total_items = len(overdue_evidence) + len(blocking_controls) + len(stale_collections)
+    # Distinct union of the item identities on show, NOT a sum of section
+    # lengths (#809). A sum is only ever correct while every section is
+    # provably disjoint from every other, which is a property no future edit is
+    # obliged to preserve; counting identities is correct either way. Keys are
+    # namespaced because a control id and an evidence id are different things
+    # that happen to be strings.
+    distinct_items = (
+        {("evidence", item.evidence_id) for item in overdue_evidence}
+        | {("control", item.scf_id) for item in blocking_controls}
+        | {("evidence", item.evidence_id) for item in stale_collections}
+    )
+    total_items = len(distinct_items)
 
     return WorkQueueResponse(
         overdue_evidence=overdue_evidence,

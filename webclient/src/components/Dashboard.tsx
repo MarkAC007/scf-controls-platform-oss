@@ -11,8 +11,7 @@ import { FrequencyHealthTile } from './dashboard/FrequencyHealthTile'
 import WorkQueuePanel from './dashboard/WorkQueuePanel'
 
 // M4 (#574) — gate the Frequency Health tile mount on the build-time flag.
-const PER_WINDOW_REVIEW_ENABLED =
-  import.meta.env.VITE_ENABLE_PER_WINDOW_REVIEW === 'true'
+import { PER_WINDOW_REVIEW_ENABLED } from '../data/featureFlags'
 
 type DashboardTab = 'implementation' | 'maturity' | 'evidence' | 'frameworks'
 
@@ -202,7 +201,7 @@ export default function Dashboard({ controls, scopingData, onScopingDataChange, 
             </span>
           </div>
           <div className="kpi-value">{stats.statusCounts.at_risk}</div>
-          <div className="kpi-secondary">Immediate action required</div>
+          <div className="kpi-secondary">{stats.statusCounts.at_risk > 0 ? 'Immediate action required' : 'No controls at risk'}</div>
           <div className="kpi-glow"></div>
         </div>
         <div className="kpi-card">

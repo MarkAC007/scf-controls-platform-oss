@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { type EvidenceFileResponse, type AssessmentFinding } from '../../data/apiClient'
 import { useAssessmentPolling } from '../../hooks/useAssessmentPolling'
 import { formatFileSize, fileTypeIcon, relativeTime } from './EvidenceFileList'
+import { PreparerAssertionPanel } from './PreparerAssertionPanel'
 
 // ---- Props ----
 
@@ -290,6 +291,14 @@ export function EvidenceFilePreviewModal({
 
         {/* Body */}
         {renderBody()}
+
+        {/* What the preparer asserted (#786, #802). Rendered for every file,
+            including one with nothing asserted — "no claim was made about this
+            evidence's period, population or provenance" is exactly the finding
+            an auditor needs, and hiding the panel would hide it. Note the meta
+            card inside renderBody() only appears for unsupported file types, so
+            this is the only always-visible metadata region in the modal. */}
+        <PreparerAssertionPanel file={file} />
 
         {/* AI Assessment Panel */}
         <div className="ai-assessment-panel">

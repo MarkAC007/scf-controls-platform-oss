@@ -5,6 +5,13 @@ import {
   type EvidenceFileUploadUrlResponse,
   type EvidenceFileResponse,
 } from '../../data/apiClient'
+import {
+  PreparerAssertionForm,
+  EMPTY_ASSERTIONS,
+  assertionErrors,
+  toAssertionPayload,
+  type AssertionFormValues,
+} from './PreparerAssertionForm'
 
 // ---- Upload state machine ----
 
@@ -78,6 +85,14 @@ export function EvidenceFileUpload({
   maxSizeMB = 50,
 }: EvidenceFileUploadProps) {
   const [state, setState] = useState<UploadState>({ phase: 'idle' })
+  // Preparer assertions (#786, #802) live *beside* the upload state machine, not
+  // in it. Uploads start the instant a file is dropped with no interaction in
+  // between, so a form inside the phase union would have to interrupt the drop.
+  // Held here, the values apply to whatever is dropped next — which is also how
+  // batches behave in practice: files dropped together share a period, a
+  // population and an extract.
+  const [assertions, setAssertions] = useState<AssertionFormValues>(EMPTY_ASSERTIONS)
+  const [assertionsExpanded, setAssertionsExpanded] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const xhrRef = useRef<XMLHttpRequest | null>(null)
   const dragCounterRef = useRef(0)
@@ -108,6 +123,21 @@ export function EvidenceFileUpload({
     const validationError = validateFile(file)
     if (validationError) {
       setState({ phase: 'error', message: validationError, file })
+      return false
+    }
+
+    // Checked before the bytes move. The backend enforces the same two rules and
+    // remains the authority; catching them here means a preparer is told while
+    // the form is still in front of them, rather than after a 50 MB upload has
+    // completed and the confirm has come back 422.
+    const badAssertions = assertionErrors(assertions)
+    if (badAssertions.length > 0) {
+      setAssertionsExpanded(true)
+      setState({
+        phase: 'error',
+        message: `Fix the audit assertions first: ${badAssertions.join(' ')}`,
+        file,
+      })
       return false
     }
 
@@ -206,6 +236,13 @@ export function EvidenceFileUpload({
       confirmed = await confirmEvidenceUpload(evidenceId, {
         s3_key: uploadInfo.s3_key,
         sha256_hash: sha256,
+        // Proves this key is the one the backend just handed *this* user for
+        // *this* evidence item. Without it the confirm is refused.
+        upload_ticket: uploadInfo.upload_ticket,
+        // Whatever the preparer asserted, if anything. Blank fields are omitted
+        // rather than sent as empty strings — "not asserted" is a state the
+        // column records, and an empty string is not that state.
+        ...toAssertionPayload(assertions),
       }, orgId)
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Failed to confirm upload'
@@ -228,7 +265,7 @@ export function EvidenceFileUpload({
     }
     return true
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orgId, evidenceId, acceptedTypes, maxSizeBytes, onUploadComplete])
+  }, [orgId, evidenceId, acceptedTypes, maxSizeBytes, onUploadComplete, assertions])
 
   const processFiles = useCallback(async (files: File[]) => {
     for (let i = 0; i < files.length; i++) {
@@ -337,6 +374,14 @@ export function EvidenceFileUpload({
         tabIndex={-1}
         aria-hidden="true"
         onChange={handleFileInputChange}
+      />
+
+      <PreparerAssertionForm
+        values={assertions}
+        onChange={setAssertions}
+        expanded={assertionsExpanded}
+        onToggle={() => setAssertionsExpanded(prev => !prev)}
+        disabled={isActive}
       />
 
       {/* Drop zone */}

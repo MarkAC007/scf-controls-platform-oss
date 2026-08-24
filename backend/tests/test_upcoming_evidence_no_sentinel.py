@@ -15,7 +15,7 @@ Mock-based — no database (mirrors tests/test_frequency_health_api.py).
 import pytest
 from unittest.mock import MagicMock
 from uuid import uuid4
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 
 import sys
@@ -26,6 +26,19 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import catalog_models  # noqa: E402,F401 — registers mappers referenced by models
 from fastapi import Response  # noqa: E402
 from starlette.requests import Request  # noqa: E402
+
+
+def _utc_today() -> date:
+    """The day boundary the code under test uses.
+
+    ``api/evidence_health.py`` works from ``datetime.utcnow()``. Building the
+    expectations here from ``date.today()`` -- the *local* date -- made these
+    tests disagree with it by one day for the hour each day when the server's
+    timezone and UTC are on different dates. CI runs in UTC and never saw it;
+    anyone west of Greenwich in the evening, or east of it in the morning, did.
+    """
+    return datetime.utcnow().date()
+
 
 
 def _request() -> Request:
@@ -85,9 +98,22 @@ def tracking(evidence_id, frequency="monthly"):
     return t
 
 
-def file_row(evidence_id, uploaded_at, count=3):
+def file_row(evidence_id, uploaded_at, count=3, coverage_through=None):
+    """One row of the latest-files subquery.
+
+    ``latest_coverage`` mirrors the SQL ``COALESCE(effective_period_end,
+    uploaded_at::date)``: with nothing asserted it IS the upload date, which is
+    what these tests assume unless they say otherwise.
+    """
+    any_asserted = 1 if coverage_through is not None else 0
+    if coverage_through is None and uploaded_at is not None:
+        coverage_through = uploaded_at.date()
     return SimpleNamespace(
-        evidence_id=evidence_id, latest_upload=uploaded_at, file_count=count
+        evidence_id=evidence_id,
+        latest_upload=uploaded_at,
+        latest_coverage=coverage_through,
+        any_asserted=any_asserted,
+        file_count=count,
     )
 
 
@@ -243,7 +269,12 @@ class TestSortOrder:
                 tracking("E-EARLIER", frequency="monthly"),
             ],
             [
-                file_row("E-LATER", now - timedelta(days=20)),
+                # Monthly threshold is 35 days, and the window here is 14, so
+                # both of these have to be due within a fortnight to be in the
+                # result at all. 20 days ago put E-LATER 15 days out — it only
+                # ever appeared because the day count truncated toward zero
+                # after midnight (#789 audit lane). 25 puts it genuinely inside.
+                file_row("E-LATER", now - timedelta(days=25)),
                 file_row("E-EARLIER", now - timedelta(days=35)),
             ],
             [],
@@ -266,3 +297,70 @@ class TestSortOrder:
 
         assert len(items) == 3
         assert all(i["days_until_due"] is None for i in items)
+
+
+class TestDayCountsAreCountedInDateSpace:
+    """``days_until_due`` is a number of days, not a truncated duration.
+
+    The endpoint computes a due *date* and subtracts today's *date*. It used to
+    subtract a mid-afternoon ``datetime.utcnow()`` from midnight on the due day,
+    and ``timedelta.days`` truncates toward zero: at 14:00 the answer came back
+    one day short, every day, for every item. The visible consequence was
+    evidence due today reporting as already overdue from one minute past
+    midnight onwards.
+
+    These assert exact numbers rather than an ordering, because an ordering
+    survives a uniform off-by-one and this bug was a uniform off-by-one.
+    """
+
+    @pytest.mark.asyncio
+    async def test_evidence_due_today_is_not_yet_overdue(self):
+        # Monthly cadence is a 35-day threshold, so coverage ending 35 days ago
+        # is due exactly today.
+        db = FakeSession(
+            [tracking("E-DUE-TODAY", frequency="monthly")],
+            [file_row(
+                "E-DUE-TODAY",
+                datetime.utcnow() - timedelta(days=35),
+                coverage_through=_utc_today() - timedelta(days=35),
+            )],
+            [],
+        )
+
+        item = (await call_upcoming(db))["items"][0]
+
+        assert item["days_until_due"] == 0
+        assert item["is_overdue"] is False
+
+    @pytest.mark.asyncio
+    async def test_a_deadline_ten_days_out_reports_ten_days(self):
+        db = FakeSession(
+            [tracking("E-TEN", frequency="monthly")],
+            [file_row(
+                "E-TEN",
+                datetime.utcnow() - timedelta(days=25),
+                coverage_through=_utc_today() - timedelta(days=25),
+            )],
+            [],
+        )
+
+        item = (await call_upcoming(db))["items"][0]
+
+        assert item["days_until_due"] == 10
+
+    @pytest.mark.asyncio
+    async def test_a_deadline_a_day_past_reports_minus_one(self):
+        db = FakeSession(
+            [tracking("E-PAST", frequency="monthly")],
+            [file_row(
+                "E-PAST",
+                datetime.utcnow() - timedelta(days=36),
+                coverage_through=_utc_today() - timedelta(days=36),
+            )],
+            [],
+        )
+
+        item = (await call_upcoming(db))["items"][0]
+
+        assert item["days_until_due"] == -1
+        assert item["is_overdue"] is True

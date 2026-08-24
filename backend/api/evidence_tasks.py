@@ -13,6 +13,7 @@ from database import get_db
 from user_display import user_label as _user_label
 from auth import require_auth, get_accessible_org_ids, verify_org_membership, assert_user_in_org, User
 from models import EvidenceCollectionTask, EvidenceTracking, User as DBUser
+from services.collection_date import advance_last_collection_date
 from schemas import (
     EvidenceCollectionTaskCreate,
     EvidenceCollectionTaskUpdate,
@@ -441,8 +442,12 @@ async def complete_evidence_task(
             select(EvidenceTracking).where(EvidenceTracking.id == task.evidence_tracking_id)
         )
         evidence = result.scalar_one_or_none()
-        if evidence:
-            evidence.last_collection_date = date.today()
+        # Today, because completing a collection task IS a person saying they
+        # collected it today — unlike an upload, which may be carrying old
+        # paperwork. Routed through the shared helper for the monotonic guard
+        # only: closing a task must never walk the column backwards behind a
+        # more recent collection (#57).
+        advance_last_collection_date(evidence, date.today())
 
     await db.commit()
     await db.refresh(task)

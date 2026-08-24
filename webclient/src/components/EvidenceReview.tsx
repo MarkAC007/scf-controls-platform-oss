@@ -41,8 +41,7 @@ import { interactiveRowProps } from '../data/interactiveRow'
 // M4 (#574) — gate the per-window review panel mount on the build-time flag.
 // When unset (default), the panel is not rendered and the legacy per-file
 // review buttons in ``EvidenceFileList`` remain visible.
-const PER_WINDOW_REVIEW_ENABLED =
-  import.meta.env.VITE_ENABLE_PER_WINDOW_REVIEW === 'true'
+import { PER_WINDOW_REVIEW_ENABLED } from '../data/featureFlags'
 
 interface EvidenceReviewProps {
   controls: EnrichedControl[]

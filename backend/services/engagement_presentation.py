@@ -7,8 +7,10 @@ Re-sequences an engagement's frozen control set under the requested framework's
 own clause / Annex A identifiers. The clause outline is *derived on read* from
 the catalog framework_mappings (design decision D3) — there is no authored
 canonical outline — so only clauses that at least one in-scope control maps to
-appear. Evidence is shown live and flagged in/out of the audit window using the
-upload-date proxy (D4); nothing is hidden.
+appear. Evidence is shown live and flagged in/out of the audit window; nothing is
+hidden. The window test prefers the preparer's asserted effective period
+(#786) and falls back to the upload-date proxy (D4) only where nothing was
+asserted — each artifact reports which of the two it was judged on.
 
 This module is deliberately pure (no DB access) so the ordering and tree-assembly
 logic is unit-testable in isolation. The API layer fetches the inputs and passes
@@ -39,21 +41,77 @@ def natural_clause_sort_key(clause_id: str) -> tuple:
     return tuple(key)
 
 
-def _in_window(uploaded_at: Optional[datetime], window: Tuple[Optional[date], Optional[date]]) -> bool:
-    """Whether an artifact's upload date sits within the engagement window.
+#: The artifact carries a preparer-asserted effective period and it was used.
+WINDOW_BASIS_ASSERTED = "asserted_period"
+#: Nothing was asserted, so the upload date stood in for the coverage period.
+WINDOW_BASIS_UPLOAD = "upload_date"
 
-    An unset window bound is treated as open-ended, so an engagement with no
-    dates counts every artifact as in-window.
+
+def _as_date(value) -> Optional[date]:
+    if value is None:
+        return None
+    return value.date() if isinstance(value, datetime) else value
+
+
+def _asserted_period(artifact: Dict[str, Any]) -> Optional[Tuple[date, date]]:
+    """The preparer-asserted period, or None if this artifact has no whole one.
+
+    Both ends or nothing. The confirm endpoint refuses a half-asserted period,
+    but a row written before those columns existed — or patched by hand — can
+    still hold one, and half a period cannot be compared against a window.
+    """
+    start = _as_date(artifact.get("effective_period_start"))
+    end = _as_date(artifact.get("effective_period_end"))
+    if start is None or end is None:
+        return None
+    return start, end
+
+
+def _in_window(
+    artifact: Dict[str, Any],
+    window: Tuple[Optional[date], Optional[date]],
+) -> Tuple[bool, str]:
+    """Whether an artifact belongs to the engagement window, and on what basis.
+
+    The upload date was always a proxy (design decision D4): it says when a file
+    arrived, not what period it describes. A quarterly access review exported on
+    2 April covers Q1 and uploads in Q2, and the proxy puts it in the wrong one.
+
+    Where the preparer has asserted an effective period, that is used instead —
+    it is the only statement in the system about what the evidence actually
+    covers, and it was made by a person who takes responsibility for it. The
+    test is **overlap**, not containment: an annual report legitimately supports
+    a quarterly engagement, and excluding it would be wrong. A period that does
+    not touch the window at all is out.
+
+    Where nothing was asserted the upload proxy still applies, unchanged, which
+    is why the returned basis matters as much as the boolean. A reader has to be
+    able to tell "the preparer said this covers the window" from "we guessed
+    from the upload date" — those are very different grounds for relying on it.
+
+    An unset window bound is open-ended, so an engagement with no dates counts
+    every artifact as in-window.
     """
     start, end = window
+
+    period = _asserted_period(artifact)
+    if period is not None:
+        p_start, p_end = period
+        if end is not None and p_start > end:
+            return False, WINDOW_BASIS_ASSERTED
+        if start is not None and p_end < start:
+            return False, WINDOW_BASIS_ASSERTED
+        return True, WINDOW_BASIS_ASSERTED
+
+    uploaded_at = artifact.get("uploaded_at")
     if uploaded_at is None:
-        return False
-    upload_date = uploaded_at.date() if isinstance(uploaded_at, datetime) else uploaded_at
+        return False, WINDOW_BASIS_UPLOAD
+    upload_date = _as_date(uploaded_at)
     if start is not None and upload_date < start:
-        return False
+        return False, WINDOW_BASIS_UPLOAD
     if end is not None and upload_date > end:
-        return False
-    return True
+        return False, WINDOW_BASIS_UPLOAD
+    return True, WINDOW_BASIS_UPLOAD
 
 
 def _build_control_node(
@@ -69,7 +127,7 @@ def _build_control_node(
     evidence: List[Dict[str, Any]] = []
     in_window_count = 0
     for art in evidence_by_scf.get(scf_id, []):
-        flagged = _in_window(art.get("uploaded_at"), window)
+        flagged, basis = _in_window(art, window)
         if flagged:
             in_window_count += 1
         evidence.append({
@@ -78,6 +136,12 @@ def _build_control_node(
             "uploaded_at": art.get("uploaded_at"),
             "review_status": art.get("review_status"),
             "in_window": flagged,
+            # What the in/out ruling was actually based on. Without this the
+            # reader cannot tell an asserted coverage period from the upload-date
+            # proxy, and those carry very different weight in an audit file.
+            "in_window_basis": basis,
+            "effective_period_start": art.get("effective_period_start"),
+            "effective_period_end": art.get("effective_period_end"),
         })
 
     return {

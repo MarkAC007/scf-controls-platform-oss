@@ -77,6 +77,7 @@ celery_app = Celery(
         "tasks_updates",
         "tasks_automation",
         "tasks_doc_gen",
+        "tasks_evidence_integrity",
         "services.composite_service",
     ],
 )
@@ -197,6 +198,12 @@ celery_app.conf.update(
         # with no -Q at all. A queue that works locally and is silently dead in
         # production is worse than sharing default.
         "doc_gen.generate": {"queue": "default"},
+        # Evidence integrity verification routes to default for the same reason
+        # again (#57). This one matters most of the three: a malware scan that
+        # runs in compose and is silently dead on AWS/GCP would show a green
+        # control on the dashboard while nothing was ever scanned.
+        "tasks_evidence_integrity.verify_evidence_file_task": {"queue": "default"},
+        "tasks_evidence_integrity.sweep_unverified_evidence_task": {"queue": "default"},
         "cdm.classify_intent": {"queue": "cdm_intent"},
         # Catalog upgrade flow (WP1b). catalog.import routes itself via its
         # task decorator (queue="catalog"); the upgrade tasks route here.
@@ -254,6 +261,24 @@ celery_app.conf.update(
                 },
             }
             if _flag_enabled("TASK_AUTOMATION_ENABLED", "true")
+            else {}
+        ),
+        # Evidence integrity backlog drain (#57). Every file that predates the
+        # verification feature sits at hash_verification_status='pending'; this
+        # tick hands the oldest batch to the verifier. Hourly rather than daily
+        # because a large backlog should drain in days, not months, and because
+        # each tick is bounded by EVIDENCE_INTEGRITY_SWEEP_BATCH and the
+        # verifier's own rate_limit. Once the backlog is empty the query returns
+        # no rows against a partial index that has shrunk to nothing, so the
+        # steady-state cost of leaving this on is a no-op every hour.
+        **(
+            {
+                "evidence-integrity-sweep-hourly": {
+                    "task": "tasks_evidence_integrity.sweep_unverified_evidence_task",
+                    "schedule": crontab(minute=20),
+                }
+            }
+            if _flag_enabled("EVIDENCE_INTEGRITY_SWEEP_ENABLED", "true")
             else {}
         ),
         # Catalog upgrade workbook retention (plan §4.2.7): keep the last 5

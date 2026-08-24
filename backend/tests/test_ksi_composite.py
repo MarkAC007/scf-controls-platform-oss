@@ -24,6 +24,7 @@ from typing import Any
 from uuid import UUID
 
 import pytest
+from sqlalchemy.sql import Select
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -56,6 +57,13 @@ class _FakeResult:
     def all(self) -> list[Any]:
         return list(self._rows)
 
+    def scalar_one_or_none(self) -> Any:
+        # #787: _fetch_evidence_metrics_per_theme now resolves the org's
+        # assurance policy before choosing its SQL. No row means "no policy
+        # set", which is the default — i.e. exactly the behaviour these
+        # tests were written against.
+        return self._rows[0] if self._rows else None
+
 
 class _CapturingSession:
     """Async session that records the SQL passed to ``execute``.
@@ -69,8 +77,15 @@ class _CapturingSession:
         self.rows_for_sql = rows_for_sql or {}
         self.last_sql = None
         self.last_params = None
+        self.executed = []
 
     async def execute(self, sql, params=None):  # noqa: D401 — sqlalchemy shape
+        self.executed.append(sql)
+        # The assurance-policy lookup (#787) is a Core select, not one of the
+        # text() constants under test; it must not clobber last_sql or these
+        # assertions would start reading the wrong statement.
+        if isinstance(sql, Select):
+            return _FakeResult([])
         self.last_sql = sql
         self.last_params = params
         rows = self.rows_for_sql.get(id(sql), [])

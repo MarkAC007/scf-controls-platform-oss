@@ -715,6 +715,7 @@ def assess_window(
         )
         assessment.summary = "No files in window — nothing to assess."
         assessment.prompt_hash = prompt_hash_value
+        assessment.prompt_version = PROMPT_VERSION
         assessment.control_context_hash = control_context.context_hash
         assessment.framework_version = control_context.framework_version
         assessment.model_id = None
@@ -765,6 +766,7 @@ def assess_window(
     assessment.summary = parsed.get("summary", "")
     assessment.model_id = model_id
     assessment.prompt_hash = prompt_hash_value
+    assessment.prompt_version = PROMPT_VERSION
     assessment.control_context_hash = control_context.context_hash
     assessment.framework_version = control_context.framework_version
     assessment.input_token_count = input_tokens
@@ -805,6 +807,9 @@ def _finalise_error(
     assessment.assessed_at = datetime.utcnow()
     if prompt_hash:
         assessment.prompt_hash = prompt_hash
+        # The version travels with the hash: recording one without the other
+        # leaves a verdict whose provenance is half-known.
+        assessment.prompt_version = PROMPT_VERSION
     if control_context_hash:
         assessment.control_context_hash = control_context_hash
     if framework_version:

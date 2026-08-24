@@ -14,8 +14,7 @@ import { EvidenceFilePreviewModal } from './EvidenceFilePreviewModal'
 // level (see ``WindowReviewPanel``). The row-level review badge stays visible
 // for historical context. When the flag is unset (default), behaviour is
 // unchanged — existing tests and existing per-file reviews keep working.
-const PER_WINDOW_REVIEW_ENABLED =
-  import.meta.env.VITE_ENABLE_PER_WINDOW_REVIEW === 'true'
+import { PER_WINDOW_REVIEW_ENABLED } from '../../data/featureFlags'
 
 // ---- Props ----
 
@@ -104,6 +103,52 @@ function AssessmentChip({ status }: { status: string | null }) {
   return <span className={`ai-chip ${config.className}`}>{config.label}</span>
 }
 
+// ---- Integrity badge (#57) ----
+//
+// The server hashes and scans every stored object out of band. Until that lands
+// a file reads as "not yet scanned" — and stays downloadable and posture-bearing
+// while it does, deliberately: the unscanned backlog is the platform's own debt,
+// not the customer's, so it is disclosed rather than penalised. Only `infected`
+// is withheld, and the backend enforces that independently of this label.
+
+const INTEGRITY_BADGE_CONFIG: Record<string, { label: string; className: string; title: string }> = {
+  infected: {
+    label: 'Infected',
+    className: 'integrity-badge-infected',
+    title: 'The malware scanner flagged this file. It has been quarantined and cannot be downloaded.',
+  },
+  hash_mismatch: {
+    label: 'Hash Mismatch',
+    className: 'integrity-badge-mismatch',
+    title:
+      'The stored file does not match the checksum supplied at upload. It is still downloadable so the '
+      + 'discrepancy can be investigated, but it does not count toward compliance posture.',
+  },
+  unreadable: {
+    label: 'Unreadable',
+    className: 'integrity-badge-unreadable',
+    title: 'This record names a file that could not be read back from evidence storage.',
+  },
+  not_yet_scanned: {
+    label: 'Not Yet Scanned',
+    className: 'integrity-badge-pending',
+    title:
+      'This file has not been hashed or scanned by the server yet. It remains available and continues to '
+      + 'count toward posture in the meantime.',
+  },
+}
+
+function IntegrityBadge({ badge }: { badge: string | null }) {
+  if (!badge) return null
+  const config = INTEGRITY_BADGE_CONFIG[badge]
+  if (!config) return null
+  return (
+    <span className={`integrity-badge ${config.className}`} title={config.title}>
+      {config.label}
+    </span>
+  )
+}
+
 function ReviewStatusBadge({ status }: { status: string }) {
   if (status === 'not_reviewed') return null
   const config = REVIEW_STATUS_CONFIG[status]
@@ -124,6 +169,45 @@ interface FileRowProps {
   canDelete?: boolean
   canReview?: boolean
   assessmentStatus?: string | null
+}
+
+/**
+ * The asserted effective period, as a compact row chip (#786).
+ *
+ * Shown only when a period was actually asserted. The list is a scanning
+ * surface, and a row of "not asserted" on every legacy file would drown the
+ * rows that do carry a claim — the preview modal is where the absence is
+ * spelled out. What the chip buys on the row is the comparison an auditor makes
+ * at a glance: uploaded last week, covers 2023.
+ */
+/**
+ * The chip owns its own separator, and therefore its own decision about whether
+ * to appear at all. Guarding at the call site instead would put the same rule in
+ * two places — and the version that survived a mutation sweep was the call site,
+ * which meant the guard in here was unreachable and untested. One guard, here.
+ */
+function EffectivePeriodChip({ start, end }: { start: string | null; end: string | null }) {
+  // Both ends or nothing. A half-asserted period is not a window, and
+  // "covers 1 Apr 2026 – " reads as a claim the preparer never made.
+  if (!start || !end) return null
+  const short = (value: string) => {
+    const parsed = new Date(value.length === 10 ? `${value}T00:00:00` : value)
+    return Number.isNaN(parsed.getTime())
+      ? value
+      : parsed.toLocaleDateString('en-GB', { year: 'numeric', month: 'short', day: 'numeric' })
+  }
+  return (
+    <>
+      <span className="evidence-files-separator" aria-hidden="true">{'\u00B7'}</span>
+      <span
+        className="evidence-files-period"
+        data-testid="evidence-file-effective-period"
+        title={`Preparer asserts this evidence covers ${short(start)} to ${short(end)}`}
+      >
+        {`covers ${short(start)} – ${short(end)}`}
+      </span>
+    </>
+  )
 }
 
 function FileRow({ file, onDelete, onReview, isDeleting, isReviewing, onView, isLoadingPreview, canDelete, canReview, assessmentStatus }: FileRowProps) {
@@ -182,10 +266,20 @@ function FileRow({ file, onDelete, onReview, isDeleting, isReviewing, onView, is
           >
             {relativeTime(file.uploaded_at)}
           </time>
+          <EffectivePeriodChip
+            start={file.effective_period_start}
+            end={file.effective_period_end}
+          />
           {file.review_status && (
             <>
               <span className="evidence-files-separator" aria-hidden="true">{'\u00B7'}</span>
               <ReviewStatusBadge status={file.review_status} />
+            </>
+          )}
+          {file.integrity_badge && (
+            <>
+              <span className="evidence-files-separator" aria-hidden="true">{'\u00B7'}</span>
+              <IntegrityBadge badge={file.integrity_badge} />
             </>
           )}
           {assessmentStatus && (

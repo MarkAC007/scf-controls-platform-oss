@@ -299,6 +299,7 @@ def assess_evidence_task(
                     summary = :summary,
                     model_id = :model_id,
                     prompt_hash = :prompt_hash,
+                    prompt_version = :prompt_version,
                     control_context_hash = :control_context_hash,
                     framework_version = :framework_version,
                     input_token_count = :input_tokens,
@@ -315,6 +316,7 @@ def assess_evidence_task(
                 "summary": parsed.get("summary", ""),
                 "model_id": model_id,
                 "prompt_hash": prompt_hash_value,
+                "prompt_version": PROMPT_VERSION,
                 "control_context_hash": control_context.context_hash,
                 "framework_version": control_context.framework_version,
                 "input_tokens": llm_result.get("input_tokens", 0),
@@ -400,6 +402,8 @@ def _update_assessment_error(
                 processing_time_ms = :processing_time_ms,
                 assessed_at = :assessed_at,
                 prompt_hash = COALESCE(:prompt_hash, prompt_hash),
+                prompt_version = CASE WHEN :prompt_hash IS NULL THEN prompt_version
+                                      ELSE :prompt_version END,
                 control_context_hash = COALESCE(:control_context_hash, control_context_hash)
             WHERE evidence_file_id = :file_id AND organization_id = :org_id
         """),
@@ -413,6 +417,7 @@ def _update_assessment_error(
             "processing_time_ms": processing_time_ms,
             "assessed_at": datetime.utcnow(),
             "prompt_hash": prompt_hash,
+            "prompt_version": PROMPT_VERSION,
             "control_context_hash": control_context_hash,
             "file_id": evidence_file_id,
             "org_id": organization_id,

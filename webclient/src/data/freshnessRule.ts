@@ -13,6 +13,12 @@
  * frequency implies. That is why every string below says "its threshold" rather
  * than naming a number — a single number would be right for some rows and
  * confidently wrong for others, which is the failure this text exists to end.
+ *
+ * What the days are counted FROM changed in #57: the *coverage* date, meaning
+ * the end of the preparer-asserted effective period, with the upload date
+ * standing in only where nothing was asserted. These strings used to describe
+ * the arrival date instead — a legend that explains the colours by a rule the
+ * backend has stopped applying is worse than no legend, because it is believed.
  */
 
 /**
@@ -26,14 +32,16 @@ export type FreshnessStatus = 'green' | 'amber' | 'red' | 'unknown'
 
 /** One-line rule per status, for tooltips and the legend. */
 export const FRESHNESS_RULE: Record<FreshnessStatus, string> = {
-  green: 'Fresh — last upload is within the item’s collection threshold.',
+  green: 'Fresh — the period this evidence covers ended within the item’s collection threshold.',
   amber: `Stale — past the threshold, but within ${AMBER_GRACE_MULTIPLIER}× of it.`,
-  red: `Critical — more than ${AMBER_GRACE_MULTIPLIER}× the threshold since the last upload.`,
-  unknown: 'No Data — never uploaded, or the item has no collection frequency set.',
+  red: `Critical — more than ${AMBER_GRACE_MULTIPLIER}× the threshold since the period it covers ended.`,
+  unknown: 'No Data — nothing collected yet, or the item has no collection frequency set.',
 }
 
 /** Shown once above the list, so the colours are legible without hovering. */
 export const FRESHNESS_LEGEND =
   `Freshness is measured against each item’s own threshold: Fresh within it, ` +
   `Stale up to ${AMBER_GRACE_MULTIPLIER}× it, Critical beyond that. ` +
-  `Each card shows the threshold it was judged against.`
+  `Age is counted from the period each file says it covers, falling back to its ` +
+  `upload date where no period was asserted; each card shows which was used and ` +
+  `the threshold it was judged against.`

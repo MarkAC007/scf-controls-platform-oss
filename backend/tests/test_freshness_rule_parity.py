@@ -62,3 +62,63 @@ def test_backend_still_grades_against_a_multiple_of_the_threshold():
     fires here rather than leaving the parity test vacuously green.
     """
     assert _backend_multiplier() > 1.0
+
+
+# ---------------------------------------------------------------------------
+# The anchor, not just the band
+# ---------------------------------------------------------------------------
+#
+# The multiplier was only half of what the legend promises. The other half is
+# what the days are counted FROM, and #57 changed it from the upload date to the
+# coverage date. The legend went on saying "last upload" — describing, with the
+# platform's full authority, a rule the backend had stopped applying.
+
+
+def _rule_text() -> str:
+    """Just the user-facing strings, not the file's own explanatory comments."""
+    text = FRONTEND_RULE.read_text()
+    return text[text.index("export const FRESHNESS_RULE"):]
+
+
+@pytest.mark.skipif(
+    not FRONTEND_RULE.exists(),
+    reason="webclient not present (backend-only checkout)",
+)
+def test_the_legend_does_not_promise_an_anchor_the_backend_abandoned():
+    rule = _rule_text().lower()
+
+    # "upload" may appear only where the copy is describing the fallback, which
+    # it has to name as a fallback for the sentence to be true.
+    for line in rule.splitlines():
+        if "upload" in line:
+            assert "fall" in line or "asserted" in line, (
+                f"freshness copy still anchors on the upload date: {line.strip()}"
+            )
+
+
+@pytest.mark.skipif(
+    not FRONTEND_RULE.exists(),
+    reason="webclient not present (backend-only checkout)",
+)
+def test_the_legend_names_the_anchor_the_backend_actually_uses():
+    """The always-visible legend, specifically.
+
+    Checking the whole file would pass on the per-status tooltips alone, and
+    those are only read on hover. The legend is the one string every user of the
+    dashboard sees, so it is the one that has to carry the disclosure: what the
+    days are counted from, and that the upload date is a fallback rather than
+    the rule.
+    """
+    text = _rule_text()
+    legend = text[text.index("FRESHNESS_LEGEND"):].lower()
+
+    assert "cover" in legend, "the legend never says what the age is counted from"
+    assert "fall" in legend, "the legend never discloses the upload-date fallback"
+
+
+def test_the_backend_really_does_anchor_on_coverage():
+    """Guards the two above from passing against a backend that reverted."""
+    source = inspect.getsource(evidence_health)
+
+    assert "days_since_coverage, threshold_days" in source
+    assert "effective_period_end" in source

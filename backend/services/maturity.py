@@ -21,7 +21,11 @@ from dataclasses import dataclass
 from enum import IntEnum
 from typing import Optional, List
 from datetime import date, timedelta
-from services.frequency_vocabulary import normalize as normalize_frequency
+from services.frequency_vocabulary import (
+    DEFAULT_STALENESS_DAYS,
+    normalize as normalize_frequency,
+    staleness_days,
+)
 
 
 class MaturityLevel(IntEnum):
@@ -131,6 +135,29 @@ FREQUENCY_SCORES = {
 # Cadences tight enough to support L5. Canonical values only.
 L5_FREQUENCIES = ("real_time", "daily")
 
+# Freshness bands, expressed as multiples of the cadence's OWN staleness
+# threshold rather than as absolute day counts (#789 audit lane).
+#
+# The previous ladder was a flat 7 / 30 / 90 days for every cadence, which
+# quietly assumed monthly collection everywhere. Annual evidence collected four
+# months ago scored "very stale" even though it was not yet due; quarterly
+# evidence at 60 days scored "stale" while its own vocabulary gives it 95. The
+# maturity engine was penalising organisations for honouring the cadence they
+# had configured.
+#
+# The multipliers are chosen so a monthly cadence — the most common by far, and
+# the one the literals were implicitly tuned for — lands within a day or two of
+# the old behaviour: threshold 35 gives 8 / 35 / 105 against the old 7 / 30 / 90.
+# Longer cadences are the ones that move, and they move in the direction of
+# being judged against what they actually promised.
+FRESHNESS_BAND_MULTIPLIERS = (
+    (0.25, 1),   # well inside the cadence — collected ahead of being due
+    (1.0, 0),    # inside the cadence — exactly what was asked for
+    (3.0, -1),   # overdue, but recoverable
+)
+#: Beyond the last band.
+FRESHNESS_VERY_STALE = -2
+
 
 def calculate_maturity(input_data: MaturityInput) -> MaturityResult:
     """
@@ -209,22 +236,43 @@ def calculate_maturity(input_data: MaturityInput) -> MaturityResult:
         }
 
     # Step 4: Check freshness (if we have last_collection_date)
+    #
+    # Judged against the cadence this evidence was configured for, not against a
+    # flat calendar. "Stale" has to mean "later than you said you would collect
+    # it", otherwise the score punishes an organisation for correctly running an
+    # annual control annually.
     freshness_modifier = 0
     if input_data.last_collection_date:
         days_since = (date.today() - input_data.last_collection_date).days
-        if days_since <= 7:
-            freshness_modifier = 1  # Very fresh
-        elif days_since <= 30:
-            freshness_modifier = 0  # Acceptable
-        elif days_since <= 90:
-            freshness_modifier = -1  # Stale
-        else:
-            freshness_modifier = -2  # Very stale
+        threshold = staleness_days(input_data.frequency)
+        if threshold is None:
+            # Two different situations, and only one of them is fine.
+            if input_data.frequency:
+                # A frequency IS configured and we do not recognise it. Scoring
+                # freshness off a substituted default is how a typo comes to
+                # masquerade as monthly (#783). Record the days, score nothing.
+                factors["freshness"] = {
+                    "days_since_collection": days_since,
+                    "modifier": 0,
+                    "unscored_reason": f"unrecognised frequency {input_data.frequency!r}",
+                }
+                threshold = None
+            else:
+                # No cadence configured at all — the documented fallback.
+                threshold = DEFAULT_STALENESS_DAYS
 
-        factors["freshness"] = {
-            "days_since_collection": days_since,
-            "modifier": freshness_modifier,
-        }
+        if threshold is not None:
+            freshness_modifier = FRESHNESS_VERY_STALE
+            for multiplier, modifier in FRESHNESS_BAND_MULTIPLIERS:
+                if days_since <= threshold * multiplier:
+                    freshness_modifier = modifier
+                    break
+
+            factors["freshness"] = {
+                "days_since_collection": days_since,
+                "modifier": freshness_modifier,
+                "threshold_days": threshold,
+            }
 
     # Step 5: System linkage bonus
     system_modifier = 0
@@ -243,6 +291,16 @@ def calculate_maturity(input_data: MaturityInput) -> MaturityResult:
     clamped_score = max(1, min(4, raw_score))  # Cap at L4 for now - L5 requires special criteria
 
     # L5 criteria: Must be L4 AND have active status AND high frequency AND fresh data
+    #
+    # TOMBSTONE — this 7 is still a literal, deliberately (#789 audit lane).
+    # Every other freshness threshold in this function now comes from the
+    # frequency vocabulary, but L5 is only reachable on a real_time or daily
+    # cadence, whose vocabulary threshold is 2 days. Swapping the literal for it
+    # would strip L5 from any organisation whose daily collector last ran three
+    # days ago — a visible downgrade, applied silently, to the customers with
+    # the most mature programmes. That is a defensible change to make; it is not
+    # a defensible change to make as a side effect of fixing the staleness
+    # ladder. It needs its own PR, with a note to affected tenants.
     if (clamped_score == 4 and
         capability_status == "active" and
         frequency in L5_FREQUENCIES and

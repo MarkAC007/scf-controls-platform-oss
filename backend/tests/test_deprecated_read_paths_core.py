@@ -99,6 +99,12 @@ class _FakeAsyncSession:
 
     async def execute(self, stmt, params=None) -> _Result:
         self.statements.append(stmt)
+        # #787: the org assurance-policy lookup is an extra statement these
+        # scripts were not written to expect. No row means "no policy set",
+        # which is the default — so answer it without consuming a scripted
+        # response rather than re-numbering every caller's list.
+        if "organization_assurance_policies" in str(stmt):
+            return _Result([])
         return _Result(list(self._pop()))
 
     async def scalar(self, stmt) -> Any:

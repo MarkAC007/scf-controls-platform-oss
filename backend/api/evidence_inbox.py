@@ -26,9 +26,15 @@ from database import get_db
 from models import WebhookEndpoint, WebhookDelivery, EvidenceFile, EvidenceTracking
 from schemas import WebhookIngestResponse
 from services.storage_service import ALLOWED_CONTENT_TYPES
-from services.storage_service import move_to_quarantine, write_inbox_payload
+from services.storage_service import write_inbox_payload
 from services.audit_service import create_audit_entry
 from services.validation_service import run_validation
+from services.evidence_integrity_service import compute_sha256
+from services.collection_date import advance_last_collection_date, collection_date_from
+from services.evidence_quarantine import (
+    enqueue_integrity_verification,
+    quarantine_evidence_file,
+)
 from services.malware_scan_service import get_scan_service
 from rate_limiting import rate_limit_inbox
 
@@ -465,7 +471,16 @@ async def ingest_evidence(
             description = data.get("description", f"Webhook evidence from {source}")
             filename = data.get("filename", f"webhook_{source}_{delivery.id}.json")
 
-            # Store the JSON payload as an evidence file record
+            # Store the JSON payload as an evidence file record.
+            #
+            # Unlike a browser upload, the bytes are in hand here, so the digest
+            # is taken at ingest with no extra read. It goes into `sha256_hash`
+            # — the assertion column — because on this path the platform itself
+            # is the asserting party: this is a record of what arrived at the
+            # webhook. The verification task still fetches the object back out
+            # of storage afterwards and compares, which is what turns that record
+            # into a check that the payload was written intact.
+            ingest_digest = compute_sha256(body)
             evidence_file = EvidenceFile(
                 organization_id=org_id,
                 evidence_id=evidence_id,
@@ -473,7 +488,11 @@ async def ingest_evidence(
                 s3_key=f"evidence/{org_id}/inbox/{delivery.id}.json",
                 content_type="application/json",
                 file_size_bytes=len(body),
-                # No uploaded_by_user_id — this is system-ingested
+                sha256_hash=ingest_digest,
+                # No uploaded_by_user_id — this is system-ingested. Attributing it
+                # to a person would invent an actor; the webhook endpoint id on
+                # the WebhookDelivery row is the real provenance, and it is
+                # already recorded there.
             )
             db.add(evidence_file)
             await db.flush()
@@ -496,9 +515,11 @@ async def ingest_evidence(
             evidence_file.scan_details = scan_result.details
 
             if scan_result.status == "infected":
-                # Quarantine the file and reject
-                move_to_quarantine(evidence_file.s3_key, str(org_id))
-                evidence_file.s3_key = f"quarantine/{org_id}/{evidence_file.id}_{filename}"
+                # Quarantine the file and reject. The shared helper writes the
+                # audit row this path never used to write, and takes the
+                # destination key from the storage layer instead of rebuilding
+                # it by hand — the two had no guarantee of agreeing.
+                quarantine_evidence_file(db, evidence_file)
                 delivery.evidence_file_id = evidence_file.id
                 delivery.status = "rejected"
                 delivery.error_message = f"Malware detected: {scan_result.details.get('message', 'unknown threat')}"
@@ -513,6 +534,9 @@ async def ingest_evidence(
 
             delivery.evidence_file_id = evidence_file.id
 
+            # Verify the object as it now sits in storage, off the request path.
+            enqueue_integrity_verification(evidence_file.id)
+
             # Run validation (never raises — results stored in DB)
             await run_validation(
                 db=db,
@@ -521,7 +545,39 @@ async def ingest_evidence(
                 validation_source="webhook",
             )
 
+        else:
+            # TOMBSTONE (#57 class sweep). A non-JSON payload passes signature
+            # and size validation, records a WebhookDelivery, and then falls
+            # straight through: no EvidenceFile, no object written to storage,
+            # no malware scan, no validation. The module docstring above claims
+            # this endpoint "creates EvidenceFile records from JSON or multipart
+            # payloads"; the multipart half has never existed.
+            #
+            # Building it is a feature, not an integrity fix, and it is filed
+            # rather than smuggled in here. What is fixed is the silence: the
+            # delivery now says plainly that nothing was ingested, instead of
+            # returning success for a payload the platform discarded.
+            reason = (
+                "the payload was empty or could not be parsed as JSON"
+                if is_json
+                else f"content-type '{content_type}' is not ingested — this endpoint stores JSON only"
+            )
+            delivery.status = "rejected"
+            delivery.error_message = (
+                f"No evidence was stored: {reason}. Nothing was written to evidence storage."
+            )
+            logger.warning(
+                "Webhook payload discarded: org=%s evidence_id=%s content_type=%s "
+                "delivery=%s reason=%s",
+                org_id, evidence_id, content_type, delivery.id, reason,
+            )
+
         # --- Update evidence tracker (link webhook evidence) ----------------
+        #
+        # Guarded on an evidence file actually existing. It used to run
+        # unconditionally, so a payload that was discarded without being stored
+        # still stamped the collection date — reporting the evidence item as
+        # freshly collected on the strength of a delivery that produced nothing.
         tracker_result = await db.execute(
             select(EvidenceTracking).where(
                 and_(
@@ -531,21 +587,42 @@ async def ingest_evidence(
             )
         )
         tracker = tracker_result.scalar_one_or_none()
-        if tracker:
-            tracker.last_collection_date = datetime.utcnow().date()
-            logger.info(
-                "Updated evidence tracker last_collection_date: evidence_id=%s, org=%s",
-                evidence_id, org_id,
+        if tracker and evidence_file is not None:
+            # Same rule as the browser upload path (#57): prefer what the
+            # evidence says it covers, fall back to the arrival date, and never
+            # move the column backwards. Webhook payloads carry no asserted
+            # period today, so in practice this still stamps the arrival date —
+            # what changes is that a replayed or back-dated delivery can no
+            # longer regress a live programme's collection date, and the two
+            # ingest paths now share one rule instead of two copies of one.
+            collected_on = collection_date_from(
+                getattr(evidence_file, "effective_period_end", None),
+                uploaded_at=datetime.utcnow(),
             )
-        else:
+            if advance_last_collection_date(tracker, collected_on):
+                logger.info(
+                    "Updated evidence tracker last_collection_date to %s: evidence_id=%s, org=%s",
+                    collected_on, evidence_id, org_id,
+                )
+            else:
+                logger.info(
+                    "Left evidence tracker last_collection_date at %s (candidate %s was "
+                    "not later): evidence_id=%s, org=%s",
+                    tracker.last_collection_date, collected_on, evidence_id, org_id,
+                )
+        elif evidence_file is not None:
             logger.warning(
                 "No evidence tracking record for evidence_id=%s in org=%s — "
                 "webhook evidence file created but not linked to tracker",
                 evidence_id, org_id,
             )
 
-        # Update delivery status
-        delivery.status = "processed"
+        # Update delivery status. A delivery already marked rejected above — an
+        # unstorable payload, or one the scanner condemned — keeps that verdict:
+        # overwriting it with "processed" is how the discard came to be invisible
+        # in the first place.
+        if delivery.status != "rejected":
+            delivery.status = "processed"
         delivery.processed_at = datetime.utcnow()
 
         # Update endpoint stats
@@ -556,14 +633,18 @@ async def ingest_evidence(
         await db.refresh(delivery)
 
         logger.info(
-            "Webhook delivery processed: delivery_id=%s, endpoint=%s, evidence=%s, org=%s",
-            delivery.id, endpoint.id, evidence_id, org_id,
+            "Webhook delivery %s: delivery_id=%s, endpoint=%s, evidence=%s, org=%s",
+            delivery.status, delivery.id, endpoint.id, evidence_id, org_id,
         )
 
         return WebhookIngestResponse(
             delivery_id=delivery.id,
-            status="processed",
-            message="Evidence ingested successfully",
+            status=delivery.status,
+            message=(
+                "Evidence ingested successfully"
+                if delivery.status == "processed"
+                else (delivery.error_message or "Payload was not ingested")
+            ),
         )
 
     except Exception as e:

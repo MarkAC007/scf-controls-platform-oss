@@ -3,7 +3,7 @@ Pydantic schemas for request/response validation.
 These define the API contract and handle data validation.
 """
 from enum import Enum
-from pydantic import BaseModel, Field, ConfigDict, computed_field, field_validator
+from pydantic import BaseModel, Field, ConfigDict, computed_field, field_validator, model_validator
 from typing import Optional, Any, List, Dict, Union
 from datetime import date, datetime, timedelta
 from uuid import UUID
@@ -3081,15 +3081,164 @@ class EvidenceFileUploadUrlResponse(BaseModel):
     fields: Dict[str, str] = Field(description="Form fields to include in the POST")
     s3_key: str = Field(description="S3 object key — pass this to confirm endpoint")
     expires_in: int = Field(description="URL expiry in seconds")
+    upload_ticket: Optional[str] = Field(
+        None,
+        description=(
+            "Opaque signed ticket binding this key to your organisation, evidence item "
+            "and user. Pass it back verbatim to the confirm endpoint, which will refuse "
+            "a key that does not arrive with a matching ticket. Null only when the "
+            "deployment has no signing secret configured."
+        ),
+    )
 
 
-class EvidenceFileConfirmRequest(BaseModel):
+class PreparerAssertionFields(BaseModel):
+    """Facts only the preparer knows, asserted at upload (#786, #802).
+
+    Shared verbatim by the confirm request and the file response so the two
+    cannot drift — a field the API accepts but never gives back is a field the
+    preparer has no way to check.
+
+    Every field is optional and stays that way. `None` means **not asserted**,
+    which is a true statement about most evidence in most tenants and must not
+    be dressed up as a default: the columns exist to record that a person took
+    responsibility for a claim, so a value nobody supplied is worse than no
+    value at all. Callers rendering these must distinguish "not asserted" from
+    an empty string.
+
+    Cross-field validation lives on the request, not here — a response that
+    refused to serialise historical data would turn a data problem into an
+    outage on read.
+    """
+    effective_period_start: Optional[date] = Field(
+        None,
+        description=(
+            "First day the evidence actually covers. Distinct from uploaded_at: "
+            "a 2023 access review uploaded today covers 2023."
+        ),
+    )
+    effective_period_end: Optional[date] = Field(
+        None,
+        description="Last day the evidence actually covers. Assert with the start or not at all.",
+    )
+    population_size: Optional[int] = Field(
+        None,
+        ge=0,
+        description=(
+            "How many items the artefact was drawn from — the denominator. "
+            "Without it, a file count is not a coverage statement."
+        ),
+    )
+    population_source: Optional[str] = Field(
+        None,
+        max_length=2000,
+        description="Where the population came from, e.g. 'All joiners in Workday, 1 Jan – 31 Mar 2026'.",
+    )
+    sample_size: Optional[int] = Field(
+        None,
+        ge=0,
+        description="How many items were actually examined — the numerator.",
+    )
+    sample_method: Optional[str] = Field(
+        None,
+        max_length=100,
+        description="How the sample was selected, e.g. 'random', 'haphazard', 'judgemental', 'full population'.",
+    )
+    sample_basis: Optional[str] = Field(
+        None,
+        max_length=2000,
+        description="Why that method and that size are adequate for this control.",
+    )
+    ipe_source_system: Optional[str] = Field(
+        None,
+        max_length=255,
+        description="System the export was produced by, for Information Produced by the Entity.",
+    )
+    ipe_query_or_filter: Optional[str] = Field(
+        None,
+        max_length=4000,
+        description="The exact query, report name or filter used, so the extract can be reproduced.",
+    )
+    ipe_extracted_by_user_id: Optional[UUID] = Field(
+        None,
+        description=(
+            "Platform user who ran the export. Null when nobody was named, or when "
+            "the person who ran it has no account here."
+        ),
+    )
+    ipe_extracted_at: Optional[datetime] = Field(
+        None,
+        description="When the export was run — not when the file was uploaded.",
+    )
+    ipe_completeness_check: Optional[str] = Field(
+        None,
+        max_length=2000,
+        description="How completeness and accuracy of the extract were established.",
+    )
+
+
+class EvidenceFileConfirmRequest(PreparerAssertionFields):
     """Request to confirm a successful upload and create the file record."""
     s3_key: str = Field(..., min_length=1, description="S3 object key returned by upload-url")
-    sha256_hash: Optional[str] = Field(None, min_length=64, max_length=64, description="SHA-256 hash of uploaded file")
+    sha256_hash: Optional[str] = Field(
+        None,
+        min_length=64,
+        max_length=64,
+        description=(
+            "SHA-256 the client computed before upload. Recorded as the uploader's "
+            "assertion, never as a verified fact — the server recomputes it from the "
+            "stored object and reports the comparison in hash_verification_status."
+        ),
+    )
+    upload_ticket: Optional[str] = Field(
+        None,
+        description="The upload_ticket returned by the upload-url endpoint. Required.",
+    )
+
+    # Both rules are model-level rather than field-level on purpose. A
+    # `field_validator` does not run for a field the caller simply omitted, so
+    # the half-asserted case these exist to catch — a start with no end — would
+    # sail straight through one.
+
+    @model_validator(mode="after")
+    def period_is_whole_and_ordered(self):
+        """A half-asserted period is not a window, and coverage cannot use one.
+
+        Rejecting the half is kinder than storing it: a start with no end reads
+        on the dashboard as an open-ended assertion nobody made, and an end with
+        no start cannot be tested against an engagement window at all.
+        """
+        start, end = self.effective_period_start, self.effective_period_end
+        if start is not None and end is None:
+            raise ValueError(
+                "effective_period_end is required when effective_period_start is asserted "
+                "— a period needs both ends"
+            )
+        if end is not None and start is None:
+            raise ValueError(
+                "effective_period_start is required when effective_period_end is asserted "
+                "— a period needs both ends"
+            )
+        if start is not None and end is not None and end < start:
+            raise ValueError("effective_period_end cannot be before effective_period_start")
+        return self
+
+    @model_validator(mode="after")
+    def sample_fits_its_population(self):
+        """You cannot examine more items than exist to be examined."""
+        if (
+            self.sample_size is not None
+            and self.population_size is not None
+            and self.sample_size > self.population_size
+        ):
+            raise ValueError(
+                f"sample_size ({self.sample_size}) cannot exceed "
+                f"population_size ({self.population_size})"
+            )
+        return self
 
 
-class EvidenceFileResponse(BaseModel):
+class EvidenceFileResponse(PreparerAssertionFields):
     """Complete evidence file record with download URL."""
     id: UUID
     organization_id: UUID
@@ -3102,6 +3251,13 @@ class EvidenceFileResponse(BaseModel):
     classification: str
     scan_status: str = "pending"
     scan_details: Optional[dict] = None
+    # Server-side integrity verification (#57). `sha256_hash` above is what the
+    # uploader claimed; these are what the backend measured for itself.
+    computed_sha256: Optional[str] = None
+    hash_verification_status: str = "pending"
+    hash_verified_at: Optional[datetime] = None
+    hash_verification_details: Optional[dict] = None
+    integrity_badge: Optional[str] = None
     uploaded_by_user_id: Optional[UUID] = None
     uploaded_at: datetime
     expires_at: Optional[datetime] = None
@@ -3268,6 +3424,27 @@ class EvidenceHealthItem(BaseModel):
     frequency: Optional[str] = None
     last_file_uploaded_at: Optional[datetime] = None
     days_since_upload: Optional[int] = None
+    coverage_through: Optional[date] = Field(
+        None,
+        description=(
+            "The latest date this evidence is claimed to cover: the newest "
+            "preparer-asserted effective period end, falling back to the newest "
+            "upload date where nothing was asserted. This — not the upload "
+            "date — is what the traffic light is computed from."
+        ),
+    )
+    days_since_coverage: Optional[int] = Field(
+        None,
+        description="Days since `coverage_through`. The staleness measure.",
+    )
+    staleness_basis: str = Field(
+        "upload_date",
+        description=(
+            "`asserted_period` when at least one file carries an asserted "
+            "effective period, `upload_date` when the upload proxy was used. "
+            "A reader has to be able to tell a claim from a proxy."
+        ),
+    )
     staleness_threshold_days: Optional[int] = None
     status: str = Field(..., description="green, amber, red, or unknown")
     file_count: int = 0
@@ -3334,6 +3511,9 @@ class EvidenceAssessmentResponse(BaseModel):
     # Audit metadata
     model_id: Optional[str] = None
     prompt_hash: Optional[str] = None
+    prompt_version: Optional[str] = Field(
+        None, description="Release of the prompt template that produced this verdict"
+    )
     control_context_hash: Optional[str] = None
     framework_version: Optional[str] = None
     input_token_count: Optional[int] = None
@@ -3401,6 +3581,9 @@ class EvidenceWindowAssessmentResponse(BaseModel):
 
     model_id: Optional[str] = None
     prompt_hash: Optional[str] = None
+    prompt_version: Optional[str] = Field(
+        None, description="Release of the prompt template that produced this verdict"
+    )
     control_context_hash: Optional[str] = None
     framework_version: Optional[str] = None
     window_hash: Optional[str] = None
@@ -3562,7 +3745,17 @@ class PresentationEvidenceItem(BaseModel):
     filename: Optional[str] = None
     uploaded_at: Optional[datetime] = None
     review_status: Optional[str] = None
-    in_window: bool = False  # upload date within the engagement window (upload-date proxy)
+    in_window: bool = False
+    in_window_basis: str = "upload_date"
+    """What the in/out ruling was based on.
+
+    ``asserted_period`` — the preparer asserted an effective period and it
+    overlaps the engagement window. ``upload_date`` — nothing was asserted, so
+    the upload date stood in for the coverage period, which is a proxy and not
+    a claim anybody made. An auditor relying on the flag needs to know which.
+    """
+    effective_period_start: Optional[date] = None
+    effective_period_end: Optional[date] = None
 
 
 class PresentationControl(BaseModel):
