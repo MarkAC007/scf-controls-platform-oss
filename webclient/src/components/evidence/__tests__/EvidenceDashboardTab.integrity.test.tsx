@@ -23,6 +23,10 @@ vi.mock('../../../data/apiClient', () => ({
   getUpcomingEvidence: vi.fn(),
   getWindowAssessmentSummary: vi.fn(),
   refreshStaleWindowAssessments: vi.fn(),
+  // #822 phase 2: the Owner Workload cards resolve member_type through this to
+  // badge a contractor owner. Empty means no badge, leaving these tests to
+  // assert the freshness and coverage behaviour they were written for.
+  getOrgMemberSummaries: vi.fn(() => Promise.resolve([])),
 }))
 
 vi.mock('../../../data/scopingService', () => ({

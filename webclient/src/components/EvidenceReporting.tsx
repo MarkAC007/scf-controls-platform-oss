@@ -1,7 +1,9 @@
 import { useMemo, useState } from 'react'
 import type { EnrichedControl, ScopedControlsFile, EvidenceId } from '../types'
 import { getScopedControl, getEvidenceTracking } from '../data/scopingService'
-import { evidenceOwnerLabel } from '../data/userDisplay'
+import { evidenceOwnerLabel, evidenceOwnerUserId } from '../data/userDisplay'
+import { ContractorBadge } from './ContractorBadge'
+import { useOrgMemberTypes } from '../hooks/useOrgMemberTypes'
 import { frequencyLabel } from '../data/frequencyVocabulary'
 
 interface EvidenceReportingProps {
@@ -22,6 +24,12 @@ interface EvidenceItem {
    * owner/assignee user columns by `evidenceOwnerLabel`.
    */
   ownerLabel: string
+  /**
+   * The user behind ``ownerLabel``, or null when nobody is answerable (#822
+   * phase 2). Carried so an owner can be labelled a contractor; grouping still
+   * keys off the label, which is what the heading has to read.
+   */
+  ownerUserId: string | null
   frequency?: string
   collectingSystem?: string
   methodOfCollection?: string
@@ -54,6 +62,7 @@ export default function EvidenceReporting({ controls, scopingData, onNavigateToE
             controlIds: [control.scf_id],
             isTracked: tracking?.is_tracked || false,
             ownerLabel: evidenceOwnerLabel(tracking),
+            ownerUserId: evidenceOwnerUserId(tracking),
             frequency: tracking?.frequency,
             collectingSystem: tracking?.collecting_system,
             methodOfCollection: tracking?.method_of_collection
@@ -135,6 +144,23 @@ export default function EvidenceReporting({ controls, scopingData, onNavigateToE
 
   const currentGroups = groupBy === 'owner' ? evidenceByOwner : evidenceByFrequency
 
+  const { memberTypeOf } = useOrgMemberTypes(scopingData.organizationId)
+
+  /**
+   * The one person a group of evidence belongs to, or null.
+   *
+   * Groups key off the display label, and two people can share one. Badging
+   * the heading is only honest when every row in it resolved to the same user
+   * — otherwise the heading would call one person a contractor on another
+   * person's evidence.
+   */
+  const soleOwnerUserId = (items: EvidenceItem[]): string | null => {
+    const ids = new Set(items.map(i => i.ownerUserId))
+    if (ids.size !== 1) return null
+    const [only] = [...ids]
+    return only
+  }
+
   return (
     <div className="evidence-reporting">
       <div className="reporting-header">
@@ -193,7 +219,16 @@ export default function EvidenceReporting({ controls, scopingData, onNavigateToE
               <div key={groupName} className="evidence-group">
                 <div className="group-header">
                   <div className="group-title">
-                    <h3>{groupName}</h3>
+                    <h3>
+                      {groupName}
+                      {groupBy === 'owner' && (
+                        <ContractorBadge
+                          className="contractor-badge-inline"
+                          memberType={memberTypeOf(soleOwnerUserId(items))}
+                          personName={groupName}
+                        />
+                      )}
+                    </h3>
                     <span className="group-count">
                       {tracked}/{items.length} tracked ({percentage}%)
                     </span>
@@ -333,7 +368,14 @@ export default function EvidenceReporting({ controls, scopingData, onNavigateToE
                               <td className="cell-frequency">{frequencyLabel(evidence.frequency) || '-'}</td>
                             )}
                             {groupBy === 'frequency' && (
-                              <td className="cell-owner">{evidence.ownerLabel}</td>
+                              <td className="cell-owner">
+                                {evidence.ownerLabel}
+                                <ContractorBadge
+                                  className="contractor-badge-inline"
+                                  memberType={memberTypeOf(evidence.ownerUserId)}
+                                  personName={evidence.ownerLabel}
+                                />
+                              </td>
                             )}
                             <td className="cell-system">{evidence.collectingSystem || '-'}</td>
                             <td className="cell-method">{evidence.methodOfCollection || '-'}</td>

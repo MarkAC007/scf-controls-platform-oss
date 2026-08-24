@@ -28,3 +28,20 @@ export function evidenceOwnerLabel(tracking?: EvidenceTracking | null): string {
   const user = tracking?.owner_user || tracking?.assigned_user
   return user ? userLabel(user) : 'Unassigned'
 }
+
+/**
+ * The user id behind ``evidenceOwnerLabel`` (#822 phase 2).
+ *
+ * The reporting and dashboard breakdowns group on the LABEL, which is right —
+ * it is what the heading has to read. But a label cannot be turned back into a
+ * person: two people can share a display name and 'Unassigned' is not anybody.
+ * So the id is carried alongside, and a group is only labelled a contractor's
+ * when every row in it resolved to the same person.
+ *
+ * Null when nobody is answerable, which is the ordinary case for untracked
+ * evidence and must render as no badge rather than as a missing lookup.
+ */
+export function evidenceOwnerUserId(tracking?: EvidenceTracking | null): string | null {
+  const user = tracking?.owner_user || tracking?.assigned_user
+  return user?.id ? String(user.id) : null
+}

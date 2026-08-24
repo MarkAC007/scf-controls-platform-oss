@@ -26,6 +26,7 @@ import TasksPage from './components/TasksPage'
 import SystemsRegistry from './components/SystemsRegistry'
 import AddSystemModal from './components/AddSystemModal'
 import UserManagement from './components/UserManagement'
+import TeamManagement from './components/TeamManagement'
 import type { System } from './types'
 import Header from './components/Header'
 import Sidebar from './components/Sidebar'
@@ -684,6 +685,12 @@ function AppContent() {
           {activeTab === 'users' && scopingData && (
             <>
               <UserManagement
+                organizationId={scopingData.organizationId!}
+              />
+              {/* Teams sit with user management, not in settings: they are a
+                  statement about people. They grant no permissions — org role
+                  above is still the only thing access is decided on. */}
+              <TeamManagement
                 organizationId={scopingData.organizationId!}
               />
               <ApiKeyManagement

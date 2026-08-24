@@ -1,6 +1,9 @@
 import { useState, useEffect, useCallback } from 'react'
-import { apiClient } from '../data/apiClient'
+import { apiClient, updateOrgMember } from '../data/apiClient'
+import type { MemberType } from '../types'
 import InviteUserModal from './InviteUserModal'
+import { ContractorBadge } from './ContractorBadge'
+import { useIsOrgAdmin } from '../hooks/useIsOrgAdmin'
 
 interface User {
   id: string
@@ -13,9 +16,28 @@ interface OrganizationMember {
   organization_id: string
   user_id: string
   role: string
+  /**
+   * Internal staff or external contractor, in THIS organisation (#822 phase 2).
+   *
+   * This screen reads the members endpoint raw rather than through
+   * ``getOrgMembers``, so the field arrives intact and only this local shape
+   * had to learn about it. Optional because a backend without the column
+   * simply omits it, and the honest reading of a missing label is 'internal'
+   * — the server default every existing row already carries.
+   *
+   * Purely descriptive. Nothing on this screen may branch on it: the row's
+   * controls are gated on the VIEWER being an admin, never on the subject's
+   * member_type, and a contractor who is an admin is an admin.
+   */
+  member_type?: MemberType
   joined_at: string
   user: User | null
 }
+
+const MEMBER_TYPE_OPTIONS: { value: MemberType; label: string }[] = [
+  { value: 'internal', label: 'Internal' },
+  { value: 'external_contractor', label: 'Contractor' },
+]
 
 interface UserManagementProps {
   organizationId: string
@@ -72,6 +94,13 @@ export default function UserManagement({ organizationId }: UserManagementProps) 
   const [showRolesInfo, setShowRolesInfo] = useState(false)
   const [copiedOrgId, setCopiedOrgId] = useState(false)
 
+  // Who may CHANGE a member's type: an admin of this organisation. Gated on
+  // the viewer's role, never on anybody's member_type — see the note on the
+  // interface above. This is a courtesy that keeps a control that would 403
+  // off a viewer's screen; the API is the boundary and refuses the write
+  // whatever this returns.
+  const isOrgAdmin = useIsOrgAdmin(organizationId)
+
   const handleCopyOrgId = useCallback(() => {
     navigator.clipboard.writeText(organizationId).then(() => {
       setCopiedOrgId(true)
@@ -104,6 +133,19 @@ export default function UserManagement({ organizationId }: UserManagementProps) 
     } catch (err: any) {
       console.error('Failed to update role:', err)
       alert('Failed to update user role: ' + (err.message || 'Unknown error'))
+    }
+  }
+
+  const handleMemberTypeChange = async (userId: string, newType: MemberType) => {
+    try {
+      // Sends only member_type. Posting the role alongside it would rewrite
+      // the role to whatever this screen last rendered, which can be stale if
+      // another admin has changed it in the meantime.
+      await updateOrgMember(organizationId, userId, { member_type: newType })
+      await loadMembers()
+    } catch (err: any) {
+      console.error('Failed to update member type:', err)
+      alert('Failed to update member type: ' + (err.message || 'Unknown error'))
     }
   }
 
@@ -315,6 +357,7 @@ export default function UserManagement({ organizationId }: UserManagementProps) 
             <tr>
               <th>User</th>
               <th>Role</th>
+              <th>Type</th>
               <th>Joined</th>
               <th>Actions</th>
             </tr>
@@ -322,7 +365,7 @@ export default function UserManagement({ organizationId }: UserManagementProps) 
           <tbody>
             {filteredMembers.length === 0 ? (
               <tr>
-                <td colSpan={4} className="empty-state">
+                <td colSpan={5} className="empty-state">
                   {searchQuery ? 'No users match your search' : 'No users found'}
                 </td>
               </tr>
@@ -339,6 +382,11 @@ export default function UserManagement({ organizationId }: UserManagementProps) 
                     <div className="user-info">
                       <div className="user-name">
                         {member.user?.display_name || 'No name'}
+                        <ContractorBadge
+                          className="contractor-badge-inline"
+                          memberType={member.member_type}
+                          personName={member.user?.display_name || member.user?.email}
+                        />
                       </div>
                       <div className="user-email">{member.user?.email}</div>
                     </div>
@@ -353,6 +401,39 @@ export default function UserManagement({ organizationId }: UserManagementProps) 
                       <option value="editor">Editor</option>
                       <option value="viewer">Viewer</option>
                     </select>
+                  </td>
+                  <td>
+                    {isOrgAdmin ? (
+                      <select
+                        className="member-type-select"
+                        value={member.member_type ?? 'internal'}
+                        aria-label={`Member type for ${member.user?.display_name || member.user?.email || 'this member'}`}
+                        onChange={e =>
+                          void handleMemberTypeChange(
+                            member.user_id,
+                            e.target.value as MemberType
+                          )
+                        }
+                      >
+                        {MEMBER_TYPE_OPTIONS.map(option => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      /*
+                       * A non-admin still SEES the value — the label is not a
+                       * secret and hiding it would make the badge elsewhere in
+                       * the app look like it came from nowhere. They just
+                       * cannot change it.
+                       */
+                      <span className="member-type-static">
+                        {member.member_type === 'external_contractor'
+                          ? 'Contractor'
+                          : 'Internal'}
+                      </span>
+                    )}
                   </td>
                   <td className="date-cell">
                     {formatDate(member.joined_at)}

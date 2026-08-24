@@ -9,9 +9,9 @@ as of v4.0.0. The scf_id field replaces the former ccf_id field.
 from datetime import datetime
 from enum import Enum
 from typing import Optional, List, Tuple
-from sqlalchemy import Column, String, Boolean, Text, Date, ForeignKey, DateTime, JSON, Integer, Numeric, UniqueConstraint, Index, BigInteger, Float, LargeBinary, CheckConstraint, Computed, SmallInteger
+from sqlalchemy import Column, String, Boolean, Text, Date, ForeignKey, ForeignKeyConstraint, DateTime, JSON, Integer, Numeric, UniqueConstraint, Index, BigInteger, Float, LargeBinary, CheckConstraint, Computed, SmallInteger
 from sqlalchemy.dialects.postgresql import UUID, JSONB, ARRAY, TSVECTOR
-from sqlalchemy.sql import func
+from sqlalchemy.sql import func, text
 from sqlalchemy.orm import relationship
 import uuid
 
@@ -343,12 +343,23 @@ class OrganizationMember(Base):
     __table_args__ = (
         # Unique constraint: each user can only have one membership per organization
         UniqueConstraint('organization_id', 'user_id', name='uq_organization_members_org_user'),
+        CheckConstraint(
+            "member_type IN ('internal', 'external_contractor')",
+            name='ck_organization_members_member_type',
+        ),
+        Index('ix_organization_members_member_type', 'organization_id', 'member_type'),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     role = Column(String(50), nullable=False, default='viewer')
+    #: Employment type at THIS organisation, and only this one. It sits on the
+    #: membership rather than on users because one person can be permanent
+    #: staff at one organisation and an external contractor at another, and a
+    #: single global field would publish whichever answer it held into every
+    #: tenant's view. A label, not a grant — authorisation stays on `role`.
+    member_type = Column(String(30), nullable=False, server_default='internal')
     joined_at = Column(DateTime(timezone=False), server_default=func.now())
 
     # Relationships
@@ -402,6 +413,13 @@ class ScopedControl(Base):
         - DEFERRED: Control implementation has been deferred
     """
     __tablename__ = "scoped_controls"
+    __table_args__ = (
+        # Redundant against the primary key as a uniqueness statement, and not
+        # redundant at all as a foreign-key target: it is what lets
+        # ControlTeamAssignment prove its denormalised organization_id matches
+        # its control's. Added in `ctrlteamassign1`.
+        UniqueConstraint('organization_id', 'id', name='uq_scoped_controls_org_id'),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
@@ -491,6 +509,12 @@ class ScopedControl(Base):
 class EvidenceTracking(Base):
     """Evidence Tracking model - tracks evidence collection status."""
     __tablename__ = "evidence_tracking"
+    __table_args__ = (
+        # A foreign-key target, not a uniqueness rule: it is what lets
+        # EvidenceTeamAssignment prove its denormalised organization_id matches
+        # its evidence record's. Added in `ctrlteamassign1`.
+        UniqueConstraint('organization_id', 'id', name='uq_evidence_tracking_org_id'),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
@@ -1069,12 +1093,24 @@ class OrganizationInvite(InviteMixin, Base):
         - cancelled: Admin cancelled the invite
     """
     __tablename__ = "organization_invites"
+    __table_args__ = (
+        CheckConstraint(
+            "member_type IN ('internal', 'external_contractor')",
+            name='ck_organization_invites_member_type',
+        ),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
     invited_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     email = Column(String(255), nullable=False)
     role = Column(String(50), nullable=False, default='viewer')
+    #: Employment type the invited person will hold at THIS organisation, kept
+    #: here so the choice survives from sending to acceptance and can be copied
+    #: onto the OrganizationMember. Same two values as
+    #: ck_organization_members_member_type, and they must stay in step. A label,
+    #: not a grant — authorisation stays on `role`.
+    member_type = Column(String(30), nullable=False, server_default='internal')
     invite_token = Column(String(64), nullable=False, unique=True)
     status = Column(String(20), nullable=False, default='pending')
     custom_message = Column(Text, nullable=True)
@@ -3238,4 +3274,344 @@ class OrganizationAssurancePolicy(Base):
             f"<OrganizationAssurancePolicy(org={self.organization_id}, "
             f"attestation={self.require_evidence_attestation}, "
             f"independence={self.require_reviewer_independence})>"
+        )
+
+
+# =============================================================================
+# Functions, Teams and Team Membership (#822 phase 1)
+# =============================================================================
+
+class Function(Base):
+    """Platform-static business function a team can be aligned to.
+
+    Fourteen seeded rows, identical in every deployment — the ids are fixed
+    literals in migration ``teamsfunctions1``, not generated, so a mapping
+    written against a function in one environment means the same thing in the
+    next. Tenants do not create these; they point their own teams at them.
+    """
+
+    __tablename__ = "functions"
+    __table_args__ = (
+        UniqueConstraint('key', name='uq_functions_key'),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
+                server_default=text('gen_random_uuid()'))
+    key = Column(String(50), nullable=False)
+    name = Column(String(100), nullable=False)
+    description = Column(Text, nullable=True)
+    display_order = Column(Integer, nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True,
+                       server_default=text('true'))
+
+    teams = relationship("Team", back_populates="function")
+
+    def __repr__(self):
+        return f"<Function(key={self.key}, name={self.name}, active={self.is_active})>"
+
+
+class Team(Base):
+    """Organisation-scoped team, aligned to exactly one platform function.
+
+    ``uq_teams_org_id`` looks redundant beside the primary key and is not: it
+    is the foreign-key target that lets :class:`TeamMember` prove its
+    denormalised ``organization_id`` agrees with its team's.
+    """
+
+    __tablename__ = "teams"
+    __table_args__ = (
+        UniqueConstraint('organization_id', 'name', name='uq_teams_org_name'),
+        UniqueConstraint('organization_id', 'id', name='uq_teams_org_id'),
+        Index('ix_teams_function_id', 'function_id'),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
+                server_default=text('gen_random_uuid()'))
+    organization_id = Column(UUID(as_uuid=True),
+                             ForeignKey("organizations.id", ondelete="CASCADE"),
+                             nullable=False)
+    #: RESTRICT, not CASCADE — removing a platform function must not silently
+    #: delete the tenant teams standing behind it.
+    function_id = Column(UUID(as_uuid=True),
+                         ForeignKey("functions.id", ondelete="RESTRICT"),
+                         nullable=False)
+    name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True,
+                       server_default=text('true'))
+
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=False), server_default=func.now(),
+                        onupdate=func.now(), nullable=False)
+    created_by_user_id = Column(UUID(as_uuid=True),
+                                ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    updated_by_user_id = Column(UUID(as_uuid=True),
+                                ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    organization = relationship("Organization")
+    function = relationship("Function", back_populates="teams")
+    created_by = relationship("User", foreign_keys=[created_by_user_id])
+    updated_by = relationship("User", foreign_keys=[updated_by_user_id])
+    #: Explicit foreign_keys/primaryjoin: TeamMember reaches this table by two
+    #: separate foreign keys (team_id, and the composite organization_id +
+    #: team_id), which SQLAlchemy cannot choose between on its own.
+    #: passive_deletes mirrors the database's ON DELETE CASCADE rather than
+    #: having the ORM issue its own DELETEs for rows Postgres removes anyway.
+    members = relationship(
+        "TeamMember",
+        primaryjoin="Team.id == TeamMember.team_id",
+        foreign_keys="[TeamMember.team_id]",
+        back_populates="team",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+    def __repr__(self):
+        return f"<Team(id={self.id}, org={self.organization_id}, name={self.name})>"
+
+
+class TeamMember(Base):
+    """A person's place on a team, with tenant isolation enforced by the database.
+
+    ``organization_id`` is denormalised beside ``team_id`` and ``user_id`` so
+    that two composite foreign keys can force all three to agree:
+
+    * ``fk_team_members_org_member`` — the user is a member of this
+      organisation. Its ``ON DELETE CASCADE`` also means revoking somebody's
+      organisation membership removes them from its teams in the same
+      statement, with no application code involved.
+    * ``fk_team_members_team_org`` — the team belongs to that same
+      organisation. Without it the first constraint is a half-open door: a row
+      could name another tenant's ``team_id`` while setting
+      ``organization_id`` to the caller's own org, and the membership check
+      would pass.
+
+    ``uq_team_primary`` and ``uq_team_delegate`` are partial unique indexes
+    allowing **at most** one primary and at most one delegate per team. At
+    most, not exactly one — a team is legal with no members at all, which is
+    the state every team is in the moment it is created.
+    """
+
+    __tablename__ = "team_members"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ['team_id'], ['teams.id'],
+            name='fk_team_members_team', ondelete='CASCADE',
+        ),
+        ForeignKeyConstraint(
+            ['organization_id', 'user_id'],
+            ['organization_members.organization_id', 'organization_members.user_id'],
+            name='fk_team_members_org_member', ondelete='CASCADE',
+        ),
+        ForeignKeyConstraint(
+            ['organization_id', 'team_id'],
+            ['teams.organization_id', 'teams.id'],
+            name='fk_team_members_team_org', ondelete='CASCADE',
+        ),
+        UniqueConstraint('team_id', 'user_id', name='uq_team_members_team_user'),
+        CheckConstraint(
+            "membership_role IN ('primary', 'delegate', 'member')",
+            name='ck_team_members_membership_role',
+        ),
+        Index('uq_team_primary', 'team_id', unique=True,
+              postgresql_where=text("membership_role = 'primary'")),
+        Index('uq_team_delegate', 'team_id', unique=True,
+              postgresql_where=text("membership_role = 'delegate'")),
+        Index('ix_team_members_user_id', 'user_id'),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
+                server_default=text('gen_random_uuid()'))
+    team_id = Column(UUID(as_uuid=True), nullable=False)
+    organization_id = Column(UUID(as_uuid=True), nullable=False)
+    #: No direct ForeignKey to users.id. Reaching users only through
+    #: organization_members is what makes the membership check unavoidable.
+    user_id = Column(UUID(as_uuid=True), nullable=False)
+    membership_role = Column(String(20), nullable=False)
+    added_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    added_by_user_id = Column(UUID(as_uuid=True),
+                              ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    team = relationship(
+        "Team",
+        primaryjoin="TeamMember.team_id == Team.id",
+        foreign_keys="[TeamMember.team_id]",
+        back_populates="members",
+    )
+    #: viewonly: ``user_id`` has no ForeignKey of its own, so the ORM has no
+    #: business writing it from this attribute. Set ``user_id`` (and
+    #: ``organization_id``) explicitly; this is for reading the person back.
+    user = relationship(
+        "User",
+        primaryjoin="TeamMember.user_id == User.id",
+        foreign_keys="[TeamMember.user_id]",
+        viewonly=True,
+    )
+    added_by = relationship("User", foreign_keys=[added_by_user_id])
+
+    def __repr__(self):
+        return (
+            f"<TeamMember(team={self.team_id}, user={self.user_id}, "
+            f"role={self.membership_role})>"
+        )
+
+
+class ControlTeamAssignment(Base):
+    """A team's assignment to a scoped control, with tenant isolation in the database.
+
+    ``organization_id`` is denormalised beside ``scoped_control_id`` and
+    ``team_id`` so that two composite foreign keys can force all three to
+    agree:
+
+    * ``fk_control_team_assignments_control_org`` — the control belongs to this
+      organisation.
+    * ``fk_control_team_assignments_team_org`` — and so does the team. Without
+      it the first constraint is a half-open door: a row could name another
+      tenant's ``scoped_control_id`` while setting ``organization_id`` to the
+      caller's own org, and the control check would pass.
+
+    ``uq_control_accountable_team`` is a partial unique index allowing **at
+    most** one accountable team per control. At most, not exactly one — a
+    control with no accountable team is legal, which is the state every control
+    is in until somebody assigns one.
+
+    Deliberately not polymorphic. Unlike :class:`Assignment`, whose
+    ``assignable_id`` has no foreign key behind it, this table names its target
+    and lets Postgres enforce that the target exists.
+    """
+
+    __tablename__ = "control_team_assignments"
+    __table_args__ = (
+        #: The directly readable "this belongs to a control" edge. The tenant
+        #: check is the composite below; this one says what the row is about.
+        ForeignKeyConstraint(
+            ['scoped_control_id'], ['scoped_controls.id'],
+            name='fk_control_team_assignments_control', ondelete='CASCADE',
+        ),
+        ForeignKeyConstraint(
+            ['organization_id', 'scoped_control_id'],
+            ['scoped_controls.organization_id', 'scoped_controls.id'],
+            name='fk_control_team_assignments_control_org', ondelete='CASCADE',
+        ),
+        ForeignKeyConstraint(
+            ['organization_id', 'team_id'],
+            ['teams.organization_id', 'teams.id'],
+            name='fk_control_team_assignments_team_org', ondelete='CASCADE',
+        ),
+        UniqueConstraint('scoped_control_id', 'team_id',
+                         name='uq_control_team_assignments_control_team'),
+        Index('uq_control_accountable_team', 'scoped_control_id', unique=True,
+              postgresql_where=text('is_accountable')),
+        Index('ix_control_team_assignments_team_id', 'team_id'),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
+                server_default=text('gen_random_uuid()'))
+    scoped_control_id = Column(UUID(as_uuid=True), nullable=False)
+    team_id = Column(UUID(as_uuid=True), nullable=False)
+    #: Denormalised on purpose — it is the column the composite foreign keys
+    #: join through. Set it explicitly on every insert; it is not derived.
+    organization_id = Column(UUID(as_uuid=True), nullable=False)
+    is_accountable = Column(Boolean, nullable=False, default=False,
+                            server_default=text('false'))
+    assigned_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    assigned_by_user_id = Column(UUID(as_uuid=True),
+                                 ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    #: Explicit foreign_keys/primaryjoin: this table reaches scoped_controls by
+    #: two separate foreign keys (scoped_control_id, and the composite
+    #: organization_id + scoped_control_id), which SQLAlchemy cannot choose
+    #: between on its own.
+    scoped_control = relationship(
+        "ScopedControl",
+        primaryjoin="ControlTeamAssignment.scoped_control_id == ScopedControl.id",
+        foreign_keys="[ControlTeamAssignment.scoped_control_id]",
+    )
+    #: viewonly: ``team_id`` has no ForeignKey of its own — it is reachable only
+    #: through the composite — so the ORM has no business writing it from this
+    #: attribute. Set ``team_id`` (and ``organization_id``) explicitly; this is
+    #: for reading the team back.
+    team = relationship(
+        "Team",
+        primaryjoin="ControlTeamAssignment.team_id == Team.id",
+        foreign_keys="[ControlTeamAssignment.team_id]",
+        viewonly=True,
+    )
+    assigned_by = relationship("User", foreign_keys=[assigned_by_user_id])
+
+    def __repr__(self):
+        return (
+            f"<ControlTeamAssignment(control={self.scoped_control_id}, "
+            f"team={self.team_id}, accountable={self.is_accountable})>"
+        )
+
+
+class EvidenceTeamAssignment(Base):
+    """A team's assignment to an evidence tracking record, isolated by the database.
+
+    The same shape as :class:`ControlTeamAssignment` and for the same reasons:
+    a denormalised ``organization_id`` joined through by two composite foreign
+    keys, so that the evidence record and the team must belong to the same
+    organisation, and a partial unique index allowing at most one accountable
+    team per evidence item.
+
+    Nothing here reads ``EvidenceTracking.owner``. That column holds free-text
+    team labels that were never validated against anything, and turning them
+    into rows automatically would write junk into every tenant at once.
+    """
+
+    __tablename__ = "evidence_team_assignments"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ['evidence_tracking_id'], ['evidence_tracking.id'],
+            name='fk_evidence_team_assignments_evidence', ondelete='CASCADE',
+        ),
+        ForeignKeyConstraint(
+            ['organization_id', 'evidence_tracking_id'],
+            ['evidence_tracking.organization_id', 'evidence_tracking.id'],
+            name='fk_evidence_team_assignments_evidence_org', ondelete='CASCADE',
+        ),
+        ForeignKeyConstraint(
+            ['organization_id', 'team_id'],
+            ['teams.organization_id', 'teams.id'],
+            name='fk_evidence_team_assignments_team_org', ondelete='CASCADE',
+        ),
+        UniqueConstraint('evidence_tracking_id', 'team_id',
+                         name='uq_evidence_team_assignments_evidence_team'),
+        Index('uq_evidence_accountable_team', 'evidence_tracking_id', unique=True,
+              postgresql_where=text('is_accountable')),
+        Index('ix_evidence_team_assignments_team_id', 'team_id'),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
+                server_default=text('gen_random_uuid()'))
+    evidence_tracking_id = Column(UUID(as_uuid=True), nullable=False)
+    team_id = Column(UUID(as_uuid=True), nullable=False)
+    #: Denormalised on purpose — the column the composite foreign keys join
+    #: through. Set it explicitly on every insert.
+    organization_id = Column(UUID(as_uuid=True), nullable=False)
+    is_accountable = Column(Boolean, nullable=False, default=False,
+                            server_default=text('false'))
+    assigned_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    assigned_by_user_id = Column(UUID(as_uuid=True),
+                                 ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    evidence_tracking = relationship(
+        "EvidenceTracking",
+        primaryjoin="EvidenceTeamAssignment.evidence_tracking_id == EvidenceTracking.id",
+        foreign_keys="[EvidenceTeamAssignment.evidence_tracking_id]",
+    )
+    #: viewonly, for the same reason as ControlTeamAssignment.team.
+    team = relationship(
+        "Team",
+        primaryjoin="EvidenceTeamAssignment.team_id == Team.id",
+        foreign_keys="[EvidenceTeamAssignment.team_id]",
+        viewonly=True,
+    )
+    assigned_by = relationship("User", foreign_keys=[assigned_by_user_id])
+
+    def __repr__(self):
+        return (
+            f"<EvidenceTeamAssignment(evidence={self.evidence_tracking_id}, "
+            f"team={self.team_id}, accountable={self.is_accountable})>"
         )

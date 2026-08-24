@@ -26,6 +26,16 @@ import {
 import { getSystems, getEvidenceSuggestions, submitRecipeFeedback, getOrgMembers } from '../data/apiClient'
 import type { System, EvidenceSuggestionsResponse, UserSimple } from '../types'
 import { AssignmentPicker } from './AssignmentPicker'
+import OwningTeams from './OwningTeams'
+import TeamListFilters, { ALL as ALL_TEAMS } from './TeamListFilters'
+import { useOrgMemberTypes } from '../hooks/useOrgMemberTypes'
+import AccountableOwnerTypeFilter, {
+  ALL_OWNER_TYPES,
+  type AccountableOwnerTypeValue,
+} from './AccountableOwnerTypeFilter'
+import { useTeamAssignments, matchesTeamFilters, accountableTeamLabel } from '../hooks/useTeamAssignments'
+import { useIsOrgAdmin } from '../hooks/useIsOrgAdmin'
+import { useTeamFilteredEvidence } from '../hooks/useTeamFilteredEvidence'
 import { ModernCommentThread } from './ModernCommentThread'
 import { EvidenceTaskList } from './EvidenceTaskList'
 import { MaturityBadge, MaturityStepper, MaturityAdvisoryCard } from './maturity'
@@ -69,6 +79,11 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
   )
   const [query, setQuery] = useState('')
   const [domainFilter, setDomainFilter] = useState<string>('all')
+  // Team ownership filters (#822), applied against the batch-loaded map below.
+  const [teamFilter, setTeamFilter] = useState<string>(ALL_TEAMS)
+  const [functionFilter, setFunctionFilter] = useState<string>(ALL_TEAMS)
+  const [ownerTypeFilter, setOwnerTypeFilter] =
+    useState<AccountableOwnerTypeValue>(ALL_OWNER_TYPES)
   const [saving, setSaving] = useState(false)
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Evidence-tracking saves debounce PER EVIDENCE ITEM. They used to share
@@ -83,6 +98,10 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
   const [localEvidenceState, setLocalEvidenceState] = useState<Record<EvidenceId, EvidenceTracking>>({})
   const [systems, setSystems] = useState<System[]>([]) // Systems from registry for picker
   const [orgMembers, setOrgMembers] = useState<UserSimple[]>([]) // Org members for the assignee picker (#781)
+  // Internal / contractor labels for those same members (#822 phase 2). One
+  // request for the screen, shared by the bulk bar and both assignee pickers,
+  // rather than each control resolving the membership list for itself.
+  const { memberTypeOf } = useOrgMemberTypes(scopingData.organizationId)
   const [suggestions, setSuggestions] = useState<EvidenceSuggestionsResponse | null>(null)
   const [loadingSuggestions, setLoadingSuggestions] = useState(false)
   const [collectionGuidance, setCollectionGuidance] = useState<CollectionGuidanceResponse | null>(null)
@@ -349,6 +368,59 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
     return filtered
   }, [selectedControls, query, domainFilter])
 
+  // Team ownership for the whole evidence list, in ONE request (#822). Rows
+  // read this map; none of them fetches. The map is keyed by the evidence
+  // TRACKING row's database id, so a catalogue item that has never been saved
+  // has no key here — which is correct, since it cannot be assigned either.
+  //
+  // Deliberately NOT scoped with itemIds, unlike the controls list. There is
+  // no page to scope to: evidence arrives complete inside the scoping payload,
+  // so every row is on screen already and narrowing the read would save
+  // nothing. It also keeps a large tenant off the API's 1000-id ceiling, which
+  // an unpaginated list is the one thing here that could reach.
+  const {
+    accountableFor: accountableTeamFor,
+    teamsFor: owningTeamsFor,
+    reload: reloadTeamAssignments,
+  } = useTeamAssignments(scopingData.organizationId, 'evidence')
+
+  const canManageTeams = useIsOrgAdmin(scopingData.organizationId)
+
+  /** Catalogue evidence id (E-0001) → its tracking row's database id, if saved. */
+  const trackingDbIdFor = useCallback(
+    (evidenceId: EvidenceId): string | null =>
+      getEvidenceTracking(scopingData, evidenceId)?.id ?? null,
+    [scopingData]
+  )
+
+  const teamFilterActive = teamFilter !== ALL_TEAMS || functionFilter !== ALL_TEAMS
+  const ownerTypeFilterActive = ownerTypeFilter !== ALL_OWNER_TYPES
+
+  // The server decides which evidence a team owns, so both lists answer that
+  // question the same way. Null while it is in flight or if it fails, in which
+  // case the assignment map below answers instead — same semantics, so the
+  // list stays correct rather than going blank.
+  const {
+    trackingIds: serverFilteredTrackingIds,
+    loading: ownerFilterLoading,
+    error: ownerFilterError,
+  } = useTeamFilteredEvidence(
+    scopingData.organizationId,
+    teamFilter !== ALL_TEAMS ? teamFilter : undefined,
+    functionFilter !== ALL_TEAMS ? functionFilter : undefined,
+    ownerTypeFilterActive ? ownerTypeFilter : undefined
+  )
+
+  /**
+   * The accountable-owner filter has no client-side fallback, unlike the team
+   * one: nothing this screen already holds knows who leads an accountable team
+   * or how that person is employed. So when the server has not answered, the
+   * list must NOT quietly fall back to showing everything — an unfiltered list
+   * presented as a filtered one is the failure this phase exists to avoid.
+   * It narrows to nothing and says why, right next to the control.
+   */
+  const ownerTypeUnanswered = ownerTypeFilterActive && !serverFilteredTrackingIds
+
   // Filter evidence items based on search and domain
   const filteredEvidenceItems = useMemo(() => {
     let filtered = uniqueEvidenceItems
@@ -368,8 +440,37 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
       )
     }
 
+    // Owning-team / function filter. An unsaved item has no tracking row and
+    // so cannot own anything — it drops out of any active team filter rather
+    // than being shown as unowned.
+    if (teamFilterActive || ownerTypeFilterActive) {
+      if (ownerTypeUnanswered) return []
+      filtered = filtered.filter(item => {
+        const dbId = trackingDbIdFor(item.id)
+        if (!dbId) return false
+        if (serverFilteredTrackingIds) return serverFilteredTrackingIds.has(dbId)
+        return matchesTeamFilters(
+          owningTeamsFor(dbId),
+          { teamId: teamFilter, functionId: functionFilter },
+          ALL_TEAMS
+        )
+      })
+    }
+
     return filtered
-  }, [uniqueEvidenceItems, query, domainFilter])
+  }, [
+    uniqueEvidenceItems,
+    query,
+    domainFilter,
+    teamFilterActive,
+    ownerTypeFilterActive,
+    ownerTypeUnanswered,
+    teamFilter,
+    functionFilter,
+    trackingDbIdFor,
+    owningTeamsFor,
+    serverFilteredTrackingIds,
+  ])
 
   // Get stats (only for selected controls)
   const stats = useMemo(() => {
@@ -671,6 +772,28 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
               )
             })}
           </select>
+          {viewMode === 'evidence' && scopingData.organizationId && (
+            <TeamListFilters
+              organizationId={scopingData.organizationId}
+              teamId={teamFilter}
+              functionId={functionFilter}
+              onTeamChange={setTeamFilter}
+              onFunctionChange={setFunctionFilter}
+            />
+          )}
+          {viewMode === 'evidence' && scopingData.organizationId && (
+            <AccountableOwnerTypeFilter
+              value={ownerTypeFilter}
+              onChange={setOwnerTypeFilter}
+            />
+          )}
+          {ownerTypeUnanswered && (
+            <span className="owner-type-filter-notice" role="status">
+              {ownerFilterLoading
+                ? 'Filtering by accountable owner…'
+                : ownerFilterError || 'Could not filter by accountable owner.'}
+            </span>
+          )}
         </div>
 
         {viewMode === 'evidence' && (
@@ -682,6 +805,7 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
               filteredEvidenceItems.every(item => bulkSelection.has(item.id))
             }
             members={orgMembers}
+            memberTypeOf={memberTypeOf}
             busy={bulkBusy}
             result={bulkResult}
             onSelectAllVisible={() =>
@@ -771,6 +895,15 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
                     </div>
                   </div>
                   <div className="evidence-card-name">{evidenceItem.title}</div>
+                  <div className="evidence-card-team">
+                    {(() => {
+                      const dbId = trackingDbIdFor(evidenceItem.id)
+                      const label = accountableTeamLabel(dbId ? accountableTeamFor(dbId) : null)
+                      return label ?? (
+                        <span className="evidence-card-team-empty">No accountable team</span>
+                      )
+                    })()}
+                  </div>
                   <div className="evidence-card-footer">
                     <span className="evidence-card-domain">{evidenceItem.domain}</span>
                     {tracking.maturity_level ? (
@@ -1087,6 +1220,7 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
                               value={tracking.assigned_user_id}
                               resolved={tracking.assigned_user}
                               members={orgMembers}
+                              memberTypeOf={memberTypeOf}
                               onChange={userId =>
                                 updateEvidenceTracking(artifact.id, 'assigned_user_id', userId)
                               }
@@ -1456,6 +1590,7 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
                           value={tracking.assigned_user_id}
                           resolved={tracking.assigned_user}
                           members={orgMembers}
+                          memberTypeOf={memberTypeOf}
                           onChange={userId =>
                             updateEvidenceTracking(evidenceItem.id, 'assigned_user_id', userId)
                           }
@@ -1515,6 +1650,19 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
                               onAssignmentChange={() => {
                                 // Optional: trigger data refresh
                               }}
+                            />
+                          </div>
+
+                          {/* Owning teams — additive to the assignee above and
+                              to the Collaborators list. People do the work;
+                              a team owns the item. */}
+                          <div className="evidence-collaboration-section">
+                            <OwningTeams
+                              organizationId={scopingData.organizationId}
+                              assignableType="evidence"
+                              assignableId={evidenceDbId}
+                              canManage={canManageTeams}
+                              onChange={() => { void reloadTeamAssignments() }}
                             />
                           </div>
 

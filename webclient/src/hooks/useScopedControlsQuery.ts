@@ -1,4 +1,5 @@
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
+import type { MemberType } from '../types'
 import {
   fetchScopedControlsPage,
   fetchScopedControlStats,
@@ -16,6 +17,20 @@ export interface ScopedControlFilters {
   control_weighting?: number
   framework?: string
   scope_status?: 'in_scope' | 'out_of_scope' | 'all'
+  /**
+   * Owning-team filters (#822 phase 3). Both are part of the query key via the
+   * ``filters`` object, so changing either resets pagination like any other
+   * filter rather than appending a differently-filtered page to the last one.
+   */
+  team_id?: string
+  function_id?: string
+  /**
+   * Accountable owner's member type (#822 phase 2). Part of the ``filters``
+   * object and so part of the query key, which is what makes changing it reset
+   * pagination instead of appending a contractor-only page beneath an
+   * unfiltered one.
+   */
+  accountable_owner_type?: MemberType
 }
 
 /**
@@ -41,6 +56,9 @@ export function useScopedControlsQuery(filters: ScopedControlFilters = {}, orgId
           control_weighting: filters.control_weighting,
           framework: filters.framework || undefined,
           scope_status: filters.scope_status || undefined,
+          team_id: filters.team_id || undefined,
+          function_id: filters.function_id || undefined,
+          accountable_owner_type: filters.accountable_owner_type || undefined,
         },
         orgId
       )

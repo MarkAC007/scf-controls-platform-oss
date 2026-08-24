@@ -12867,6 +12867,35 @@ textarea.form-control{
   padding-right: 28px;
 }
 
+/*
+ * Member type (#822 phase 2). Same pill geometry as .role-select next to it,
+ * deliberately neutral rather than colour-coded: role is a capability and
+ * earns its colour; member_type is a label and grants nothing, so colouring
+ * it like a role would suggest it does.
+ */
+.member-type-select {
+  padding: 6px 10px 6px 10px;
+  padding-right: 28px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  background-color: var(--secondary);
+  color: var(--foreground);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+}
+
+/* What a non-admin sees in the same column: the value, not a dead control. */
+.member-type-static {
+  font-size: 12px;
+  color: var(--muted);
+}
+
 .role-select.role-admin {
   background-color: var(--role-admin-bg);
   color: var(--role-admin);
@@ -28448,4 +28477,685 @@ textarea.form-control{
   font-size: 11px;
   color: var(--muted);
   white-space: nowrap;
+}
+
+/* ============================================
+   TEAM MANAGEMENT STYLES (Issue #822, phase 1)
+
+   Every colour here is a token from :root, which [data-theme="dark"] above
+   redefines — so this block needs no dark-mode counterpart of its own.
+   ============================================ */
+
+.team-management {
+  padding: 24px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.team-management .loading-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+  color: var(--muted);
+  font-size: 16px;
+}
+
+.team-management-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.team-management-header .header-left h1 {
+  margin: 0 0 4px 0;
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.team-management-header .header-left .subtitle {
+  margin: 0;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.team-management-header .header-right {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.team-archive-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.btn-team-primary {
+  padding: 8px 16px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.btn-team-primary:hover:not(:disabled) {
+  background: var(--primary-hover);
+}
+
+.btn-team-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-team-secondary {
+  padding: 6px 12px;
+  background: var(--card);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.btn-team-secondary:hover {
+  background: var(--secondary);
+}
+
+.btn-team-archive,
+.btn-team-remove {
+  padding: 6px 12px;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.btn-team-archive:hover,
+.btn-team-remove:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.team-permissions-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  background: var(--info-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.team-permissions-note svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--info);
+}
+
+.team-management .error-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: var(--priority-critical-bg);
+  border: 1px solid var(--priority-critical);
+  border-radius: 8px;
+  margin-bottom: 16px;
+  color: var(--priority-critical);
+}
+
+.team-management .error-banner button {
+  padding: 6px 12px;
+  background: var(--card);
+  border: 1px solid var(--priority-critical);
+  border-radius: 4px;
+  color: var(--priority-critical);
+  cursor: pointer;
+}
+
+/* ---- Create form ---- */
+
+.team-create-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-end;
+  padding: 16px;
+  margin-bottom: 20px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.team-create-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 200px;
+}
+
+.team-create-field-wide {
+  flex: 1;
+  min-width: 260px;
+}
+
+.team-create-field label {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--label-tracking);
+  color: var(--label-color);
+}
+
+.team-create-field input,
+.team-create-field select {
+  padding: 8px 10px;
+  background: var(--surface-lowest);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+/* ---- Function groups ---- */
+
+.team-function-group {
+  margin-bottom: 24px;
+}
+
+.team-function-header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+.team-function-header h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--label-tracking);
+  color: var(--muted);
+}
+
+.team-function-count {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.team-function-description {
+  margin: 0 0 10px 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.team-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.team-row {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.team-row-archived {
+  opacity: 0.7;
+}
+
+.team-row-main {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+  flex-wrap: wrap;
+}
+
+.team-row-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+  min-width: 200px;
+  text-align: left;
+}
+
+.team-row-chevron {
+  color: var(--muted);
+  transition: transform 0.15s ease;
+  flex-shrink: 0;
+}
+
+.team-row-chevron.open {
+  transform: rotate(90deg);
+}
+
+.team-row-count {
+  font-size: 13px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.team-row-role {
+  display: flex;
+  flex-direction: column;
+  font-size: 13px;
+  color: var(--text);
+  min-width: 130px;
+}
+
+.team-row-role-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: var(--label-tracking);
+  color: var(--label-color);
+}
+
+.team-row-role-empty {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.team-archived-badge {
+  padding: 2px 8px;
+  border-radius: var(--badge-radius);
+  background: var(--secondary);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.team-row-actions {
+  margin-left: auto;
+}
+
+/* ---- Warnings: advisory, never blocking ---- */
+
+.team-warning-badges {
+  display: inline-flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.team-warning-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: var(--badge-radius);
+  background: var(--warning-bg);
+  color: var(--priority-high);
+  border: 1px solid var(--warning);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/*
+ * Said next to the accountable-owner filter when the server has not answered.
+ * The list is empty at that moment BY DESIGN, so this is the difference
+ * between "nothing matches" and "we could not ask".
+ */
+.owner-type-filter-notice {
+  font-size: 12px;
+  color: var(--muted);
+  align-self: center;
+}
+
+/* ---- Contractor label (#822 phase 2) ---- */
+
+/*
+ * Same shape as .team-warning-badge — inline pill, 11px, icon plus a word —
+ * because both are one advisory fact attached to a name, and two sizes of
+ * pill on the same row would read as two severities. Different colour so it
+ * is not mistaken for a warning: nothing is wrong with being a contractor.
+ * The word is in the DOM, so the colour is never the only carrier.
+ */
+.contractor-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: var(--badge-radius);
+  background: var(--secondary);
+  color: var(--muted);
+  border: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+/* Beside a name rather than under it. */
+.contractor-badge-inline {
+  margin-left: 6px;
+}
+
+.team-health-warnings {
+  margin: 0 0 12px 0;
+  padding-left: 18px;
+  font-size: 13px;
+  color: var(--priority-high);
+}
+
+/* ---- Detail panel ---- */
+
+.team-detail {
+  padding: 0 16px 16px 16px;
+  border-top: 1px solid var(--border);
+}
+
+.team-detail-description {
+  margin: 12px 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.team-promotion-confirm {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 12px 14px;
+  margin: 12px 0;
+  background: var(--warning-bg);
+  border: 1px solid var(--warning);
+  border-radius: 8px;
+}
+
+.team-promotion-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.team-promotion-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.team-members-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 12px;
+}
+
+.team-members-table th {
+  text-align: left;
+  padding: 10px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--muted);
+  background: var(--secondary);
+  border-bottom: 1px solid var(--border);
+}
+
+.team-members-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.team-members-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.team-members-table .empty-state {
+  text-align: center;
+  color: var(--muted);
+  font-style: italic;
+}
+
+.team-member-name {
+  font-weight: 500;
+  color: var(--text);
+}
+
+.team-member-email {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.team-role-select {
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.team-role-select.team-role-primary {
+  border-color: var(--primary);
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.team-role-select.team-role-delegate {
+  border-color: var(--info);
+  color: var(--info);
+}
+
+.team-add-member {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.team-add-member select {
+  padding: 8px 10px;
+  background: var(--surface-lowest);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+.team-add-hint {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.team-empty-state {
+  padding: 40px 20px;
+  text-align: center;
+  background: var(--card);
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  color: var(--text);
+}
+
+.team-empty-state .subtitle {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 4px 0 0 0;
+}
+
+/* ============================================================================
+   Team ownership of controls and evidence (Issue #822, phase 3)
+
+   Reuses phase 1's tokens and its one warning badge — .team-warning-badge is
+   shared, not re-styled here, so "no accountable team" reads at exactly the
+   same severity as "no primary" on the Teams screen.
+   ========================================================================= */
+
+.owning-teams {
+  margin-top: 16px;
+  padding: 14px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.owning-teams-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.owning-teams-title {
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text);
+}
+
+.owning-teams-hint,
+.owning-teams-readonly-note {
+  margin: 0 0 12px 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.owning-teams-readonly-note {
+  margin: 8px 0 0 0;
+}
+
+.owning-teams-empty {
+  padding: 10px 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.owning-teams-list {
+  list-style: none;
+  margin: 0 0 12px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.owning-teams-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  background: var(--surface-lowest);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.owning-teams-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.owning-teams-person {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.owning-teams-function {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.owning-teams-accountable-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.owning-teams-accountable-pill {
+  margin-left: auto;
+  padding: 2px 8px;
+  border-radius: var(--badge-radius);
+  background: var(--secondary);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.owning-teams-add {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.owning-teams-add select {
+  padding: 8px 10px;
+  background: var(--surface-lowest);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+/* ---- List views: filters and the accountable-team column ---- */
+
+.team-list-filters {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.sidebar-card-team,
+.evidence-card-team {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sidebar-card-team-empty,
+.evidence-card-team-empty {
+  opacity: 0.7;
+  font-style: italic;
 }

@@ -16,6 +16,29 @@ from models import Organization
 logger = logging.getLogger(__name__)
 
 
+#: The values ``organization_members.member_type`` accepts (#822 phase 2).
+#:
+#: Mirrors the ``ck_organization_members_member_type`` CHECK constraint on
+#: :class:`models.OrganizationMember`. Kept in one place because three
+#: endpoints validate against it -- the membership PATCH and the
+#: ``accountable_owner_type`` filter on both list endpoints -- and a vocabulary
+#: that drifts between them means the filter silently returns nothing for a
+#: value the writer happily accepted.
+#:
+#: A label, never a grant. Nothing in an authorisation path reads it;
+#: permissions live entirely on ``organization_members.role``.
+MEMBER_TYPES: frozenset = frozenset({'internal', 'external_contractor'})
+
+
+def invalid_member_type_detail(field: str = "member_type") -> str:
+    """The 400 detail for a bad member-type value, named by its parameter.
+
+    One wording for every endpoint that takes one, so the rule cannot be
+    described three different ways to the same caller.
+    """
+    return f"Invalid {field}. Must be one of: {', '.join(sorted(MEMBER_TYPES))}"
+
+
 async def generate_unique_slug(name: str, db: AsyncSession) -> str:
     """
     Generate a unique URL-safe slug from an organisation name.

@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react'
 import { getOrgInvites, cancelOrgInvite } from '../data/apiClient'
 import type { OrgInviteResponse } from '../data/apiClient'
 import { apiClient } from '../data/apiClient'
+import type { MemberType } from '../types'
+import { ContractorBadge } from './ContractorBadge'
 
 interface InviteUserModalProps {
   organizationId: string
@@ -13,6 +15,19 @@ export default function InviteUserModal({ organizationId, onClose, onInviteSent 
   const [email, setEmail] = useState('')
   const [message, setMessage] = useState('')
   const [role, setRole] = useState<'admin' | 'editor' | 'viewer'>('viewer')
+  /**
+   * Employment type to record on the membership when the invite is accepted
+   * (#822 phase 2).
+   *
+   * Defaults to 'internal', matching the API's own default and the column's
+   * server default, so an admin who ignores this control gets exactly the
+   * behaviour they got before it existed.
+   *
+   * Independent of `role` above and must stay that way: this grants nothing,
+   * so inviting somebody as a contractor must never narrow which roles they
+   * may be given.
+   */
+  const [memberType, setMemberType] = useState<MemberType>('internal')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
@@ -62,6 +77,9 @@ export default function InviteUserModal({ organizationId, onClose, onInviteSent 
       await apiClient.post(`/organizations/${organizationId}/invite`, {
         email: email.trim(),
         role,
+        // A body field, unlike the members PATCH's query parameter — the
+        // invite endpoint takes a JSON body and this rides along in it.
+        member_type: memberType,
         message: message.trim() || null
       })
 
@@ -124,7 +142,11 @@ export default function InviteUserModal({ organizationId, onClose, onInviteSent 
               </svg>
             </div>
             <h3>Invitation Sent!</h3>
-            <p>An invitation email has been sent to <strong>{email}</strong> as <strong>{role}</strong></p>
+            <p>
+              An invitation email has been sent to <strong>{email}</strong> as{' '}
+              <strong>{role}</strong>
+              {memberType === 'external_contractor' && <> (contractor)</>}
+            </p>
           </div>
         ) : (
           <form onSubmit={handleSubmit}>
@@ -163,6 +185,26 @@ export default function InviteUserModal({ organizationId, onClose, onInviteSent 
               </div>
 
               <div className="form-group">
+                <label htmlFor="member-type">Employment Type *</label>
+                <select
+                  id="member-type"
+                  value={memberType}
+                  onChange={(e) => setMemberType(e.target.value as MemberType)}
+                  disabled={loading}
+                  className="member-type-select"
+                >
+                  <option value="internal">Internal - permanent staff</option>
+                  <option value="external_contractor">
+                    Contractor - works for you under a contract
+                  </option>
+                </select>
+                <small className="form-text text-muted">
+                  A label shown beside this person's name. It grants and
+                  restricts nothing — access comes from the role above.
+                </small>
+              </div>
+
+              <div className="form-group">
                 <label htmlFor="message">Personal Message (optional)</label>
                 <textarea
                   id="message"
@@ -197,6 +239,10 @@ export default function InviteUserModal({ organizationId, onClose, onInviteSent 
                         <div className="pending-info">
                           <span className="pending-email">{inv.email}</span>
                           <span className="pending-role">{inv.role}</span>
+                          <ContractorBadge
+                            memberType={inv.member_type}
+                            personName={inv.email}
+                          />
                         </div>
                         <button
                           type="button"

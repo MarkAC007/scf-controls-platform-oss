@@ -441,16 +441,84 @@ export function setCurrentOrganization(orgId: string) {
 }
 
 /**
- * Get all members of an organization, returned as UserSimple[].
- * Calls GET /api/organizations/{org_id}/members and extracts the nested user object.
+ * Every membership row of an organisation, whole — the one place that reads
+ * ``GET /organizations/{org_id}/members``.
+ *
+ * Added for #822 phase 2 because ``member_type`` lives on the membership and
+ * both of the older adapters throw the membership away: ``getOrgMembers``
+ * returns the nested users and ``getOrgMemberships`` returns ids and roles.
+ * A field the API returns perfectly and the client deletes before any
+ * component can see it is invisible however good the backend is, so both of
+ * those now project from THIS rather than fetching for themselves. There is
+ * one URL, one response shape, and one thing to change when the payload grows
+ * a field again.
+ *
+ * ``member_type`` is defaulted, not assumed: a server that has not shipped the
+ * column yet returns rows without it, and the honest reading of a missing
+ * label is "internal" — the value the column's own server default gives every
+ * existing row.
  */
-export async function getOrgMembers(orgId: string): Promise<import('../types').UserSimple[]> {
-  const members = await apiFetch<Array<{ user: import('../types').UserSimple | null }>>(
+export async function getOrgMemberSummaries(
+  orgId: string
+): Promise<import('../types').OrgMemberSummary[]> {
+  const rows = await apiFetch<Array<Record<string, any>>>(
     `/organizations/${orgId}/members`
   )
+  return rows.map(row => ({
+    id: String(row.id),
+    organization_id: String(row.organization_id ?? orgId),
+    user_id: String(row.user_id),
+    role: String(row.role),
+    member_type:
+      row.member_type === 'external_contractor' ? 'external_contractor' : 'internal',
+    joined_at: row.joined_at,
+    user: (row.user ?? null) as import('../types').UserSimple | null,
+  }))
+}
+
+/**
+ * Get all members of an organization, returned as UserSimple[].
+ *
+ * A projection of ``getOrgMemberSummaries``: the nested user objects, with the
+ * membership around them — role, ``member_type``, joined date — discarded.
+ * That is the right shape for the pickers that consume it, which name a
+ * person and nothing else. Anything that needs to say something ABOUT the
+ * membership must not widen this return type to smuggle it through: use
+ * ``getOrgMemberSummaries``, or the ``useOrgMemberTypes`` lookup, so that a
+ * per-organisation label cannot be mistaken for a property of the user.
+ */
+export async function getOrgMembers(orgId: string): Promise<import('../types').UserSimple[]> {
+  const members = await getOrgMemberSummaries(orgId)
   return members
-    .filter((m): m is { user: import('../types').UserSimple } => m.user !== null)
     .map(m => m.user)
+    .filter((user): user is import('../types').UserSimple => user !== null)
+}
+
+/**
+ * Set a member's role, their ``member_type``, or both (#822 phase 2).
+ *
+ * Query parameters, matching the endpoint's existing ``?role=`` rather than
+ * inventing a body for it. Both are optional and only what is passed is sent,
+ * so changing somebody's ``member_type`` cannot silently rewrite their role
+ * back to whatever the client last happened to render.
+ *
+ * Requires org admin. The server is the boundary and answers 403 on its own;
+ * hiding the control from non-admins is a courtesy on top of that refusal,
+ * never instead of it.
+ */
+export async function updateOrgMember(
+  orgId: string,
+  userId: string,
+  changes: { role?: string; member_type?: import('../types').MemberType }
+): Promise<void> {
+  const params = new URLSearchParams()
+  if (changes.role) params.set('role', changes.role)
+  if (changes.member_type) params.set('member_type', changes.member_type)
+  if (params.toString() === '') return
+  await apiFetch<unknown>(
+    `/organizations/${orgId}/members/${userId}?${params.toString()}`,
+    { method: 'PATCH', body: JSON.stringify({}) }
+  )
 }
 
 /**
@@ -787,6 +855,32 @@ export interface ScopedControlsPageParams {
   csf_function?: string
   control_weighting?: number
   framework?: string
+  /**
+   * Narrow to controls an owning team is assigned to (#822 phase 3).
+   *
+   * Matches ANY assigned team, not accountable-only, which is the same
+   * semantics ``matchesTeamFilters`` applies in the browser — so turning this
+   * on changes what the filter reaches, not what it means.
+   */
+  team_id?: string
+  /**
+   * Narrow to controls owned by any team under one business function.
+   *
+   * The API resolves the function through the assignment tables, so pass the
+   * function id straight through; do not expand it to its teams here.
+   */
+  function_id?: string
+  /**
+   * Narrow to controls whose ACCOUNTABLE team's primary owner is internal
+   * staff or an external contractor (#822 phase 2).
+   *
+   * Note the difference from ``team_id`` above, which matches any assigned
+   * team: this one is accountable-only, because the question it answers is
+   * "who is answerable for this" and a merely-consulted team is not. The API
+   * resolves the chain — accountable team, its primary owner, that person's
+   * membership — so pass the member type straight through.
+   */
+  accountable_owner_type?: import('../types').MemberType
 }
 
 export async function fetchScopedControlsPage(
@@ -807,6 +901,11 @@ export async function fetchScopedControlsPage(
   if (params.csf_function) queryParams.set('csf_function', params.csf_function)
   if (params.control_weighting !== undefined) queryParams.set('control_weighting', params.control_weighting.toString())
   if (params.framework) queryParams.set('framework', params.framework)
+  if (params.team_id) queryParams.set('team_id', params.team_id)
+  if (params.function_id) queryParams.set('function_id', params.function_id)
+  if (params.accountable_owner_type) {
+    queryParams.set('accountable_owner_type', params.accountable_owner_type)
+  }
 
   const queryString = queryParams.toString()
   const endpoint = `/organizations/${orgId}/scoped-controls-paginated${queryString ? `?${queryString}` : ''}`
@@ -853,12 +952,41 @@ export interface EvidenceTrackingInput {
   maturity_level?: string | null
 }
 
-export async function getEvidenceTracking(orgId?: string): Promise<EvidenceTracking[]> {
+/**
+ * Optional owning-team narrowing for the evidence list (#822 phase 3).
+ *
+ * Same semantics as the controls list and as ``matchesTeamFilters``: ANY
+ * assigned team, accountable or consulted, not accountable-only.
+ */
+export interface EvidenceTrackingFilters {
+  team_id?: string
+  function_id?: string
+  /**
+   * Accountable team's primary owner is internal or a contractor (#822 phase
+   * 2). Same meaning as the controls list's parameter of the same name, so the
+   * two lists answer one question one way.
+   */
+  accountable_owner_type?: import('../types').MemberType
+}
+
+export async function getEvidenceTracking(
+  orgId?: string,
+  filters: EvidenceTrackingFilters = {}
+): Promise<EvidenceTracking[]> {
   if (!orgId) {
     const org = await getCurrentOrganization()
     orgId = org.id
   }
-  return apiFetch<EvidenceTracking[]>(`/organizations/${orgId}/evidence-tracking`)
+  const params = new URLSearchParams()
+  if (filters.team_id) params.set('team_id', filters.team_id)
+  if (filters.function_id) params.set('function_id', filters.function_id)
+  if (filters.accountable_owner_type) {
+    params.set('accountable_owner_type', filters.accountable_owner_type)
+  }
+  const query = params.toString()
+  return apiFetch<EvidenceTracking[]>(
+    `/organizations/${orgId}/evidence-tracking${query ? `?${query}` : ''}`
+  )
 }
 
 export async function createOrUpdateEvidenceTracking(
@@ -1631,6 +1759,16 @@ export interface OrgInviteResponse {
   organization_name: string
   email: string
   role: string
+  /**
+   * What acceptance will grant (#822 phase 2). On the response as well as the
+   * request, so a pending invite can say which it is without an admin having
+   * to accept it to find out — the read path for an invite, exactly as the
+   * badge is the read path for a membership.
+   *
+   * Optional: a backend without the field omits it, and a missing label reads
+   * as 'internal', the default the column itself would apply.
+   */
+  member_type?: import('../types').MemberType
   status: string
   invite_token: string | null
   expires_at: string
@@ -4217,4 +4355,293 @@ export async function uploadCatalogExcel(file: File): Promise<CatalogImportAccep
 /** Poll a catalogue import task. */
 export async function getCatalogImportStatus(taskId: string): Promise<CatalogImportStatus> {
   return apiFetch<CatalogImportStatus>(`/admin/catalog/import/${taskId}`)
+}
+
+// ---- Teams and business functions (Issue #822, phase 1) ----
+//
+// Teams are descriptive only. Nothing below grants, checks or implies a
+// permission: authorisation stays with ``organization_members.role``, and the
+// backend enforces it on every one of these endpoints.
+
+import type {
+  OrgFunction,
+  Team,
+  TeamCreate,
+  TeamDetail,
+  TeamMember,
+  TeamMembershipRole,
+  TeamUpdate,
+} from '../types'
+
+/** The platform's static business functions, in ``display_order``. */
+export async function listFunctions(): Promise<OrgFunction[]> {
+  return apiClient.get<OrgFunction[]>('/functions')
+}
+
+/**
+ * Teams in an organisation. Archived teams are excluded unless
+ * ``includeInactive`` asks for them.
+ */
+export async function listTeams(
+  orgId: string,
+  options: { functionId?: string; includeInactive?: boolean } = {}
+): Promise<Team[]> {
+  const params = new URLSearchParams()
+  if (options.functionId) params.set('function_id', options.functionId)
+  if (options.includeInactive) params.set('include_inactive', 'true')
+  const query = params.toString()
+  return apiClient.get<Team[]>(
+    `/organizations/${orgId}/teams${query ? `?${query}` : ''}`
+  )
+}
+
+/** One team with its membership and advisory health signals. */
+export async function getTeam(orgId: string, teamId: string): Promise<TeamDetail> {
+  return apiClient.get<TeamDetail>(`/organizations/${orgId}/teams/${teamId}`)
+}
+
+export async function createTeam(orgId: string, team: TeamCreate): Promise<Team> {
+  return apiClient.post<Team>(`/organizations/${orgId}/teams`, team)
+}
+
+export async function updateTeam(
+  orgId: string,
+  teamId: string,
+  update: TeamUpdate
+): Promise<Team> {
+  return apiClient.patch<Team>(`/organizations/${orgId}/teams/${teamId}`, update)
+}
+
+/**
+ * Archive a team. The endpoint is a DELETE but the row survives with
+ * ``is_active = false`` — no membership or history is destroyed, and the team
+ * comes back with ``updateTeam(..., { is_active: true })``.
+ */
+export async function archiveTeam(orgId: string, teamId: string): Promise<void> {
+  await apiClient.delete<void>(`/organizations/${orgId}/teams/${teamId}`)
+}
+
+export async function listTeamMembers(
+  orgId: string,
+  teamId: string
+): Promise<TeamMember[]> {
+  return apiClient.get<TeamMember[]>(`/organizations/${orgId}/teams/${teamId}/members`)
+}
+
+export async function addTeamMember(
+  orgId: string,
+  teamId: string,
+  userId: string,
+  membershipRole: TeamMembershipRole
+): Promise<TeamMember> {
+  return apiClient.post<TeamMember>(
+    `/organizations/${orgId}/teams/${teamId}/members`,
+    { user_id: userId, membership_role: membershipRole }
+  )
+}
+
+/**
+ * Change a member's role on a team.
+ *
+ * ``primary`` and ``delegate`` hold one person each. Moving somebody into an
+ * occupied slot demotes the incumbent to ``member`` inside this single
+ * request — do not follow it with a second call to demote them by hand.
+ */
+export async function updateTeamMemberRole(
+  orgId: string,
+  teamId: string,
+  userId: string,
+  membershipRole: TeamMembershipRole
+): Promise<TeamMember> {
+  return apiClient.patch<TeamMember>(
+    `/organizations/${orgId}/teams/${teamId}/members/${userId}`,
+    { membership_role: membershipRole }
+  )
+}
+
+export async function removeTeamMember(
+  orgId: string,
+  teamId: string,
+  userId: string
+): Promise<void> {
+  await apiClient.delete<void>(
+    `/organizations/${orgId}/teams/${teamId}/members/${userId}`
+  )
+}
+
+// ---- Team ownership of controls and evidence (Issue #822, phase 3) ----
+//
+// Every URL for this feature is built here and nowhere else, against the three
+// verbs the API actually exposes:
+//
+//   GET    /organizations/{org}/team-assignments?type=&item_ids=&team_id=
+//   POST   /organizations/{org}/team-assignments   {type, item_id, team_id, is_accountable}
+//   DELETE /organizations/{org}/team-assignments/{assignment_id}
+//
+// There is no PATCH, and none is needed: the POST is an upsert. Re-posting a
+// team already assigned to an item updates its accountability and returns 200
+// rather than 409, so "promote this team to accountable" is one call whether
+// or not the team was already assigned — no fetch-then-branch, and no
+// DELETE-then-POST, which is the two-call race the endpoint exists to remove.
+//
+// As with phase 1, nothing below grants or checks a permission. The writes are
+// admin-only at the API; the UI hides them from non-admins as a courtesy, and
+// the API refuses them as the actual boundary.
+
+import type {
+  TeamAssignableType,
+  TeamAssignment,
+  TeamAssignmentCreate,
+  TeamAssignmentMap,
+} from '../types'
+
+/** Which item a team is being made accountable for. */
+export interface TeamAssignmentTarget {
+  type: TeamAssignableType
+  /** Scoped control id or evidence tracking id — a database id, not an SCF id. */
+  itemId: string
+  teamId: string
+}
+
+/**
+ * Pull the map out of the batch envelope.
+ *
+ * The documented body is ``{type, total, accountable_only, assignments}``.
+ * Read defensively anyway: an unrecognised body degrades to "no assignments"
+ * rather than throwing, because an ownership column is an enhancement to
+ * somebody else's list and must not be able to take that list down with it.
+ */
+function unwrapAssignmentMap(body: unknown): TeamAssignmentMap {
+  if (!body || typeof body !== 'object') return {}
+  const record = body as Record<string, unknown>
+  const inner = record.assignments
+  const source = inner && typeof inner === 'object' ? (inner as Record<string, unknown>) : record
+  const map: TeamAssignmentMap = {}
+  for (const [itemId, value] of Object.entries(source)) {
+    if (Array.isArray(value)) map[itemId] = value as TeamAssignment[]
+  }
+  return map
+}
+
+/**
+ * Every team assignment in the organisation for one item type, indexed by item.
+ *
+ * ONE request per page. The controls and evidence lists render hundreds of
+ * rows and a per-row fetch is an N+1 measured in seconds, so this endpoint
+ * exists precisely so that no list view ever asks about a single item — see
+ * ``useTeamAssignments``, which is the only caller a list should use.
+ *
+ * ``itemIds`` and ``teamId`` narrow the read; neither is required, and a page
+ * load calls this once with nothing but the type.
+ */
+export async function listTeamAssignments(
+  orgId: string,
+  type: TeamAssignableType,
+  options: { itemIds?: string[]; teamId?: string; accountableOnly?: boolean } = {}
+): Promise<TeamAssignmentMap> {
+  const params = new URLSearchParams({ type })
+  // Repeated rather than comma-joined: the API declares item_ids as a list
+  // query parameter, so one key per id is the encoding it parses.
+  for (const itemId of options.itemIds ?? []) params.append('item_ids', itemId)
+  if (options.teamId) params.set('team_id', options.teamId)
+  if (options.accountableOnly) params.set('accountable_only', 'true')
+  const body = await apiClient.get<unknown>(
+    `/organizations/${orgId}/team-assignments?${params.toString()}`
+  )
+  return unwrapAssignmentMap(body)
+}
+
+/** The teams owning one control or evidence item. For detail panels only. */
+export async function getItemTeamAssignments(
+  orgId: string,
+  type: TeamAssignableType,
+  itemId: string
+): Promise<TeamAssignment[]> {
+  const map = await listTeamAssignments(orgId, type, { itemIds: [itemId] })
+  return map[itemId] ?? []
+}
+
+/**
+ * Assign a team to an item, or update the assignment it already has.
+ *
+ * The one write. 201 for a new assignment, 200 for an update; both return the
+ * assignment, so callers need not care which happened.
+ */
+export async function assignTeamToItem(
+  orgId: string,
+  assignment: TeamAssignmentCreate
+): Promise<TeamAssignment> {
+  return apiClient.post<TeamAssignment>(
+    `/organizations/${orgId}/team-assignments`,
+    assignment
+  )
+}
+
+/**
+ * Make one owning team the accountable one.
+ *
+ * ONE request, whether or not the team was already assigned. A partial unique
+ * index allows at most one accountable team per item, and the backend demotes
+ * the incumbent inside this same transaction, having locked the item first so
+ * two simultaneous claims resolve in order. A client that stood the old team
+ * down first would leave the item with nobody accountable if the second call
+ * failed, and would race any other admin doing the same — do not add a second
+ * call here.
+ */
+export async function setAccountableTeam(
+  orgId: string,
+  target: TeamAssignmentTarget
+): Promise<TeamAssignment> {
+  return assignTeamToItem(orgId, {
+    type: target.type,
+    item_id: target.itemId,
+    team_id: target.teamId,
+    is_accountable: true,
+  })
+}
+
+/** Stand a team down from accountable, leaving it an owner. The same upsert. */
+export async function clearAccountableTeam(
+  orgId: string,
+  target: TeamAssignmentTarget
+): Promise<TeamAssignment> {
+  return assignTeamToItem(orgId, {
+    type: target.type,
+    item_id: target.itemId,
+    team_id: target.teamId,
+    is_accountable: false,
+  })
+}
+
+/** Remove a team's ownership entirely. The team itself is untouched. */
+export async function removeTeamAssignment(
+  orgId: string,
+  assignmentId: string
+): Promise<void> {
+  await apiClient.delete<void>(`/organizations/${orgId}/team-assignments/${assignmentId}`)
+}
+
+/**
+ * Organisation members with their roles, which ``getOrgMembers`` throws away.
+ *
+ * Used to answer one question: is the person looking at this screen an admin,
+ * and so should the assignment controls be rendered at all? That is a display
+ * decision only. The API is the security boundary and refuses a non-admin's
+ * write regardless of what this returns.
+ *
+ * Carries ``member_type`` since #822 phase 2 because it costs nothing to keep
+ * and this used to be the second place a membership was fetched and stripped.
+ * It is carried, not consulted: ``role`` decides whether a control renders and
+ * ``member_type`` must never join it in that decision — a contractor who is an
+ * admin is an admin.
+ */
+export async function getOrgMemberships(
+  orgId: string
+): Promise<Array<{ user_id: string; role: string; member_type: import('../types').MemberType }>> {
+  const members = await getOrgMemberSummaries(orgId)
+  return members.map(m => ({
+    user_id: m.user_id,
+    role: m.role,
+    member_type: m.member_type,
+  }))
 }

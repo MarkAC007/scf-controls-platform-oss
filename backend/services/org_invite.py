@@ -26,6 +26,8 @@ from models import (
     ConsultantClientRelationship,
 )
 from services.domain_validation import validate_invite_domain, is_public_domain
+from services.org_utils import MEMBER_TYPES
+from services.audit_service import log_entity_changes, ORG_MEMBER_TRACKED_FIELDS
 from services.subscription import get_user_subscription, can_invite_member
 
 logger = logging.getLogger(__name__)
@@ -54,11 +56,19 @@ async def create_invite(
     role: str,
     message: Optional[str],
     db: AsyncSession,
+    member_type: str = "internal",
 ) -> OrganizationInvite:
     """
     Create an organisation member invitation.
 
     Validates domain rules, checks for duplicates, enforces subscription limits.
+
+    *member_type* is the employment type the membership will carry once the
+    invite is accepted (#822 phase 2). Defaulted so that every existing caller
+    -- and any caller that simply does not care -- produces an internal member,
+    which is what the column default would have given them anyway. It is a
+    label and grants nothing; `role` remains the only thing authorisation
+    consults.
 
     Raises:
         ValueError: For validation failures (domain, duplicates, existing member)
@@ -67,6 +77,15 @@ async def create_invite(
     # Validate role
     if role not in ("admin", "editor", "viewer"):
         raise ValueError(f"Invalid role '{role}'. Must be admin, editor, or viewer.")
+
+    # Validate member_type here as well as in the request schema: this function
+    # is called directly by the CLI and by tests, which never see the Pydantic
+    # pattern, and the CHECK constraint's rejection would surface as a 500.
+    if member_type not in MEMBER_TYPES:
+        raise ValueError(
+            f"Invalid member_type '{member_type}'. "
+            f"Must be one of: {', '.join(sorted(MEMBER_TYPES))}."
+        )
 
     # Check if inviter is a consultant for this organisation (cross-domain allowed)
     consultant_rel = await db.execute(
@@ -160,6 +179,7 @@ async def create_invite(
         invited_by_user_id=inviter_user_id,
         email=email.strip().lower(),
         role=role,
+        member_type=member_type,
         invite_token=secrets.token_urlsafe(32),
         status=OrgInviteStatus.PENDING.value,
         custom_message=message,
@@ -169,7 +189,10 @@ async def create_invite(
     await db.commit()
     await db.refresh(invite)
 
-    logger.info(f"Created org invite: org={org_id}, email={email}, role={role}")
+    logger.info(
+        f"Created org invite: org={org_id}, email={email}, role={role}, "
+        f"member_type={member_type}"
+    )
     return invite
 
 
@@ -184,6 +207,17 @@ async def accept_invite(
 
     Verifies the token, checks expiry, validates email match,
     creates the membership, and marks the invite as accepted.
+
+    **Cross-table invariant.** The invite's ``member_type`` is copied verbatim
+    onto the membership below, which means
+    ``ck_organization_invites_member_type`` and
+    ``ck_organization_members_member_type`` must accept exactly the same set of
+    values. If they ever drift, the failure is nasty and delayed: an invite
+    validates and sends fine, then blows up at acceptance -- in front of the
+    invitee, who can do nothing about it, and after the admin who sent it has
+    stopped watching. Widen or narrow one only by widening or narrowing the
+    other in the same migration, and keep :data:`services.org_utils.MEMBER_TYPES`
+    in step with both.
 
     Returns:
         Tuple of (invite, organization)
@@ -229,12 +263,56 @@ async def accept_invite(
         raise ValueError("You are already a member of this organisation.")
 
     # Create membership
+    #
+    # member_type is carried from the invite, not defaulted. If this line is
+    # dropped the invite modal's employment-type selector becomes a control
+    # that silently does nothing -- exactly the defect #822 was raised over.
     member = OrganizationMember(
         organization_id=invite.organization_id,
         user_id=user_id,
         role=invite.role,
+        member_type=invite.member_type,
     )
     db.add(member)
+    # Flush, not commit: `member.id` is generated client-side at INSERT, and
+    # the audit entry below needs it as `entity_id`. Flushing keeps the
+    # membership and its audit rows in ONE transaction, so a later failure
+    # rolls back both rather than leaving a membership nobody can account for.
+    await db.flush()
+
+    # Audit the membership creation (#822 invariant 6: every membership
+    # mutation writes to audit_log). Accepting an invite creates a membership,
+    # so it is one -- and this is the arrival path for contractors, which is
+    # exactly what `member_type` exists to make visible during an audit. A
+    # contractor accountable for a control with no record of how they got
+    # there defeats the point of the field.
+    #
+    # Driven off ORG_MEMBER_TRACKED_FIELDS rather than naming member_type, so
+    # this is a membership-creation audit rather than a member_type bolt-on
+    # and grows automatically if the tracked set does.
+    #
+    # The actor is the accepting user: they are the one taking the action. The
+    # other half of the story -- who invited them -- is on the invite row as
+    # `invited_by_user_id`, so both are reconstructible from the two records.
+    #
+    # No action_source or request_id: this service takes no Request, and
+    # threading one through the signature purely to populate two nullable
+    # columns would ripple into every caller. Both are nullable by design.
+    await log_entity_changes(
+        db=db,
+        organization_id=invite.organization_id,
+        entity_type='org_member',
+        entity_id=member.id,
+        action='create',
+        changed_by_user_id=UUID(str(user_id)) if user_id else None,
+        old_values={},
+        new_values={
+            f: getattr(member, f)
+            for f in ORG_MEMBER_TRACKED_FIELDS
+            if hasattr(member, f)
+        },
+        tracked_fields=ORG_MEMBER_TRACKED_FIELDS,
+    )
 
     # Mark invite as accepted
     invite.status = OrgInviteStatus.ACCEPTED.value
@@ -247,7 +325,8 @@ async def accept_invite(
     org = result.scalar_one()
 
     logger.info(
-        f"Invite accepted: user={user_id}, org={invite.organization_id}, role={invite.role}"
+        f"Invite accepted: user={user_id}, org={invite.organization_id}, "
+        f"role={invite.role}, member_type={invite.member_type}"
     )
     return invite, org
 

@@ -1740,3 +1740,237 @@ export interface FrequencyHealthResponse {
   low_confidence_count: number
   items: FrequencyHealthItem[]
 }
+
+/* ============================================================================
+ * Teams and business functions (Issue #822, phase 1)
+ *
+ * Teams describe who does what in an organisation. They grant no permissions
+ * whatsoever — access control remains entirely ``organization_members.role``.
+ * A team is therefore safe to hand to an admin as a purely descriptive
+ * structure, and nothing in the UI should gate a capability on membership.
+ * ========================================================================= */
+
+/**
+ * Mirror of backend ``Function``: a platform-static business function a team
+ * aligns to. Fourteen seeded rows, identical in every deployment; tenants
+ * point their teams at them rather than creating their own.
+ *
+ * Named ``OrgFunction`` rather than ``Function`` deliberately: an interface
+ * called ``Function`` would shadow the JavaScript global of that name for
+ * every consumer of this module.
+ */
+export interface OrgFunction {
+  id: string
+  key: string
+  name: string
+  description: string | null
+  display_order: number | null
+  is_active: boolean
+}
+
+/**
+ * Whether a person is permanent staff of an organisation or works for it under
+ * a contract (#822 phase 2).
+ *
+ * Mirrors ``organization_members.member_type``. It lives on the MEMBERSHIP and
+ * not on the user, which is the whole point: the same person can be permanent
+ * staff at one organisation and an external contractor at another, so there is
+ * no such thing as "is this user a contractor" — only "is this user a
+ * contractor HERE". Never hang it off ``UserSimple``; that would make it a
+ * property of the person and quietly wrong the first time somebody belongs to
+ * two organisations.
+ *
+ * It is a label and grants nothing. Nothing in the UI may hide, disable or
+ * otherwise gate a capability on it. Capability comes from
+ * ``organization_members.role`` alone, exactly as it did before this existed.
+ */
+export type MemberType = 'internal' | 'external_contractor'
+
+/**
+ * One row of ``GET /organizations/{id}/members``, whole.
+ *
+ * The membership wrapper, not the user inside it. ``getOrgMembers`` returns
+ * ``UserSimple[]`` and ``getOrgMemberships`` returns ids and roles; both are
+ * projections of this and both drop ``member_type``. Anything that needs to
+ * know internal-vs-contractor reads this shape, or the ``useOrgMemberTypes``
+ * lookup built on it.
+ */
+export interface OrgMemberSummary {
+  id: string
+  organization_id: string
+  user_id: string
+  role: string
+  member_type: MemberType
+  joined_at?: string
+  user: UserSimple | null
+}
+
+/**
+ * A person's place on a team.
+ *
+ * ``primary`` and ``delegate`` are each capped at one per team by a partial
+ * unique index, so promoting somebody into an occupied slot demotes the
+ * incumbent to ``member``. The backend performs that swap atomically in the
+ * single PATCH — callers must never issue two requests to emulate it.
+ */
+export type TeamMembershipRole = 'primary' | 'delegate' | 'member'
+
+/** Mirror of backend ``Team``: organisation-scoped, aligned to one function. */
+export interface Team {
+  id: string
+  organization_id: string
+  function_id: string
+  name: string
+  description: string | null
+  is_active: boolean
+}
+
+/** Mirror of backend ``TeamMember``. ``user`` is embedded for display. */
+export interface TeamMember {
+  id: string
+  team_id: string
+  user_id: string
+  membership_role: TeamMembershipRole
+  user?: UserSimple | null
+}
+
+/**
+ * Advisory health signals for a team. Every one of these is a warning, never
+ * a block: a team with no members at all is legal — it is the state every
+ * team is in the moment it is created.
+ */
+export interface TeamHealth {
+  has_primary: boolean
+  has_members: boolean
+  function_is_active: boolean
+  warnings: string[]
+}
+
+/** A team with its membership and health, as returned by the detail endpoint. */
+export interface TeamDetail extends Team {
+  members: TeamMember[]
+  health: TeamHealth
+}
+
+/** Request body for creating a team. A function is required; there is exactly one. */
+export interface TeamCreate {
+  name: string
+  description: string
+  function_id: string
+}
+
+/** Request body for editing or archiving a team. */
+export interface TeamUpdate {
+  name?: string
+  description?: string
+  function_id?: string
+  is_active?: boolean
+}
+
+/* ============================================================================
+ * Team ownership of controls and evidence (Issue #822, phase 3)
+ *
+ * Phase 1 said who is on a team. This says which teams own a thing. Several
+ * teams may own one control or one evidence item; at most one of them is
+ * accountable — at most, never exactly, because an item nobody has assigned
+ * yet has to stay legal, and that is the state every item starts in.
+ *
+ * These mirror the API's response models exactly, nesting and all. The
+ * temptation is to flatten ``team.name`` up to ``team_name`` on the way in;
+ * resist it, because the nesting is carrying real payload — the team's
+ * function and its primary and delegate ride along so that a list of hundreds
+ * of rows can render "Security Operations (Ana Ruiz)" with no follow-up
+ * request. Flattening would quietly throw that away.
+ *
+ * Still no permissions. A team named here changes nothing about what its
+ * members may do; ``organization_members.role`` remains the only input to
+ * access control.
+ * ========================================================================= */
+
+/** The two kinds of thing a team can own. Mirrors the API's ``type`` param. */
+export type TeamAssignableType = 'control' | 'evidence'
+
+/** Thin function reference, as nested inside an assigned team. */
+export interface FunctionSimple {
+  id: string
+  key: string
+  name: string
+  is_active: boolean
+}
+
+/**
+ * The person answerable on an assigned team, embedded in the badge payload.
+ *
+ * Both ``primary`` and ``delegate`` are nullable on the team. A team with
+ * neither is exactly what every team looks like the moment it is created, so
+ * that is a normal state and never an error.
+ */
+export interface TeamAssignmentMember {
+  user_id: string
+  membership_role: TeamMembershipRole
+  user?: UserSimple | null
+}
+
+/** The assigned team, with just enough to render a badge and filter on. */
+export interface TeamAssignmentTeam {
+  id: string
+  name: string
+  is_active: boolean
+  function_id: string
+  function?: FunctionSimple | null
+  primary?: TeamAssignmentMember | null
+  delegate?: TeamAssignmentMember | null
+}
+
+/**
+ * One team's ownership of one control or evidence item.
+ *
+ * ``item_id`` is the generic name for what the underlying table calls
+ * ``scoped_control_id`` or ``evidence_tracking_id`` — a database id, never an
+ * SCF id or a catalogue evidence id.
+ */
+export interface TeamAssignment {
+  id: string
+  type: TeamAssignableType
+  item_id: string
+  team_id: string
+  organization_id: string
+  is_accountable: boolean
+  assigned_at: string
+  assigned_by_user_id?: string | null
+  team?: TeamAssignmentTeam | null
+}
+
+/**
+ * The batch endpoint's payload, indexed by the item that owns it.
+ *
+ * Items with no teams are simply absent — callers must treat a missing key as
+ * "no teams", not as an error. JSON object keys are strings, so the key is the
+ * item's UUID in string form.
+ */
+export type TeamAssignmentMap = Record<string, TeamAssignment[]>
+
+/** The batch endpoint's envelope. The map itself is under ``assignments``. */
+export interface TeamAssignmentMapResponse {
+  type: TeamAssignableType
+  total: number
+  accountable_only: boolean
+  assignments: TeamAssignmentMap
+}
+
+/**
+ * Request body for the assignment upsert.
+ *
+ * There is no PATCH. Re-posting a team already assigned to the item updates
+ * its ``is_accountable`` and returns 200 rather than 409, which is what makes
+ * "promote this team to accountable" one atomic request. ``organization_id``
+ * is absent on purpose: the API derives it from the path and the verified
+ * membership, and a client able to name it could file one tenant's team
+ * against another tenant's control.
+ */
+export interface TeamAssignmentCreate {
+  type: TeamAssignableType
+  item_id: string
+  team_id: string
+  is_accountable?: boolean
+}

@@ -1,7 +1,8 @@
 import { useState } from 'react'
-import type { UserSimple } from '../../types'
+import type { MemberType, UserSimple } from '../../types'
 import { FREQUENCY_OPTIONS } from '../../data/frequencyVocabulary'
 import { userLabel } from '../../data/userDisplay'
+import { withContractorSuffix } from '../ContractorBadge'
 
 /**
  * Acting on many evidence items at once (#789).
@@ -44,6 +45,11 @@ export interface EvidenceBulkActionsBarProps {
   visibleCount: number
   allVisibleSelected: boolean
   members: UserSimple[]
+  /**
+   * Per-organisation internal/contractor lookup (#822 phase 2), supplied by the
+   * screen. Optional — without it this bar renders exactly as it did before.
+   */
+  memberTypeOf?: (userId: string | null | undefined) => MemberType | undefined
   busy?: boolean
   result?: BulkActionResult | null
   onSelectAllVisible: () => void
@@ -59,6 +65,7 @@ export function EvidenceBulkActionsBar({
   visibleCount,
   allVisibleSelected,
   members,
+  memberTypeOf,
   busy = false,
   result,
   onSelectAllVisible,
@@ -157,9 +164,14 @@ export function EvidenceBulkActionsBar({
               }}
             >
               <option value="">Choose…</option>
+              {/*
+                * Text suffix rather than the badge component: an <option>
+                * accepts no elements. Assigning work to a contractor in bulk
+                * is allowed — the suffix says who they are, nothing more.
+                */}
               {members.map(member => (
                 <option key={member.id} value={member.id}>
-                  {userLabel(member)}
+                  {withContractorSuffix(userLabel(member), memberTypeOf?.(member.id))}
                 </option>
               ))}
               <option value="__unassign__">Unassign</option>

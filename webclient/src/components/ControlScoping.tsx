@@ -22,6 +22,14 @@ import { useOrganizationSettings } from '../hooks/useOrganizationSettings'
 import { useCatalogFilters } from '../hooks/useCatalogFilters'
 import { useDebounce } from '../hooks/useDebounce'
 import { AssignmentPicker } from './AssignmentPicker'
+import OwningTeams from './OwningTeams'
+import TeamListFilters, { ALL as ALL_TEAMS } from './TeamListFilters'
+import AccountableOwnerTypeFilter, {
+  ALL_OWNER_TYPES,
+  type AccountableOwnerTypeValue,
+} from './AccountableOwnerTypeFilter'
+import { useTeamAssignments, accountableTeamLabel } from '../hooks/useTeamAssignments'
+import { useIsOrgAdmin } from '../hooks/useIsOrgAdmin'
 import { AuditLogPanel } from './AuditLogPanel'
 import { ModernCommentThread } from './ModernCommentThread'
 import { ScopeByFrameworkModal } from './ScopeByFrameworkModal'
@@ -74,7 +82,10 @@ interface EnrichedScopedControl extends Omit<ScopedControlWithCatalog, 'cmm_matu
   }
 }
 
-const ITEM_HEIGHT = 80 // Height of each scoping card in pixels
+// Height of each scoping card. Includes the accountable-team line the card
+// gained with team ownership (#822) — a virtualised row slot that is shorter
+// than its card overlaps the next one.
+const ITEM_HEIGHT = 100
 const DEFAULT_LIST_HEIGHT = 600
 // How many extra pages to pull while hunting for an inbound navigation
 // target before giving up. Bounded so a stale control id cannot drive an
@@ -173,6 +184,14 @@ export default function ControlScoping({
   const [weightFilter, setWeightFilter] = useState<string>('all')
   const [frameworkFilter, setFrameworkFilter] = useState<string>('all')
   const [scopeFilter, setScopeFilter] = useState<'all' | 'in_scope' | 'out_of_scope'>('in_scope')
+  // Team ownership filters (#822). Pushed into the query: the server decides
+  // which controls a team owns, and the rows it returns ARE the filtered list.
+  // Nothing here re-filters them — two answers to that question is how the
+  // wrong one gets rendered.
+  const [teamFilter, setTeamFilter] = useState<string>(ALL_TEAMS)
+  const [functionFilter, setFunctionFilter] = useState<string>(ALL_TEAMS)
+  const [ownerTypeFilter, setOwnerTypeFilter] =
+    useState<AccountableOwnerTypeValue>(ALL_OWNER_TYPES)
   const [showFilters, setShowFilters] = useState(false)
   const [saving, setSaving] = useState(false)
   const [listHeight, setListHeight] = useState(DEFAULT_LIST_HEIGHT)
@@ -222,6 +241,9 @@ export default function ControlScoping({
     setCsfFilter('all')
     setWeightFilter('all')
     setFrameworkFilter('all')
+    setTeamFilter(ALL_TEAMS)
+    setFunctionFilter(ALL_TEAMS)
+    setOwnerTypeFilter(ALL_OWNER_TYPES)
     // Deliberately NOT calling onNavigationConsumed() here: under StrictMode
     // React mounts, runs effects, unmounts and remounts. Clearing the parent
     // during the first mount left the remount with no target and no seeded
@@ -252,6 +274,10 @@ export default function ControlScoping({
     control_weighting: weightFilter !== 'all' ? parseInt(weightFilter, 10) : undefined,
     framework: frameworkFilter !== 'all' ? frameworkFilter : undefined,
     scope_status: scopeFilter,
+    team_id: teamFilter !== ALL_TEAMS ? teamFilter : undefined,
+    function_id: functionFilter !== ALL_TEAMS ? functionFilter : undefined,
+    accountable_owner_type:
+      ownerTypeFilter !== ALL_OWNER_TYPES ? ownerTypeFilter : undefined,
   }, organizationId)
 
   // Server-side stats for accurate totals (fixes #247 - stats bar bug)
@@ -314,6 +340,53 @@ export default function ControlScoping({
     })
     return Array.from(frameworkSet).sort()
   }, [controls])
+
+  /**
+   * SCF id → the scoped control's database id.
+   *
+   * The paginated list rows carry the catalogue shape and no database id, but
+   * team assignments are keyed by the scoped-control row, so the id comes from
+   * the scoping file that is loaded for this organisation anyway. Built once
+   * per data change rather than searched per row.
+   */
+  const scopedDbIdByScfId = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const scoped of scopingData.scoped_controls) {
+      if (scoped.id) map.set(scoped.scf_id, scoped.id)
+    }
+    return map
+  }, [scopingData])
+
+  /**
+   * The database ids of the controls actually loaded so far.
+   *
+   * This is what scopes the ownership read to the page. The list is
+   * server-paginated, so asking for every assignment in the organisation to
+   * render fifty rows fetches thousands of records to show fifty; the hook
+   * takes these ids instead and re-reads only what a new page adds.
+   */
+  const loadedControlDbIds = useMemo(
+    () =>
+      rawControls
+        .map(control => scopedDbIdByScfId.get(control.scf_id))
+        .filter((id): id is string => !!id),
+    [rawControls, scopedDbIdByScfId]
+  )
+
+  // Team ownership for the controls on screen — ONE request per page (#822),
+  // never one per row, which across a list this size is an N+1 measured in
+  // seconds. Ids already fetched are not re-requested, so scrolling back is
+  // free and scrolling forward costs exactly one read.
+  const {
+    accountableFor: accountableTeamFor,
+    reload: reloadTeamAssignments,
+  } = useTeamAssignments(organizationId, 'control', { itemIds: loadedControlDbIds })
+
+  const canManageTeams = useIsOrgAdmin(organizationId)
+
+  const teamFilterActive = teamFilter !== ALL_TEAMS || functionFilter !== ALL_TEAMS
+
+  const ownerTypeFilterActive = ownerTypeFilter !== ALL_OWNER_TYPES
 
   // Clear selection if selected control is not in loaded results
   useEffect(() => {
@@ -619,9 +692,12 @@ export default function ControlScoping({
         scopeBadge={{ inScope: control.selected }}
         statusBadge={control.implementation_status}
         lifecycle={getCatalogLifecycle(control)}
+        accountableTeam={
+          accountableTeamLabel(accountableTeamFor(scopedDbIdByScfId.get(control.scf_id) ?? ''))
+        }
       />
     )
-  }, [controls, selectedId, toggleSelection])
+  }, [controls, selectedId, toggleSelection, accountableTeamFor, scopedDbIdByScfId])
 
   if (isError) {
     return (
@@ -732,9 +808,16 @@ export default function ControlScoping({
             className={`filters-toggle-btn ${showFilters ? 'active' : ''}`}
             onClick={() => setShowFilters(!showFilters)}
           >
-            ⚙ Filters {(domainFilter !== 'all' || csfFilter !== 'all' || weightFilter !== 'all') && (
+            ⚙ Filters {(domainFilter !== 'all' || csfFilter !== 'all' || weightFilter !== 'all' || teamFilterActive || ownerTypeFilterActive) && (
               <span className="filter-badge">
-                {[domainFilter !== 'all', csfFilter !== 'all', weightFilter !== 'all'].filter(Boolean).length}
+                {[
+                  domainFilter !== 'all',
+                  csfFilter !== 'all',
+                  weightFilter !== 'all',
+                  teamFilter !== ALL_TEAMS,
+                  functionFilter !== ALL_TEAMS,
+                  ownerTypeFilterActive,
+                ].filter(Boolean).length}
               </span>
             )}
           </button>
@@ -777,6 +860,23 @@ export default function ControlScoping({
                   </option>
                 ))}
               </select>
+              <TeamListFilters
+                organizationId={organizationId}
+                teamId={teamFilter}
+                functionId={functionFilter}
+                onTeamChange={setTeamFilter}
+                onFunctionChange={setFunctionFilter}
+              />
+              {/*
+                * Sits with the team filters because it asks about the same
+                * thing they do — who owns this — one level further down: the
+                * accountable team's primary owner. Combining the two is
+                * legal and means what it reads as.
+                */}
+              <AccountableOwnerTypeFilter
+                value={ownerTypeFilter}
+                onChange={setOwnerTypeFilter}
+              />
             </div>
           )}
         </div>
@@ -1036,8 +1136,24 @@ export default function ControlScoping({
                       </span>
                     </div>
 
+                    {/*
+                      Two different things on this screen are called a team, and
+                      this is the older one (#822). It writes the free-text
+                      `owner` label from `settings.owner_teams` and is not
+                      connected to the organisation's real teams — those are on
+                      the Assignments tab, under "Owning teams". Left exactly as
+                      it was, behaviour untouched, because tenants have real data
+                      in this column; only the wording changed, so a reader can
+                      tell the two apart.
+                    */}
                     <div className="form-group">
-                      <label>Owner Team</label>
+                      <label>Owner Team Label</label>
+                      <span className="form-hint-block">
+                        A free-text label from your organisation's settings. It records a
+                        name only — it is not one of the teams under Users → Teams. To
+                        record which real team owns this control, use "Owning teams" on the
+                        Assignments tab.
+                      </span>
                       <select
                         value={localFormState?.owner || ''}
                         onChange={e => updateField('owner', e.target.value)}
@@ -1149,12 +1265,24 @@ export default function ControlScoping({
                       const ctrlDbId = scopedCtrl?.id;
                       if (ctrlDbId && organizationId) {
                         return (
-                          <AssignmentPicker
-                            organizationId={organizationId}
-                            assignableType="control"
-                            assignableId={ctrlDbId}
-                            onAssignmentChange={() => {}}
-                          />
+                          <>
+                            <AssignmentPicker
+                              organizationId={organizationId}
+                              assignableType="control"
+                              assignableId={ctrlDbId}
+                              onAssignmentChange={() => {}}
+                            />
+                            {/* Teams, not people, and additive to the picker
+                                above — a control has both an owner and someone
+                                doing the work, and neither implies the other. */}
+                            <OwningTeams
+                              organizationId={organizationId}
+                              assignableType="control"
+                              assignableId={ctrlDbId}
+                              canManage={canManageTeams}
+                              onChange={() => { void reloadTeamAssignments() }}
+                            />
+                          </>
                         );
                       }
                       return <span className="form-hint">Save control to enable assignment</span>;

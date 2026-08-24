@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { apiClient } from '../data/apiClient';
+import { withContractorSuffix } from './ContractorBadge';
+import { useOrgMemberTypes } from '../hooks/useOrgMemberTypes';
 
 interface User {
   id: string;
@@ -50,6 +52,12 @@ export const TaskEditModal: React.FC<TaskEditModalProps> = ({
   const [dueDate, setDueDate] = useState(task.due_date || '');
   const [assignedUserId, setAssignedUserId] = useState(task.assigned_user_id || '');
   const [members, setMembers] = useState<User[]>([]);
+
+  // The assignee picker names a person, so it says when that person is an
+  // external contractor (#822 phase 2). A suffix rather than the badge
+  // component because an <option> holds only text. Everyone stays assignable:
+  // this describes who somebody is, never whether work may go to them.
+  const { memberTypeOf } = useOrgMemberTypes(organizationId);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -201,7 +209,10 @@ export const TaskEditModal: React.FC<TaskEditModalProps> = ({
               <option value="">Unassigned</option>
               {members.map((member) => (
                 <option key={member.id} value={member.id}>
-                  {member.display_name || member.email}
+                  {withContractorSuffix(
+                    member.display_name || member.email,
+                    memberTypeOf(member.id)
+                  )}
                 </option>
               ))}
             </select>
