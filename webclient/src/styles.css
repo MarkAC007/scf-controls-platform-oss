@@ -34790,8 +34790,12 @@ button.risk-list-header-cell:hover {
   overflow-y: auto;
 }
 
-/* ---- Tighter filter rail: smaller selects, closer grouping ---- */
-.explorer-filters {
+/* ---- Tighter filter rail: smaller selects, closer grouping ----
+   :not() guard: this rule sits later in the file than the base
+   .explorer-filters--collapsed rule, so an unscoped width here would win
+   the tie and pin the collapsed rail at 240px — collapse would hide the
+   filter contents without returning the space to the list. ---- */
+.explorer-filters:not(.explorer-filters--collapsed) {
   width: 240px;
   padding: 16px 14px;
   gap: 16px;
