@@ -663,28 +663,30 @@ export default function ScopingPage({
         onScrollOffsetChange={setScrollOffset}
         frameworkNames={frameworkNames}
         ownerByControlId={ownerByControlId}
+        bulkBar={
+          rowSelection.size > 0 ? (
+            <ScopingBulkBar
+              selectedCount={rowSelection.size}
+              visibleCount={enrichedControls.length}
+              allVisibleSelected={
+                enrichedControls.length > 0 &&
+                enrichedControls.every((c) => rowSelection.has(c.scf_id))
+              }
+              ownerOptions={ownerOptions}
+              busy={bulkBusy}
+              progressText={bulkBusy ? bulkProgress : undefined}
+              onSelectAllVisible={() => {
+                const next = new Set(enrichedControls.map((c) => c.scf_id))
+                setRowSelection(next)
+              }}
+              onSetApplicable={handleSetApplicable}
+              onSetNA={handleSetNA}
+              onAssignOwner={handleAssignOwner}
+              onClear={() => setRowSelection(new Set())}
+            />
+          ) : undefined
+        }
       />
-      {rowSelection.size > 0 && (
-        <ScopingBulkBar
-          selectedCount={rowSelection.size}
-          visibleCount={enrichedControls.length}
-          allVisibleSelected={
-            enrichedControls.length > 0 &&
-            enrichedControls.every((c) => rowSelection.has(c.scf_id))
-          }
-          ownerOptions={ownerOptions}
-          busy={bulkBusy}
-          progressText={bulkBusy ? bulkProgress : undefined}
-          onSelectAllVisible={() => {
-            const next = new Set(enrichedControls.map((c) => c.scf_id))
-            setRowSelection(next)
-          }}
-          onSetApplicable={handleSetApplicable}
-          onSetNA={handleSetNA}
-          onAssignOwner={handleAssignOwner}
-          onClear={() => setRowSelection(new Set())}
-        />
-      )}
       {showFrameworkModal && (
         <ScopeByFrameworkModal
           organizationId={organizationId}
