@@ -22,17 +22,20 @@ export default function UserProfileDropdown({ onNavigateToUsers }: UserProfileDr
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
-  // Close on escape key
+  // Close on escape key (only when open; stopPropagation prevents ControlDetailPage's
+  // window-level Esc handler from also firing — document listeners run before window)
   useEffect(() => {
     function handleEscape(event: KeyboardEvent) {
+      if (!isOpen) return
       if (event.key === 'Escape') {
+        event.stopPropagation()
         setIsOpen(false)
       }
     }
 
     document.addEventListener('keydown', handleEscape)
     return () => document.removeEventListener('keydown', handleEscape)
-  }, [])
+  }, [isOpen])
 
   if (!user) return null
 

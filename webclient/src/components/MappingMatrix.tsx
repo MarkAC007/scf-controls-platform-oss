@@ -95,21 +95,30 @@ export default function MappingMatrix({ controls, scopingData }: MappingMatrixPr
 
   return (
     <div className="mapping-matrix-container">
-      <div className="mapping-matrix-header">
-        <div className="matrix-header-left">
-          <h1>SCF Framework Mapping Matrix</h1>
-        </div>
-        <div className="matrix-header-right">
+      {/* Matrix toolbar — toolbar-idiom classes (no ListToolbar component: matrix has no search) */}
+      <div className="matrix-toolbar">
+        <div className="matrix-toolbar-title">SCF Framework Mapping Matrix</div>
+        <div className="matrix-toolbar-actions">
           {hasActiveScopingData && (
             <>
               <button
-                className="btn-legend"
+                className="matrix-legend-btn"
                 onClick={() => setShowLegend(!showLegend)}
                 title="Toggle status legend"
               >
                 {showLegend ? '✕' : '?'} Legend
               </button>
-              <label className="matrix-filter-toggle">
+              <label className="matrix-scoped-toggle">
+                <span
+                  className={`matrix-scoped-checkbox${hideUnscoped ? ' is-checked' : ''}`}
+                  aria-hidden="true"
+                >
+                  {hideUnscoped && (
+                    <svg width="9" height="9" viewBox="0 0 10 10" fill="none">
+                      <path d="M1.5 5.5l2.5 2.5 4.5-5" stroke="#fff" strokeWidth="1.6" strokeLinecap="round" />
+                    </svg>
+                  )}
+                </span>
                 <input
                   type="checkbox"
                   checked={hideUnscoped}
@@ -119,52 +128,49 @@ export default function MappingMatrix({ controls, scopingData }: MappingMatrixPr
               </label>
             </>
           )}
-          <div className="matrix-stats">
-            <span>
+          <div className="matrix-toolbar-count">
+            <span className="matrix-count-filtered">
               {filteredControls.length}
               {hideUnscoped && controls.length !== filteredControls.length && (
-                <span className="stat-total"> / {controls.length}</span>
+                <span className="matrix-count-total"> / {controls.length}</span>
               )}
-              {' '}Controls
+              {' '}controls
             </span>
-            <span>{frameworks.length} Frameworks</span>
+            <span className="matrix-count-sep"> · </span>
+            <span className="matrix-count-fw">{frameworks.length} frameworks</span>
           </div>
         </div>
       </div>
 
-      {/* Status Legend */}
+      {/* Status Legend — inline strip (per Mappings.html artboard) */}
       {showLegend && hasActiveScopingData && (
-        <div className="matrix-legend">
-          <div className="legend-title">Implementation Status Legend</div>
-          <div className="legend-items">
-            <div className="legend-item legend-implemented">
-              <div className="legend-color legend-implemented"></div>
-              <span className="legend-label">Implemented</span>
-            </div>
-            <div className="legend-item legend-in-progress">
-              <div className="legend-color legend-in-progress"></div>
-              <span className="legend-label">In Progress</span>
-            </div>
-            <div className="legend-item legend-not-started">
-              <div className="legend-color legend-not-started"></div>
-              <span className="legend-label">Not Started</span>
-            </div>
-            <div className="legend-item legend-at-risk">
-              <div className="legend-color legend-at-risk"></div>
-              <span className="legend-label">At Risk</span>
-            </div>
-            <div className="legend-item legend-not-applicable">
-              <div className="legend-color legend-not-applicable"></div>
-              <span className="legend-label">Not Applicable</span>
-            </div>
-            <div className="legend-item legend-deferred">
-              <div className="legend-color legend-deferred"></div>
-              <span className="legend-label">Deferred</span>
-            </div>
+        <div className="matrix-legend-strip">
+          <span className="matrix-legend-label">STATUS LEGEND</span>
+          <div className="matrix-legend-item">
+            <div className="matrix-legend-swatch mlg-implemented"></div>
+            <span>Implemented</span>
           </div>
-          <div className="legend-note">
-            Row colors indicate the implementation status of scoped controls
+          <div className="matrix-legend-item">
+            <div className="matrix-legend-swatch mlg-in-progress"></div>
+            <span>In Progress</span>
           </div>
+          <div className="matrix-legend-item">
+            <div className="matrix-legend-swatch mlg-not-started"></div>
+            <span>Not Started</span>
+          </div>
+          <div className="matrix-legend-item">
+            <div className="matrix-legend-swatch mlg-at-risk"></div>
+            <span>At Risk</span>
+          </div>
+          <div className="matrix-legend-item">
+            <div className="matrix-legend-swatch mlg-not-applicable"></div>
+            <span>Not Applicable</span>
+          </div>
+          <div className="matrix-legend-item">
+            <div className="matrix-legend-swatch mlg-deferred"></div>
+            <span>Deferred</span>
+          </div>
+          <span className="matrix-legend-note">Row colors indicate implementation status of scoped controls</span>
         </div>
       )}
 
@@ -174,7 +180,7 @@ export default function MappingMatrix({ controls, scopingData }: MappingMatrixPr
             <tr>
               <th className="control-header sticky-col">
                 <div className="header-content">
-                  <div>SCF Control</div>
+                  <div>SCF CONTROL</div>
                 </div>
               </th>
               {frameworks.map(fw => (
@@ -193,7 +199,7 @@ export default function MappingMatrix({ controls, scopingData }: MappingMatrixPr
                 <tr key={control.scf_id} className={getStatusClass(status)}>
                   <td className="control-cell sticky-col">
                     <div className="control-info">
-                      <strong>{control.scf_id}</strong>
+                      <span className="control-id">{control.scf_id}</span>
                       <span className="control-name">{control.control_name}</span>
                     </div>
                   </td>
@@ -219,7 +225,7 @@ export default function MappingMatrix({ controls, scopingData }: MappingMatrixPr
         </table>
       </div>
 
-      {/* Tooltip */}
+      {/* Tooltip — dark surface per artboard */}
       {tooltip && (
         <div
           className="matrix-tooltip"

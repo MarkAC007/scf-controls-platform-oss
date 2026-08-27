@@ -24,6 +24,14 @@ light, `[data-theme="dark"]` for dark). Common tokens: `--bg`, `--panel`,
 `--card`, `--text`, `--muted`, `--border`, `--primary`, `--primary-hover`,
 `--accent`, `--success`, `--warning`, `--info`, `--danger`.
 
+## Base-palette-only tokens
+
+The Explorer nav tokens (`--nav-surface`, `--nav-surface-active`, `--nav-text`,
+`--nav-text-active`, `--nav-section`, `--nav-border`, `--nav-accent`,
+`--nav-note`) are defined in both base palettes (`light` and `dark`). In light
+mode, they use fixed colors; in dark mode, they use `var()` indirection to
+inherit each dark theme's palette. A theme MAY override these tokens if needed.
+
 ## Contributing a theme (codebase)
 
 1. Create `webclient/src/themes/<id>.ts` exporting a `ThemeDefinition`

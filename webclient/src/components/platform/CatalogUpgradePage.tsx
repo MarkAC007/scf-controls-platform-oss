@@ -158,13 +158,11 @@ function CatalogUpgradeConsole() {
       <UploadStage disabled={anyRunInFlight} onUpload={handleUpload} />
 
       {activeRun && (
-        <div className="surface-bench" style={{ padding: '1.25rem 1.5rem', marginTop: '1.5rem' }}>
+        <div className="surface-bench platform-run-bench" style={{ padding: '1.25rem 1.5rem', marginTop: '1.5rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
-            <h3 className="bench-header" style={{ margin: 0 }}>
-              <span className="container-title">
-                Run {activeRun.from_version || 'unversioned'} → {activeRun.to_version || '?'}
-              </span>
-            </h3>
+            <span className="platform-run-version">
+              Run {activeRun.from_version || 'unversioned'} → {activeRun.to_version || '?'}
+            </span>
             <RunStatusBadge status={activeRun.status} />
             <button
               className="btn btn-secondary btn-sm"

@@ -1,10 +1,17 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { apiClient } from '../data/apiClient';
 import { ModernCommentThread } from './ModernCommentThread';
 import { frequencyLabel } from '../data/frequencyVocabulary'
 import { useOrgMemberTypes } from '../hooks/useOrgMemberTypes';
 import { useTaskTeamOwnership } from '../hooks/useTaskTeamOwnership';
 import TaskOwningTeamBadge from './TaskOwningTeamBadge';
+import TaskDetailPage from './TaskDetailPage';
+import FilterSidebar, {
+  FilterGroup,
+  FilterSelect,
+} from './explorer/FilterSidebar'
+import FilterRadio from './explorer/FilterRadio';
+import ListToolbar from './explorer/ListToolbar';
 
 interface Task {
   id: string;
@@ -37,19 +44,124 @@ interface Task {
 interface TasksPageProps {
   onNavigateToEvidence: (evidenceId: string) => void;
   organizationId: string;
+  /** The task id to show in detail, from ?task= URL param. null = list view. */
+  taskItem?: string | null;
+  /** Called when user opens/closes/pages the detail. App owns push/replace decision. */
+  onTaskItemChange?: (id: string | null) => void;
 }
 
-export const TasksPage: React.FC<TasksPageProps> = ({ onNavigateToEvidence, organizationId }) => {
+const STATUS_OPTIONS = [
+  { value: 'all', label: 'All Statuses' },
+  { value: 'not_started', label: 'Not Started' },
+  { value: 'in_progress', label: 'In Progress' },
+  { value: 'completed', label: 'Completed' },
+];
+
+const TYPE_OPTIONS = [
+  { value: 'all', label: 'All Types' },
+  { value: 'feasibility', label: 'Feasibility' },
+  { value: 'setup', label: 'Setup' },
+  { value: 'collection', label: 'Collection' },
+  { value: 'review', label: 'Review' },
+  { value: 'documentation', label: 'Documentation' },
+  { value: 'issue', label: 'Issue' },
+];
+
+const TASK_TYPE_LABELS: Record<string, string> = {
+  feasibility: 'Feasibility',
+  setup: 'Setup',
+  collection: 'Collection',
+  review: 'Review',
+  documentation: 'Documentation',
+  issue: 'Issue',
+};
+
+const STATUS_LABELS: Record<string, string> = {
+  not_started: 'Not started',
+  in_progress: 'In progress',
+  completed: 'Completed',
+};
+
+const PRIORITY_LABELS: Record<string, string> = {
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+  critical: 'Critical',
+};
+
+/** Color token class for the left-edge tick bar */
+function tickBarClass(status: string, isOverdue: boolean): string {
+  if (isOverdue) return 'task-row-tick--overdue';
+  if (status === 'completed') return 'task-row-tick--completed';
+  if (status === 'in_progress') return 'task-row-tick--in-progress';
+  return 'task-row-tick--not-started';
+}
+
+/** Color token class for priority text */
+function priorityClass(priority: string): string {
+  return `task-priority-${priority}`;
+}
+
+/** Badge classes for task type */
+function typeClass(taskType: string): string {
+  return `task-badge task-type-badge task-type-${taskType}`;
+}
+
+/** Badge classes for status */
+function statusBadgeClass(status: string): string {
+  return `task-badge task-status-badge task-status-${status}`;
+}
+
+function getDaysUntilDue(dueDate: string): number {
+  const today = new Date();
+  const due = new Date(dueDate);
+  const diffTime = due.getTime() - today.getTime();
+  return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+}
+
+function getDueDateText(daysUntilDue: number, isCompleted: boolean): { text: string; cls: string } {
+  if (isCompleted) return { text: '', cls: '' };
+  if (daysUntilDue < 0) {
+    return { text: `${Math.abs(daysUntilDue)} days overdue`, cls: 'task-due-overdue' };
+  }
+  if (daysUntilDue <= 7) {
+    return { text: `${daysUntilDue} days`, cls: 'task-due-warning' };
+  }
+  return { text: `${daysUntilDue} days`, cls: 'task-due-ok' };
+}
+
+/** Return true if the search term matches the task */
+function matchesSearch(task: Task, query: string): boolean {
+  if (!query.trim()) return true;
+  const q = query.toLowerCase();
+  if (task.title && task.title.toLowerCase().includes(q)) return true;
+  if (task.description && task.description.toLowerCase().includes(q)) return true;
+  if (task.evidence_id && task.evidence_id.toLowerCase().includes(q)) return true;
+  return false;
+}
+
+export const TasksPage: React.FC<TasksPageProps> = ({
+  onNavigateToEvidence,
+  organizationId,
+  taskItem = null,
+  onTaskItemChange,
+}) => {
   const [view, setView] = useState<'my-tasks' | 'all-tasks'>('my-tasks');
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [taskTypeFilter, setTaskTypeFilter] = useState<string>('all');
   const [owningTeamFilter, setOwningTeamFilter] = useState<string>('all');
-  const [editingTask, setEditingTask] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [filtersCollapsed, setFiltersCollapsed] = useState(false);
+
+  // Expansion state: which row is expanded (null = none)
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  // Edit state (lives at page level, used in the expanded panel)
   const [editStatus, setEditStatus] = useState<string>('');
   const [editNotes, setEditNotes] = useState<string>('');
-  const [expandedComments, setExpandedComments] = useState<string | null>(null);
+
   useEffect(() => {
     loadTasks();
   }, [view, statusFilter, taskTypeFilter]);
@@ -79,13 +191,29 @@ export const TasksPage: React.FC<TasksPageProps> = ({ onNavigateToEvidence, orga
     }
   };
 
-  const handleEditTask = async (taskId: string) => {
+  /** Toggle expansion: same row collapses; a different row replaces the current. */
+  const toggleExpand = useCallback((task: Task) => {
+    setExpandedId(prev => {
+      if (prev === task.id) {
+        // Collapsing — reset edit state
+        setEditStatus('');
+        setEditNotes('');
+        return null;
+      }
+      // Opening a new row — seed edit state from current task values
+      setEditStatus(task.status);
+      setEditNotes(task.completion_notes || '');
+      return task.id;
+    });
+  }, []);
+
+  const handleSave = async (taskId: string) => {
     try {
       await apiClient.patch(`/evidence-tasks/${taskId}`, {
         status: editStatus,
-        completion_notes: editNotes || null
+        completion_notes: editNotes || null,
       });
-      setEditingTask(null);
+      setExpandedId(null);
       setEditStatus('');
       setEditNotes('');
       await loadTasks();
@@ -95,63 +223,10 @@ export const TasksPage: React.FC<TasksPageProps> = ({ onNavigateToEvidence, orga
     }
   };
 
-  const getTaskTypeClass = (taskType: string): string => {
-    const typeClasses: Record<string, string> = {
-      feasibility: 'task-type-feasibility',
-      setup: 'task-type-setup',
-      collection: 'task-type-collection',
-      review: 'task-type-review',
-      documentation: 'task-type-documentation',
-      issue: 'task-type-issue'
-    };
-    return typeClasses[taskType] || '';
-  };
-
-  const getTaskTypeLabel = (taskType: string): string => {
-    const labels: Record<string, string> = {
-      feasibility: 'Feasibility',
-      setup: 'Setup',
-      collection: 'Collection',
-      review: 'Review',
-      documentation: 'Documentation',
-      issue: 'Issue'
-    };
-    return labels[taskType] || taskType;
-  };
-
-  const getPriorityClass = (priority: string): string => {
-    return `priority-${priority}`;
-  };
-
-  const getStatusClass = (status: string): string => {
-    return `status-${status}`;
-  };
-
-  const startEdit = (task: Task) => {
-    setEditingTask(task.id);
-    setEditStatus(task.status);
-    setEditNotes(task.completion_notes || '');
-  };
-
-  const cancelEdit = () => {
-    setEditingTask(null);
+  const handleCancel = () => {
+    setExpandedId(null);
     setEditStatus('');
     setEditNotes('');
-  };
-
-  const getDaysUntilDue = (dueDate: string) => {
-    const today = new Date();
-    const due = new Date(dueDate);
-    const diffTime = due.getTime() - today.getTime();
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-    return diffDays;
-  };
-
-  const getDaysRemainingClass = (days: number, isCompleted: boolean): string => {
-    if (isCompleted) return '';
-    if (days < 0) return 'days-overdue';
-    if (days <= 7) return 'days-warning';
-    return 'days-ok';
   };
 
   /* -- Owning team (#822 phase 4) ------------------------------------------
@@ -169,7 +244,7 @@ export const TasksPage: React.FC<TasksPageProps> = ({ onNavigateToEvidence, orga
   const { memberTypeOf } = useOrgMemberTypes(organizationId);
 
   /**
-   * The tasks actually shown.
+   * The tasks actually shown after team-ownership filter.
    *
    * ``null`` is a third state and it carries weight: the user has asked for
    * one team and we cannot yet say which tasks that team owns. It is NOT an
@@ -178,360 +253,528 @@ export const TasksPage: React.FC<TasksPageProps> = ({ onNavigateToEvidence, orga
    * work under a heading naming one team. Both are the same class of defect
    * as an assignment field no query consumes.
    */
-  const visibleTasks: Task[] | null = useMemo(() => {
+  const teamFilteredTasks: Task[] | null = useMemo(() => {
     if (owningTeamFilter === 'all') return tasks;
     if (!ownershipResolved) return null;
     return tasks.filter(task => ownershipFor(task).team?.id === owningTeamFilter);
   }, [tasks, owningTeamFilter, ownershipResolved, ownershipFor]);
 
-  const stats = {
+  /** Apply client-side search on top of the team-filtered list. */
+  const visibleTasks: Task[] | null = useMemo(() => {
+    if (teamFilteredTasks === null) return null;
+    if (!searchQuery.trim()) return teamFilteredTasks;
+    return teamFilteredTasks.filter(t => matchesSearch(t, searchQuery));
+  }, [teamFilteredTasks, searchQuery]);
+
+  const stats = useMemo(() => ({
     total: visibleTasks?.length,
     not_started: visibleTasks?.filter(t => t.status === 'not_started').length,
     in_progress: visibleTasks?.filter(t => t.status === 'in_progress').length,
     completed: visibleTasks?.filter(t => t.status === 'completed').length,
-    overdue: visibleTasks?.filter(t => new Date(t.due_date) < new Date() && t.status !== 'completed').length
-  };
+    overdue: visibleTasks?.filter(t => new Date(t.due_date) < new Date() && t.status !== 'completed').length,
+  }), [visibleTasks]);
 
   /** An unanswered count is a dash, not a zero. Zero is a claim. */
   const statValue = (value: number | undefined) => (value === undefined ? '—' : value);
 
+  const teamOptions = useMemo(() => [
+    { value: 'all', label: 'All Teams' },
+    ...teams
+      .filter(team => team.is_active)
+      .map(team => ({ value: team.id, label: team.name })),
+  ], [teams]);
+
+  // ── Detail page (shown when taskItem is set) ──────────────────────────────
+  if (taskItem) {
+    return (
+      <TaskDetailPage
+        organizationId={organizationId}
+        taskId={taskItem}
+        visibleTasks={visibleTasks ?? []}
+        onTaskItemChange={onTaskItemChange ?? (() => {})}
+        onNavigateToEvidence={onNavigateToEvidence}
+      />
+    );
+  }
+
   return (
-    <div className="tasks-page">
-      <div className="tasks-header">
-        <h1>Evidence Collection Tasks</h1>
-        <p className="tasks-subtitle">
-          Manage evidence collection tasks and track compliance activities
-        </p>
-      </div>
+    <div className="tasks-page tasks-explorer-page">
+      {/* Explorer shell: filter sidebar + main content */}
+      <div className="tasks-explorer-shell">
 
-      {/* View Toggle */}
-      <div className="tasks-view-toggle">
-        <button
-          onClick={() => setView('my-tasks')}
-          className={`tasks-toggle-btn ${view === 'my-tasks' ? 'active' : ''}`}
+        {/* Filter Sidebar */}
+        <FilterSidebar
+          collapsed={filtersCollapsed}
+          onToggleCollapsed={() => setFiltersCollapsed(c => !c)}
+          aria-label="Task filters"
         >
-          My Tasks
-        </button>
-        <button
-          onClick={() => setView('all-tasks')}
-          className={`tasks-toggle-btn ${view === 'all-tasks' ? 'active' : ''}`}
-        >
-          All Tasks
-        </button>
-      </div>
-
-      {/* Stats */}
-      <div className="tasks-stats-grid">
-        <div className="tasks-stat-card">
-          <div className="tasks-stat-value text-blue">{statValue(stats.total)}</div>
-          <div className="tasks-stat-label">Total Tasks</div>
-        </div>
-        <div className="tasks-stat-card">
-          <div className="tasks-stat-value text-blue">{statValue(stats.not_started)}</div>
-          <div className="tasks-stat-label">Not Started</div>
-        </div>
-        <div className="tasks-stat-card">
-          <div className="tasks-stat-value text-orange">{statValue(stats.in_progress)}</div>
-          <div className="tasks-stat-label">In Progress</div>
-        </div>
-        <div className="tasks-stat-card">
-          <div className="tasks-stat-value text-red">{statValue(stats.overdue)}</div>
-          <div className="tasks-stat-label">Overdue</div>
-        </div>
-        <div className="tasks-stat-card">
-          <div className="tasks-stat-value text-green">{statValue(stats.completed)}</div>
-          <div className="tasks-stat-label">Completed</div>
-        </div>
-      </div>
-
-      {/* Filters */}
-      <div className="tasks-filters">
-        <div className="tasks-filter-group">
-          <label>Status:</label>
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="tasks-filter-select"
-          >
-            <option value="all">All Statuses</option>
-            <option value="not_started">Not Started</option>
-            <option value="in_progress">In Progress</option>
-            <option value="completed">Completed</option>
-          </select>
-        </div>
-
-        <div className="tasks-filter-group">
-          <label>Task Type:</label>
-          <select
-            value={taskTypeFilter}
-            onChange={(e) => setTaskTypeFilter(e.target.value)}
-            className="tasks-filter-select"
-          >
-            <option value="all">All Types</option>
-            <option value="feasibility">Feasibility</option>
-            <option value="setup">Setup</option>
-            <option value="collection">Collection</option>
-            <option value="review">Review</option>
-            <option value="documentation">Documentation</option>
-            <option value="issue">Issue</option>
-          </select>
-        </div>
-
-        {/* Owning team (#822 phase 4). Includes tasks that INHERIT the team
-            from their evidence item, which is most of them — a filter that
-            matched only explicit overrides would answer a question nobody
-            asked and report a team as owning almost nothing. */}
-        <div className="tasks-filter-group">
-          <label htmlFor="tasks-owning-team-filter">Owning team:</label>
-          <select
-            id="tasks-owning-team-filter"
-            value={owningTeamFilter}
-            onChange={(e) => setOwningTeamFilter(e.target.value)}
-            className="tasks-filter-select"
-            aria-label="Filter tasks by owning team"
-          >
-            <option value="all">All Teams</option>
-            {teams
-              .filter(team => team.is_active)
-              .map(team => (
-                <option key={team.id} value={team.id}>
-                  {team.name}
-                </option>
-              ))}
-          </select>
-        </div>
-      </div>
-
-      {/* Team ownership could not be read, and a team filter is riding on it.
-          Said out loud rather than swallowed: the list below is narrowed by
-          something that failed. */}
-      {ownershipError && owningTeamFilter !== 'all' && (
-        <div className="error-banner">
-          <span>Could not read team ownership: {ownershipError}</span>
-        </div>
-      )}
-
-      {/* Task List */}
-      {loading ? (
-        <div className="tasks-loading">Loading tasks...</div>
-      ) : visibleTasks === null ? (
-        /* A team filter is active and ownership has not been resolved. Neither
-           the unfiltered list nor an empty one is honest here — the first
-           shows other teams' work under this team's name, the second says
-           this team has none. Say what is actually true instead. */
-        <div className="tasks-loading">Resolving team ownership…</div>
-      ) : visibleTasks.length === 0 ? (
-        <div className="tasks-empty-state">
-          <div className="tasks-empty-icon">📋</div>
-          <h3>No Tasks Found</h3>
-          <p>
-            {owningTeamFilter !== 'all'
-              ? 'No tasks are owned by that team — directly or inherited from their evidence item.'
-              : statusFilter !== 'all'
-                ? 'Try changing the filter'
-                : 'Tasks will appear here when evidence collection is scheduled'}
-          </p>
-        </div>
-      ) : (
-        <div className="tasks-list-container">
-          {visibleTasks.map((task) => {
-            const daysUntilDue = getDaysUntilDue(task.due_date);
-            const isOverdue = daysUntilDue < 0 && task.status !== 'completed';
-            const isEditing = editingTask === task.id;
-
-            return (
-              <div
-                key={task.id}
-                className={`task-item ${isOverdue ? 'task-overdue' : ''}`}
+          {/* View toggle */}
+          <FilterGroup label="VIEW">
+            <div className="task-view-toggle">
+              <button
+                onClick={() => setView('my-tasks')}
+                className={`task-view-btn${view === 'my-tasks' ? ' task-view-btn--active' : ''}`}
+                type="button"
               >
-                {isEditing ? (
-                  /* Edit Mode */
-                  <div>
-                    <div className="task-edit-header">
-                      <h3 className="task-edit-title">
-                        Editing: {task.title || task.evidence_id}
-                      </h3>
-                    </div>
+                My Tasks
+              </button>
+              <button
+                onClick={() => setView('all-tasks')}
+                className={`task-view-btn${view === 'all-tasks' ? ' task-view-btn--active' : ''}`}
+                type="button"
+              >
+                All Tasks
+              </button>
+            </div>
+          </FilterGroup>
 
-                    <div className="task-edit-grid">
-                      <div>
-                        <label className="task-edit-field">Status:</label>
-                        <select
-                          value={editStatus}
-                          onChange={(e) => setEditStatus(e.target.value)}
-                          className="task-edit-select"
-                        >
-                          <option value="not_started">Not Started</option>
-                          <option value="in_progress">In Progress</option>
-                          <option value="completed">Completed</option>
-                        </select>
-                      </div>
-                    </div>
+          {/* Status filter — radio: only one status active at a time */}
+          <FilterGroup label="STATUS">
+            <FilterRadio
+              label="STATUS"
+              name="task-status-filter"
+              options={[
+                { value: 'all', label: 'All' },
+                { value: 'not_started', label: 'Not started' },
+                { value: 'in_progress', label: 'In progress' },
+                { value: 'completed', label: 'Completed' },
+              ]}
+              value={statusFilter}
+              onChange={setStatusFilter}
+            />
+          </FilterGroup>
 
-                    <div>
-                      <label className="task-edit-field">Notes:</label>
-                      <textarea
-                        value={editNotes}
-                        onChange={(e) => setEditNotes(e.target.value)}
-                        placeholder="Add completion notes..."
-                        className="task-edit-textarea"
+          {/* Task type filter — radio: only one type active at a time */}
+          <FilterGroup label="TASK TYPE">
+            <FilterRadio
+              label="TASK TYPE"
+              name="task-type-filter"
+              options={[
+                { value: 'all', label: 'All types' },
+                { value: 'feasibility', label: 'Feasibility' },
+                { value: 'setup', label: 'Setup' },
+                { value: 'collection', label: 'Collection' },
+                { value: 'review', label: 'Review' },
+                { value: 'documentation', label: 'Documentation' },
+                { value: 'issue', label: 'Issue' },
+              ]}
+              value={taskTypeFilter}
+              onChange={setTaskTypeFilter}
+            />
+          </FilterGroup>
+
+          {/* Owning team (#822 phase 4). Includes tasks that INHERIT the team
+              from their evidence item, which is most of them — a filter that
+              matched only explicit overrides would answer a question nobody
+              asked and report a team as owning almost nothing. */}
+          <FilterGroup label="OWNING TEAM">
+            <div className="explorer-filter-select-wrap">
+              <div className="explorer-filter-select-chrome">
+                <select
+                  id="tasks-owning-team-filter"
+                  value={owningTeamFilter}
+                  onChange={(e) => setOwningTeamFilter(e.target.value)}
+                  className="explorer-filter-select"
+                  aria-label="Filter tasks by owning team"
+                >
+                  {teamOptions.map(opt => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+                <svg
+                  className="explorer-filter-select-arrow"
+                  width="12"
+                  height="12"
+                  viewBox="0 0 12 12"
+                  fill="none"
+                  aria-hidden="true"
+                >
+                  <path d="M2 4l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                </svg>
+              </div>
+              <div className="task-team-filter-hint">
+                Includes tasks inheriting the team from their evidence item.
+              </div>
+            </div>
+          </FilterGroup>
+        </FilterSidebar>
+
+        {/* Main content column */}
+        <div className="tasks-explorer-main">
+
+          {/* ListToolbar: search + count */}
+          <ListToolbar
+            search={searchQuery}
+            onSearchChange={setSearchQuery}
+            searchPlaceholder="Search tasks — title, evidence id, description…"
+            count={
+              visibleTasks !== null
+                ? `${visibleTasks.length} task${visibleTasks.length !== 1 ? 's' : ''}`
+                : undefined
+            }
+          />
+
+          {/* Stats strip */}
+          <div className="tasks-stats-strip">
+            <div className="tasks-stat-item" data-testid="task-stat-total">
+              <span className="tasks-stat-value tasks-stat-total">{statValue(stats.total)}</span>
+              <span className="tasks-stat-label">TOTAL</span>
+            </div>
+            <div className="tasks-stat-item" data-testid="task-stat-not-started">
+              <span className="tasks-stat-value tasks-stat-not-started">{statValue(stats.not_started)}</span>
+              <span className="tasks-stat-label">NOT STARTED</span>
+            </div>
+            <div className="tasks-stat-item" data-testid="task-stat-in-progress">
+              <span className="tasks-stat-value tasks-stat-in-progress">{statValue(stats.in_progress)}</span>
+              <span className="tasks-stat-label">IN PROGRESS</span>
+            </div>
+            <div className="tasks-stat-item" data-testid="task-stat-overdue">
+              <span className="tasks-stat-value tasks-stat-overdue">{statValue(stats.overdue)}</span>
+              <span className="tasks-stat-label">OVERDUE</span>
+            </div>
+            <div className="tasks-stat-item" data-testid="task-stat-completed">
+              <span className="tasks-stat-value tasks-stat-completed">{statValue(stats.completed)}</span>
+              <span className="tasks-stat-label">COMPLETED</span>
+            </div>
+          </div>
+
+          {/* Team ownership error banner */}
+          {ownershipError && owningTeamFilter !== 'all' && (
+            <div className="error-banner">
+              <span>Could not read team ownership: {ownershipError}</span>
+            </div>
+          )}
+
+          {/* Column header row */}
+          <div className="tasks-col-header" aria-hidden="true">
+            <div className="tasks-col-tick" />
+            <div className="tasks-col-evidence">CONTROL</div>
+            <div className="tasks-col-task">TASK</div>
+            <div className="tasks-col-type">TYPE</div>
+            <div className="tasks-col-status">STATUS</div>
+            <div className="tasks-col-priority">PRIORITY</div>
+            {view === 'all-tasks' && <div className="tasks-col-assignee">ASSIGNEE</div>}
+            <div className="tasks-col-due">DUE</div>
+            <div className="tasks-col-team">TEAM</div>
+            <div className="tasks-col-expand" />
+          </div>
+
+          {/* Task rows */}
+          {loading ? (
+            <div className="tasks-loading">Loading tasks...</div>
+          ) : visibleTasks === null ? (
+            /* A team filter is active and ownership has not been resolved. Neither
+               the unfiltered list nor an empty one is honest here — the first
+               shows other teams' work under this team's name, the second says
+               this team has none. Say what is actually true instead. */
+            <div className="tasks-loading">Resolving team ownership…</div>
+          ) : visibleTasks.length === 0 ? (
+            <div className="tasks-empty-state">
+              <div className="tasks-empty-icon">📋</div>
+              <h3>No Tasks Found</h3>
+              <p>
+                {owningTeamFilter !== 'all'
+                  ? 'No tasks are owned by that team — directly or inherited from their evidence item.'
+                  : searchQuery.trim()
+                    ? 'No tasks match your search. Try different keywords.'
+                    : statusFilter !== 'all'
+                      ? 'Try changing the filter'
+                      : 'Tasks will appear here when evidence collection is scheduled'}
+              </p>
+            </div>
+          ) : (
+            <div className="tasks-row-list" role="list">
+              {visibleTasks.map((task) => {
+                const daysUntilDue = getDaysUntilDue(task.due_date);
+                const isCompleted = task.status === 'completed';
+                const isOverdue = daysUntilDue < 0 && !isCompleted;
+                const isExpanded = expandedId === task.id;
+                const dueInfo = getDueDateText(daysUntilDue, isCompleted);
+                const ownership = ownershipFor(task);
+
+                return (
+                  <div
+                    key={task.id}
+                    className={`tasks-row${isOverdue ? ' tasks-row--overdue' : ''}${isExpanded ? ' tasks-row--expanded' : ''}`}
+                    role="listitem"
+                  >
+                    {/* Main row */}
+                    <div className="tasks-row-main">
+                      {/* Status-colored left tick bar */}
+                      <div
+                        className={`tasks-row-tick ${tickBarClass(task.status, isOverdue)}`}
+                        aria-hidden="true"
                       />
-                    </div>
 
-                    <div className="task-edit-actions">
-                      <button
-                        onClick={() => handleEditTask(task.id)}
-                        className="task-edit-save"
-                      >
-                        Save Changes
-                      </button>
-                      <button
-                        onClick={cancelEdit}
-                        className="task-edit-cancel"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  /* View Mode */
-                  <div className="task-view-layout">
-                    {/* Left: Task Details */}
-                    <div className="task-view-content">
-                      {/* Badges */}
-                      <div className="task-badges-row">
-                        <span className={`task-badge ${getTaskTypeClass(task.task_type)}`}>
-                          {getTaskTypeLabel(task.task_type)}
+                      {/* Evidence/Control ID */}
+                      <div className="tasks-col-evidence">
+                        <span
+                          className="tasks-evidence-id"
+                          onClick={() => onNavigateToEvidence(task.evidence_id)}
+                          role="button"
+                          tabIndex={0}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              onNavigateToEvidence(task.evidence_id);
+                            }
+                          }}
+                          title={`Navigate to evidence ${task.evidence_id}`}
+                        >
+                          {task.evidence_id}
                         </span>
-                        <span className={`task-badge ${getPriorityClass(task.priority)}`}>
-                          {task.priority}
-                        </span>
-                        <div className={`task-badge ${getStatusClass(task.status)}`}>
-                          {task.status.replace('_', ' ')}
-                        </div>
-                        {isOverdue && (
-                          <div className="task-badge status-overdue">
-                            OVERDUE
-                          </div>
-                        )}
                       </div>
 
-                      {/* Task Title */}
-                      <h3 className="task-title">
-                        {task.title || 'Untitled Task'}
-                      </h3>
-
-                      {/* Evidence Link */}
-                      <div className="task-evidence-link">
-                        <a onClick={() => onNavigateToEvidence(task.evidence_id)}>
-                          Evidence: {task.evidence_id} →
-                        </a>
-                      </div>
-
-                      {/* Description */}
-                      {task.description && (
-                        <div className="task-description-block">
-                          {task.description}
-                        </div>
-                      )}
-
-                      <div className="task-details-grid">
-                        <div>
-                          <strong>Due Date:</strong>{' '}
-                          {new Date(task.due_date).toLocaleDateString('en-US', {
-                            weekday: 'short',
-                            year: 'numeric',
-                            month: 'short',
-                            day: 'numeric'
-                          })}
-                          {daysUntilDue >= 0 ? (
-                            <span className={`task-days-remaining ${getDaysRemainingClass(daysUntilDue, task.status === 'completed')}`}>
-                              ({daysUntilDue} days)
-                            </span>
-                          ) : (
-                            <span className="task-days-remaining days-overdue">
-                              ({Math.abs(daysUntilDue)} days overdue)
+                      {/* Task title + evidence link */}
+                      <div className="tasks-col-task">
+                        {/* Title is now a button — click opens TaskDetailPage */}
+                        <button
+                          className="tasks-row-title tasks-row-title-btn"
+                          onClick={() => onTaskItemChange?.(task.id)}
+                          type="button"
+                          aria-label={task.title || 'Untitled Task'}
+                        >
+                          {task.title || 'Untitled Task'}
+                          {task.completion_notes && (
+                            <span
+                              className="tasks-notes-indicator"
+                              title={task.completion_notes}
+                              aria-label="Has completion notes"
+                            >
+                              📝
                             </span>
                           )}
-                        </div>
-                        {task.frequency && (
-                          <div>
-                            <strong>Frequency:</strong> {frequencyLabel(task.frequency)}
-                          </div>
-                        )}
-                        {task.owner && (
-                          <div>
-                            <strong>Owner:</strong> {task.owner}
-                          </div>
-                        )}
-                        <div>
-                          <TaskOwningTeamBadge
-                            ownership={ownershipFor(task)}
-                            memberType={memberTypeOf(ownershipFor(task).team?.person_user_id)}
-                            resolved={ownershipResolved}
-                          />
-                        </div>
-                        {view === 'all-tasks' && task.assigned_user && (
-                          <div>
-                            <strong>Assigned To:</strong>{' '}
-                            {task.assigned_user.display_name || task.assigned_user.email}
-                          </div>
-                        )}
-                        {task.collecting_system && (
-                          <div>
-                            <strong>System:</strong> {task.collecting_system}
-                          </div>
-                        )}
-                        {task.method_of_collection && (
-                          <div>
-                            <strong>Method:</strong> {task.method_of_collection}
-                          </div>
+                        </button>
+                        <button
+                          className="tasks-evidence-link"
+                          onClick={() => onNavigateToEvidence(task.evidence_id)}
+                          type="button"
+                        >
+                          Evidence: {task.evidence_id} →
+                        </button>
+                      </div>
+
+                      {/* Type badge */}
+                      <div className="tasks-col-type">
+                        <span className={typeClass(task.task_type)}>
+                          {TASK_TYPE_LABELS[task.task_type] || task.task_type}
+                        </span>
+                      </div>
+
+                      {/* Status badge */}
+                      <div className="tasks-col-status">
+                        <span className={statusBadgeClass(task.status)}>
+                          {STATUS_LABELS[task.status] || task.status.replace('_', ' ')}
+                        </span>
+                        {isOverdue && (
+                          <span className="task-badge task-overdue-badge">OVERDUE</span>
                         )}
                       </div>
 
-                      {task.completion_notes && (
-                        <div className="task-completion-notes">
-                          <strong>Notes:</strong> {task.completion_notes}
+                      {/* Priority */}
+                      <div className="tasks-col-priority">
+                        <span className={`tasks-priority-text ${priorityClass(task.priority)}`}>
+                          {PRIORITY_LABELS[task.priority] || task.priority}
+                        </span>
+                      </div>
+
+                      {/* Assignee — only visible in all-tasks view */}
+                      {view === 'all-tasks' && (
+                        <div className="tasks-col-assignee">
+                          {task.assigned_user ? (
+                            <span className="tasks-assignee">
+                              {task.assigned_user.display_name || task.assigned_user.email}
+                            </span>
+                          ) : (
+                            <span className="tasks-assignee-none">—</span>
+                          )}
                         </div>
                       )}
+
+                      {/* Due date + days remaining */}
+                      <div className="tasks-col-due">
+                        {task.due_date && (
+                          <>
+                            <div className="tasks-due-date">
+                              {new Date(task.due_date).toLocaleDateString('en-US', {
+                                month: 'short',
+                                day: 'numeric',
+                                year: 'numeric',
+                              })}
+                            </div>
+                            {dueInfo.text && (
+                              <div className={`tasks-due-countdown ${dueInfo.cls}`}>
+                                {dueInfo.text}
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
+
+                      {/* Team — includes inherited/override pill and warnings
+                          so the owning-team column is never silent (#822) */}
+                      <div className="tasks-col-team">
+                        <TaskOwningTeamBadge
+                          ownership={ownership}
+                          memberType={memberTypeOf(ownership.team?.person_user_id)}
+                          resolved={ownershipResolved}
+                        />
+                      </div>
+
+                      {/* Expand/collapse chevron */}
+                      <div className="tasks-col-expand">
+                        <button
+                          type="button"
+                          className={`tasks-expand-btn${isExpanded ? ' tasks-expand-btn--open' : ''}`}
+                          aria-label={isExpanded ? 'Collapse row' : 'Expand row'}
+                          aria-expanded={isExpanded}
+                          onClick={() => toggleExpand(task)}
+                        >
+                          <svg
+                            width="16"
+                            height="16"
+                            viewBox="0 0 16 16"
+                            fill="none"
+                            aria-hidden="true"
+                          >
+                            <path
+                              d={isExpanded ? 'M4 10l4-4 4 4' : 'M4 6l4 4 4-4'}
+                              stroke="currentColor"
+                              strokeWidth="1.5"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            />
+                          </svg>
+                        </button>
+                      </div>
                     </div>
 
-                    {/* Right: Actions */}
-                    <div className="task-actions">
-                      <button onClick={() => startEdit(task)} className="task-btn task-btn-primary">
-                        ✏️ Edit Task
-                      </button>
-                      <button
-                        onClick={() => setExpandedComments(expandedComments === task.id ? null : task.id)}
-                        className="task-btn task-btn-outline"
-                      >
-                        💬 Comments
-                      </button>
-                      <button
-                        onClick={() => onNavigateToEvidence(task.evidence_id)}
-                        className="task-btn task-btn-secondary"
-                      >
-                        View Evidence →
-                      </button>
-                    </div>
-                  </div>
-                )}
+                    {/* Expanded panel: inline edit form + comment thread */}
+                    {isExpanded && (
+                      <div className="tasks-row-expansion">
+                        <div className="tasks-expansion-inner">
 
-                {/* Expanded Comments Section - Outside Edit/View Toggle */}
-                {!isEditing && expandedComments === task.id && (
-                  <div className="task-comments-section">
-                    <ModernCommentThread
-                      commentableType="task"
-                      commentableId={task.id}
-                      organizationId={organizationId}
-                    />
+                          {/* Inline edit form (same PATCH endpoint as before) */}
+                          <div className="tasks-edit-panel">
+                            <h4 className="tasks-edit-heading">
+                              Edit: {task.title || task.evidence_id}
+                            </h4>
+
+                            {/* Optional read-only context: system + method + frequency */}
+                            {(task.collecting_system || task.method_of_collection || task.frequency || task.owner || task.description) && (
+                              <div className="tasks-edit-context">
+                                {task.description && (
+                                  <div className="tasks-edit-context-row">
+                                    <span className="tasks-edit-context-label">Description:</span>
+                                    <span>{task.description}</span>
+                                  </div>
+                                )}
+                                {task.owner && (
+                                  <div className="tasks-edit-context-row">
+                                    <span className="tasks-edit-context-label">Owner:</span>
+                                    <span>{task.owner}</span>
+                                  </div>
+                                )}
+                                {task.frequency && (
+                                  <div className="tasks-edit-context-row">
+                                    <span className="tasks-edit-context-label">Frequency:</span>
+                                    <span>{frequencyLabel(task.frequency)}</span>
+                                  </div>
+                                )}
+                                {task.collecting_system && (
+                                  <div className="tasks-edit-context-row">
+                                    <span className="tasks-edit-context-label">System:</span>
+                                    <span>{task.collecting_system}</span>
+                                  </div>
+                                )}
+                                {task.method_of_collection && (
+                                  <div className="tasks-edit-context-row">
+                                    <span className="tasks-edit-context-label">Method:</span>
+                                    <span>{task.method_of_collection}</span>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
+                            {/* Full team ownership badge in the expansion */}
+                            <div className="tasks-edit-team-row">
+                              <TaskOwningTeamBadge
+                                ownership={ownership}
+                                memberType={memberTypeOf(ownership.team?.person_user_id)}
+                                resolved={ownershipResolved}
+                              />
+                            </div>
+
+                            {/* Status select */}
+                            <div className="tasks-edit-field-row">
+                              <label htmlFor={`task-status-${task.id}`} className="tasks-edit-label">
+                                Status:
+                              </label>
+                              <select
+                                id={`task-status-${task.id}`}
+                                value={editStatus}
+                                onChange={e => setEditStatus(e.target.value)}
+                                className="task-edit-select"
+                                aria-label="Status"
+                              >
+                                <option value="not_started">Not Started</option>
+                                <option value="in_progress">In Progress</option>
+                                <option value="completed">Completed</option>
+                              </select>
+                            </div>
+
+                            {/* Completion notes */}
+                            <div className="tasks-edit-field-row">
+                              <label htmlFor={`task-notes-${task.id}`} className="tasks-edit-label">
+                                Notes:
+                              </label>
+                              <textarea
+                                id={`task-notes-${task.id}`}
+                                value={editNotes}
+                                onChange={e => setEditNotes(e.target.value)}
+                                placeholder="Add completion notes..."
+                                className="task-edit-textarea"
+                              />
+                            </div>
+
+                            {/* Save / Cancel */}
+                            <div className="task-edit-actions">
+                              <button
+                                type="button"
+                                onClick={() => handleSave(task.id)}
+                                className="task-edit-save"
+                              >
+                                Save Changes
+                              </button>
+                              <button
+                                type="button"
+                                onClick={handleCancel}
+                                className="task-edit-cancel"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Comment thread */}
+                          <div className="tasks-comments-panel">
+                            <ModernCommentThread
+                              commentableType="task"
+                              commentableId={task.id}
+                              organizationId={organizationId}
+                            />
+                          </div>
+
+                        </div>
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
-            );
-          })}
+                );
+              })}
+            </div>
+          )}
         </div>
-      )}
+      </div>
     </div>
   );
 };

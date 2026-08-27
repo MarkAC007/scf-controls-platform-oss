@@ -41,7 +41,7 @@ function underSrc(key: string): string {
 
 const REVIEW = SOURCES['../EvidenceReview.tsx']
 
-const PRODUCTION = Object.entries(SOURCES).filter(([key]) => !key.includes('__tests__'))
+const PRODUCTION = Object.entries(SOURCES).filter(([key]) => !key.includes('__tests__') && !key.includes('.test.'))
 
 describe('the fixture itself', () => {
   // A glob that silently matched nothing would make every case below vacuous.
@@ -76,9 +76,16 @@ describe('a deep-linked item wins', () => {
     )
   })
 
-  it('auto-selects only when nothing is already selected', () => {
+  // The evidence view must not auto-select on a bare landing: since the
+  // detail became a full page there is no side panel to fill, and the old
+  // fallback painted a phantom "active" row while silently rewriting a
+  // shareable list URL into a deep link. Only an already-selected-but-unknown
+  // id gets corrected — by clearing, not by claiming the first item.
+  it('a bare landing selects nothing; an unknown item clears', () => {
     const autoSelect = REVIEW.slice(REVIEW.indexOf('uniqueEvidenceItems.length > 0'))
-    expect(autoSelect).toMatch(/!selectedEvidenceId \|\| !known/)
+    expect(autoSelect).toMatch(/uniqueEvidenceItems\.length > 0 && selectedEvidenceId/)
+    expect(autoSelect).toMatch(/setSelectedEvidenceId\(undefined\)/)
+    expect(autoSelect).not.toMatch(/uniqueEvidenceItems\[0\]/)
   })
 
   // Member access, not the bare word: the comments explaining what the URL
@@ -107,9 +114,9 @@ describe('selection is a place', () => {
     expect(REVIEW.slice(start, start + 300)).toMatch(/pushSearch\(withEvidenceItem\(/)
   })
 
-  // The fallback for an id this org does not have, and the auto-select, both
-  // correct the URL without inventing a history entry the user did not create.
-  it('the auto-select fallback replaces rather than pushes', () => {
+  // The correction for an id this org does not have fixes the URL without
+  // inventing a history entry the user did not create.
+  it('the unknown-item correction replaces rather than pushes', () => {
     const start = REVIEW.indexOf('const known = uniqueEvidenceItems.some')
     expect(REVIEW.slice(start, start + 400)).toMatch(/replaceSearch\(withEvidenceItem\(/)
   })
@@ -118,8 +125,11 @@ describe('selection is a place', () => {
 describe('no other screen was quietly made URL-aware', () => {
   // The allow-list is closed because the other screens read one-shot navigation
   // signals out of sessionStorage and would arrive without them. This fails the
-  // moment a fourth file starts writing the address bar.
-  it('only the three intended components import the URL module', () => {
+  // moment an un-intended file starts writing the address bar.
+  //
+  // Task 6 added Header.tsx: it reads TAB_TITLES and the Tab type from appUrl
+  // but does NOT write the address bar — it is a read-only consumer.
+  it('only the intended components import the URL module', () => {
     const importers = PRODUCTION.filter(([, source]) => /from '.*data\/appUrl'/.test(source))
       .map(([key]) => underSrc(key))
       .sort()
@@ -127,6 +137,7 @@ describe('no other screen was quietly made URL-aware', () => {
       'App.tsx',
       'components/EvidenceReview.tsx',
       'components/EvidenceWorkspace.tsx',
+      'components/Header.tsx',
     ])
   })
 })

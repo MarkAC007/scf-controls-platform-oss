@@ -1,6 +1,7 @@
 /// <reference types="vitest" />
 import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
+import packageJson from './package.json'
 
 // Vitest config — kept separate from vite.config.ts to avoid affecting the
 // production build. The unit tests run under jsdom so React components can
@@ -8,6 +9,11 @@ import react from '@vitejs/plugin-react'
 // matchers globally.
 export default defineConfig({
   plugins: [react()],
+  define: {
+    // Mirror the vite.config.ts define so components that consume __APP_VERSION__
+    // at module scope (e.g. Footer.tsx) resolve correctly in the test environment.
+    __APP_VERSION__: JSON.stringify(packageJson.version),
+  },
   test: {
     globals: true,
     environment: 'jsdom',

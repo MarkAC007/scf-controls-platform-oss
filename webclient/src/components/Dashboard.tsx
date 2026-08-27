@@ -9,6 +9,8 @@ import { FRAMEWORK_GROUPS, OTHER_GROUP, getFrameworkGroup } from '../data/framew
 import { FrameworkLogo } from './FrameworkLogo'
 import { FrequencyHealthTile } from './dashboard/FrequencyHealthTile'
 import WorkQueuePanel from './dashboard/WorkQueuePanel'
+import TabRow from './explorer/TabRow'
+import type { TabRowItem } from './explorer/TabRow'
 
 // M4 (#574) — gate the Frequency Health tile mount on the build-time flag.
 import { PER_WINDOW_REVIEW_ENABLED } from '../data/featureFlags'
@@ -162,6 +164,13 @@ export default function Dashboard({ controls, scopingData, onScopingDataChange, 
     )
   }
 
+  const DASHBOARD_TABS: TabRowItem[] = [
+    { id: 'implementation', label: 'Implementation' },
+    { id: 'maturity', label: 'Maturity' },
+    { id: 'evidence', label: 'Evidence' },
+    { id: 'frameworks', label: 'Frameworks' },
+  ]
+
   return (
     <div className="dashboard">
       <div className="dashboard-header">
@@ -218,32 +227,12 @@ export default function Dashboard({ controls, scopingData, onScopingDataChange, 
       </div>
 
       {/* Tab Navigation */}
-      <div className="dashboard-tabs">
-        <button
-          className={`dashboard-tab${activeTab === 'implementation' ? ' dashboard-tab-active' : ''}`}
-          onClick={() => setActiveTab('implementation')}
-        >
-          Implementation
-        </button>
-        <button
-          className={`dashboard-tab${activeTab === 'maturity' ? ' dashboard-tab-active' : ''}`}
-          onClick={() => setActiveTab('maturity')}
-        >
-          Maturity
-        </button>
-        <button
-          className={`dashboard-tab${activeTab === 'evidence' ? ' dashboard-tab-active' : ''}`}
-          onClick={() => setActiveTab('evidence')}
-        >
-          Evidence
-        </button>
-        <button
-          className={`dashboard-tab${activeTab === 'frameworks' ? ' dashboard-tab-active' : ''}`}
-          onClick={() => setActiveTab('frameworks')}
-        >
-          Frameworks
-        </button>
-      </div>
+      <TabRow
+        tabs={DASHBOARD_TABS}
+        activeId={activeTab}
+        onSelect={(id) => setActiveTab(id as DashboardTab)}
+        aria-label="Dashboard sections"
+      />
 
       {/* Tab Content */}
       <div className="dashboard-tab-content">

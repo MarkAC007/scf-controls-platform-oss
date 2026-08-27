@@ -9,12 +9,16 @@ import {
   vendorRiskLevelToRAG
 } from '../types'
 import { getVendors } from '../data/apiClient'
+import FilterSidebar, { FilterGroup, FilterSelect } from './explorer/FilterSidebar'
+import ListToolbar from './explorer/ListToolbar'
+import ExplorerListRow, { RowMeta } from './explorer/ListRow'
 
 interface VendorRegistryProps {
   organizationId: string
   onSelectVendor: (vendorId: string) => void
   onAddVendor: () => void
   onDeleteVendor: (vendor: Vendor) => void
+  onFilteredListChange?: (list: Vendor[]) => void
 }
 
 /**
@@ -31,11 +35,30 @@ function formatDate(dateStr?: string | null): string {
   }
 }
 
+// Status filter options
+const STATUS_OPTIONS: { value: string; label: string }[] = [
+  { value: 'all', label: 'All Statuses' },
+  ...(Object.keys(VENDOR_STATUS_LABELS) as VendorStatus[]).map((key) => ({
+    value: key,
+    label: VENDOR_STATUS_LABELS[key],
+  })),
+]
+
+// Criticality filter options
+const CRITICALITY_OPTIONS: { value: string; label: string }[] = [
+  { value: 'all', label: 'All Criticality Levels' },
+  ...(Object.keys(VENDOR_CRITICALITY_LABELS) as VendorCriticality[]).map((key) => ({
+    value: key,
+    label: VENDOR_CRITICALITY_LABELS[key],
+  })),
+]
+
 export const VendorRegistry: React.FC<VendorRegistryProps> = ({
   organizationId,
   onSelectVendor,
   onAddVendor,
   onDeleteVendor,
+  onFilteredListChange,
 }) => {
   const [vendors, setVendors] = useState<Vendor[]>([])
   const [loading, setLoading] = useState(true)
@@ -44,21 +67,22 @@ export const VendorRegistry: React.FC<VendorRegistryProps> = ({
   const [statusFilter, setStatusFilter] = useState<VendorStatus | 'all'>('all')
   const [criticalityFilter, setCriticalityFilter] = useState<VendorCriticality | 'all'>('all')
   const [categoryFilter, setCategoryFilter] = useState<string>('all')
+  const [filtersCollapsed, setFiltersCollapsed] = useState(false)
 
-  // Build API filter params from the current dropdown values
+  // Build API filter params from the current sidebar filter values.
+  // Search is handled client-side only for immediate feedback — it is NOT
+  // included here to avoid an API round-trip on every keystroke.
   const apiFilters = useMemo(() => {
     const filters: {
       status?: VendorStatus
       criticality?: VendorCriticality
       category?: string
-      search?: string
     } = {}
     if (statusFilter !== 'all') filters.status = statusFilter
     if (criticalityFilter !== 'all') filters.criticality = criticalityFilter
     if (categoryFilter !== 'all') filters.category = categoryFilter
-    if (searchQuery.trim()) filters.search = searchQuery.trim()
     return filters
-  }, [statusFilter, criticalityFilter, categoryFilter, searchQuery])
+  }, [statusFilter, criticalityFilter, categoryFilter])
 
   useEffect(() => {
     let cancelled = false
@@ -108,25 +132,24 @@ export const VendorRegistry: React.FC<VendorRegistryProps> = ({
     return Array.from(cats).sort()
   }, [vendors])
 
+  const categoryOptions: { value: string; label: string }[] = useMemo(() => [
+    { value: 'all', label: 'All Categories' },
+    ...uniqueCategories.map((cat) => ({ value: cat, label: cat })),
+  ], [uniqueCategories])
+
+  // Notify parent of the current filtered list (for pager navigation in VendorDetailPage)
+  useEffect(() => {
+    onFilteredListChange?.(filteredVendors)
+  }, [filteredVendors, onFilteredListChange])
+
   // ----- Render helpers -----
 
   if (loading) {
     return (
-      <div className="systems-page">
-        <div className="systems-loading" style={{ textAlign: 'center', padding: '3rem 1rem' }}>
-          <div
-            style={{
-              display: 'inline-block',
-              width: '2rem',
-              height: '2rem',
-              border: '3px solid var(--border)',
-              borderTopColor: 'var(--primary)',
-              borderRadius: '50%',
-              animation: 'spin 0.6s linear infinite',
-            }}
-          />
-          <p style={{ marginTop: '1rem', color: 'var(--muted)' }}>Loading vendors...</p>
-          <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      <div className="vendor-explorer-page">
+        <div className="vendor-explorer-loading">
+          <div className="vendor-explorer-spinner" aria-hidden="true" />
+          <p>Loading vendors...</p>
         </div>
       </div>
     )
@@ -134,15 +157,9 @@ export const VendorRegistry: React.FC<VendorRegistryProps> = ({
 
   if (error) {
     return (
-      <div className="systems-page">
-        <div
-          style={{
-            textAlign: 'center',
-            padding: '3rem 1rem',
-            color: '#ef4444',
-          }}
-        >
-          <p style={{ fontSize: '1.125rem', fontWeight: 600 }}>{error}</p>
+      <div className="vendor-explorer-page">
+        <div className="vendor-explorer-error">
+          <p>{error}</p>
           <button
             onClick={() => {
               setError(null)
@@ -152,16 +169,7 @@ export const VendorRegistry: React.FC<VendorRegistryProps> = ({
                 .catch(() => setError('Failed to load vendors. Please try again.'))
                 .finally(() => setLoading(false))
             }}
-            style={{
-              marginTop: '1rem',
-              padding: '0.5rem 1.25rem',
-              backgroundColor: 'var(--primary)',
-              color: '#fff',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: 'pointer',
-              fontWeight: 600,
-            }}
+            className="vendor-explorer-retry-btn"
           >
             Retry
           </button>
@@ -171,309 +179,203 @@ export const VendorRegistry: React.FC<VendorRegistryProps> = ({
   }
 
   return (
-    <div className="systems-page">
-      {/* Header */}
-      <div className="systems-header">
-        <div>
-          <h1>Vendor Registry</h1>
-          <p className="systems-subtitle">
-            Manage third-party vendors and their risk posture for your organisation
-          </p>
-        </div>
-        <button onClick={onAddVendor} className="systems-add-btn">
-          <span style={{ fontSize: '1.25rem' }}>+</span> Add Vendor
-        </button>
-      </div>
-
-      {/* Filters */}
-      <div className="systems-filters">
-        <div className="systems-search-wrapper">
-          <input
-            type="text"
-            placeholder="Search vendors by name..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="systems-search-input"
-          />
-        </div>
-
-        <div className="systems-filter-group">
-          <label>Status:</label>
-          <select
+    <div className="vendor-explorer-page">
+      <FilterSidebar
+        collapsed={filtersCollapsed}
+        onToggleCollapsed={() => setFiltersCollapsed((c) => !c)}
+        aria-label="Vendor filters"
+      >
+        <FilterGroup label="STATUS">
+          <FilterSelect
             value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value as VendorStatus | 'all')}
-            className="systems-filter-select"
-          >
-            <option value="all">All Statuses</option>
-            {(Object.keys(VENDOR_STATUS_LABELS) as VendorStatus[]).map((key) => (
-              <option key={key} value={key}>
-                {VENDOR_STATUS_LABELS[key]}
-              </option>
-            ))}
-          </select>
-        </div>
+            onChange={(v) => setStatusFilter(v as VendorStatus | 'all')}
+            options={STATUS_OPTIONS}
+          />
+        </FilterGroup>
 
-        <div className="systems-filter-group">
-          <label>Criticality:</label>
-          <select
+        <FilterGroup label="CRITICALITY">
+          <FilterSelect
             value={criticalityFilter}
-            onChange={(e) => setCriticalityFilter(e.target.value as VendorCriticality | 'all')}
-            className="systems-filter-select"
-          >
-            <option value="all">All Criticality Levels</option>
-            {(Object.keys(VENDOR_CRITICALITY_LABELS) as VendorCriticality[]).map((key) => (
-              <option key={key} value={key}>
-                {VENDOR_CRITICALITY_LABELS[key]}
-              </option>
-            ))}
-          </select>
-        </div>
+            onChange={(v) => setCriticalityFilter(v as VendorCriticality | 'all')}
+            options={CRITICALITY_OPTIONS}
+          />
+        </FilterGroup>
 
-        <div className="systems-filter-group">
-          <label>Category:</label>
-          <select
+        <FilterGroup label="CATEGORY">
+          <FilterSelect
             value={categoryFilter}
-            onChange={(e) => setCategoryFilter(e.target.value)}
-            className="systems-filter-select"
-          >
-            <option value="all">All Categories</option>
-            {uniqueCategories.map((cat) => (
-              <option key={cat} value={cat}>
-                {cat}
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
+            onChange={(v) => setCategoryFilter(v)}
+            options={categoryOptions}
+          />
+        </FilterGroup>
+      </FilterSidebar>
 
-      {/* Vendor List */}
-      {filteredVendors.length === 0 ? (
-        <div className="systems-empty-state">
-          <div className="systems-empty-icon">🏢</div>
-          <h3>No Vendors Found</h3>
-          <p>
-            {vendors.length === 0
-              ? 'Add your first vendor to start tracking third-party risk.'
-              : 'No vendors match the current filters. Try adjusting your search or filter criteria.'}
-          </p>
-          {vendors.length === 0 && (
-            <button
-              onClick={onAddVendor}
-              style={{
-                marginTop: '1rem',
-                padding: '0.75rem 1.5rem',
-                backgroundColor: 'var(--primary)',
-                color: '#fff',
-                border: 'none',
-                borderRadius: '4px',
-                cursor: 'pointer',
-                fontWeight: 600,
-              }}
-            >
-              Add Your First Vendor
+      <div className="vendor-explorer-body">
+        <ListToolbar
+          search={searchQuery}
+          onSearchChange={setSearchQuery}
+          searchPlaceholder="Search vendors by name…"
+          count={
+            <span className="vendor-explorer-count">
+              {filteredVendors.length} vendor{filteredVendors.length !== 1 ? 's' : ''}
+            </span>
+          }
+          actions={
+            <button onClick={onAddVendor} className="vendor-explorer-add-btn">
+              + Add Vendor
             </button>
+          }
+        />
+
+        <div className="vendor-explorer-rows">
+          {filteredVendors.length === 0 ? (
+            <div className="vendor-explorer-empty">
+              <h3>No Vendors Found</h3>
+              <p>
+                {vendors.length === 0
+                  ? 'Add your first vendor to start tracking third-party risk.'
+                  : 'No vendors match the current filters. Try adjusting your search or filter criteria.'}
+              </p>
+              {vendors.length === 0 && (
+                <button onClick={onAddVendor} className="vendor-explorer-add-btn">
+                  Add Your First Vendor
+                </button>
+              )}
+            </div>
+          ) : (
+            filteredVendors.map((vendor) => {
+              const statusColor = VENDOR_STATUS_COLORS[vendor.status] || 'var(--muted)'
+              const statusLabel = VENDOR_STATUS_LABELS[vendor.status] || vendor.status
+              const criticalityColor = VENDOR_CRITICALITY_COLORS[vendor.criticality] || 'var(--muted)'
+              const criticalityLabel = VENDOR_CRITICALITY_LABELS[vendor.criticality] || vendor.criticality
+              const rag = vendorRiskLevelToRAG(vendor.risk_level)
+              const ragColor = rag ? VENDOR_RAG_COLORS[rag] : null
+              const reviewStatus = vendor.review_status
+
+              return (
+                <ExplorerListRow
+                  key={vendor.id}
+                  title={vendor.name}
+                  description={vendor.description ?? undefined}
+                  onClick={() => onSelectVendor(vendor.id)}
+                >
+                  {/* Category chip */}
+                  {vendor.category && (
+                    <RowMeta>
+                      <span className="vendor-chip">{vendor.category}</span>
+                    </RowMeta>
+                  )}
+
+                  {/* Status badge */}
+                  <RowMeta>
+                    <span
+                      className="vendor-badge"
+                      style={{
+                        backgroundColor: statusColor + '1a',
+                        color: statusColor,
+                        border: `1px solid ${statusColor}40`,
+                      }}
+                    >
+                      {statusLabel}
+                    </span>
+                  </RowMeta>
+
+                  {/* Criticality badge */}
+                  <RowMeta>
+                    <span
+                      className="vendor-badge"
+                      style={{
+                        backgroundColor: criticalityColor + '1a',
+                        color: criticalityColor,
+                        border: `1px solid ${criticalityColor}40`,
+                      }}
+                    >
+                      {criticalityLabel}
+                    </span>
+                  </RowMeta>
+
+                  {/* Risk score + RAG pill */}
+                  <RowMeta>
+                    {vendor.risk_score != null && ragColor ? (
+                      <span
+                        className="vendor-rag-pill"
+                        style={{
+                          backgroundColor: ragColor + '1a',
+                          color: ragColor,
+                          border: `1px solid ${ragColor}40`,
+                        }}
+                      >
+                        {vendor.risk_score} · {rag}
+                      </span>
+                    ) : vendor.risk_score != null ? (
+                      <span className="vendor-risk-plain">{vendor.risk_score}</span>
+                    ) : (
+                      <span className="vendor-meta-dash">-</span>
+                    )}
+                  </RowMeta>
+
+                  {/* Review status */}
+                  <RowMeta>
+                    {reviewStatus === 'overdue' || reviewStatus === 'due_soon' ? (
+                      <span
+                        className="vendor-badge"
+                        style={{
+                          backgroundColor: (reviewStatus === 'overdue' ? 'var(--destructive)' : 'var(--warning)') + '1a',
+                          color: reviewStatus === 'overdue' ? 'var(--destructive)' : 'var(--warning)',
+                          border: `1px solid ${reviewStatus === 'overdue' ? 'var(--destructive)' : 'var(--warning)'}40`,
+                        }}
+                      >
+                        {reviewStatus === 'overdue' ? 'Overdue' : 'Due soon'}
+                      </span>
+                    ) : vendor.next_review_date ? (
+                      <span className="vendor-meta-muted">{formatDate(vendor.next_review_date)}</span>
+                    ) : (
+                      <span className="vendor-meta-dash">-</span>
+                    )}
+                  </RowMeta>
+
+                  {/* Contract end date */}
+                  <RowMeta>
+                    <span className="vendor-meta-text">{formatDate(vendor.contract_end_date)}</span>
+                  </RowMeta>
+
+                  {/* Contact */}
+                  <RowMeta>
+                    {vendor.contact_name ? (
+                      <span className="vendor-contact">
+                        <span className="vendor-contact-name">{vendor.contact_name}</span>
+                        {vendor.contact_email && (
+                          <span className="vendor-contact-email">{vendor.contact_email}</span>
+                        )}
+                      </span>
+                    ) : (
+                      <span className="vendor-meta-dash">-</span>
+                    )}
+                  </RowMeta>
+
+                  {/* Delete action — outside row click with stopPropagation */}
+                  <RowMeta>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onDeleteVendor(vendor)
+                      }}
+                      title="Delete vendor"
+                      aria-label={`Delete ${vendor.name}`}
+                      className="vendor-delete-btn"
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                        <polyline points="3 6 5 6 21 6" />
+                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                      </svg>
+                    </button>
+                  </RowMeta>
+                </ExplorerListRow>
+              )
+            })
           )}
         </div>
-      ) : (
-        <div className="systems-list-container">
-          {/* Table Header */}
-          <div
-            className="systems-table-header"
-            style={{
-              gridTemplateColumns: '2fr 1fr 1fr 1fr 0.9fr 0.9fr 1fr 1.25fr 0.5fr',
-            }}
-          >
-            <div>Name</div>
-            <div>Category</div>
-            <div>Status</div>
-            <div>Criticality</div>
-            <div>Risk</div>
-            <div>Review</div>
-            <div>Contract End Date</div>
-            <div>Contact</div>
-            <div></div>
-          </div>
-
-          {/* Vendor Rows */}
-          {filteredVendors.map((vendor) => {
-            const statusColor = VENDOR_STATUS_COLORS[vendor.status] || '#6b7280'
-            const statusLabel = VENDOR_STATUS_LABELS[vendor.status] || vendor.status
-            const criticalityColor = VENDOR_CRITICALITY_COLORS[vendor.criticality] || '#6b7280'
-            const criticalityLabel = VENDOR_CRITICALITY_LABELS[vendor.criticality] || vendor.criticality
-            const rag = vendorRiskLevelToRAG(vendor.risk_level)
-            const ragColor = rag ? VENDOR_RAG_COLORS[rag] : null
-            const reviewStatus = vendor.review_status
-
-            return (
-              <div
-                key={vendor.id}
-                className="systems-table-row"
-                style={{
-                  gridTemplateColumns: '2fr 1fr 1fr 1fr 0.9fr 0.9fr 1fr 1.25fr 0.5fr',
-                  cursor: 'pointer',
-                }}
-                onClick={() => onSelectVendor(vendor.id)}
-              >
-                {/* Name */}
-                <div>
-                  <div className="systems-name-link">{vendor.name}</div>
-                  {vendor.description && (
-                    <div className="systems-description">
-                      {vendor.description.length > 60
-                        ? `${vendor.description.substring(0, 60)}...`
-                        : vendor.description}
-                    </div>
-                  )}
-                </div>
-
-                {/* Category */}
-                <div className="systems-vendor">{vendor.category || '-'}</div>
-
-                {/* Status Badge */}
-                <div>
-                  <span
-                    className="systems-badge"
-                    style={{
-                      backgroundColor: statusColor + '1a',
-                      color: statusColor,
-                      border: `1px solid ${statusColor}40`,
-                      padding: '0.2rem 0.6rem',
-                      borderRadius: '4px',
-                      fontSize: '0.8rem',
-                      fontWeight: 600,
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    {statusLabel}
-                  </span>
-                </div>
-
-                {/* Criticality Badge */}
-                <div>
-                  <span
-                    className="systems-badge"
-                    style={{
-                      backgroundColor: criticalityColor + '1a',
-                      color: criticalityColor,
-                      border: `1px solid ${criticalityColor}40`,
-                      padding: '0.2rem 0.6rem',
-                      borderRadius: '4px',
-                      fontSize: '0.8rem',
-                      fontWeight: 600,
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    {criticalityLabel}
-                  </span>
-                </div>
-
-                {/* Risk: single score + RAG pill */}
-                <div>
-                  {vendor.risk_score != null && ragColor ? (
-                    <span
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '0.25rem',
-                        padding: '0.2rem 0.6rem',
-                        borderRadius: '9999px',
-                        fontSize: '0.8rem',
-                        fontWeight: 600,
-                        whiteSpace: 'nowrap',
-                        backgroundColor: ragColor + '1a',
-                        color: ragColor,
-                        border: `1px solid ${ragColor}40`,
-                      }}
-                    >
-                      {vendor.risk_score} · {rag}
-                    </span>
-                  ) : vendor.risk_score != null ? (
-                    <span style={{ fontWeight: 600, color: 'var(--text)' }}>{vendor.risk_score}</span>
-                  ) : (
-                    <span style={{ color: 'var(--muted)' }}>-</span>
-                  )}
-                </div>
-
-                {/* Review due badge */}
-                <div>
-                  {reviewStatus === 'overdue' || reviewStatus === 'due_soon' ? (
-                    <span
-                      style={{
-                        display: 'inline-block',
-                        padding: '0.2rem 0.6rem',
-                        borderRadius: '4px',
-                        fontSize: '0.8rem',
-                        fontWeight: 600,
-                        whiteSpace: 'nowrap',
-                        backgroundColor: (reviewStatus === 'overdue' ? '#ef4444' : '#f59e0b') + '1a',
-                        color: reviewStatus === 'overdue' ? '#ef4444' : '#f59e0b',
-                        border: `1px solid ${(reviewStatus === 'overdue' ? '#ef4444' : '#f59e0b')}40`,
-                      }}
-                    >
-                      {reviewStatus === 'overdue' ? 'Overdue' : 'Due soon'}
-                    </span>
-                  ) : vendor.next_review_date ? (
-                    <span style={{ color: 'var(--muted)', fontSize: '0.8rem', whiteSpace: 'nowrap' }}>
-                      {formatDate(vendor.next_review_date)}
-                    </span>
-                  ) : (
-                    <span style={{ color: 'var(--muted)' }}>-</span>
-                  )}
-                </div>
-
-                {/* Contract End Date */}
-                <div style={{ color: 'var(--text)', fontSize: '0.875rem' }}>
-                  {formatDate(vendor.contract_end_date)}
-                </div>
-
-                {/* Contact */}
-                <div style={{ fontSize: '0.875rem' }}>
-                  {vendor.contact_name ? (
-                    <div>
-                      <div style={{ fontWeight: 500, color: 'var(--text)' }}>{vendor.contact_name}</div>
-                      {vendor.contact_email && (
-                        <div style={{ color: 'var(--muted)', fontSize: '0.8rem' }}>
-                          {vendor.contact_email}
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    <span style={{ color: 'var(--muted)' }}>-</span>
-                  )}
-                </div>
-
-                {/* Delete action */}
-                <div style={{ display: 'flex', justifyContent: 'center' }}>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      onDeleteVendor(vendor)
-                    }}
-                    title="Delete vendor"
-                    style={{
-                      background: 'none',
-                      border: 'none',
-                      cursor: 'pointer',
-                      padding: '4px 8px',
-                      borderRadius: '4px',
-                      color: 'var(--muted)',
-                      fontSize: '0.875rem',
-                      transition: 'color 0.15s',
-                    }}
-                    onMouseEnter={(e) => (e.currentTarget.style.color = '#ef4444')}
-                    onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--muted)')}
-                  >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <polyline points="3 6 5 6 21 6" />
-                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                    </svg>
-                  </button>
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      )}
+      </div>
     </div>
   )
 }

@@ -9,6 +9,7 @@
  */
 import { useState, useEffect, useCallback } from 'react'
 import { toast } from 'react-hot-toast'
+import ListToolbar from './explorer/ListToolbar'
 import {
   listWebhookEndpoints,
   rotateWebhookSecret,
@@ -28,6 +29,7 @@ interface WebhookManagementProps {
 export default function WebhookManagement({ organizationId }: WebhookManagementProps) {
   const [endpoints, setEndpoints] = useState<WebhookEndpointResponse[]>([])
   const [loading, setLoading] = useState(true)
+  const [searchQuery, setSearchQuery] = useState('')
   const [expandedId, setExpandedId] = useState<string | null>(null)
 
   // Rotate secret state
@@ -162,23 +164,36 @@ export default function WebhookManagement({ organizationId }: WebhookManagementP
   const rotateEndpoint = endpoints.find(e => e.id === rotateConfirm)
   const deliveryEndpoint = endpoints.find(e => e.id === deliveryEndpointId)
 
+  const filteredEndpoints = searchQuery.trim()
+    ? endpoints.filter(ep =>
+        ep.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        ep.description?.toLowerCase().includes(searchQuery.toLowerCase())
+      )
+    : endpoints
+
   return (
     <div className="api-keys-section surface-bench">
-      <div className="section-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-        <div>
-          <h3 className="bench-header"><span className="container-title">Your Webhooks</span></h3>
-          <p>
-            Manage webhook endpoints for automated evidence ingestion. Use the Collection Wizard to create new endpoints.
-          </p>
-        </div>
-        <button
-          className="btn btn-primary"
-          onClick={() => toast('To create a webhook endpoint, use the Collection Wizard when configuring an evidence item.', { icon: 'ℹ️', duration: 5000 })}
-          style={{ whiteSpace: 'nowrap' }}
-        >
-          + Create (via Wizard)
-        </button>
+      <div className="section-header" style={{ marginBottom: '16px' }}>
+        <h3 className="bench-header"><span className="container-title">Your Webhooks</span></h3>
+        <p>
+          Manage webhook endpoints for automated evidence ingestion. Use the Collection Wizard to create new endpoints.
+        </p>
       </div>
+
+      <ListToolbar
+        search={searchQuery}
+        onSearchChange={setSearchQuery}
+        searchPlaceholder="Search webhooks…"
+        count={`${endpoints.length} endpoint${endpoints.length !== 1 ? 's' : ''}`}
+        actions={
+          <button
+            className="btn btn-primary webhook-create-btn"
+            onClick={() => toast('To create a webhook endpoint, use the Collection Wizard when configuring an evidence item.', { icon: 'ℹ️', duration: 5000 })}
+          >
+            + Create (via Wizard)
+          </button>
+        }
+      />
 
       {loading ? (
         <div style={{ textAlign: 'center', padding: '2rem' }}>
@@ -204,7 +219,7 @@ export default function WebhookManagement({ organizationId }: WebhookManagementP
               </tr>
             </thead>
             <tbody>
-              {endpoints.map(ep => (
+              {filteredEndpoints.map(ep => (
                 <>
                   <tr
                     key={ep.id}

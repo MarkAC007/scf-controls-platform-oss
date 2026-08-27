@@ -90,17 +90,29 @@ interface PostureBarSegment {
   label: string
 }
 
+/** Status bar colors — defined CSS custom properties, no bare hex. */
+const STATUS_BAR_COLORS: Record<string, string> = {
+  monitored: 'var(--purple)',
+  implemented: 'var(--success)',
+  ready_for_review: 'var(--purple)',
+  in_progress: 'var(--info)',
+  not_started: 'var(--muted)',
+  at_risk: 'var(--destructive)',
+  not_applicable: 'var(--muted)',
+  deferred: 'var(--warning)',
+}
+
 function getPostureSegments(posture: CapabilityThemeResponse['posture'], total: number): PostureBarSegment[] {
   if (total === 0) return []
   return [
-    { key: 'monitored', value: posture.monitored, color: '#8b5cf6', label: 'Monitored' },
-    { key: 'implemented', value: posture.implemented, color: '#22c55e', label: 'Implemented' },
-    { key: 'ready_for_review', value: posture.ready_for_review, color: '#06b6d4', label: 'Ready for Review' },
-    { key: 'in_progress', value: posture.in_progress, color: '#3b82f6', label: 'In Progress' },
-    { key: 'not_started', value: posture.not_started, color: '#94a3b8', label: 'Not Started' },
-    { key: 'at_risk', value: posture.at_risk, color: '#ef4444', label: 'At Risk' },
-    { key: 'not_applicable', value: posture.not_applicable, color: '#d1d5db', label: 'N/A' },
-    { key: 'deferred', value: posture.deferred, color: '#f59e0b', label: 'Deferred' },
+    { key: 'monitored', value: posture.monitored, color: STATUS_BAR_COLORS.monitored, label: 'Monitored' },
+    { key: 'implemented', value: posture.implemented, color: STATUS_BAR_COLORS.implemented, label: 'Implemented' },
+    { key: 'ready_for_review', value: posture.ready_for_review, color: STATUS_BAR_COLORS.ready_for_review, label: 'Ready for Review' },
+    { key: 'in_progress', value: posture.in_progress, color: STATUS_BAR_COLORS.in_progress, label: 'In Progress' },
+    { key: 'not_started', value: posture.not_started, color: STATUS_BAR_COLORS.not_started, label: 'Not Started' },
+    { key: 'at_risk', value: posture.at_risk, color: STATUS_BAR_COLORS.at_risk, label: 'At Risk' },
+    { key: 'not_applicable', value: posture.not_applicable, color: STATUS_BAR_COLORS.not_applicable, label: 'N/A' },
+    { key: 'deferred', value: posture.deferred, color: STATUS_BAR_COLORS.deferred, label: 'Deferred' },
   ].filter(s => s.value > 0)
 }
 
@@ -108,7 +120,7 @@ const CONFIDENCE_CONFIG: Record<string, { color: string; label: string }> = {
   strong: { color: 'var(--success)', label: 'Strong Evidence' },
   moderate: { color: 'var(--warning)', label: 'Moderate Evidence' },
   weak: { color: 'var(--destructive)', label: 'Weak Evidence' },
-  none: { color: 'var(--muted-foreground)', label: 'No Evidence' },
+  none: { color: 'var(--muted)', label: 'No Evidence' },
 }
 
 interface ThemeCardProps {

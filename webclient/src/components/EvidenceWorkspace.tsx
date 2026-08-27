@@ -16,6 +16,8 @@ import {
   withEvidenceView,
 } from '../data/appUrl'
 import type { EvidenceView } from '../data/appUrl'
+import TabRow from './explorer/TabRow'
+import type { TabRowItem } from './explorer/TabRow'
 
 interface EvidenceWorkspaceProps {
   controls: EnrichedControl[]
@@ -65,22 +67,19 @@ export default function EvidenceWorkspace({
     return () => window.removeEventListener('popstate', onPopState)
   }, [])
 
+  const EVIDENCE_TABS: TabRowItem[] = [
+    { id: 'dashboard', label: 'Dashboard' },
+    { id: 'workspace', label: 'Workspace' },
+  ]
+
   return (
     <div className="evidence-workspace">
-      <div className="evidence-workspace-tabs">
-        <button
-          className={`evidence-workspace-tab ${activeTab === 'dashboard' ? 'active' : ''}`}
-          onClick={() => selectTab('dashboard')}
-        >
-          Dashboard
-        </button>
-        <button
-          className={`evidence-workspace-tab ${activeTab === 'workspace' ? 'active' : ''}`}
-          onClick={() => selectTab('workspace')}
-        >
-          Workspace
-        </button>
-      </div>
+      <TabRow
+        tabs={EVIDENCE_TABS}
+        activeId={activeTab}
+        onSelect={(id) => selectTab(id as EvidenceView)}
+        aria-label="Evidence sub-tabs"
+      />
 
       <div className="evidence-workspace-content">
         {activeTab === 'workspace' && (

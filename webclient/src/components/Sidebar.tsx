@@ -1,4 +1,8 @@
-import { useState, useMemo } from 'react'
+import { useEffect, useState, useMemo } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { useOrgLogo } from '../hooks/useOrgLogo'
+import { useOrganization } from '../contexts/OrganizationContext'
+import { getCatalogStatusExtended } from '../data/catalogUpgradeApi'
 
 type Tab = 'dashboard' | 'capability-posture' | 'library' | 'scoping' | 'evidence' | 'mapping-matrix' | 'tasks' | 'systems' | 'users' | 'consultant-portal' | 'risk-register' | 'vendors' | 'settings' | 'webhooks' | 'audit-log' | 'engagements' | 'cdm' | 'document-map' | 'documents' | 'platform-catalog' | 'platform-tenants' | 'catalog-changelog'
 
@@ -206,20 +210,21 @@ interface NavItem {
 }
 
 interface NavSection {
+  /** Display label for the section header (rendered uppercase via CSS). */
   label: string
   items: NavItem[]
 }
 
 const navSections: NavSection[] = [
   {
-    label: 'Overview',
+    label: 'OVERVIEW',
     items: [
       { id: 'dashboard', label: 'Dashboard', icon: Icons.dashboard },
       { id: 'capability-posture', label: 'Analytics', icon: Icons.analytics },
     ],
   },
   {
-    label: 'Controls & Frameworks',
+    label: 'CONTROLS & FRAMEWORKS',
     items: [
       { id: 'library', label: 'Control Library', icon: Icons.library },
       { id: 'mapping-matrix', label: 'Framework Mappings', icon: Icons.matrix },
@@ -227,20 +232,20 @@ const navSections: NavSection[] = [
     ],
   },
   {
-    label: 'Risk & Third Party',
+    label: 'RISK & THIRD PARTY',
     items: [
       { id: 'risk-register', label: 'Risk Register', icon: Icons.risk },
       { id: 'vendors', label: 'Vendor Inventory', icon: Icons.vendor },
     ],
   },
   {
-    label: 'Evidence',
+    label: 'EVIDENCE',
     items: [
       { id: 'evidence', label: 'Evidence', icon: Icons.evidence },
     ],
   },
   {
-    label: 'Knowledge Base',
+    label: 'KNOWLEDGE BASE',
     items: [
       { id: 'cdm', label: 'Control Documents', icon: Icons.cdm },
       { id: 'document-map', label: 'Document Map', icon: Icons.documentMap },
@@ -248,7 +253,7 @@ const navSections: NavSection[] = [
     ],
   },
   {
-    label: 'Operations',
+    label: 'OPERATIONS',
     items: [
       { id: 'tasks', label: 'Task Management', icon: Icons.tasks },
       { id: 'systems', label: 'Systems Registry', icon: Icons.systems },
@@ -256,7 +261,7 @@ const navSections: NavSection[] = [
     ],
   },
   {
-    label: 'Admin',
+    label: 'ADMIN',
     items: [
       { id: 'engagements', label: 'Engagements', icon: Icons.engagements },
       { id: 'webhooks', label: 'Webhooks', icon: Icons.webhook },
@@ -267,7 +272,7 @@ const navSections: NavSection[] = [
     ],
   },
   {
-    label: 'Platform',
+    label: 'PLATFORM',
     items: [
       { id: 'platform-catalog', label: 'Catalog', icon: Icons.platformCatalog },
       { id: 'platform-tenants', label: 'Tenants', icon: Icons.tenants },
@@ -279,8 +284,103 @@ const navSections: NavSection[] = [
 // out for everyone else.
 const PLATFORM_TABS: Tab[] = ['platform-catalog', 'platform-tenants']
 
+// Role-gated item ids: shown only when the relevant flag is set.
+const ROLE_GATED_TABS: Tab[] = ['consultant-portal', 'platform-catalog', 'platform-tenants']
+
+const DEFAULT_APP_TITLE = 'SCF Controls Platform'
+
+/** Brand block — needs QueryClient + OrganizationProvider */
+function SidebarBrandBlock() {
+  const { currentOrg } = useOrganization()
+  const { data: orgLogoUrl } = useOrgLogo(currentOrg?.id)
+
+  const appLogoEnv = import.meta.env.VITE_APP_LOGO
+  const appLogo = appLogoEnv === '' ? null : (appLogoEnv || '/cropped-Logo-301x101.webp')
+  const logoSrc = orgLogoUrl || appLogo
+
+  // Degrade broken logo to wordmark alone (#807)
+  const [logoBroken, setLogoBroken] = useState(false)
+  useEffect(() => {
+    setLogoBroken(false)
+  }, [logoSrc])
+
+  // White-label: when VITE_APP_TITLE is set to a non-default value, render
+  // that title instead of the stylized "SCF Controls" wordmark.
+  const appTitleEnv = import.meta.env.VITE_APP_TITLE
+  const isCustomTitle = appTitleEnv && appTitleEnv !== DEFAULT_APP_TITLE
+
+  return (
+    <div className="sidebar-brand">
+      <div className="sidebar-brand-logo">
+        {logoSrc && !logoBroken && (
+          <img src={logoSrc} alt="Logo" onError={() => setLogoBroken(true)} />
+        )}
+      </div>
+      <div className="sidebar-brand-wordmark">
+        {isCustomTitle ? (
+          <span className="sidebar-brand-title">{appTitleEnv}</span>
+        ) : (
+          <span className="sidebar-brand-title">
+            SCF <span className="sidebar-brand-accent">Controls</span>
+          </span>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/** Nav footer with role-gate note and catalog version chip — needs QueryClient */
+function SidebarFooter({ showRoleGateNote }: { showRoleGateNote: boolean }) {
+  // Catalog version chip — cached, never fires a new call per-render
+  const { data: catalogStatus } = useQuery({
+    queryKey: ['catalog-status-sidebar'],
+    queryFn: getCatalogStatusExtended,
+    staleTime: 10 * 60 * 1000, // 10 min
+    refetchOnWindowFocus: false,
+    retry: false,
+  })
+  const catalogVersion = catalogStatus?.catalog_version ?? null
+
+  return (
+    <div className="sidebar-footer">
+      {showRoleGateNote && (
+        <div className="sidebar-footer-note">
+          ◇ role-gated — consultant / platform admin only
+        </div>
+      )}
+      {catalogVersion && (
+        <div className="sidebar-footer-version">
+          SCF {catalogVersion}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Persisted collapse preference — '1' means the user pinned the rail closed.
+const NAV_COLLAPSED_KEY = 'scf-nav-collapsed'
+
 export default function Sidebar({ activeTab, onTabChange, showConsultantPortal = false, isPlatformAdmin = false, mobileOpen = false, onMobileClose }: SidebarProps) {
-  const [isExpanded, setIsExpanded] = useState(false)
+  // Expanded (labels visible) by default; the toggle pins it either way.
+  // Hover no longer drives expansion — 20+ icon-only entries were unlearnable.
+  const [isExpanded, setIsExpanded] = useState(() => {
+    try {
+      return localStorage.getItem(NAV_COLLAPSED_KEY) !== '1'
+    } catch {
+      return true
+    }
+  })
+
+  const toggleExpanded = () => {
+    setIsExpanded(prev => {
+      try {
+        localStorage.setItem(NAV_COLLAPSED_KEY, prev ? '1' : '0')
+      } catch {
+        // Private mode: preference just won't persist
+      }
+      return !prev
+    })
+  }
 
   const visibleSections = useMemo(() => {
     return navSections.map(section => ({
@@ -292,6 +392,13 @@ export default function Sidebar({ activeTab, onTabChange, showConsultantPortal =
       }),
     })).filter(section => section.items.length > 0)
   }, [showConsultantPortal, isPlatformAdmin])
+
+  // Show the role-gate note only when at least one gated entry is visible
+  const showRoleGateNote = useMemo(() => {
+    return visibleSections.some(section =>
+      section.items.some(item => ROLE_GATED_TABS.includes(item.id))
+    )
+  }, [visibleSections])
 
   const handleSelect = (tab: Tab) => {
     onTabChange(tab)
@@ -310,9 +417,10 @@ export default function Sidebar({ activeTab, onTabChange, showConsultantPortal =
       <nav
         className={`sidebar-nav ${isExpanded ? 'expanded' : ''} ${mobileOpen ? 'mobile-open' : ''}`}
         aria-label="Primary navigation"
-        onMouseEnter={() => setIsExpanded(true)}
-        onMouseLeave={() => setIsExpanded(false)}
       >
+        {/* Brand block */}
+        <SidebarBrandBlock />
+
         <div className="sidebar-nav-items">
           {visibleSections.map((section) => (
             <div key={section.label} className="sidebar-section">
@@ -331,6 +439,34 @@ export default function Sidebar({ activeTab, onTabChange, showConsultantPortal =
             </div>
           ))}
         </div>
+
+        <button
+          className="sidebar-collapse-toggle"
+          type="button"
+          onClick={toggleExpanded}
+          aria-expanded={isExpanded}
+          title={isExpanded ? 'Collapse navigation' : 'Expand navigation'}
+        >
+          <span className="sidebar-nav-icon" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              {isExpanded ? (
+                <>
+                  <polyline points="11 17 6 12 11 7" />
+                  <polyline points="18 17 13 12 18 7" />
+                </>
+              ) : (
+                <>
+                  <polyline points="13 17 18 12 13 7" />
+                  <polyline points="6 17 11 12 6 7" />
+                </>
+              )}
+            </svg>
+          </span>
+          <span className="sidebar-nav-label">Collapse</span>
+        </button>
+
+        {/* Nav footer */}
+        <SidebarFooter showRoleGateNote={showRoleGateNote} />
       </nav>
     </>
   )

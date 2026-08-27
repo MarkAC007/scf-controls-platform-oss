@@ -1,8 +1,46 @@
+/**
+ * How to read the map — compact inline form for the Explorer chrome.
+ *
+ * Phase-5 restyle: the four coverage states are folded into the section-head
+ * row as compact swatch + label pairs. The expanded card form (three-column
+ * legend with glyph explanations) is preserved in the full dm-legend section
+ * that sits above the grid for accessible, printable reference.
+ *
+ * Every non-colour cue (glyph, word, strip pattern) remains on the tiles
+ * themselves; the inline legend adds orientation without replacing the
+ * redundant channels on each tile.
+ */
+
+/** Compact inline version — four swatch+label pairs for the section head. */
+export function MapLegendInline() {
+  return (
+    <div className="dm-legend-inline" aria-label="Coverage legend">
+      <span className="dm-legend-inline-item">
+        <span className="dm-legend-inline-swatch dm-legend-inline-swatch-covered" aria-hidden="true" />
+        Confirmed
+      </span>
+      <span className="dm-legend-inline-item">
+        <span className="dm-legend-inline-swatch dm-legend-inline-swatch-claimed" aria-hidden="true" />
+        Suggested
+      </span>
+      <span className="dm-legend-inline-item">
+        <span className="dm-legend-inline-swatch dm-legend-inline-swatch-gap" aria-hidden="true" />
+        Gap
+      </span>
+      <span className="dm-legend-inline-item">
+        <span className="dm-legend-inline-swatch dm-legend-inline-swatch-oos" aria-hidden="true" />
+        Not in scope
+      </span>
+    </div>
+  )
+}
+
 import { AlertGlyph, CheckGlyph, MinusGlyph, RingGlyph } from './icons'
 
 /**
- * How to read the map. Every entry names the non-colour cue as well as the
- * colour, because colour is never the only signal on this screen.
+ * Full expanded legend — three-column card above the grid.
+ * Still rendered on the page for accessible, printable reference; the section-
+ * head inline variant adds quick orientation when the card scrolls out of view.
  */
 export default function MapLegend() {
   return (

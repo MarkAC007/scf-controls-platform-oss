@@ -150,6 +150,11 @@ describe('writers', () => {
       tab: 'evidence',
       evidenceView: 'workspace',
       evidenceItem: 'E-HRS-16',
+      libraryItem: null,
+      riskItem: null,
+      vendorItem: null,
+      systemItem: null,
+      taskItem: null,
     })
   })
 

@@ -28,23 +28,24 @@ const STATUS_LABELS: Record<string, string> = {
   deferred: 'Deferred',
 }
 
+/** Status bar colors — defined CSS custom properties, no bare hex. */
 const STATUS_COLORS: Record<string, string> = {
-  monitored: '#8b5cf6',
-  implemented: '#22c55e',
-  ready_for_review: '#06b6d4',
-  in_progress: '#3b82f6',
-  not_started: '#94a3b8',
-  at_risk: '#ef4444',
-  not_applicable: '#d1d5db',
-  deferred: '#f59e0b',
+  monitored: 'var(--purple)',
+  implemented: 'var(--success)',
+  ready_for_review: 'var(--purple)',
+  in_progress: 'var(--info)',
+  not_started: 'var(--muted)',
+  at_risk: 'var(--destructive)',
+  not_applicable: 'var(--muted)',
+  deferred: 'var(--warning)',
 }
 
 const ASSESSMENT_STATUS_COLORS: Record<string, string> = {
-  sufficient: '#22c55e',
-  partial: '#f59e0b',
-  insufficient: '#ef4444',
-  pending: '#3b82f6',
-  unassessed: '#94a3b8',
+  sufficient: 'var(--success)',
+  partial: 'var(--warning)',
+  insufficient: 'var(--destructive)',
+  pending: 'var(--info)',
+  unassessed: 'var(--muted)',
 }
 
 const ASSESSMENT_STATUS_LABELS: Record<string, string> = {
@@ -56,10 +57,10 @@ const ASSESSMENT_STATUS_LABELS: Record<string, string> = {
 }
 
 const CONFIDENCE_LABELS: Record<string, { label: string; color: string }> = {
-  strong: { label: 'Strong', color: '#22c55e' },
-  moderate: { label: 'Moderate', color: '#f59e0b' },
-  weak: { label: 'Weak', color: '#ef4444' },
-  none: { label: 'None', color: '#94a3b8' },
+  strong: { label: 'Strong', color: 'var(--success)' },
+  moderate: { label: 'Moderate', color: 'var(--warning)' },
+  weak: { label: 'Weak', color: 'var(--destructive)' },
+  none: { label: 'None', color: 'var(--muted)' },
 }
 
 interface ThemeDetailProps {

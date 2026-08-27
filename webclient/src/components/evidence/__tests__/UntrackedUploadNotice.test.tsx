@@ -39,17 +39,18 @@ describe('UntrackedUploadNotice', () => {
 })
 
 describe('the notice is not a gate', () => {
-  const sources = import.meta.glob('../../*.tsx', {
+  // Phase 4 (Task 3): upload controls live in EvidenceDetailPage, not EvidenceReview.
+  const sources = import.meta.glob('../*.tsx', {
     query: '?raw',
     import: 'default',
     eager: true,
   }) as Record<string, string>
 
-  function evidenceReview(): string {
-    const key = Object.keys(sources).find(k => k.endsWith('EvidenceReview.tsx'))
+  function evidenceDetailPage(): string {
+    const key = Object.keys(sources).find(k => k.endsWith('EvidenceDetailPage.tsx'))
     if (!key) {
       throw new Error(
-        `EvidenceReview.tsx not loaded — the glob matched ${Object.keys(sources).length} files`,
+        `EvidenceDetailPage.tsx not loaded — the glob matched ${Object.keys(sources).length} files`,
       )
     }
     return sources[key]
@@ -57,13 +58,14 @@ describe('the notice is not a gate', () => {
 
   it('loaded the fixture it is asserting on', () => {
     // A glob matching nothing would make the case below pass vacuously.
-    expect(evidenceReview()).toContain('EvidenceFileUpload')
+    expect(evidenceDetailPage()).toContain('EvidenceFileUpload')
   })
 
   it('renders the upload control regardless of tracking state', () => {
     // Refusing the upload would be a second wrong answer: capturing evidence
     // before deciding how it will be collected is a legitimate order to work in.
-    const text = evidenceReview()
+    // Since Phase 4 Task 3, upload controls live in EvidenceDetailPage.
+    const text = evidenceDetailPage()
     const uploadBlock = text.slice(text.indexOf('<UntrackedUploadNotice'))
     expect(uploadBlock).toMatch(/<EvidenceFileUpload/)
     expect(uploadBlock.slice(0, uploadBlock.indexOf('<EvidenceFileUpload'))).not.toMatch(

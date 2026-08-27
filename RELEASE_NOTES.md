@@ -1,19 +1,21 @@
-# v0.23.0
+# v0.24.0
 
 Adds SCF document generation to the platform — generated documents with versions, sections and review transitions. Migration docgen001 creates five new tables and changes no existing schema.
 
 ## What's new
 
-- Allow teams to serve multiple functions (PR 830)
-- A task's owning team, one rule for who hears about an item, and a queue that reads what assignment writes (PR 829)
+- Phase 1 Foundation — Plex type, nav tokens, chrome components, dark nav, utility bar, footer (PR 834)
 
-## Migrations
+## Fixes and improvements
 
-- `evtaskteam1` — Evidence collection tasks gain an organisation and an optional owning team.
-- `teamfunctions2` — Allow each team to serve one or more business functions.
-
-Migrations run automatically on upgrade. Review them before upgrading a deployment you cannot restore.
+- Evidence workspace layout, pinned nav, tighter filters (PR 840)
+- Phase 5 — remaining pages in explorer chrome (zero functionality loss) (PR 839)
+- Constant format string in bulk-update error log (PR 838)
+- Phase 4 Details & Dashboards — six detail pages, dashboard tabs, modal promotions (PR 837)
+- Phase 3 List Rollout — Scoping bulk bar, Evidence, Risk, Vendors, Systems, Tasks, Users (PR 836)
+- Phase 2 Reference Pair — Control Library full-width list + detail with pager (PR 835)
+- Option A design mockups export (spec assets for `#832`) (PR 833)
 
 ## Upgrading
 
-- Run `scripts/upgrade.sh v0.23.0` (read `UPGRADING.md` first).
+- Run `scripts/upgrade.sh v0.24.0` (read `UPGRADING.md` first).

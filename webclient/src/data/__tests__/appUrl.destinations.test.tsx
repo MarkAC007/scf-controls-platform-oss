@@ -14,6 +14,7 @@
  * is exactly the drift that produced #810.
  */
 import { fireEvent, render, screen } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import Sidebar from '../../components/Sidebar'
@@ -26,6 +27,18 @@ import {
   toSearchString,
 } from '../appUrl'
 
+// Silence provider-dependent hooks so Sidebar renders without QueryClient/OrganizationProvider
+vi.mock('../../hooks/useOrgLogo', () => ({
+  useOrgLogo: vi.fn().mockReturnValue({ data: null }),
+  ORG_LOGO_QUERY_KEY: 'organization-logo',
+}))
+vi.mock('../../contexts/OrganizationContext', () => ({
+  useOrganization: () => ({ currentOrg: null }),
+}))
+vi.mock('../catalogUpgradeApi', () => ({
+  getCatalogStatusExtended: vi.fn().mockResolvedValue({ catalog_version: null, seeded: false, controls: 0 }),
+}))
+
 /**
  * The destinations the sidebar offers, in the order it offers them, obtained by
  * clicking every one of them. Both role-gated sections are switched on so the
@@ -33,8 +46,11 @@ import {
  */
 function sidebarDestinations(): string[] {
   const onTabChange = vi.fn()
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   const { unmount } = render(
-    <Sidebar activeTab="dashboard" onTabChange={onTabChange} isPlatformAdmin showConsultantPortal />,
+    <QueryClientProvider client={client}>
+      <Sidebar activeTab="dashboard" onTabChange={onTabChange} isPlatformAdmin showConsultantPortal />
+    </QueryClientProvider>,
   )
   for (const button of screen.getAllByRole('button')) fireEvent.click(button)
   unmount()

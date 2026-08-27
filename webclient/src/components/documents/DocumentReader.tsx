@@ -46,13 +46,33 @@ import SectionDecision from './SectionDecision'
 import SectionDiff from './SectionDiff'
 import { useResolveSection } from './useResolveSection'
 
-interface Props {
+export interface DocumentReaderProps {
   organizationId: string
   documentId: string
+  /**
+   * Document title shown in the breadcrumb before the query resolves.
+   * Falls back to the fetched doc.title once available.
+   */
+  documentTitle?: string
+  /**
+   * Pager position in the generated-docs list.
+   *
+   * null → total unknown (pager hidden, both buttons disabled)
+   * { index: null, total } → doc not in current filter set, "— of N", both disabled
+   * { index: number, total } → normal pager
+   */
+  position?: { index: number | null; total: number } | null
+  /** Navigate to the previous document in the list. */
+  onPrev?: () => void
+  /** Navigate to the next document in the list. */
+  onNext?: () => void
   onBack: () => void
   /** Enter the editor. The section id anchors it to what was being read. */
   onEdit: (sectionId: string | null) => void
 }
+
+/** @deprecated Use DocumentReaderProps */
+type Props = DocumentReaderProps
 
 /**
  * What the reader is allowed to render.
@@ -96,9 +116,24 @@ const LIFECYCLE_ORDER: LifecycleStatus[] = [
 /** Statuses that always earn their chrome, however uniform the document is. */
 const ALWAYS_FLAGGED = new Set(['conflict', 'pending_retirement'])
 
+/** True when the keyboard event target should suppress pager shortcuts. */
+function isSuppressed(e: KeyboardEvent): boolean {
+  const t = e.target
+  if (!t || !(t instanceof Element)) return false
+  const tag = (t as HTMLElement).tagName?.toLowerCase()
+  if (!tag) return false
+  if (tag === 'input' || tag === 'textarea' || tag === 'select') return true
+  if ((t as HTMLElement).isContentEditable) return true
+  return false
+}
+
 export default function DocumentReader({
   organizationId,
   documentId,
+  documentTitle,
+  position = null,
+  onPrev,
+  onNext,
   onBack,
   onEdit,
 }: Props) {
@@ -117,6 +152,34 @@ export default function DocumentReader({
   const [decisionMounts, setDecisionMounts] = useState<Record<string, HTMLElement>>({})
   const bodyRef = useRef<HTMLDivElement>(null)
   const tocRef = useRef<HTMLUListElement>(null)
+
+  // ── Pager keyboard shortcuts ─────────────────────────────────────────────
+  // ArrowLeft/ArrowRight walk the document list; Esc closes the reader.
+  // Suppressed when focus is in an interactive element (input/textarea/select/
+  // contentEditable) and when a dropdown is open — same pattern as
+  // ControlDetailPage.
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent): void {
+      if (isSuppressed(e)) return
+      if (
+        e.key === 'Escape' &&
+        document.querySelector('.theme-menu-panel, .user-dropdown-menu')
+      ) return
+
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault()
+        onPrev?.()
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault()
+        onNext?.()
+      } else if (e.key === 'Escape') {
+        e.preventDefault()
+        onBack()
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [onPrev, onNext, onBack])
 
   const { data: doc } = useQuery({
     queryKey: ['document', organizationId, documentId],
@@ -286,8 +349,105 @@ export default function DocumentReader({
     )
   }
 
+  // ── Pager derived values (computed before the !doc guard so breadcrumb
+  //    renders immediately, giving users context while the doc loads) ────────
+  const isFirst = position === null || position.index === null || position.index === 0
+  const isLast =
+    position === null ||
+    position.index === null ||
+    position.index === position.total - 1
+  // null → hidden; index null → "— of N documents"; normal → "k of N documents"
+  const positionText =
+    position === null
+      ? null
+      : position.index === null
+        ? `— of ${position.total} documents`
+        : `${position.index + 1} of ${position.total} documents`
+  // Use the fetched title once available; fall back to the prop for instant
+  // breadcrumb while the query is in-flight.
+  const breadcrumbTitle = doc?.title ?? documentTitle
+
+  // ── Breadcrumb bar (always rendered — even while loading) ─────────────────
+  const breadcrumbBar = (
+    <div className="doc-reader-breadcrumb">
+      <button
+        type="button"
+        className="doc-reader-back-btn"
+        onClick={onBack}
+        aria-label="Back to Generated Documents"
+      >
+        <svg
+          className="doc-reader-back-icon"
+          width="14"
+          height="14"
+          viewBox="0 0 14 14"
+          fill="none"
+          aria-hidden="true"
+        >
+          <path
+            d="M9 2L4 7l5 5"
+            stroke="currentColor"
+            strokeWidth="1.6"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+        Generated Documents
+      </button>
+      <span className="doc-reader-breadcrumb-sep">/</span>
+      <span className="doc-reader-breadcrumb-name">{breadcrumbTitle}</span>
+
+      <div className="doc-reader-pager">
+        {positionText && (
+          <span className="doc-reader-position">{positionText}</span>
+        )}
+        <div className="doc-reader-pager-buttons">
+          <button
+            type="button"
+            className="doc-reader-pager-btn"
+            onClick={onPrev}
+            disabled={isFirst}
+            aria-label="Previous document"
+          >
+            <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+              <path
+                d="M9 2L4 7l5 5"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
+          <button
+            type="button"
+            className="doc-reader-pager-btn"
+            onClick={onNext}
+            disabled={isLast}
+            aria-label="Next document"
+          >
+            <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+              <path
+                d="M5 2l5 5-5 5"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+
   if (!doc) {
-    return <div className="doc-editor-loading-page">Loading document…</div>
+    return (
+      <div className="doc-reader">
+        {breadcrumbBar}
+        <div className="doc-editor-loading-page">Loading document…</div>
+      </div>
+    )
   }
 
   const stageIndex = LIFECYCLE_ORDER.indexOf(doc.lifecycle_status)
@@ -323,6 +483,9 @@ export default function DocumentReader({
 
   return (
     <div className="doc-reader">
+      {/* ── Breadcrumb + pager bar ────────────────────────────────────── */}
+      {breadcrumbBar}
+
       {/* ── Masthead ─────────────────────────────────────────────────── */}
       {/* Compact on purpose. At 1280×800 the header, stepper and stacked
           notices used to take half the window and left the document itself in

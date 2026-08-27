@@ -8,14 +8,15 @@ interface MaturityHistogramProps {
 
 const LEVELS = ['L0', 'L1', 'L2', 'L3', 'L4', 'L5'] as const
 
+/** Maturity level histogram colors — defined CSS custom properties, no bare hex. */
 const LEVEL_COLORS: Record<string, string> = {
-  L0: '#ef4444',
-  L1: '#f97316',
-  L2: '#f59e0b',
-  L3: '#22c55e',
-  L4: '#16a34a',
-  L5: '#15803d',
-  unset: '#94a3b8',
+  L0: 'var(--maturity-l0)',
+  L1: 'var(--maturity-l1)',
+  L2: 'var(--maturity-l2)',
+  L3: 'var(--maturity-l3)',
+  L4: 'var(--maturity-l4)',
+  L5: 'var(--maturity-l5)',
+  unset: 'var(--muted)',
 }
 
 export default function MaturityHistogram({ controls, includeUnset = true }: MaturityHistogramProps) {

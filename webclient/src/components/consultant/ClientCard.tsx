@@ -5,112 +5,117 @@ interface ClientCardProps {
   isCurrentOrg?: boolean
 }
 
+type ReadinessGrade = 'excellent' | 'good' | 'fair' | 'needs-work'
+
+function getReadinessGrade(percent: number): ReadinessGrade {
+  if (percent >= 90) return 'excellent'
+  if (percent >= 70) return 'good'
+  if (percent >= 50) return 'fair'
+  return 'needs-work'
+}
+
+const GRADE_LABEL: Record<ReadinessGrade, string> = {
+  excellent: 'Excellent',
+  good: 'Good',
+  fair: 'Fair',
+  'needs-work': 'Needs Work',
+}
+
+function formatDate(dateString: string): string {
+  const date = new Date(dateString)
+  const now = new Date()
+  const diffMs = now.getTime() - date.getTime()
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
+
+  if (diffDays === 0) return 'Today'
+  if (diffDays === 1) return 'Yesterday'
+  if (diffDays < 7) return `${diffDays} days ago`
+  if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`
+  return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+}
+
 export default function ClientCard({ client, isCurrentOrg }: ClientCardProps) {
-  const getReadinessGrade = (percent: number): { label: string; className: string } => {
-    if (percent >= 90) return { label: 'Excellent', className: 'readiness-excellent' }
-    if (percent >= 70) return { label: 'Good', className: 'readiness-good' }
-    if (percent >= 50) return { label: 'Fair', className: 'readiness-fair' }
-    return { label: 'Needs Work', className: 'readiness-needs-work' }
-  }
-
-  const formatDate = (dateString: string): string => {
-    const date = new Date(dateString)
-    const now = new Date()
-    const diffMs = now.getTime() - date.getTime()
-    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
-
-    if (diffDays === 0) return 'Today'
-    if (diffDays === 1) return 'Yesterday'
-    if (diffDays < 7) return `${diffDays} days ago`
-    if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`
-    return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
-  }
-
-  const readiness = getReadinessGrade(client.framework_readiness_percent)
+  const grade = getReadinessGrade(client.framework_readiness_percent)
   const implementationPercent = client.controls_total > 0
     ? Math.round((client.controls_implemented / client.controls_total) * 100)
     : 0
 
   return (
-    <div className={`client-card ${isCurrentOrg ? 'client-card-current' : ''}`}>
-      {isCurrentOrg && (
-        <div className="client-card-current-badge">Current</div>
-      )}
-
-      <div className="client-card-header">
-        <div className="client-card-org-icon">
+    <div className={`consultant-client-card${isCurrentOrg ? ' card-current' : ''}`}>
+      {/* Header: org icon · name · badge */}
+      <div className="consultant-card-header">
+        <div className="consultant-card-org-icon">
           {client.organization_name.charAt(0).toUpperCase()}
         </div>
-        <div className="client-card-title">
-          <h3>{client.organization_name}</h3>
-          {client.primary_framework && (
-            <span className="client-card-framework">{client.primary_framework}</span>
-          )}
-        </div>
+        <span className="consultant-card-org-name">{client.organization_name}</span>
+        {isCurrentOrg && (
+          <span className="consultant-card-current-badge">Current</span>
+        )}
+        {client.primary_framework && (
+          <span className="consultant-card-framework-badge">{client.primary_framework}</span>
+        )}
       </div>
 
-      <div className="client-card-readiness">
-        <div className="readiness-header">
-          <span className="readiness-label">Framework Readiness</span>
-          <span className={`readiness-badge ${readiness.className}`}>
-            {readiness.label}
+      {/* Readiness */}
+      <div className="consultant-card-readiness">
+        <div className="consultant-card-readiness-header">
+          <span className="consultant-card-readiness-label">Framework Readiness</span>
+          <span className={`consultant-card-readiness-badge badge-${grade}`}>
+            {GRADE_LABEL[grade]}
           </span>
         </div>
-        <div className="readiness-bar-container">
+        <div className="consultant-card-readiness-bar">
           <div
-            className={`readiness-bar-fill ${readiness.className}`}
+            className={`consultant-card-readiness-fill fill-${grade}`}
             style={{ width: `${client.framework_readiness_percent}%` }}
           />
         </div>
-        <div className="readiness-percent">{client.framework_readiness_percent}%</div>
+        <span className="consultant-card-readiness-pct">{client.framework_readiness_percent}%</span>
       </div>
 
-      <div className="client-card-stats">
-        <div className="client-stat">
-          <div className="client-stat-value">
+      {/* Controls stats */}
+      <div className="consultant-card-stats">
+        <div className="consultant-card-controls-row">
+          <span className="consultant-card-controls-value">
             {client.controls_implemented}
-            <span className="client-stat-total">/{client.controls_total}</span>
-          </div>
-          <div className="client-stat-label">Controls</div>
-          <div className="client-stat-bar">
-            <div
-              className="client-stat-bar-fill implemented"
-              style={{ width: `${implementationPercent}%` }}
-            />
-          </div>
+            <span className="consultant-card-controls-denom">/{client.controls_total}</span>
+          </span>
+          <span className="consultant-card-controls-label">controls implemented</span>
         </div>
-
-        <div className="client-stat-inline">
-          <div className="client-stat-item">
-            <span className="status-dot status-in_progress" />
-            <span>{client.controls_in_progress} in progress</span>
-          </div>
+        <div className="consultant-card-impl-bar">
+          <div
+            className="consultant-card-impl-fill"
+            style={{ width: `${implementationPercent}%` }}
+          />
+        </div>
+        <div className="consultant-card-status-row">
+          <span className="consultant-card-status-item">
+            <span className="consultant-card-status-dot dot-in-progress" />
+            {client.controls_in_progress} in progress
+          </span>
           {client.controls_at_risk > 0 && (
-            <div className="client-stat-item at-risk">
-              <span className="status-dot status-at_risk" />
-              <span>{client.controls_at_risk} at risk</span>
-            </div>
+            <span className="consultant-card-status-item item-at-risk">
+              <span className="consultant-card-status-dot dot-at-risk" />
+              {client.controls_at_risk} at risk
+            </span>
           )}
         </div>
-
-        <div className="client-stat evidence">
-          <div className="client-stat-value">
-            {client.evidence_tracked}
-            <span className="client-stat-total">/{client.evidence_total}</span>
-          </div>
-          <div className="client-stat-label">Evidence Tracked</div>
+        <div className="consultant-card-evidence-row">
+          <span className="consultant-card-evidence-value">{client.evidence_tracked}</span>
+          /{client.evidence_total} evidence tracked
         </div>
       </div>
 
-      <div className="client-card-footer">
-        <div className="client-card-activity">
-          <span className="activity-label">Last activity:</span>
-          <span className="activity-date">{formatDate(client.last_activity_date)}</span>
-          {client.last_activity_by && (
-            <span className="activity-by">by {client.last_activity_by}</span>
-          )}
-        </div>
-
+      {/* Footer */}
+      <div className="consultant-card-footer">
+        Last activity:{' '}
+        <span className="consultant-card-activity-date">{formatDate(client.last_activity_date)}</span>
+        {client.last_activity_by && (
+          <> by {client.last_activity_by}</>
+        )}
+        {client.awaiting_admin && (
+          <span className="consultant-card-awaiting-badge">Awaiting admin</span>
+        )}
       </div>
     </div>
   )
