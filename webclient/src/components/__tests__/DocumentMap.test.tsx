@@ -422,4 +422,59 @@ describe('DocumentMap', () => {
       expect(screen.getByText(/Failed to load the document map/)).toBeInTheDocument()
     )
   })
+
+  /* ── Phase-5 restyle-pinning tests ────────────────────────── */
+
+  it('renders all four KPI values and sub-labels after load', async () => {
+    mockFetch.mockResolvedValue(response())
+    const { container } = renderMap()
+
+    await waitFor(() => expect(tile('GOV')).toBeInTheDocument())
+
+    const kpis = Array.from(container.querySelectorAll('.dm-kpi'))
+    expect(kpis).toHaveLength(4)
+
+    // KPI values are present and numeric (no stale/missing renders)
+    const values = kpis.map((el) => el.querySelector('.kpi-value')?.textContent?.trim())
+    // documents_total=3, covered=1, accepted=7, proposed=19
+    expect(values).toContain('3')   // Documents on the map
+    expect(values).toContain('7')   // Confirmed mappings (from default domain fixture)
+    // All KPIs carry a sub-label
+    kpis.forEach((el) => {
+      expect(el.querySelector('.dm-kpi-sub')).not.toBeNull()
+    })
+  })
+
+  it('opens the detail panel when a tile is clicked and closes on backdrop click', async () => {
+    mockFetch.mockResolvedValue(response())
+    renderMap()
+
+    await waitFor(() => expect(tile('GOV')).toBeInTheDocument())
+
+    // Panel hidden before interaction
+    expect(screen.getByRole('dialog', { hidden: true })).not.toBeVisible()
+
+    fireEvent.click(tile('GOV'))
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(within(screen.getByRole('dialog')).getByText('GOV')).toBeInTheDocument()
+
+    // Backdrop click dismisses the panel
+    const backdrop = document.querySelector('.dm-backdrop') as HTMLElement
+    fireEvent.click(backdrop)
+    await waitFor(() =>
+      expect(screen.getByRole('dialog', { hidden: true })).not.toBeVisible()
+    )
+  })
+
+  it('renders the unmapped rail with the correct section label', async () => {
+    mockFetch.mockResolvedValue(response())
+    renderMap()
+
+    await waitFor(() => expect(tile('GOV')).toBeInTheDocument())
+
+    const rail = screen.getByRole('complementary', { name: 'Unmapped documents' })
+    expect(rail).toBeInTheDocument()
+    // The CTA is available when orphans exist
+    expect(within(rail).getByRole('button', { name: /Review in Control Documents/ })).toBeInTheDocument()
+  })
 })

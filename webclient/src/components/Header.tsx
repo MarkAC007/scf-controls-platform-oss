@@ -1,13 +1,10 @@
-import { useEffect, useState } from 'react'
-import { useAuth } from '../contexts/AuthContext'
 import { NotificationBell } from './NotificationBell'
 import UserProfileDropdown from './UserProfileDropdown'
 import ThemeMenu from './ThemeMenu'
 import OrgSwitcher from './OrgSwitcher'
-import { Organization, useOrganization } from '../contexts/OrganizationContext'
-import { useOrgLogo } from '../hooks/useOrgLogo'
-
-type Tab = 'dashboard' | 'capability-posture' | 'library' | 'scoping' | 'evidence' | 'mapping-matrix' | 'tasks' | 'systems' | 'users' | 'consultant-portal' | 'risk-register' | 'vendors' | 'settings' | 'webhooks' | 'audit-log' | 'engagements' | 'cdm' | 'document-map' | 'documents' | 'platform-catalog' | 'platform-tenants' | 'catalog-changelog'
+import { Organization } from '../contexts/OrganizationContext'
+import { useAuth } from '../contexts/AuthContext'
+import { Tab, TAB_TITLES } from '../data/appUrl'
 
 interface HeaderProps {
   activeTab: Tab
@@ -34,29 +31,14 @@ export default function Header({
   mobileNavOpen = false
 }: HeaderProps) {
   const { user } = useAuth()
-  const { currentOrg } = useOrganization()
-  const { data: orgLogoUrl } = useOrgLogo(currentOrg?.id)
-
-  // Get configurable logo and title from environment variables
-  // If VITE_APP_LOGO is explicitly set to empty string, hide logo; otherwise use value or default
-  const appLogoEnv = import.meta.env.VITE_APP_LOGO
-  const appLogo = appLogoEnv === '' ? null : (appLogoEnv || '/cropped-Logo-301x101.webp')
-  const appTitle = import.meta.env.VITE_APP_TITLE || 'SCF Controls Platform'
-  // Org-uploaded logo takes precedence over the deploy-time default
-  const logoSrc = orgLogoUrl || appLogo
-
-  // A logo that fails to load degrades to the wordmark alone. Without this the
-  // header rendered the browser's broken-image icon on every route (#807).
-  const [logoBroken, setLogoBroken] = useState(false)
-  useEffect(() => {
-    setLogoBroken(false)
-  }, [logoSrc])
 
   const showOrgSwitcher = isConsultant && clientOrgIds && clientOrgIds.length > 0
 
+  const pageTitle = TAB_TITLES[activeTab]
+
   return (
     <div className="header header-streamlined">
-      {/* Left: Brand (mobile hamburger first — hidden on desktop via CSS) */}
+      {/* Left: mobile hamburger (hidden on desktop via CSS) + page title */}
       <div className="header-left">
         <button
           className="mobile-nav-toggle"
@@ -79,27 +61,20 @@ export default function Header({
             )}
           </svg>
         </button>
-        <div className="brand">
-          {logoSrc && !logoBroken && (
-            <img src={logoSrc} alt="Logo" onError={() => setLogoBroken(true)} />
-          )}
-          <div className="brand-title">{appTitle}</div>
-        </div>
+        <span className="header-page-title">{pageTitle}</span>
       </div>
 
-      {/* Center: Org Switcher (consultant only) */}
-      {showOrgSwitcher && (
-        <div className="header-center">
+      {/* Right: utilities cluster */}
+      <div className="header-right">
+        {/* Org switcher chip — consultant-only, keep today's render condition */}
+        {showOrgSwitcher && (
           <OrgSwitcher
             compact
             clientOrgIds={clientOrgIds}
             onSwitch={onOrgSwitch}
           />
-        </div>
-      )}
+        )}
 
-      {/* Right: Theme & User */}
-      <div className="header-right">
         <ThemeMenu />
 
         {user && (
@@ -107,12 +82,10 @@ export default function Header({
             <NotificationBell
               onNavigateToEvidence={onNavigateToEvidence}
               onNavigateToControl={(controlId) => {
-                // Forward the control id — dropping it here left control
-                // notifications landing on an unfiltered scoping list.
                 if (onNavigateToControl) {
-                  onNavigateToControl(controlId);
+                  onNavigateToControl(controlId)
                 } else {
-                  onTabChange('scoping');
+                  onTabChange('scoping')
                 }
               }}
               onNavigateToTask={() => onTabChange('tasks')}

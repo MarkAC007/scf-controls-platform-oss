@@ -5,16 +5,17 @@ import {
   replaceSearch,
   withEvidenceItem,
 } from '../data/appUrl'
+import FilterSidebar, { FilterGroup, FilterSelect } from './explorer/FilterSidebar'
+import ListToolbar from './explorer/ListToolbar'
+import ExplorerListRow, { RowChip, RowMeta } from './explorer/ListRow'
 import type {
   EnrichedControl,
   ScopedControlsFile,
   EvidenceTracking,
   EvidenceId,
-  OwnerTeam,
   ERLFile,
   EvidenceMaturityLevel,
   CollectionGuidanceResponse,
-  RecipeConfidence,
   EvidenceTemplatesFile,
 } from '../types'
 import {
@@ -25,8 +26,6 @@ import {
 } from '../data/scopingService'
 import { getSystems, getEvidenceSuggestions, submitRecipeFeedback, getOrgMembers } from '../data/apiClient'
 import type { System, EvidenceSuggestionsResponse, UserSimple } from '../types'
-import { AssignmentPicker } from './AssignmentPicker'
-import OwningTeams from './OwningTeams'
 import TeamListFilters, { ALL as ALL_TEAMS } from './TeamListFilters'
 import { useOrgMemberTypes } from '../hooks/useOrgMemberTypes'
 import AccountableOwnerTypeFilter, {
@@ -36,22 +35,13 @@ import AccountableOwnerTypeFilter, {
 import { useTeamAssignments, matchesTeamFilters, accountableTeamLabel } from '../hooks/useTeamAssignments'
 import { useIsOrgAdmin } from '../hooks/useIsOrgAdmin'
 import { useTeamFilteredEvidence } from '../hooks/useTeamFilteredEvidence'
-import { ModernCommentThread } from './ModernCommentThread'
-import { EvidenceTaskList } from './EvidenceTaskList'
-import { MaturityBadge, MaturityStepper, MaturityAdvisoryCard } from './maturity'
-import { RecipeCard, RecipeConfidenceBadge, EvidenceTemplateGuidance, EvidenceFileUpload, EvidenceFileList, CollectionWizard, EvidenceAssigneeSelect, UntrackedUploadNotice, EvidenceBulkActionsBar } from './evidence'
+import { CollectionWizard, EvidenceAssigneeSelect, EvidenceBulkActionsBar } from './evidence'
 import type { BulkActionResult } from './evidence/EvidenceBulkActionsBar'
 import { batchUpdateEvidenceTracking } from '../data/apiClient'
 import type { BatchEvidenceTrackingOperation } from '../data/apiClient'
-import { WindowReviewPanel } from './evidence/WindowReviewPanel'
 import { ScfReference } from './provenance/ScfReference'
 import { frequencyOptionsFor } from '../data/frequencyVocabulary'
-import { interactiveRowProps } from '../data/interactiveRow'
-
-// M4 (#574) — gate the per-window review panel mount on the build-time flag.
-// When unset (default), the panel is not rendered and the legacy per-file
-// review buttons in ``EvidenceFileList`` remain visible.
-import { PER_WINDOW_REVIEW_ENABLED } from '../data/featureFlags'
+import EvidenceDetailPage from './evidence/EvidenceDetailPage'
 
 interface EvidenceReviewProps {
   controls: EnrichedControl[]
@@ -76,6 +66,12 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
   // was invisible.
   const [selectedEvidenceId, setSelectedEvidenceId] = useState<EvidenceId | undefined>(
     () => readAppLocation(window.location.search).evidenceItem ?? undefined,
+  )
+  // True only when the user has explicitly opened a detail (deep-link or row
+  // click). Auto-select does NOT set this so bare workspace arrival lands on the
+  // list. Seeded true when a ?item= is already in the URL (deep-link arrival).
+  const [evidenceDetailOpen, setEvidenceDetailOpen] = useState<boolean>(
+    () => readAppLocation(window.location.search).evidenceItem != null,
   )
   const [query, setQuery] = useState('')
   const [domainFilter, setDomainFilter] = useState<string>('all')
@@ -116,6 +112,7 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
   const [bulkSelection, setBulkSelection] = useState<Set<EvidenceId>>(new Set())
   const [bulkBusy, setBulkBusy] = useState(false)
   const [bulkResult, setBulkResult] = useState<BulkActionResult | null>(null)
+  const [filterSidebarCollapsed, setFilterSidebarCollapsed] = useState(false)
 
   // Filter to only selected controls with artifacts
   const selectedControls = useMemo(() => {
@@ -179,7 +176,12 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
   useEffect(() => {
     const onPopState = () => {
       const item = readAppLocation(window.location.search).evidenceItem
-      if (item) setSelectedEvidenceId(item)
+      if (item) {
+        setSelectedEvidenceId(item)
+        setEvidenceDetailOpen(true)
+      } else {
+        setEvidenceDetailOpen(false)
+      }
     }
     window.addEventListener('popstate', onPopState)
     return () => window.removeEventListener('popstate', onPopState)
@@ -191,6 +193,7 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
   // would make the first press of Back a no-op.
   const selectEvidence = useCallback((evidenceId: EvidenceId) => {
     setSelectedEvidenceId(evidenceId)
+    setEvidenceDetailOpen(true)
     pushSearch(withEvidenceItem(window.location.search, evidenceId))
   }, [])
 
@@ -312,23 +315,25 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
     }
   }, [collectionGuidance, scopingData.organizationId, selectedEvidenceId])
 
-  // Select first item on mount based on view mode
+  // Select first control on mount (control view still fills a side panel).
+  // The evidence view deliberately does NOT auto-select: since the detail
+  // became a full page, a bare list landing stays a bare list — no phantom
+  // "active" row, no silent ?item= rewrite of a shareable URL.
   useEffect(() => {
     if (viewMode === 'control') {
       if (!selectedId && selectedControls.length > 0) {
         setSelectedId(selectedControls[0].scf_id)
       }
-    } else if (uniqueEvidenceItems.length > 0) {
+    } else if (uniqueEvidenceItems.length > 0 && selectedEvidenceId) {
       // A URL can name an item this organisation does not have: a stale
-      // bookmark, a typo, an id copied from another tenant. Falling back to the
-      // first item beats rendering a detail panel about nothing, and
-      // `replaceSearch` keeps the address bar honest about where the user
-      // actually ended up rather than about where they asked to go.
+      // bookmark, a typo, an id copied from another tenant. Clearing beats
+      // opening a detail page about nothing, and `replaceSearch` keeps the
+      // address bar honest without inventing a history entry.
       const known = uniqueEvidenceItems.some(item => item.id === selectedEvidenceId)
-      if (!selectedEvidenceId || !known) {
-        const fallback = uniqueEvidenceItems[0].id
-        setSelectedEvidenceId(fallback)
-        replaceSearch(withEvidenceItem(window.location.search, fallback))
+      if (!known) {
+        setSelectedEvidenceId(undefined)
+        setEvidenceDetailOpen(false)
+        replaceSearch(withEvidenceItem(window.location.search, null))
       }
     }
   }, [viewMode, selectedControls, selectedId, uniqueEvidenceItems, selectedEvidenceId])
@@ -695,97 +700,167 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
   const activedomains = viewMode === 'control' ? domains : evidenceDomains
   const activeFilteredItems = viewMode === 'control' ? filteredControls : filteredEvidenceItems
 
-  return (
-    <div className="layout">
-      {/* Left Panel - Control or Evidence List */}
-      <div className="sidebar">
-        {/* View Mode Toggle */}
-        <div className="evidence-view-toggle">
-          <span className="toggle-label">View by:</span>
-          <button
-            className={`toggle-option ${viewMode === 'evidence' ? 'active' : ''}`}
-            onClick={() => setViewMode('evidence')}
-          >
-            Evidence
-          </button>
-          <button
-            className={`toggle-option ${viewMode === 'control' ? 'active' : ''}`}
-            onClick={() => setViewMode('control')}
-          >
-            Control
-          </button>
-          <button
-            className="btn-secondary btn-sm"
-            onClick={() => setShowCollectionWizard(true)}
-            title="Set up automated evidence collection"
-          >
-            Set Up Collection
-          </button>
-        </div>
+  // Domain options for FilterSelect
+  const domainOptions = useMemo(() => [
+    { value: 'all', label: `All Domains (${activeFilteredItems.length})` },
+    ...activedomains.map(domain => {
+      const count = viewMode === 'control'
+        ? selectedControls.filter(c => c.scf_domain === domain).length
+        : uniqueEvidenceItems.filter(item => item.domain === domain).length
+      return { value: domain, label: `${domain} (${count})` }
+    }),
+  ], [activedomains, activeFilteredItems.length, viewMode, selectedControls, uniqueEvidenceItems])
 
-        <div className="evidence-sidebar-header">
-          <div className="evidence-stats-compact">
-            <div className="stat-compact stat-tracked">
-              <div className="stat-compact-value">{stats.tracked}</div>
-              <div className="stat-compact-label">Tracked</div>
-            </div>
-            <div className="stat-compact-divider">/</div>
-            <div className="stat-compact stat-total-evidence">
-              <div className="stat-compact-value">{stats.total}</div>
-              <div className="stat-compact-label">Evidence</div>
-            </div>
-          </div>
-          <div className="evidence-progress-mini">
-            <div className="evidence-progress-mini-bar">
-              <div
-                className="evidence-progress-mini-fill"
-                style={{ width: `${stats.total > 0 ? (stats.tracked / stats.total) * 100 : 0}%` }}
-              ></div>
-            </div>
-          </div>
-        </div>
+  // ── Evidence detail position in the CURRENT filtered list ────────────────────
+  const evidenceDetailPosition = useMemo<{ index: number | null; total: number } | null>(() => {
+    if (!selectedEvidenceId || viewMode !== 'evidence') return null
+    const total = filteredEvidenceItems.length
+    if (total === 0) return null
+    const idx = filteredEvidenceItems.findIndex(item => item.id === selectedEvidenceId)
+    return { index: idx < 0 ? null : idx, total }
+  }, [selectedEvidenceId, viewMode, filteredEvidenceItems])
 
-        <div className="search">
-          <input
-            type="text"
-            placeholder="Search controls or evidence..."
-            value={query}
-            onChange={e => setQuery(e.target.value)}
+  const handleEvidencePrev = useCallback(() => {
+    if (!evidenceDetailPosition || evidenceDetailPosition.index === null || evidenceDetailPosition.index <= 0) return
+    const prev = filteredEvidenceItems[evidenceDetailPosition.index - 1]
+    if (prev) selectEvidence(prev.id)
+  }, [evidenceDetailPosition, filteredEvidenceItems, selectEvidence])
+
+  const handleEvidenceNext = useCallback(() => {
+    if (!evidenceDetailPosition || evidenceDetailPosition.index === null || evidenceDetailPosition.index >= evidenceDetailPosition.total - 1) return
+    const next = filteredEvidenceItems[evidenceDetailPosition.index + 1]
+    if (next) selectEvidence(next.id)
+  }, [evidenceDetailPosition, filteredEvidenceItems, selectEvidence])
+
+  // Back from detail page: clear the selection and update the URL.
+  const handleEvidenceBack = useCallback(() => {
+    setEvidenceDetailOpen(false)
+    setSelectedEvidenceId(undefined)
+    replaceSearch(withEvidenceItem(window.location.search, null))
+  }, [])
+
+  const handleNavigateToControl = useCallback((controlId: string) => {
+    setViewMode('control')
+    setSelectedId(controlId)
+    setSelectedEvidenceId(undefined)
+    replaceSearch(withEvidenceItem(window.location.search, null))
+  }, [])
+
+  // Resolve the active evidence item data for EvidenceDetailPage.
+  const activeEvidenceItem = viewMode === 'evidence' && selectedEvidenceId
+    ? uniqueEvidenceItems.find(item => item.id === selectedEvidenceId) ?? null
+    : null
+  const activeEvidenceTracking = activeEvidenceItem
+    ? (localEvidenceState[activeEvidenceItem.id] || {})
+    : {}
+  const activeRequiringControls = activeEvidenceItem
+    ? getControlsRequiringEvidence(activeEvidenceItem.id)
+    : []
+
+  // ── Evidence-first detail: full-width page (list state preserved in component) ─
+  // evidenceDetailOpen is only true when the user explicitly requested a detail
+  // view (row click or deep-link). Bare workspace arrival auto-selects an item
+  // but leaves evidenceDetailOpen false, so the list renders as intended.
+  if (viewMode === 'evidence' && evidenceDetailOpen && activeEvidenceItem) {
+    return (
+      <>
+        <EvidenceDetailPage
+          evidenceItem={activeEvidenceItem}
+          tracking={activeEvidenceTracking}
+          requiringControls={activeRequiringControls}
+          position={evidenceDetailPosition}
+          onPrev={handleEvidencePrev}
+          onNext={handleEvidenceNext}
+          onBack={handleEvidenceBack}
+          scopingData={scopingData}
+          systems={systems}
+          orgMembers={orgMembers}
+          memberTypeOf={memberTypeOf}
+          suggestions={suggestions}
+          loadingSuggestions={loadingSuggestions}
+          collectionGuidance={collectionGuidance}
+          loadingGuidance={loadingGuidance}
+          feedbackSubmitted={feedbackSubmitted}
+          fileListRefreshTrigger={fileListRefreshTrigger}
+          saving={saving}
+          canManageTeams={canManageTeams}
+          erlData={erlData}
+          evidenceTemplates={evidenceTemplates}
+          onUpdateTracking={updateEvidenceTracking}
+          onRecipeFeedback={handleRecipeFeedback}
+          onFileUploaded={() => setFileListRefreshTrigger(prev => prev + 1)}
+          onReloadTeamAssignments={reloadTeamAssignments}
+          onNavigateToControl={handleNavigateToControl}
+        />
+        {showCollectionWizard && scopingData.organizationId && (
+          <CollectionWizard
+            orgId={scopingData.organizationId}
+            onClose={() => setShowCollectionWizard(false)}
+            onNavigateToSystems={onNavigateToSystems}
           />
-        </div>
+        )}
+      </>
+    )
+  }
 
-        <div className="filter">
-          <select
-            value={domainFilter}
-            onChange={e => setDomainFilter(e.target.value)}
-            className="framework-select"
-          >
-            <option value="all">All Domains ({activeFilteredItems.length})</option>
-            {activedomains.map(domain => {
-              const count = viewMode === 'control'
-                ? selectedControls.filter(c => c.scf_domain === domain).length
-                : uniqueEvidenceItems.filter(item => item.domain === domain).length
-              return (
-                <option key={domain} value={domain}>
-                  {domain} ({count})
-                </option>
-              )
-            })}
-          </select>
-          {viewMode === 'evidence' && scopingData.organizationId && (
-            <TeamListFilters
-              organizationId={scopingData.organizationId}
-              teamId={teamFilter}
-              functionId={functionFilter}
-              onTeamChange={setTeamFilter}
-              onFunctionChange={setFunctionFilter}
+  // ── List mode: evidence list (full-width) or control-first split layout ───────
+  return (
+    <div className="evidence-review-layout">
+      {/* Left Panel — filter sidebar + list */}
+      <div className={viewMode === 'evidence' ? 'evidence-review-panel evidence-review-panel--full' : 'evidence-review-panel'}>
+        <FilterSidebar
+          collapsed={filterSidebarCollapsed}
+          onToggleCollapsed={() => setFilterSidebarCollapsed(c => !c)}
+          aria-label="Evidence filters"
+        >
+          {/* View-by toggle */}
+          <FilterGroup label="VIEW BY">
+            <div className="evidence-view-toggle">
+              <button
+                className={`toggle-option ${viewMode === 'evidence' ? 'active' : ''}`}
+                onClick={() => setViewMode('evidence')}
+              >
+                Evidence
+              </button>
+              <button
+                className={`toggle-option ${viewMode === 'control' ? 'active' : ''}`}
+                onClick={() => setViewMode('control')}
+              >
+                Control
+              </button>
+            </div>
+          </FilterGroup>
+
+          {/* Domain */}
+          <FilterGroup label="DOMAIN">
+            <FilterSelect
+              value={domainFilter}
+              onChange={setDomainFilter}
+              options={domainOptions}
             />
+          </FilterGroup>
+
+          {/* Team / function — evidence view only */}
+          {viewMode === 'evidence' && scopingData.organizationId && (
+            <FilterGroup label="TEAM">
+              <TeamListFilters
+                organizationId={scopingData.organizationId}
+                teamId={teamFilter}
+                functionId={functionFilter}
+                onTeamChange={setTeamFilter}
+                onFunctionChange={setFunctionFilter}
+              />
+            </FilterGroup>
           )}
+
+          {/* Accountable owner type — evidence view only */}
           {viewMode === 'evidence' && scopingData.organizationId && (
-            <AccountableOwnerTypeFilter
-              value={ownerTypeFilter}
-              onChange={setOwnerTypeFilter}
-            />
+            <FilterGroup label="ACCOUNTABLE OWNER">
+              <AccountableOwnerTypeFilter
+                value={ownerTypeFilter}
+                onChange={setOwnerTypeFilter}
+              />
+            </FilterGroup>
           )}
           {ownerTypeUnanswered && (
             <span className="owner-type-filter-notice" role="status">
@@ -794,8 +869,50 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
                 : ownerFilterError || 'Could not filter by accountable owner.'}
             </span>
           )}
-        </div>
 
+          {/* Tracking progress */}
+          <FilterGroup label="TRACKING PROGRESS">
+            <div className="evidence-progress-sidebar">
+              <span className="evidence-progress-label">
+                {stats.tracked} / {stats.total} tracked
+              </span>
+              <div className="evidence-progress-mini">
+                <div className="evidence-progress-mini-bar">
+                  <div
+                    className="evidence-progress-mini-fill"
+                    style={{ width: `${stats.total > 0 ? (stats.tracked / stats.total) * 100 : 0}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+          </FilterGroup>
+        </FilterSidebar>
+
+      {/* Everything right of the filter rail: toolbar, bulk bar, list */}
+      <div className="evidence-review-main">
+
+        {/* Toolbar: search + counts + "Set Up Collection" */}
+        <ListToolbar
+          search={query}
+          onSearchChange={setQuery}
+          searchPlaceholder="Search controls or evidence…"
+          count={
+            viewMode === 'evidence'
+              ? `${stats.tracked} tracked · ${activeFilteredItems.length} evidence items`
+              : `${activeFilteredItems.length} controls`
+          }
+          actions={
+            <button
+              className="btn-secondary btn-sm"
+              onClick={() => setShowCollectionWizard(true)}
+              title="Set up automated evidence collection"
+            >
+              Set Up Collection
+            </button>
+          }
+        />
+
+        {/* Bulk actions bar (evidence view only) */}
         {viewMode === 'evidence' && (
           <EvidenceBulkActionsBar
             selectedCount={bulkSelection.size}
@@ -823,41 +940,31 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
           {viewMode === 'control' ? (
             /* Control-First View */
             filteredControls.map(control => {
-            const trackedCount = control.artifactsResolved.filter(a =>
-              getEvidenceTracking(scopingData, a.id)?.is_tracked
-            ).length
-            const trackingPercentage = control.artifactsResolved.length > 0
-              ? Math.round((trackedCount / control.artifactsResolved.length) * 100)
-              : 0
+              const trackedCount = control.artifactsResolved.filter(a =>
+                getEvidenceTracking(scopingData, a.id)?.is_tracked
+              ).length
 
-            return (
-              <div
-                key={control.scf_id}
-                className={`evidence-card-modern ${selectedId === control.scf_id ? 'active' : ''}`}
-                {...interactiveRowProps(() => setSelectedId(control.scf_id))}
-              >
-                <div className="evidence-card-header">
-                  <span className="badge-modern">{control.scf_id}</span>
-                  <div className="evidence-tracking-badge">
-                    <span className="tracking-count">{trackedCount}/{control.artifactsResolved.length}</span>
-                  </div>
+              return (
+                <div key={control.scf_id} className="evidence-card-select-row">
+                  <ExplorerListRow
+                    monoId={control.scf_id}
+                    title={control.control_name}
+                    description={control.scf_domain}
+                    highlighted={selectedId === control.scf_id}
+                    onClick={() => setSelectedId(control.scf_id)}
+                  >
+                    <RowChip>
+                      {trackedCount}/{control.artifactsResolved.length} tracked
+                    </RowChip>
+                  </ExplorerListRow>
                 </div>
-                <div className="evidence-card-name">{control.control_name}</div>
-                <div className="evidence-card-footer">
-                  <span className="evidence-card-domain">{control.scf_domain}</span>
-                  <div className="mini-progress">
-                    <div className="mini-progress-fill" style={{ width: `${trackingPercentage}%` }}></div>
-                  </div>
-                </div>
-              </div>
-            )
-          })
+              )
+            })
           ) : (
             /* Evidence-First View */
             filteredEvidenceItems.map(evidenceItem => {
               const tracking = localEvidenceState[evidenceItem.id] || {}
               const isTracked = tracking.is_tracked || false
-
               const bulkSelected = bulkSelection.has(evidenceItem.id)
 
               return (
@@ -879,42 +986,44 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
                     onChange={() => toggleBulkSelection(evidenceItem.id)}
                     aria-label={`Select ${evidenceItem.id} for bulk actions`}
                   />
-                <div
-                  data-evidence-id={evidenceItem.id}
-                  className={`evidence-card-modern ${selectedEvidenceId === evidenceItem.id ? 'active' : ''} ${bulkSelected ? 'bulk-selected' : ''}`}
-                  {...interactiveRowProps(() => selectEvidence(evidenceItem.id))}
-                >
-                  <div className="evidence-card-header">
-                    <span className="badge-modern">{evidenceItem.id}</span>
-                    <div className="evidence-tracking-badge">
-                      {isTracked ? (
-                        <span className="tracking-count tracked-pill">Tracked</span>
-                      ) : (
-                        <span className="tracking-count">Not Tracked</span>
-                      )}
-                    </div>
-                  </div>
-                  <div className="evidence-card-name">{evidenceItem.title}</div>
-                  <div className="evidence-card-team">
-                    {(() => {
-                      const dbId = trackingDbIdFor(evidenceItem.id)
-                      const label = accountableTeamLabel(dbId ? accountableTeamFor(dbId) : null)
-                      return label ?? (
-                        <span className="evidence-card-team-empty">No accountable team</span>
-                      )
-                    })()}
-                  </div>
-                  <div className="evidence-card-footer">
-                    <span className="evidence-card-domain">{evidenceItem.domain}</span>
-                    {tracking.maturity_level ? (
-                      <MaturityBadge level={tracking.maturity_level} size="small" showLabel={false} showTooltip={false} />
-                    ) : (
-                      <span className="evidence-card-domain" style={{ opacity: 0.7 }}>
+                  <div
+                    data-evidence-id={evidenceItem.id}
+                    className={`evidence-card-modern ${selectedEvidenceId === evidenceItem.id ? 'active' : ''} ${bulkSelected ? 'bulk-selected' : ''}`}
+                  >
+                    <ExplorerListRow
+                      monoId={evidenceItem.id}
+                      title={evidenceItem.title}
+                      highlighted={selectedEvidenceId === evidenceItem.id}
+                      onClick={() => selectEvidence(evidenceItem.id)}
+                    >
+                      <RowChip>
+                        {(() => {
+                          const dbId = trackingDbIdFor(evidenceItem.id)
+                          const label = accountableTeamLabel(dbId ? accountableTeamFor(dbId) : null)
+                          return label ?? (
+                            <span className="evidence-card-team-empty">No accountable team</span>
+                          )
+                        })()}
+                      </RowChip>
+                      <RowChip>
+                        {isTracked ? (
+                          <span className="evidence-tracked-pill">Tracked</span>
+                        ) : (
+                          <span className="evidence-untracked-pill">Not Tracked</span>
+                        )}
+                      </RowChip>
+                      <RowChip>
                         {evidenceItem.controlCount} ctrl{evidenceItem.controlCount !== 1 ? 's' : ''}
-                      </span>
-                    )}
+                      </RowChip>
+                      {(tracking.method_of_collection || tracking.frequency) && (
+                        <RowMeta>
+                          {[tracking.method_of_collection, tracking.frequency]
+                            .filter(Boolean)
+                            .join(' · ')}
+                        </RowMeta>
+                      )}
+                    </ExplorerListRow>
                   </div>
-                </div>
                 </div>
               )
             })
@@ -922,13 +1031,15 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
         </div>
 
         {saving && (
-          <div className="save-indicator">💾 Saving...</div>
+          <div className="save-indicator">Saving...</div>
         )}
       </div>
+      </div>
 
-      {/* Right Panel - Evidence or Control Details */}
-      <div className="detail">
-        {viewMode === 'control' && selectedControl ? (
+      {/* Right Panel — Control detail (control-first view only) */}
+      {viewMode === 'control' && (
+        <div className="evidence-review-detail">
+          {selectedControl ? (
           <>
             <div className="detail-header-compact">
               <div className="detail-header-main surface-bedrock" data-source="SCF Reference">
@@ -1246,457 +1357,11 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
               </div>
             </div>
           </>
-        ) : viewMode === 'evidence' && selectedEvidenceId ? (
-          /* Evidence-First Detail View */
-          (() => {
-            const evidenceItem = uniqueEvidenceItems.find(item => item.id === selectedEvidenceId)
-            if (!evidenceItem) return <div className="empty">Evidence not found</div>
-
-            const tracking = localEvidenceState[evidenceItem.id] || {}
-            const isTracked = tracking.is_tracked || false
-            const requiringControls = getControlsRequiringEvidence(evidenceItem.id)
-
-            return (
-              <>
-                <div className="detail-header-compact">
-                  <div className="detail-header-main surface-bedrock" data-source="SCF Evidence Requirements">
-                    <span className="scf-source-tag">SCF ERL</span>
-                    <div className="detail-id-compact">{evidenceItem.id}</div>
-                    <h2 className="detail-name-compact">{evidenceItem.title}</h2>
-                    <div className="detail-meta-row">
-                      <span className="detail-domain-compact">{evidenceItem.domain}</span>
-                      <div className="detail-badges">
-                        {isTracked ? (
-                          <span className="badge-theme theme-process">Tracked</span>
-                        ) : (
-                          <span className="badge-type type-detective">Not Tracked</span>
-                        )}
-                        {tracking.maturity_level && (
-                          <MaturityBadge level={tracking.maturity_level} size="small" />
-                        )}
-                        {saving && <span className="detail-save-chip">Saving…</span>}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="detail-content-compact">
-                  {/* Required by Controls — SCF/ERL reference mapping, rendered flat */}
-                  <ScfReference>
-                  <div className="detail-section-container">
-                    <div className="container-header">
-                      <span className="container-icon">🔗</span>
-                      <span className="container-title">Required by Controls</span>
-                      <span className="container-count">{requiringControls.length}</span>
-                    </div>
-                    <div className="container-content">
-                      {requiringControls.length === 0 ? (
-                        <p className="muted">No controls require this evidence</p>
-                      ) : (
-                        <div className="requiring-controls-pills">
-                          {requiringControls.map(ctrl => {
-                            const tooltipId = `tooltip-ev-${evidenceItem.id}-${ctrl.scf_id}`
-                            const ctrlScopedData = getScopedControl(scopingData, ctrl.scf_id)
-                            const implStatus = ctrlScopedData?.implementation_status || 'not_started'
-
-                            // Status display helpers
-                            const statusConfig = {
-                              implemented: { label: 'IMPLEMENTED', icon: '✅', class: 'status-implemented' },
-                              in_progress: { label: 'IN PROGRESS', icon: '🔄', class: 'status-in-progress' },
-                              not_started: { label: 'NOT STARTED', icon: '⭕', class: 'status-not-started' },
-                              at_risk: { label: 'AT RISK', icon: '⚠️', class: 'status-at-risk' },
-                              not_applicable: { label: 'NOT APPLICABLE', icon: '❌', class: 'status-not-applicable' },
-                              deferred: { label: 'DEFERRED', icon: '⏸️', class: 'status-deferred' }
-                            }
-
-                            const status = statusConfig[implStatus as keyof typeof statusConfig] || statusConfig.not_started
-                            const pillStatusClass = implStatus === 'not_applicable' ? 'pill-not-applicable' :
-                                                   implStatus === 'deferred' ? 'pill-deferred' :
-                                                   implStatus === 'at_risk' ? 'pill-at-risk' : ''
-
-                            return (
-                              <div key={ctrl.scf_id} className="control-pill-wrapper">
-                                <button
-                                  className={`control-pill ${pillStatusClass}`}
-                                  onClick={() => {
-                                    setViewMode('control')
-                                    setSelectedId(ctrl.scf_id)
-                                  }}
-                                  onMouseEnter={(e) => {
-                                    const tooltip = document.getElementById(tooltipId)
-                                    if (tooltip) {
-                                      const rect = e.currentTarget.getBoundingClientRect()
-                                      tooltip.style.top = `${rect.top - tooltip.offsetHeight - 8}px`
-                                      tooltip.style.left = `${Math.max(10, rect.left + rect.width / 2 - 200)}px`
-                                    }
-                                  }}
-                                >
-                                  {ctrl.scf_id} — {ctrl.control_name}
-                                </button>
-                                <div id={tooltipId} className="control-tooltip">
-                                  <div className="tooltip-header">
-                                    <strong>{ctrl.scf_id}</strong> — {ctrl.control_name}
-                                  </div>
-                                  <div className="tooltip-domain">{ctrl.scf_domain}</div>
-
-                                  {ctrlScopedData && status && (
-                                    <div className={`tooltip-status-box ${status.class}`}>
-                                      <div className="status-row">
-                                        <span className="status-label">Status:</span>
-                                        <span className="status-value">
-                                          {status.icon} {status.label}
-                                        </span>
-                                      </div>
-                                      {ctrlScopedData.owner && (
-                                        <div className="status-row">
-                                          <span className="status-label">Owner:</span>
-                                          <span className="status-value">{ctrlScopedData.owner}</span>
-                                        </div>
-                                      )}
-                                      {ctrlScopedData.completion_date && (
-                                        <div className="status-row">
-                                          <span className="status-label">Target Date:</span>
-                                          <span className="status-value">{ctrlScopedData.completion_date}</span>
-                                        </div>
-                                      )}
-                                    </div>
-                                  )}
-
-                                  <div className="tooltip-section">
-                                    <strong>Description:</strong>
-                                    <p>{ctrl.control_description}</p>
-                                  </div>
-                                </div>
-                              </div>
-                            )
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                  </ScfReference>
-
-                  {scopingData.organizationId && PER_WINDOW_REVIEW_ENABLED && (
-                    <WindowReviewPanel
-                      orgId={scopingData.organizationId}
-                      evidenceId={selectedEvidenceId}
-                      refreshTrigger={fileListRefreshTrigger}
-                    />
-                  )}
-
-                  {scopingData.organizationId && (
-                    <div className="detail-section-container surface-bench">
-                      <div className="container-header bench-header">
-                        <span className="container-icon">{'\uD83D\uDCC1'}</span>
-                        <span className="container-title">Your Evidence Files</span>
-                      </div>
-                      <div className="container-content">
-                        {!isTracked && (
-                          <UntrackedUploadNotice
-                            onStartTracking={() =>
-                              updateEvidenceTracking(evidenceItem.id, 'is_tracked', true)
-                            }
-                          />
-                        )}
-                        <EvidenceFileUpload
-                          orgId={scopingData.organizationId}
-                          evidenceId={selectedEvidenceId}
-                          onUploadComplete={() => setFileListRefreshTrigger(prev => prev + 1)}
-                        />
-                        <EvidenceFileList
-                          orgId={scopingData.organizationId}
-                          evidenceId={selectedEvidenceId}
-                          refreshTrigger={fileListRefreshTrigger}
-                        />
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Evidence Tracking Form */}
-                  <div className="detail-section-container surface-bench">
-                    <div className="container-header bench-header">
-                      <span className="container-icon">📋</span>
-                      <span className="container-title">Your Collection Record</span>
-                      {isTracked && <span className="container-tracking-badge">✓ Active</span>}
-                    </div>
-                    <div className="container-content">
-                      <div className="tracking-toggle-section">
-                        <label className="tracking-toggle-label">
-                          <input
-                            type="checkbox"
-                            checked={isTracked}
-                            onChange={e => updateEvidenceTracking(evidenceItem.id, 'is_tracked', e.target.checked)}
-                            className="tracking-checkbox"
-                          />
-                          <div className="tracking-toggle-content">
-                            <div className="tracking-toggle-title">Evidence Collection Active</div>
-                            <div className="tracking-toggle-hint">Mark this evidence as being actively collected for compliance</div>
-                          </div>
-                        </label>
-                      </div>
-
-                      <div className="form-group">
-                        <label>Collecting System</label>
-                        {(() => {
-                          // Smart defaults: suggested systems at top, then divider, then rest
-                          const suggestedNames = new Set(
-                            (suggestions?.capable_systems || []).map(s => s.name)
-                          )
-                          const suggestedSystems = systems.filter(s => suggestedNames.has(s.name))
-                          const otherSystems = systems.filter(s => !suggestedNames.has(s.name))
-                          return (
-                            <select
-                              value={tracking.collecting_system || ''}
-                              onChange={e => updateEvidenceTracking(evidenceItem.id, 'collecting_system', e.target.value)}
-                              className="form-control"
-                            >
-                              <option value="">Select System...</option>
-                              {suggestedSystems.length > 0 && (
-                                <optgroup label="Suggested for this evidence">
-                                  {suggestedSystems.map(system => {
-                                    const cap = suggestions?.capable_systems.find(s => s.name === system.name)
-                                    return (
-                                      <option key={system.id} value={system.name}>
-                                        {system.name} ({system.vendor || system.system_type}){cap ? ` \u2014 ${cap.capability_status}` : ''}
-                                      </option>
-                                    )
-                                  })}
-                                </optgroup>
-                              )}
-                              {otherSystems.length > 0 && (
-                                <optgroup label="All systems">
-                                  {otherSystems.map(system => (
-                                    <option key={system.id} value={system.name}>
-                                      {system.name} ({system.vendor || system.system_type})
-                                    </option>
-                                  ))}
-                                </optgroup>
-                              )}
-                              <optgroup label="Other">
-                                <option value="Manual">Manual / Not Automated</option>
-                              </optgroup>
-                            </select>
-                          )
-                        })()}
-                        {suggestions?.recommendation && !tracking.collecting_system && (
-                          <div className="form-hint suggestion-inline-hint">
-                            {'\u2728'} Recommended: <strong>{suggestions.recommendation.system_name}</strong> — {suggestions.recommendation.reason}
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="form-group">
-                        <label>Collection Maturity</label>
-                        <MaturityStepper
-                          value={tracking.maturity_level}
-                          onChange={level => updateEvidenceTracking(evidenceItem.id, 'maturity_level', level)}
-                        />
-                      </div>
-
-                      {/* Inline Collection Guide — reacts to the selected system and maturity level above */}
-                      {tracking.collecting_system && tracking.collecting_system !== 'Manual' && (
-                        <div className="inline-collection-guide">
-                          {loadingGuidance ? (
-                            <div className="inline-guide-loading">Loading collection guide...</div>
-                          ) : collectionGuidance?.recipe ? (
-                            <details className="inline-guide-details" open>
-                              <summary className="inline-guide-summary">
-                                <span className="inline-guide-icon">{'\uD83D\uDCD6'}</span>
-                                <span>Collection Guide for {collectionGuidance.system_name}</span>
-                                <RecipeConfidenceBadge confidence={collectionGuidance.recipe_confidence as RecipeConfidence} />
-                              </summary>
-                              <div className="inline-guide-content">
-                                <RecipeCard
-                                  recipe={collectionGuidance.recipe}
-                                  confidence={collectionGuidance.recipe_confidence as RecipeConfidence}
-                                />
-                                <div className="recipe-feedback">
-                                  {feedbackSubmitted ? (
-                                    <div className="recipe-feedback-thanks">
-                                      {'\u2705'} Thanks for your feedback!
-                                    </div>
-                                  ) : (
-                                    <>
-                                      <span className="recipe-feedback-label">Was this helpful?</span>
-                                      <button
-                                        className="recipe-feedback-btn recipe-feedback-yes"
-                                        onClick={() => handleRecipeFeedback('helpful')}
-                                      >
-                                        {'\uD83D\uDC4D'} This helped
-                                      </button>
-                                      <button
-                                        className="recipe-feedback-btn recipe-feedback-no"
-                                        onClick={() => handleRecipeFeedback('not_matching')}
-                                      >
-                                        {'\uD83D\uDC4E'} Didn't match
-                                      </button>
-                                    </>
-                                  )}
-                                </div>
-                              </div>
-                            </details>
-                          ) : collectionGuidance && !collectionGuidance.recipe ? (
-                            <div className="inline-guide-empty">
-                              <span className="inline-guide-icon">{'\uD83D\uDCD6'}</span>
-                              No collection recipe available for {collectionGuidance.system_name} at {collectionGuidance.current_maturity}.
-                            </div>
-                          ) : null}
-                        </div>
-                      )}
-
-                      {tracking.maturity_level && (
-                        <MaturityAdvisoryCard
-                          currentLevel={tracking.maturity_level}
-                          evidenceId={evidenceItem.id}
-                          evidenceTitle={evidenceItem.title}
-                          nextLevelRecipe={collectionGuidance?.next_level_preview || undefined}
-                          systemName={collectionGuidance?.system_name || undefined}
-                        />
-                      )}
-
-                      <div className="form-group">
-                        <label>Method of Collection</label>
-                        <input
-                          type="text"
-                          value={tracking.method_of_collection || ''}
-                          onChange={e => updateEvidenceTracking(evidenceItem.id, 'method_of_collection', e.target.value)}
-                          placeholder="e.g., Automated export, Manual review, Screenshot"
-                          className="form-control"
-                        />
-                      </div>
-
-                      <div className="form-row">
-                        <div className="form-group">
-                          <label>Frequency</label>
-                          <select
-                            value={tracking.frequency || ''}
-                            onChange={e => updateEvidenceTracking(evidenceItem.id, 'frequency', e.target.value)}
-                            className="form-control"
-                          >
-                            <option value="">Not set</option>
-                            {frequencyOptionsFor(tracking.frequency).map(opt => (
-                              <option key={opt.value} value={opt.value}>{opt.label}</option>
-                            ))}
-                          </select>
-                        </div>
-                      </div>
-
-                      {/* #781 — the assignee the task generator actually reads. The
-                          free-text "Owner Team" dropdown that used to sit above
-                          this is gone: one concept, one control. */}
-                      <div className="form-row">
-                        <EvidenceAssigneeSelect
-                          id={`assignee-${evidenceItem.id}`}
-                          value={tracking.assigned_user_id}
-                          resolved={tracking.assigned_user}
-                          members={orgMembers}
-                          memberTypeOf={memberTypeOf}
-                          onChange={userId =>
-                            updateEvidenceTracking(evidenceItem.id, 'assigned_user_id', userId)
-                          }
-                        />
-                      </div>
-
-                      <div className="form-group">
-                        <label>Comments</label>
-                        <textarea
-                          value={tracking.comments || ''}
-                          onChange={e => updateEvidenceTracking(evidenceItem.id, 'comments', e.target.value)}
-                          placeholder="Additional notes about evidence collection..."
-                          className="form-control"
-                          rows={3}
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Evidence Template Guidance (Issue #326) — collapsed by default; SCF/ERL reference, rendered flat */}
-                  <ScfReference>
-                    <EvidenceTemplateGuidance
-                      evidenceId={selectedEvidenceId}
-                      evidenceTemplates={evidenceTemplates}
-                      orgId={scopingData.organizationId}
-                      erlData={erlData}
-                      tracking={getEvidenceTracking(scopingData, selectedEvidenceId)}
-                    />
-                  </ScfReference>
-
-                  {/* Tasks, Assignment and Comments */}
-                  {(() => {
-                    const evidenceTracking = getEvidenceTracking(scopingData, selectedEvidenceId);
-                    const evidenceDbId = evidenceTracking?.id;
-
-                    // Only show if we have a database ID (evidence is saved to DB)
-                    if (evidenceDbId && scopingData.organizationId) {
-                      return (
-                        <div className="evidence-collaboration-container">
-                          {/* Collection Tasks */}
-                          <EvidenceTaskList
-                            evidenceTrackingId={evidenceDbId}
-                            evidenceId={selectedEvidenceId}
-                            organizationId={scopingData.organizationId}
-                            onTaskChange={() => {
-                              // Optional: trigger data refresh
-                            }}
-                          />
-
-                          {/* Assignments */}
-                          <div className="evidence-collaboration-section">
-                            <AssignmentPicker
-                              organizationId={scopingData.organizationId}
-                              assignableType="evidence"
-                              assignableId={evidenceDbId}
-                              label="Collaborators"
-                              onAssignmentChange={() => {
-                                // Optional: trigger data refresh
-                              }}
-                            />
-                          </div>
-
-                          {/* Owning teams — additive to the assignee above and
-                              to the Collaborators list. People do the work;
-                              a team owns the item. */}
-                          <div className="evidence-collaboration-section">
-                            <OwningTeams
-                              organizationId={scopingData.organizationId}
-                              assignableType="evidence"
-                              assignableId={evidenceDbId}
-                              canManage={canManageTeams}
-                              onChange={() => { void reloadTeamAssignments() }}
-                            />
-                          </div>
-
-                          {/* Comments */}
-                          <div className="evidence-collaboration-section">
-                            <ModernCommentThread
-                              commentableType="evidence"
-                              commentableId={evidenceDbId}
-                              organizationId={scopingData.organizationId}
-                            />
-                          </div>
-                        </div>
-                      );
-                    }
-
-                    // Show helpful message if not yet saved
-                    return (
-                      <div className="evidence-save-hint">
-                        <p>
-                          Save this evidence tracking to enable tasks, assignments and comments
-                        </p>
-                      </div>
-                    );
-                  })()}
-                </div>
-              </>
-            )
-          })()
-        ) : (
-          <div className="empty">
-            {viewMode === 'control' ? 'Select a control to review evidence' : 'Select an evidence item to track'}
-          </div>
-        )}
-      </div>
+          ) : (
+            <div className="empty">Select a control to review evidence</div>
+          )}
+        </div>
+      )}
 
       {/* Collection Wizard Modal */}
       {showCollectionWizard && scopingData.organizationId && (

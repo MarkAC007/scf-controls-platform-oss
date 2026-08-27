@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
+import ListToolbar from './explorer/ListToolbar'
 import {
   listEngagements,
   createEngagement,
@@ -175,7 +176,7 @@ function CreateEngagementDrawer({ organizationId, frameworks, onClose, onCreated
     e.preventDefault()
     if (!name.trim()) { setError('Give the engagement a name.'); return }
     if (selected.length === 0) { setError('Select at least one framework to scope.'); return }
-    if (startDate && endDate && endDate < startDate) { setError('The end date can’t be before the start date.'); return }
+    if (startDate && endDate && endDate < startDate) { setError("The end date can't be before the start date."); return }
 
     setSubmitting(true)
     setError(null)
@@ -199,7 +200,7 @@ function CreateEngagementDrawer({ organizationId, frameworks, onClose, onCreated
     <Drawer width={520} onClose={onClose}>
       <DrawerHeader
         title="New engagement"
-        subtitle="Scope an audit to one or more frameworks. We pull in the SCF controls that map to them, so you can present and evidence the audit from the framework’s perspective."
+        subtitle="Scope an audit to one or more frameworks. We pull in the SCF controls that map to them, so you can present and evidence the audit from the framework's perspective."
         onClose={onClose}
       />
 
@@ -361,9 +362,9 @@ function ScopeDrawer({ organizationId, engagement, frameworkName, onClose }: Sco
 
       <div style={{ padding: '16px 24px 0' }}>
         <HelpNote>
-          Every control mapped to the engagement’s frameworks, tagged by how your organisation scoped it.
+          Every control mapped to the engagement's frameworks, tagged by how your organisation scoped it.
           <strong> Excluded</strong> controls carry the justification an auditor will review;
-          <strong> not tracked</strong> means the control isn’t in your control set yet.
+          <strong> not tracked</strong> means the control isn't in your control set yet.
         </HelpNote>
       </div>
 
@@ -386,7 +387,7 @@ function ScopeDrawer({ organizationId, engagement, frameworkName, onClose }: Sco
         ) : items === null ? (
           <div style={{ color: 'var(--muted)', fontSize: 14 }}>Loading scope…</div>
         ) : items.length === 0 ? (
-          <div style={{ color: 'var(--muted)', fontSize: 14 }}>No controls map to the engagement’s frameworks yet.</div>
+          <div style={{ color: 'var(--muted)', fontSize: 14 }}>No controls map to the engagement's frameworks yet.</div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
             {SCOPE_STATUS_ORDER.filter(s => counts[s] > 0).map(status => {
@@ -466,7 +467,7 @@ function PresentationDrawer({ organizationId, engagement, frameworkName, onClose
     <Drawer width={720} onClose={onClose}>
       <DrawerHeader
         title="Framework presentation"
-        subtitle={<>{engagement.name} — controls sequenced under {frameworkName(framework)}’s own clauses.
+        subtitle={<>{engagement.name} — controls sequenced under {frameworkName(framework)}'s own clauses.
           {(data?.start_date || data?.end_date) && <> Evidence window {fmtDate(data?.start_date)} → {fmtDate(data?.end_date)}.</>}</>}
         onClose={onClose}
       />
@@ -489,7 +490,7 @@ function PresentationDrawer({ organizationId, engagement, frameworkName, onClose
         ) : loading || data === null ? (
           <div style={{ color: 'var(--muted)', fontSize: 14 }}>Loading presentation…</div>
         ) : controlCount === 0 ? (
-          <div style={{ color: 'var(--muted)', fontSize: 14 }}>No controls map to {frameworkName(framework)} in this engagement’s scope.</div>
+          <div style={{ color: 'var(--muted)', fontSize: 14 }}>No controls map to {frameworkName(framework)} in this engagement's scope.</div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
             <HelpNote>
@@ -596,7 +597,7 @@ function AuditorsDrawer({ organizationId, engagement, onClose }: AuditorsDrawerP
   }
 
   const handleRevoke = async (auditor: EngagementAuditor) => {
-    if (!window.confirm(`Revoke ${auditor.email ?? 'this auditor'}’s access?`)) return
+    if (!window.confirm(`Revoke ${auditor.email ?? 'this auditor'}'s access?`)) return
     setBusy(true); setError(null)
     try {
       await revokeEngagementAuditor(organizationId, engagement.id, auditor.id); load()
@@ -616,7 +617,7 @@ function AuditorsDrawer({ organizationId, engagement, onClose }: AuditorsDrawerP
       <div style={{ padding: 24, flex: 1, display: 'flex', flexDirection: 'column', gap: 20 }}>
         <HelpNote>
           An auditor you add here gets <strong>read-only</strong> access to <strong>this engagement only</strong> — its
-          controls, evidence, and queries. They can’t see anything else in your organisation. They reach it from their
+          controls, evidence, and queries. They can't see anything else in your organisation. They reach it from their
           own “My engagements” list after signing in.
         </HelpNote>
 
@@ -626,7 +627,7 @@ function AuditorsDrawer({ organizationId, engagement, onClose }: AuditorsDrawerP
           <label htmlFor="auditor-user" style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>Grant access</label>
           <div style={{ display: 'flex', gap: 8 }}>
             <input id="auditor-user" type="text" value={userId} onChange={e => setUserId(e.target.value)}
-              placeholder="Auditor’s user ID" style={{ ...inputStyle, fontSize: 13 }} />
+              placeholder="Auditor's user ID" style={{ ...inputStyle, fontSize: 13 }} />
             <button type="submit" disabled={busy || !userId.trim()} style={{
               padding: '9px 16px', borderRadius: 8, border: 'none',
               background: busy || !userId.trim() ? 'var(--muted-bg)' : 'var(--primary)',
@@ -795,9 +796,9 @@ function QueriesDrawer({ organizationId, engagement, onClose }: QueriesDrawerPro
         ) : (
           <>
             <HelpNote>
-              Queries are the audit’s question log. An auditor <strong>raises</strong> a question about a control;
+              Queries are the audit's question log. An auditor <strong>raises</strong> a question about a control;
               the control owner <strong>responds</strong> (moving it to <em>Answered</em>); the auditor
-              <strong> closes</strong> it once satisfied. Reopen any time if there’s more to discuss.
+              <strong> closes</strong> it once satisfied. Reopen any time if there's more to discuss.
             </HelpNote>
 
             <div>
@@ -851,6 +852,7 @@ export default function EngagementsPage({ organizationId }: EngagementsPageProps
   const [engagements, setEngagements] = useState<AuditEngagement[]>([])
   const [frameworks, setFrameworks] = useState<FrameworkInfo[]>([])
   const [loading, setLoading] = useState(true)
+  const [searchQuery, setSearchQuery] = useState('')
   const [showCreateDrawer, setShowCreateDrawer] = useState(false)
   const [scopeEngagement, setScopeEngagement] = useState<AuditEngagement | null>(null)
   const [presentEngagement, setPresentEngagement] = useState<AuditEngagement | null>(null)
@@ -878,6 +880,15 @@ export default function EngagementsPage({ organizationId }: EngagementsPageProps
   const nameById = useMemo(() => Object.fromEntries(frameworks.map(f => [f.id, f.name])), [frameworks])
   const frameworkName: FrameworkNamer = (id) => nameById[id] ?? id
 
+  const filteredEngagements = useMemo(() => {
+    if (!searchQuery.trim()) return engagements
+    const q = searchQuery.toLowerCase()
+    return engagements.filter(eng =>
+      eng.name.toLowerCase().includes(q) ||
+      eng.frameworks.some(fw => (nameById[fw] ?? fw).toLowerCase().includes(q))
+    )
+  }, [engagements, searchQuery, nameById])
+
   const handleDelete = async (engagement: AuditEngagement) => {
     if (!window.confirm(`Delete engagement “${engagement.name}”? This cannot be undone.`)) return
     setDeleting(engagement.id)
@@ -904,21 +915,30 @@ export default function EngagementsPage({ organizationId }: EngagementsPageProps
   return (
     <div style={{ padding: '24px 32px', maxWidth: 1100, margin: '0 auto' }}>
       {/* Page header */}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
-        <div>
-          <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700, color: 'var(--text)' }}>Audit Engagements</h1>
-          <p style={{ margin: '4px 0 0', color: 'var(--muted)', fontSize: 14, maxWidth: 640, lineHeight: 1.5 }}>
-            A time-bounded audit scoped to one or more frameworks. Each engagement pulls in the mapped SCF controls,
-            presents them from the framework’s perspective with the evidence you’ve collected, and gives external
-            auditors a read-only workspace to review and raise queries.
-          </p>
-        </div>
-        <button onClick={() => setShowCreateDrawer(true)} style={{
-          padding: '9px 18px', borderRadius: 6, border: 'none',
-          background: 'var(--primary)', color: 'var(--primary-foreground)',
-          fontSize: 14, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap',
-        }}>+ New Engagement</button>
+      <div style={{ marginBottom: 12 }}>
+        <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700, color: 'var(--text)' }}>Audit Engagements</h1>
+        <p style={{ margin: '4px 0 0', color: 'var(--muted)', fontSize: 14, maxWidth: 640, lineHeight: 1.5 }}>
+          A time-bounded audit scoped to one or more frameworks. Each engagement pulls in the mapped SCF controls,
+          presents them from the framework's perspective with the evidence you've collected, and gives external
+          auditors a read-only workspace to review and raise queries.
+        </p>
       </div>
+
+      {/* Explorer toolbar */}
+      <ListToolbar
+        search={searchQuery}
+        onSearchChange={setSearchQuery}
+        searchPlaceholder="Search engagements…"
+        count={`${engagements.length} engagement${engagements.length !== 1 ? 's' : ''}`}
+        actions={
+          <button
+            onClick={() => setShowCreateDrawer(true)}
+            className="eng-new-btn"
+          >
+            + New Engagement
+          </button>
+        }
+      />
 
       {/* Content */}
       {loading ? (
@@ -935,12 +955,11 @@ export default function EngagementsPage({ organizationId }: EngagementsPageProps
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {engagements.map(eng => {
+          {filteredEngagements.map(eng => {
             const statusStyle = STATUS_COLORS[eng.status] ?? { bg: 'var(--secondary)', color: 'var(--muted)' }
             return (
-              <div key={eng.id} style={{
-                border: '1px solid var(--border)', borderRadius: 10, padding: '18px 22px', background: 'var(--card)',
-                display: 'flex', alignItems: 'flex-start', gap: 16, boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+              <div key={eng.id} className="eng-explorer-row" style={{
+                padding: '18px 22px', display: 'flex', alignItems: 'flex-start', gap: 16,
               }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>

@@ -4,6 +4,7 @@ import type { MemberType } from '../types'
 import InviteUserModal from './InviteUserModal'
 import { ContractorBadge } from './ContractorBadge'
 import { useIsOrgAdmin } from '../hooks/useIsOrgAdmin'
+import ListToolbar from './explorer/ListToolbar'
 
 interface User {
   id: string
@@ -229,7 +230,6 @@ export default function UserManagement({ organizationId }: UserManagementProps) 
       <div className="user-management-header">
         <div className="header-left">
           <h1>User Management</h1>
-          <p className="subtitle">{members.length} member{members.length !== 1 ? 's' : ''} in organization</p>
           <div className="org-id-display">
             <span className="org-id-label">Organization ID:</span>
             <code className="org-id-value">{organizationId}</code>
@@ -252,33 +252,28 @@ export default function UserManagement({ organizationId }: UserManagementProps) 
             </button>
           </div>
         </div>
-        <div className="header-right">
-          <div className="search-box">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="11" cy="11" r="8" />
-              <path d="M21 21l-4.35-4.35" />
-            </svg>
-            <input
-              type="text"
-              placeholder="Search users..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-            />
-          </div>
+      </div>
+
+      <ListToolbar
+        search={searchQuery}
+        onSearchChange={setSearchQuery}
+        searchPlaceholder="Search users..."
+        count={`${members.length} member${members.length !== 1 ? 's' : ''}`}
+        actions={
           <button
-            className="btn-invite"
+            className="users-invite-btn"
             onClick={() => setShowInviteModal(true)}
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
               <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
               <circle cx="8.5" cy="7" r="4" />
               <line x1="20" y1="8" x2="20" y2="14" />
               <line x1="23" y1="11" x2="17" y2="11" />
             </svg>
-            Invite User
+            + Invite User
           </button>
-        </div>
-      </div>
+        }
+      />
 
       {error && (
         <div className="error-banner">
@@ -446,8 +441,9 @@ export default function UserManagement({ organizationId }: UserManagementProps) 
                         member.user?.display_name || member.user?.email || 'this user'
                       )}
                       title="Remove from organization"
+                      aria-label={`Remove ${member.user?.display_name || member.user?.email || 'user'} from organization`}
                     >
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
                         <path d="M3 6h18" />
                         <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
                       </svg>

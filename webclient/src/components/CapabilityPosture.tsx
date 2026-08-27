@@ -74,35 +74,37 @@ export default function CapabilityPosture({ organizationId }: CapabilityPostureP
   return (
     <div className="cp-container">
       <div className="cp-header">
-        <nav className="page-breadcrumb">
-          <span>Governance</span>
-          <span className="breadcrumb-separator">&rsaquo;</span>
-          <span className="breadcrumb-active">Capabilities</span>
-        </nav>
-        <h1 className="page-title">Capability Posture</h1>
-        <p className="dashboard-subtitle">Monitor capability themes across control domains and organizational maturity.</p>
+        <div className="cp-header-title-col">
+          <nav className="page-breadcrumb cp-breadcrumb-mono">
+            <span>Governance</span>
+            <span className="breadcrumb-separator">&rsaquo;</span>
+            <span className="breadcrumb-active">Capabilities</span>
+          </nav>
+          <h1 className="page-title cp-page-title">Capability Posture</h1>
+          <p className="dashboard-subtitle">Monitor capability themes across control domains and organizational maturity.</p>
+        </div>
         {aggregateStats && (
           <div className="cp-aggregate-stats">
-            <div className="kpi-card">
+            <div className="kpi-card cp-kpi-tile">
               <div className="kpi-card-header">
-                <span className="kpi-label">OVERALL KPS</span>
+                <span className="kpi-label cp-kpi-label">OVERALL KPS</span>
               </div>
-              <div className="kpi-value">{formatAxisPercent(aggregateStats.overallKps)}</div>
+              <div className="kpi-value cp-kpi-value">{formatAxisPercent(aggregateStats.overallKps)}</div>
             </div>
-            <div className="kpi-card">
+            <div className="kpi-card cp-kpi-tile">
               <div className="kpi-card-header">
-                <span className="kpi-label">SCOPED CONTROLS</span>
+                <span className="kpi-label cp-kpi-label">SCOPED CONTROLS</span>
               </div>
-              <div className="kpi-value" data-testid="cp-scoped-controls">
+              <div className="kpi-value cp-kpi-value" data-testid="cp-scoped-controls">
                 {scopedStats ? scopedStats.in_scope : '—'}
               </div>
             </div>
             {aggregateStats.totalAtRisk > 0 && (
-              <div className="kpi-card">
+              <div className="kpi-card cp-kpi-tile">
                 <div className="kpi-card-header">
-                  <span className="kpi-label">AT RISK</span>
+                  <span className="kpi-label cp-kpi-label">AT RISK</span>
                 </div>
-                <div className="kpi-value" style={{ color: 'var(--destructive)' }}>{aggregateStats.totalAtRisk}</div>
+                <div className="kpi-value cp-kpi-value" style={{ color: 'var(--destructive)' }}>{aggregateStats.totalAtRisk}</div>
               </div>
             )}
           </div>

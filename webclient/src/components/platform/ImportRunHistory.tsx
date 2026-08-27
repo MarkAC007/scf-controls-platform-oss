@@ -43,9 +43,9 @@ interface ImportRunHistoryProps {
 export default function ImportRunHistory({ runs, total, activeRunId, onSelect }: ImportRunHistoryProps) {
   return (
     <div className="surface-bench" style={{ padding: '1.25rem 1.5rem', marginTop: '1.5rem' }}>
-      <h3 className="bench-header">
-        <span className="container-title">Import history</span>
-      </h3>
+      <div className="platform-section-label">
+        Import history{total > 0 ? ` — ${total} run${total === 1 ? '' : 's'}` : ''}
+      </div>
       {runs.length === 0 ? (
         <p style={{ color: 'var(--muted)' }}>No catalog upgrade runs yet.</p>
       ) : (
@@ -66,13 +66,11 @@ export default function ImportRunHistory({ runs, total, activeRunId, onSelect }:
                 <tr
                   key={run.id}
                   onClick={() => onSelect(run.id)}
-                  style={{
-                    cursor: 'pointer',
-                    background: run.id === activeRunId ? 'var(--bg-tertiary)' : undefined,
-                  }}
+                  className={run.id === activeRunId ? 'platform-board-row-selected' : undefined}
+                  style={{ cursor: 'pointer' }}
                 >
-                  <td>{run.from_version || '—'}</td>
-                  <td style={{ fontWeight: 500 }}>{run.to_version || '—'}</td>
+                  <td className="platform-mono-id">{run.from_version || '—'}</td>
+                  <td className="platform-mono-id strong">{run.to_version || '—'}</td>
                   <td><RunStatusBadge status={run.status} /></td>
                   <td>{run.created_by || '—'}</td>
                   <td>{formatDateTime(run.created_at)}</td>

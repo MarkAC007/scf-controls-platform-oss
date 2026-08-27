@@ -41,9 +41,11 @@ function source(path: string): string {
 const NAVIGATIONAL_ROWS: { file: string; rows: number }[] = [
   { file: 'components/dashboard/WorkQueuePanel.tsx', rows: 3 },
   { file: 'components/evidence/EvidenceDashboardTab.tsx', rows: 2 },
-  { file: 'components/SidebarControlCard.tsx', rows: 1 },
+  // SidebarControlCard.tsx deleted in Phase 3 — scoping rows now go through
+  // ExplorerListRow (which owns the interactiveRowProps call) via ScopingList.
   { file: 'components/NotificationBell.tsx', rows: 1 },
-  { file: 'components/EvidenceReview.tsx', rows: 2 },
+  // EvidenceReview.tsx rows moved to ExplorerListRow in Phase 3 — keyboard
+  // contract owned and tested there (same pattern as SidebarControlCard above).
 ]
 
 /**

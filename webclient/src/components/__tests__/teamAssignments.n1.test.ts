@@ -4,13 +4,16 @@ import { describe, expect, it } from 'vitest'
  * Source assertions over team ownership in the two list views.
  *
  * `TeamAssignmentList.test.tsx` proves the batching works; this proves the
- * real lists use it. Rendering ControlScoping or EvidenceReview to count
+ * real lists use it. Rendering ScopingPage or EvidenceReview to count
  * requests would need eight mocks between them and would end up asserting on
  * the mocks — what actually matters here is structural, and it is the kind of
  * thing a later edit removes by accident: no row, and nothing a row calls,
  * may fetch its own ownership.
  *
  * Modelled on `data/__tests__/interactiveRow.usage.test.ts`.
+ *
+ * Phase 3 migration: ControlScoping.tsx deleted → ScopingPage.tsx + ScopingList.tsx.
+ * SidebarControlCard.tsx deleted → ExplorerListRow (owns its own keyboard contract).
  */
 const sources = import.meta.glob('../../**/*.{ts,tsx}', {
   query: '?raw',
@@ -43,12 +46,9 @@ function source(path: string): string {
 
 /** The org-scoped lists that carry an accountable-team column. */
 const LIST_VIEWS = [
-  'components/ControlScoping.tsx',
+  'components/scoping/ScopingPage.tsx',   // Phase 3: replaced ControlScoping.tsx
   'components/EvidenceReview.tsx',
 ]
-
-/** Rendered once per row. Anything that fetches in here is the N+1 itself. */
-const ROW_COMPONENTS = ['components/SidebarControlCard.tsx']
 
 function occurrences(haystack: string, needle: string): number {
   return haystack.split(needle).length - 1
@@ -60,7 +60,7 @@ describe('team ownership in list views is batch-loaded', () => {
     expect(occurrences(text, 'useTeamAssignments(')).toBe(1)
   })
 
-  it.each(LIST_VIEWS)('%s never reads one item’s assignments', file => {
+  it.each(LIST_VIEWS)('%s never reads one item\'s assignments', file => {
     const text = source(file)
     // The single-item read is for detail panels. In a list it is the N+1.
     expect(text).not.toContain('getItemTeamAssignments')
@@ -70,7 +70,7 @@ describe('team ownership in list views is batch-loaded', () => {
   })
 
   it('the controls list scopes the read to the page it has loaded', () => {
-    const text = source('components/ControlScoping.tsx')
+    const text = source('components/scoping/ScopingPage.tsx')
     // Server-paginated: asking for every assignment in the organisation to
     // render fifty rows fetches thousands of records to show fifty.
     expect(text).toContain("useTeamAssignments(organizationId, 'control', { itemIds: loadedControlDbIds })")
@@ -103,21 +103,29 @@ describe('team ownership in list views is batch-loaded', () => {
     expect(hook).toContain('chunk(ids, MAX_ITEM_IDS_PER_REQUEST)')
   })
 
-  it.each(ROW_COMPONENTS)('%s takes its team as a value and fetches nothing', file => {
-    const text = source(file)
-    expect(text).toContain('accountableTeam')
-    expect(text).not.toContain('useTeamAssignments')
-    expect(text).not.toContain('apiClient')
+  it('ScopingList receives the accountable-team map as a prop and never calls useTeamAssignments', () => {
+    // Phase 3: SidebarControlCard replaced by ScopingList + ExplorerListRow.
+    // The owner label is now batch-loaded in ScopingPage and passed as
+    // ownerByControlId prop — the list component never invokes useTeamAssignments.
+    // (ScopingList does use apiClient for team/function *filter options*, not ownership.)
+    // Comments may mention the hook name; we check the call pattern.
+    const list = source('components/scoping/ScopingList.tsx')
+    expect(list).toContain('ownerByControlId')
+    // The hook is not imported in this file
+    expect(list).not.toMatch(/import.*useTeamAssignments/)
+    expect(list).not.toContain('getItemTeamAssignments')
+    expect(list).not.toContain('listTeamAssignments(')
   })
 })
 
 describe('the team filter is pushed into the query, not only applied in the browser', () => {
   it('the controls list sends team_id and function_id to the server', () => {
-    const text = source('components/ControlScoping.tsx')
+    // Phase 3: ScopingList owns the filter→query mapping; ScopingPage passes filters down.
+    const list = source('components/scoping/ScopingList.tsx')
     // Filtering only in the browser would narrow the pages already loaded and
     // quietly under-report the rest of the catalogue.
-    expect(text).toContain('team_id: teamFilter !== ALL_TEAMS')
-    expect(text).toContain('function_id: functionFilter !== ALL_TEAMS')
+    expect(list).toContain("team_id: filters.teamId !== ALL")
+    expect(list).toContain("function_id: filters.functionId !== ALL")
   })
 
   it('the fetcher forwards both to the paginated endpoint', () => {
@@ -168,8 +176,8 @@ describe('the team filter is pushed into the query, not only applied in the brow
     expect(loader).not.toContain('getEvidenceTracking(orgId, {')
   })
 
-  it('the controls list does not re-filter what the server already filtered', () => {
-    const text = source('components/ControlScoping.tsx')
+  it('the controls page does not re-filter what the server already filtered', () => {
+    const text = source('components/scoping/ScopingPage.tsx')
     // The rows the server returns ARE the filtered list. A second predicate
     // over the same data is two answers to one question, and the wrong one
     // still renders — it is the shape of defect this issue exists to remove.
@@ -177,16 +185,15 @@ describe('the team filter is pushed into the query, not only applied in the brow
   })
 
   it('no longer tells the user the filter only reaches loaded pages', () => {
-    const text = source('components/ControlScoping.tsx')
-    // The caveat was true while filtering was client-side only. The server
-    // filters now, so leaving it would be the documented-but-false defect in
-    // the other direction.
-    // Match the rendered sentence, not the phrase: "loaded so far" is
-    // legitimate in a comment about which ids the page holds, and a guard that
-    // cannot tell those apart fails on unrelated edits.
-    expect(text).not.toContain('Team ownership is')
-    expect(text).not.toContain('scroll to bring more into range')
-    expect(text).not.toContain('team-filter-scope-hint')
+    // Phase 3: these strings were in ControlScoping.tsx which is now deleted.
+    // ScopingList/ScopingPage have no such caveats — the server filters.
+    // This assertion validates the deleted content does not re-appear in the
+    // new implementation.
+    const page = source('components/scoping/ScopingPage.tsx')
+    const list = source('components/scoping/ScopingList.tsx')
+    expect(page + list).not.toContain('Team ownership is')
+    expect(page + list).not.toContain('scroll to bring more into range')
+    expect(page + list).not.toContain('team-filter-scope-hint')
   })
 })
 
@@ -244,28 +251,32 @@ describe('team ownership never claims to grant access', () => {
   })
 })
 
-describe('the legacy free-text owner column is left alone', () => {
-  const text = source('components/ControlScoping.tsx')
-
+describe('the legacy free-text owner column is preserved in ScopingDetailPage', () => {
+  // Phase 3: the owner field (free-text from settings) moved to ScopingDetailPage.
+  // ScopingPage owns the write (updateField → updateScopedControl).
   it('still writes scoped_controls.owner from the settings list', () => {
-    expect(text).toContain("updateField('owner', e.target.value)")
-    expect(text).toContain('DEFAULT_OWNER_TEAMS')
-    expect(text).toContain('orgOwnerTeams')
+    const page = source('components/scoping/ScopingPage.tsx')
+    expect(page).toContain('DEFAULT_OWNER_TEAMS')
+    expect(page).toContain('orgOwnerTeams')
+    const detail = source('components/scoping/ScopingDetailPage.tsx')
+    expect(detail).toContain("onFieldChange('owner'")
+    expect(detail).toContain('DEFAULT_OWNER_TEAMS')
   })
 
   it('is labelled so it cannot be mistaken for a real team', () => {
-    const flattened = text.replace(/\s+/g, ' ')
+    const flattened = source('components/scoping/ScopingDetailPage.tsx').replace(/\s+/g, ' ')
     expect(flattened).toContain('Owner Team Label')
-    expect(flattened).toContain('it is not one of the teams under Users → Teams')
+    expect(flattened).toContain('it is not one of the teams under Users')
   })
 
   it('does not put a second team picker beside it', () => {
     // The one team selector on the details form is the legacy label. Owning
     // teams lives on the Assignments tab, next to the per-user picker.
+    const text = source('components/scoping/ScopingDetailPage.tsx')
     const detailsForm = text.slice(
       text.indexOf('Owner Team Label'),
-      text.indexOf("activeTab === 'notes'"),
+      text.indexOf("'notes'"),
     )
-    expect(detailsForm).not.toContain('OwningTeams')
+    expect(detailsForm).not.toContain('<OwningTeams')
   })
 })

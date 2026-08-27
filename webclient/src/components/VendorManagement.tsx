@@ -1,25 +1,32 @@
 import { useState, useCallback } from 'react'
 import VendorRegistry from './VendorRegistry'
-import VendorDetail from './VendorDetail'
+import VendorDetailPage from './VendorDetailPage'
 import VendorModal from './VendorModal'
 import { deleteVendor } from '../data/apiClient'
 import type { Vendor } from '../types'
 
 interface VendorManagementProps {
   organizationId: string
+  /** The vendor id to show in detail, from ?vendor= URL param. null = list view. */
+  vendorItem?: string | null
+  /** Called when user opens/closes/pages detail. App owns push/replace decision. */
+  onVendorItemChange?: (id: string | null) => void
 }
 
 /**
  * VendorManagement - orchestrates the vendor list, detail, and modal views.
  *
+ * Phase 4 Task 5: URL-driven routing via vendorItem/onVendorItemChange (mirrors
+ * RiskDashboard's riskItem/onRiskItemChange pattern). App owns URL writes.
+ *
  * States:
- *   - 'list': Shows VendorRegistry with search/filter/table
- *   - 'detail': Shows VendorDetail for a selected vendor
+ *   - vendorItem null: Shows VendorRegistry (list stays mounted beneath for filter/pager state)
+ *   - vendorItem set: Shows VendorDetailPage full-width
  *   - Modal overlay: Shows VendorModal for creating/editing a vendor
  */
-export default function VendorManagement({ organizationId }: VendorManagementProps) {
-  const [view, setView] = useState<'list' | 'detail'>('list')
-  const [selectedVendorId, setSelectedVendorId] = useState<string | null>(null)
+export default function VendorManagement({ organizationId, vendorItem = null, onVendorItemChange }: VendorManagementProps) {
+  // URL-driven: no local view/selectedVendorId state — App owns them via vendorItem/onVendorItemChange
+  const [filteredVendors, setFilteredVendors] = useState<Vendor[]>([])
   const [showModal, setShowModal] = useState(false)
   const [editVendor, setEditVendor] = useState<Vendor | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)
@@ -27,14 +34,8 @@ export default function VendorManagement({ organizationId }: VendorManagementPro
   const [deleting, setDeleting] = useState(false)
 
   const handleSelectVendor = useCallback((vendorId: string) => {
-    setSelectedVendorId(vendorId)
-    setView('detail')
-  }, [])
-
-  const handleBack = useCallback(() => {
-    setView('list')
-    setSelectedVendorId(null)
-  }, [])
+    onVendorItemChange?.(vendorId)
+  }, [onVendorItemChange])
 
   const handleAddVendor = useCallback(() => {
     setEditVendor(null)
@@ -56,8 +57,7 @@ export default function VendorManagement({ organizationId }: VendorManagementPro
     try {
       await deleteVendor(deleteConfirm.vendor.id, organizationId)
       setDeleteConfirm(null)
-      setView('list')
-      setSelectedVendorId(null)
+      onVendorItemChange?.(null)
       setRefreshKey(prev => prev + 1)
     } catch (err) {
       console.error('Failed to delete vendor:', err)
@@ -65,7 +65,7 @@ export default function VendorManagement({ organizationId }: VendorManagementPro
     } finally {
       setDeleting(false)
     }
-  }, [deleteConfirm, organizationId])
+  }, [deleteConfirm, organizationId, onVendorItemChange])
 
   const handleModalClose = useCallback(() => {
     setShowModal(false)
@@ -80,21 +80,31 @@ export default function VendorManagement({ organizationId }: VendorManagementPro
 
   return (
     <>
-      {view === 'list' && (
+      {/* List always mounted — stays alive for filter state and pager.
+          display:contents (not block) when visible so the wrapper div adds no
+          stacking context or box model of its own; display:none when the detail
+          page is open makes the list non-focusable (keyboard+AT safe) while
+          keeping it mounted so VendorRegistry's filteredVendors state survives. */}
+      <div
+        style={{ display: vendorItem ? 'none' : 'contents' }}
+        aria-hidden={vendorItem ? true : undefined}
+      >
         <VendorRegistry
           key={refreshKey}
           organizationId={organizationId}
           onSelectVendor={handleSelectVendor}
           onAddVendor={handleAddVendor}
           onDeleteVendor={handleDeleteVendor}
+          onFilteredListChange={setFilteredVendors}
         />
-      )}
+      </div>
 
-      {view === 'detail' && selectedVendorId && (
-        <VendorDetail
+      {vendorItem && (
+        <VendorDetailPage
           organizationId={organizationId}
-          vendorId={selectedVendorId}
-          onBack={handleBack}
+          vendorId={vendorItem}
+          filteredVendors={filteredVendors}
+          onVendorItemChange={onVendorItemChange ?? (() => {})}
           onEdit={handleEditVendor}
           onDelete={handleDeleteVendor}
         />
@@ -136,7 +146,6 @@ export default function VendorManagement({ organizationId }: VendorManagementPro
               maxWidth: '440px',
               margin: '20px',
               border: '1px solid var(--border)',
-              boxShadow: '0 20px 60px rgba(0, 0, 0, 0.3)',
             }}
           >
             <h3 style={{ margin: '0 0 12px 0', fontSize: '1.125rem', fontWeight: 600, color: 'var(--text)' }}>

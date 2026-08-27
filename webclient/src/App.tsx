@@ -16,18 +16,15 @@ import {
   transformConsultantInvite
 } from './data/apiClient'
 import type { EnrichedControl, ScopedControlsFile, CollectionInterfacesFile, ERLFile, FrameworkNameMap, EvidenceTemplatesFile } from './types'
-import ControlList from './components/ControlList'
-import ControlDetail from './components/ControlDetail'
-import ControlScoping from './components/ControlScoping'
+import LibraryPage from './components/library/LibraryPage'
+import ScopingPage from './components/scoping/ScopingPage'
 import EvidenceWorkspace from './components/EvidenceWorkspace'
 import Dashboard from './components/Dashboard'
 import MappingMatrix from './components/MappingMatrix'
 import TasksPage from './components/TasksPage'
-import SystemsRegistry from './components/SystemsRegistry'
-import AddSystemModal from './components/AddSystemModal'
+import SystemsManagement from './components/SystemsManagement'
 import UserManagement from './components/UserManagement'
 import TeamManagement from './components/TeamManagement'
-import type { System } from './types'
 import Header from './components/Header'
 import Sidebar from './components/Sidebar'
 import Footer from './components/Footer'
@@ -63,9 +60,15 @@ import {
   SYNCED_TABS,
   evidenceItemSearch,
   pushSearch,
+  readAppLocation,
   readTabFromUrl,
   replaceSearch,
   searchForTab,
+  withLibraryItem,
+  withRiskItem,
+  withVendorItem,
+  withSystemItem,
+  withTaskItem,
 } from './data/appUrl'
 import InviteAcceptance from './components/InviteAcceptance'
 import OrgSwitcher from './components/OrgSwitcher'
@@ -101,7 +104,7 @@ function AppContent() {
 
   // Scoping data — single source of truth for the whole app.
   // React Query owns it, so any writer that invalidates ['scoping-data']
-  // (ControlScoping) or updates the cache (EvidenceReview / FrameworkGapDetail
+  // (ScopingPage) or updates the cache (EvidenceReview / FrameworkGapDetail
   // via onScopingDataChange) propagates to every consumer by construction —
   // no full page reload, no per-tab refetch hack.
   const { data: scopingDataRaw, isError: scopingFailed } = useQuery({
@@ -136,7 +139,32 @@ function AppContent() {
   }, [queryClient, currentOrg?.id])
 
   const [selectedId, setSelectedId] = useState<string | undefined>(undefined)
-  // One-shot "navigate me to this control" signal for ControlScoping.
+  // Library tab: the ?item= param from the URL (scf_id of the control to show, or null).
+  // Seeded from the URL on mount so deep links land on the right control.
+  const [libraryItem, setLibraryItem] = useState<string | null>(
+    () => readAppLocation(window.location.search).libraryItem,
+  )
+  // Risk register tab: the ?risk= param from the URL (risk code to show in detail, or null).
+  // Seeded from the URL on mount so deep links land on the right risk.
+  const [riskItem, setRiskItem] = useState<string | null>(
+    () => readAppLocation(window.location.search).riskItem,
+  )
+  // Vendors tab: the ?vendor= param from the URL (vendor id to show in detail, or null).
+  // Seeded from the URL on mount so deep links land on the right vendor.
+  const [vendorItem, setVendorItem] = useState<string | null>(
+    () => readAppLocation(window.location.search).vendorItem,
+  )
+  // Systems tab: the ?system= param from the URL (system id to show in detail, or null).
+  // Seeded from the URL on mount so deep links land on the right system.
+  const [systemItem, setSystemItem] = useState<string | null>(
+    () => readAppLocation(window.location.search).systemItem,
+  )
+  // Tasks tab: the ?task= param from the URL (task id to show in detail, or null).
+  // Seeded from the URL on mount so deep links land on the right task.
+  const [taskItem, setTaskItem] = useState<string | null>(
+    () => readAppLocation(window.location.search).taskItem,
+  )
+  // One-shot "navigate me to this control" signal for ScopingPage.
   const [controlNavTarget, setControlNavTarget] = useState<string | undefined>(undefined)
   // Seeded from the URL: every sidebar destination is addressable, so a reload
   // or a pasted link lands on the screen it names rather than the dashboard
@@ -146,10 +174,7 @@ function AppContent() {
   // OSS onboarding: null = not yet checked, false = empty (show upload gate), true = seeded
   const [catalogSeeded, setCatalogSeeded] = useState<boolean | null>(null)
   // NOTE: isRefreshing state removed in #273 — React Query handles data freshness
-  // Systems Registry state
-  const [showSystemModal, setShowSystemModal] = useState(false)
-  const [editingSystem, setEditingSystem] = useState<System | null>(null)
-  const [systemsKey, setSystemsKey] = useState(0) // Key to force refresh
+  // Systems Registry state now owned by SystemsManagement (Phase 4 Task 6)
 
   // Consultant Portal state
   const [isConsultant, setIsConsultant] = useState<boolean | null>(null) // null = loading
@@ -183,11 +208,116 @@ function AppContent() {
     setActiveTab('evidence')
   }
 
+  // Handler for library tab ?item= changes.
+  //
+  // Navigation decisions (mirrors evidence's push/replace idiom):
+  //   list → detail  : pushSearch  (libraryItem was null → new id)
+  //   prev / next    : replaceSearch (libraryItem was non-null → new id; one entry)
+  //   back / Esc     : pushSearch  (clearing item; user can press Back to return)
+  //
+  // App owns the push/replace decision; LibraryPage calls this for all cases.
+  const handleLibraryItemChange = useCallback((id: string | null) => {
+    const current = readAppLocation(window.location.search).libraryItem
+    const next = withLibraryItem(window.location.search, id)
+    if (id !== null && current !== null) {
+      // prev/next: same "detail view" history entry
+      replaceSearch(next)
+    } else {
+      // list→detail or back: new history entry
+      pushSearch(next)
+    }
+    setLibraryItem(id)
+  }, [])
+
+  // Handler for risk register tab ?risk= changes.
+  //
+  // Navigation decisions (mirrors library's push/replace idiom):
+  //   list → detail  : pushSearch  (riskItem was null → new code)
+  //   prev / next    : replaceSearch (riskItem was non-null → new code; one entry)
+  //   back / Esc     : pushSearch  (clearing risk; user can press Back to return)
+  //
+  // App owns the push/replace decision; RiskDashboard calls this for all cases.
+  const handleRiskItemChange = useCallback((code: string | null) => {
+    const current = readAppLocation(window.location.search).riskItem
+    const next = withRiskItem(window.location.search, code)
+    if (code !== null && current !== null) {
+      // prev/next: same "detail view" history entry
+      replaceSearch(next)
+    } else {
+      // list→detail or back: new history entry
+      pushSearch(next)
+    }
+    setRiskItem(code)
+  }, [])
+
+  // Handler for vendor tab ?vendor= changes.
+  //
+  // Navigation decisions (mirrors risk's push/replace idiom):
+  //   list → detail  : pushSearch  (vendorItem was null → new id)
+  //   prev / next    : replaceSearch (vendorItem was non-null → new id; one entry)
+  //   back / Esc     : pushSearch  (clearing vendor; user can press Back to return)
+  //
+  // App owns the push/replace decision; VendorManagement calls this for all cases.
+  const handleVendorItemChange = useCallback((id: string | null) => {
+    const current = readAppLocation(window.location.search).vendorItem
+    const next = withVendorItem(window.location.search, id)
+    if (id !== null && current !== null) {
+      // prev/next: same "detail view" history entry
+      replaceSearch(next)
+    } else {
+      // list→detail or back: new history entry
+      pushSearch(next)
+    }
+    setVendorItem(id)
+  }, [])
+
+  // Handler for system tab ?system= changes.
+  //
+  // Navigation decisions (mirrors vendor's push/replace idiom):
+  //   list → detail  : pushSearch  (systemItem was null → new id)
+  //   prev / next    : replaceSearch (systemItem was non-null → new id; one entry)
+  //   back / Esc     : pushSearch  (clearing system; user can press Back to return)
+  //
+  // App owns the push/replace decision; SystemsManagement calls this for all cases.
+  const handleSystemItemChange = useCallback((id: string | null) => {
+    const current = readAppLocation(window.location.search).systemItem
+    const next = withSystemItem(window.location.search, id)
+    if (id !== null && current !== null) {
+      // prev/next: same "detail view" history entry
+      replaceSearch(next)
+    } else {
+      // list→detail or back: new history entry
+      pushSearch(next)
+    }
+    setSystemItem(id)
+  }, [])
+
+  // Handler for task tab ?task= changes.
+  //
+  // Navigation decisions (mirrors vendor's push/replace idiom):
+  //   list → detail  : pushSearch  (taskItem was null → new id)
+  //   prev / next    : replaceSearch (taskItem was non-null → new id; one entry)
+  //   back / Esc     : pushSearch  (clearing task; user can press Back to return)
+  //
+  // App owns the push/replace decision; TasksPage calls this for all cases.
+  const handleTaskItemChange = useCallback((id: string | null) => {
+    const current = readAppLocation(window.location.search).taskItem
+    const next = withTaskItem(window.location.search, id)
+    if (id !== null && current !== null) {
+      // prev/next: same "detail view" history entry
+      replaceSearch(next)
+    } else {
+      // list→detail or back: new history entry
+      pushSearch(next)
+    }
+    setTaskItem(id)
+  }, [])
+
   // Handler for navigating to a specific control from the dashboard work
   // queue, a risk assessment, or a notification. `controlNavTarget` is the
   // "take me there" signal — distinct from `selectedId`, which only remembers
-  // the last selection. ControlScoping clears it once acted on, so arriving
-  // at Scoping later by other means does not re-trigger the search.
+  // the last selection. ScopingPage clears it once acted on (onNavigationConsumed),
+  // so arriving at Scoping later by other means does not re-trigger the search.
   const handleNavigateToControl = (scfId: string) => {
     setSelectedId(scfId)
     setControlNavTarget(scfId)
@@ -379,15 +509,26 @@ function AppContent() {
 
   // Browser Back and Forward. This acts when the URL names a synced tab, or
   // when we are leaving one for the dashboard, and otherwise leaves `activeTab`
-  // alone. It reads only `tab` — EvidenceWorkspace and EvidenceReview each
-  // listen for the same event and read only their own parameter, so the three
-  // never contend.
+  // alone. Also syncs libraryItem and riskItem from the URL (same event — the
+  // tabs own their params while active; reading them here avoids separate
+  // listeners that would contend with EvidenceWorkspace/EvidenceReview).
   useEffect(() => {
     const onPopState = () => {
       const fromUrl = readTabFromUrl()
       setActiveTab((current) =>
         SYNCED_TABS.some((tab) => tab === fromUrl || tab === current) ? fromUrl : current
       )
+      const loc = readAppLocation(window.location.search)
+      // Restore libraryItem from the history entry we're navigating to
+      setLibraryItem(loc.libraryItem)
+      // Restore riskItem from the history entry we're navigating to
+      setRiskItem(loc.riskItem)
+      // Restore vendorItem from the history entry we're navigating to
+      setVendorItem(loc.vendorItem)
+      // Restore systemItem from the history entry we're navigating to
+      setSystemItem(loc.systemItem)
+      // Restore taskItem from the history entry we're navigating to
+      setTaskItem(loc.taskItem)
     }
     window.addEventListener('popstate', onPopState)
     return () => window.removeEventListener('popstate', onPopState)
@@ -467,11 +608,6 @@ function AppContent() {
 
   // NOTE: Legacy 30s polling and input-focus tracking removed in #273.
   // Saves are now immediate (debounced 300ms) via React Query.
-
-  const selected = useMemo(
-    () => controls.find(c => c.scf_id === selectedId),
-    [controls, selectedId]
-  )
 
   // Show invite acceptance flow if there's an invite token in URL
   // This takes priority over normal auth flow
@@ -587,29 +723,27 @@ function AppContent() {
             <CapabilityPosture organizationId={scopingData.organizationId!} />
           )}
           {activeTab === 'library' && (
-            <div className="layout">
-              <ControlList
-                selectedId={selectedId}
-                onSelect={setSelectedId}
-                erlData={erlData}
-                frameworkNames={frameworkNames}
-              />
-              <ControlDetail
-                control={selected}
-                scopingData={scopingData}
-                organizationId={scopingData?.organizationId ?? undefined}
-                onNavigateToEvidence={handleNavigateToEvidence}
-              />
-            </div>
+            <LibraryPage
+              item={libraryItem}
+              onItemChange={handleLibraryItemChange}
+              scopingData={scopingData}
+              erlData={erlData}
+              frameworkNames={frameworkNames}
+              onNavigateToEvidence={handleNavigateToEvidence}
+              organizationId={scopingData?.organizationId ?? undefined}
+              controls={controls}
+            />
           )}
           {activeTab === 'scoping' && scopingData && (
-            <ControlScoping
+            <ScopingPage
               organizationId={scopingData.organizationId!}
               erlData={erlData}
               frameworkNames={frameworkNames}
               initialSelectedId={selectedId}
               navigateToId={controlNavTarget}
               onNavigationConsumed={() => setControlNavTarget(undefined)}
+              scopingData={scopingData}
+              onScopingDataChange={setScopingData}
             />
           )}
           {activeTab === 'evidence' && scopingData && (
@@ -633,54 +767,32 @@ function AppContent() {
             <TasksPage
               onNavigateToEvidence={handleNavigateToEvidence}
               organizationId={scopingData.organizationId!}
+              taskItem={taskItem}
+              onTaskItemChange={handleTaskItemChange}
             />
           )}
           {activeTab === 'risk-register' && scopingData && (
             <RiskDashboard
               organizationId={scopingData.organizationId!}
               onNavigateToControl={handleNavigateToControl}
+              riskItem={riskItem}
+              onRiskItemChange={handleRiskItemChange}
             />
           )}
           {activeTab === 'vendors' && scopingData && (
             <VendorManagement
               organizationId={scopingData.organizationId!}
+              vendorItem={vendorItem}
+              onVendorItemChange={handleVendorItemChange}
             />
           )}
           {activeTab === 'systems' && scopingData && (
-            <>
-              <SystemsRegistry
-                key={systemsKey}
-                organizationId={scopingData.organizationId!}
-                collectionInterfaces={collectionInterfaces}
-                onAddSystem={() => {
-                  setEditingSystem(null)
-                  setShowSystemModal(true)
-                }}
-                onEditSystem={(system) => {
-                  setEditingSystem(system)
-                  setShowSystemModal(true)
-                }}
-                onViewSystem={(system) => {
-                  setEditingSystem(system)
-                  setShowSystemModal(true)
-                }}
-              />
-              {showSystemModal && (
-                <AddSystemModal
-                  organizationId={scopingData.organizationId!}
-                  editSystem={editingSystem}
-                  onClose={() => {
-                    setShowSystemModal(false)
-                    setEditingSystem(null)
-                  }}
-                  onSuccess={() => {
-                    setShowSystemModal(false)
-                    setEditingSystem(null)
-                    setSystemsKey(prev => prev + 1) // Force refresh
-                  }}
-                />
-              )}
-            </>
+            <SystemsManagement
+              organizationId={scopingData.organizationId!}
+              collectionInterfaces={collectionInterfaces}
+              systemItem={systemItem}
+              onSystemItemChange={handleSystemItemChange}
+            />
           )}
           {activeTab === 'users' && scopingData && (
             <>
@@ -756,23 +868,45 @@ function AppContent() {
             <CatalogChangelogPage organizationId={scopingData.organizationId!} />
           )}
           {activeTab === 'settings' && scopingData && (
-            <>
-              <CatalogVersionCard
-                organizationId={scopingData.organizationId!}
-              />
-              <AppearanceSettings
-                organizationId={scopingData.organizationId!}
-              />
-              <RiskProfileSettings
-                organizationId={scopingData.organizationId!}
-              />
-              <DocGenSettingsCard
-                organizationId={scopingData.organizationId!}
-              />
-              <BackupRestore
-                organizationId={scopingData.organizationId!}
-              />
-            </>
+            <div className="settings-page-layout">
+              <nav className="settings-section-nav" aria-label="Settings sections">
+                <a className="settings-section-nav-item" href="#settings-catalog-version">CATALOG VERSION</a>
+                <a className="settings-section-nav-item" href="#settings-branding">ORGANISATION BRANDING</a>
+                <a className="settings-section-nav-item" href="#settings-risk">RISK &amp; GOVERNANCE</a>
+                <a className="settings-section-nav-item" href="#settings-docgen">DOCUMENT GENERATION</a>
+                <a className="settings-section-nav-item" href="#settings-backups">BACKUPS</a>
+                <p className="settings-section-nav-note">
+                  Settings apply to this organisation only. Platform-wide catalog administration lives under Platform → Catalog.
+                </p>
+              </nav>
+              <div className="settings-page-content">
+                <div id="settings-catalog-version">
+                  <CatalogVersionCard
+                    organizationId={scopingData.organizationId!}
+                  />
+                </div>
+                <div id="settings-branding">
+                  <AppearanceSettings
+                    organizationId={scopingData.organizationId!}
+                  />
+                </div>
+                <div id="settings-risk">
+                  <RiskProfileSettings
+                    organizationId={scopingData.organizationId!}
+                  />
+                </div>
+                <div id="settings-docgen">
+                  <DocGenSettingsCard
+                    organizationId={scopingData.organizationId!}
+                  />
+                </div>
+                <div id="settings-backups">
+                  <BackupRestore
+                    organizationId={scopingData.organizationId!}
+                  />
+                </div>
+              </div>
+            </div>
           )}
           {activeTab === 'consultant-portal' && scopingData && (
             // Check consultant status first

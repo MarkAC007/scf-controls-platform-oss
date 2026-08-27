@@ -143,7 +143,34 @@ export default function DocumentsPage({ organizationId, onOpenSettings }: Props)
 
   const totalConflicts = documents.reduce((sum, d) => sum + d.conflict_count, 0)
 
+  // Pager: find the current document's position in the flat documents list.
+  // `documents` is the query result in its natural order (same as the cards).
+  const docIndex = openDocument
+    ? documents.findIndex((d) => d.id === openDocument)
+    : -1
+  const docPosition =
+    openDocument && documents.length > 0
+      ? { index: docIndex === -1 ? null : docIndex, total: documents.length }
+      : null
+
+  function navigateToDoc(id: string) {
+    setOpenDocument(id)
+    setEditing(false)
+    setEditSection(null)
+  }
+
+  function pagerPrev() {
+    if (docIndex <= 0) return
+    navigateToDoc(documents[docIndex - 1].id)
+  }
+
+  function pagerNext() {
+    if (docIndex < 0 || docIndex >= documents.length - 1) return
+    navigateToDoc(documents[docIndex + 1].id)
+  }
+
   if (openDocument) {
+    const currentDoc = documents.find((d) => d.id === openDocument)
     // Reading is the default; editing is entered deliberately and returns
     // here rather than dumping you back out to the list.
     return editing ? (
@@ -157,6 +184,10 @@ export default function DocumentsPage({ organizationId, onOpenSettings }: Props)
       <DocumentReader
         organizationId={organizationId}
         documentId={openDocument}
+        documentTitle={currentDoc?.title}
+        position={docPosition}
+        onPrev={pagerPrev}
+        onNext={pagerNext}
         onBack={() => {
           setOpenDocument(null)
           setEditing(false)
@@ -171,29 +202,25 @@ export default function DocumentsPage({ organizationId, onOpenSettings }: Props)
   }
 
   return (
-    <div className="documents-page">
-      <div className="documents-header">
-        <div>
-          <h1>Documents</h1>
-          <p className="documents-sub">
-            ISMS documents generated from your scoped controls. Edit them here —
-            regeneration keeps what you have written. The{' '}
-            <a href={DOC_GEN_USER_DOC_URL} target="_blank" rel="noreferrer">
-              generated documents guide
-            </a>{' '}
-            explains how edits survive a regeneration.
-          </p>
-        </div>
-        <div className="documents-header-actions">
-          <button
-            type="button"
-            className="btn-primary"
-            disabled={!settings?.enabled}
-            onClick={() => setShowGenerate(true)}
-          >
-            Generate documents
-          </button>
-        </div>
+    <div className="docs-list-page">
+      {/* Library intro: description inline with generate action */}
+      <div className="docs-list-intro">
+        <p className="docs-list-description">
+          ISMS documents generated from your scoped controls. Edit them here —
+          regeneration keeps what you have written. The{' '}
+          <a href={DOC_GEN_USER_DOC_URL} target="_blank" rel="noreferrer">
+            generated documents guide
+          </a>{' '}
+          explains how edits survive a regeneration.
+        </p>
+        <button
+          type="button"
+          className="btn-primary"
+          disabled={!settings?.enabled}
+          onClick={() => setShowGenerate(true)}
+        >
+          Generate documents
+        </button>
       </div>
 
       {settings && !settings.enabled && (
@@ -224,17 +251,23 @@ export default function DocumentsPage({ organizationId, onOpenSettings }: Props)
         </div>
       )}
 
-      <div className="documents-filters">
+      {/* Lifecycle status filter chips + document count */}
+      <div className="docs-list-filter-bar">
         {STATUS_FILTERS.map((f) => (
           <button
             key={f.value}
             type="button"
-            className={`doc-filter-chip ${statusFilter === f.value ? 'is-active' : ''}`}
+            className={`docs-list-filter-chip${statusFilter === f.value ? ' is-active' : ''}`}
             onClick={() => setStatusFilter(f.value)}
           >
             {f.label}
           </button>
         ))}
+        {!isLoading && documents.length > 0 && (
+          <span className="docs-list-filter-count">
+            {documents.length} document{documents.length === 1 ? '' : 's'}
+          </span>
+        )}
       </div>
 
       {showGenerate && (
@@ -245,9 +278,9 @@ export default function DocumentsPage({ organizationId, onOpenSettings }: Props)
       )}
 
       {isLoading ? (
-        <p className="doc-empty">Loading documents…</p>
+        <p className="docs-list-loading">Loading documents…</p>
       ) : documents.length === 0 ? (
-        <div className="documents-empty">
+        <div className="docs-list-empty">
           <h2>No documents yet</h2>
           <p>
             {settings?.enabled
@@ -257,37 +290,51 @@ export default function DocumentsPage({ organizationId, onOpenSettings }: Props)
         </div>
       ) : (
         grouped.map(([type, docs]) => (
-          <section key={type} className="documents-group">
-            <h2>{TYPE_LABELS[type] ?? type}</h2>
-            <div className="documents-grid">
+          <section key={type} className="docs-list-group">
+            {/* Mono uppercase group label per artboard — replaces the old h2.
+                Kept as a <p> (not heading) so heading hierarchy is title→card only. */}
+            <p className="docs-list-group-label">{TYPE_LABELS[type] ?? type}</p>
+            <div className="docs-list-grid">
               {docs.map((d) => (
                 <button
                   key={d.id}
                   type="button"
-                  className="document-card"
+                  className="docs-list-card"
                   onClick={() => setOpenDocument(d.id)}
                 >
-                  <div className="document-card-head">
+                  <div className="docs-list-card-head">
                     <h3>{d.title}</h3>
                     <span className={`doc-lifecycle-pill status-${d.lifecycle_status}`}>
                       {LIFECYCLE_LABELS[d.lifecycle_status as LifecycleStatus]}
                     </span>
                   </div>
-                  <div className="document-card-meta">
+                  {/* Meta line in mono: v4 · GOV · 14 sections · SCF 2025.4 */}
+                  <div className="docs-list-card-meta">
                     <span>v{d.generation_version}</span>
-                    {d.domain_id && <span>{d.domain_id}</span>}
+                    {d.domain_id && (
+                      <>
+                        <span className="docs-list-card-meta-sep">·</span>
+                        <span>{d.domain_id}</span>
+                      </>
+                    )}
                     {/* Operative sections only — `section_count` excludes
                         pending_retirement rows (backend `_section_stats`). The
                         retiring tally is a separate badge below rather than a
                         number folded in here, because a Statement of
                         Applicability with 39 live sections and 30 retiring ones
                         is a 39-section document, not a 69-section one. */}
+                    <span className="docs-list-card-meta-sep">·</span>
                     <span>
                       {d.section_count} section{d.section_count === 1 ? '' : 's'}
                     </span>
-                    {d.catalog_version && <span>SCF {d.catalog_version}</span>}
+                    {d.catalog_version && (
+                      <>
+                        <span className="docs-list-card-meta-sep">·</span>
+                        <span>SCF {d.catalog_version}</span>
+                      </>
+                    )}
                   </div>
-                  <div className="document-card-flags">
+                  <div className="docs-list-card-flags">
                     {d.conflict_count > 0 && (
                       <span className="doc-section-badge status-conflict">
                         {d.conflict_count} section
@@ -320,7 +367,7 @@ export default function DocumentsPage({ organizationId, onOpenSettings }: Props)
                     )}
                   </div>
                   {d.updated_at && (
-                    <span className="document-card-when">
+                    <span className="docs-list-card-when">
                       Updated {new Date(d.updated_at).toLocaleDateString('en-GB')}
                     </span>
                   )}

@@ -12,6 +12,8 @@ import {
 } from '../data/apiClient'
 import { useCdmComputeRun } from '../hooks/useCdmComputeRun'
 import CDMReviewQueue from './CDMReviewQueue'
+import TabRow from './explorer/TabRow'
+import type { TabRowItem } from './explorer/TabRow'
 
 interface CDMWorkspaceProps {
   organizationId: string
@@ -495,6 +497,15 @@ export default function CDMWorkspace({ organizationId }: CDMWorkspaceProps) {
           ? 'is-success'
           : ''
 
+  const CDM_TABS: TabRowItem[] = [
+    { id: 'documents', label: 'Documents' },
+    {
+      id: 'review',
+      label: 'Review queue',
+      ...(proposedTotal ? { count: proposedTotal } : {}),
+    },
+  ]
+
   return (
     <div className="cdm-workspace">
       <header className="cdm-workspace-header">
@@ -505,29 +516,12 @@ export default function CDMWorkspace({ organizationId }: CDMWorkspaceProps) {
         </p>
       </header>
 
-      <div className="cdm-tabs" role="tablist">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={activeTab === 'documents'}
-          className={`cdm-tab ${activeTab === 'documents' ? 'is-active' : ''}`}
-          onClick={() => setActiveTab('documents')}
-        >
-          Documents
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={activeTab === 'review'}
-          className={`cdm-tab ${activeTab === 'review' ? 'is-active' : ''}`}
-          onClick={() => setActiveTab('review')}
-        >
-          Review queue
-          {proposedTotal ? (
-            <span className="cdm-tab-count">{proposedTotal}</span>
-          ) : null}
-        </button>
-      </div>
+      <TabRow
+        tabs={CDM_TABS}
+        activeId={activeTab}
+        onSelect={(id) => setActiveTab(id as CDMTab)}
+        aria-label="Control Documents tabs"
+      />
 
       {/* The mapping run is the bridge between the two tabs: upload here,
           review there. The bar lives outside the tab panels so a running
@@ -625,7 +619,7 @@ export default function CDMWorkspace({ organizationId }: CDMWorkspaceProps) {
       ) : (
         <>
       <section
-        className={`cdm-upload-zone ${dragOver ? 'is-drag-over' : ''} ${uploading ? 'is-uploading' : ''}`}
+        className={`cdm-upload-zone cdm-upload-zone--inline ${dragOver ? 'is-drag-over' : ''} ${uploading ? 'is-uploading' : ''}`}
         onDragOver={(e) => {
           e.preventDefault()
           setDragOver(true)
@@ -633,46 +627,44 @@ export default function CDMWorkspace({ organizationId }: CDMWorkspaceProps) {
         onDragLeave={() => setDragOver(false)}
         onDrop={onDrop}
       >
-        <div className="cdm-upload-zone-inner">
-          <div className="cdm-upload-icon" aria-hidden="true">
-            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-              <polyline points="17 8 12 3 7 8" />
-              <line x1="12" y1="3" x2="12" y2="15" />
-            </svg>
-          </div>
-          <p className="cdm-upload-headline">
-            {uploading
-              ? uploadProgress && uploadProgress.total > 1
-                ? `Uploading ${uploadProgress.done} of ${uploadProgress.total}…`
-                : 'Uploading…'
-              : 'Drag files here, or'}
-          </p>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept={ACCEPTED_EXTENSIONS}
-            multiple
-            onChange={onFilePicker}
-            disabled={uploading}
-            style={{ display: 'none' }}
-          />
-          <button
-            type="button"
-            className="btn-primary"
-            disabled={uploading}
-            onClick={() => fileInputRef.current?.click()}
-          >
-            {uploading ? 'Uploading…' : 'Choose files'}
-          </button>
-          <p className="cdm-upload-hint">Accepted: .txt, .md, .pdf, .docx — multiple files supported</p>
+        <div className="cdm-upload-icon" aria-hidden="true">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="17 8 12 3 7 8" />
+            <line x1="12" y1="3" x2="12" y2="15" />
+          </svg>
         </div>
+        <p className="cdm-upload-headline">
+          {uploading
+            ? uploadProgress && uploadProgress.total > 1
+              ? `Uploading ${uploadProgress.done} of ${uploadProgress.total}…`
+              : 'Uploading…'
+            : 'Drag files here, or'}
+        </p>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept={ACCEPTED_EXTENSIONS}
+          multiple
+          onChange={onFilePicker}
+          disabled={uploading}
+          style={{ display: 'none' }}
+        />
+        <button
+          type="button"
+          className="btn-primary"
+          disabled={uploading}
+          onClick={() => fileInputRef.current?.click()}
+        >
+          {uploading ? 'Uploading…' : 'Choose files'}
+        </button>
+        <p className="cdm-upload-hint">Accepted: .txt, .md, .pdf, .docx — multiple files supported</p>
       </section>
 
       <section className="cdm-documents-section">
-        <div className="cdm-documents-header">
-          <h2>Uploaded documents</h2>
-          <button type="button" className="btn-secondary" onClick={() => void refresh()}>
+        <div className="cdm-documents-header cdm-list-toolbar">
+          <h2 className="cdm-list-toolbar-title">Uploaded documents</h2>
+          <button type="button" className="btn-outline cdm-btn-sm" onClick={() => void refresh()}>
             Refresh
           </button>
         </div>
@@ -707,22 +699,22 @@ export default function CDMWorkspace({ organizationId }: CDMWorkspaceProps) {
           </div>
         ) : (
           <div className="cdm-documents-table-wrap">
-            <table className="cdm-documents-table">
+            <table className="cdm-documents-table cdm-hairline-table">
               <thead>
-                <tr>
+                <tr className="cdm-col-headers">
                   <th>Filename</th>
                   <th>Status</th>
-                  <th>Words</th>
-                  <th>Size</th>
+                  <th className="cdm-col-num">Words</th>
+                  <th className="cdm-col-num">Size</th>
                   <th>Uploaded</th>
-                  <th>Actions</th>
+                  <th className="cdm-col-actions">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {documents.map((doc) => (
-                  <tr key={doc.id}>
+                  <tr key={doc.id} className="cdm-doc-row">
                     <td>
-                      <div className="cdm-filename">{doc.original_filename}</div>
+                      <div className="cdm-filename cdm-doc-name">{doc.original_filename}</div>
                       {doc.ingest_error ? (
                         <div className="cdm-row-error">{doc.ingest_error}</div>
                       ) : null}
@@ -746,24 +738,27 @@ export default function CDMWorkspace({ organizationId }: CDMWorkspaceProps) {
                         )
                       })()}
                     </td>
-                    <td>{doc.word_count?.toLocaleString() ?? '—'}</td>
-                    <td>{formatBytes(doc.size_bytes)}</td>
-                    <td>{formatDate(doc.created_at)}</td>
-                    <td>
+                    <td className="cdm-col-num cdm-meta-text">{doc.word_count?.toLocaleString() ?? '—'}</td>
+                    <td className="cdm-col-num cdm-meta-text">{formatBytes(doc.size_bytes)}</td>
+                    <td className="cdm-meta-text">{formatDate(doc.created_at)}</td>
+                    <td className="cdm-col-actions">
                       {doc.ingest_status === 'failed' || doc.is_stale ? (
                         <button
                           type="button"
-                          className="btn-secondary"
+                          className="cdm-action-link"
                           disabled={retryingId === doc.id}
                           onClick={() => void handleRetry(doc)}
                           title="Run ingest again against the already-uploaded file"
                         >
                           {retryingId === doc.id ? 'Retrying…' : 'Retry'}
                         </button>
-                      ) : null}{' '}
+                      ) : null}
+                      {doc.ingest_status === 'failed' || doc.is_stale ? (
+                        <span className="cdm-action-sep"> · </span>
+                      ) : null}
                       <button
                         type="button"
-                        className="btn-secondary"
+                        className="cdm-action-link"
                         disabled={deletingId === doc.id}
                         onClick={() => void handleDelete(doc)}
                         title="Remove this document and all of its mappings"

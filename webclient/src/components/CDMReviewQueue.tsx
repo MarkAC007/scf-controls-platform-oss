@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { toast } from 'react-hot-toast'
 import {
   listCdmControlProposals,
@@ -8,6 +8,8 @@ import {
   type CDMControlProposalStatus,
   type CDMMapping,
 } from '../data/apiClient'
+import TabRow from './explorer/TabRow'
+import type { TabRowItem } from './explorer/TabRow'
 
 interface CDMReviewQueueProps {
   organizationId: string
@@ -427,20 +429,14 @@ export default function CDMReviewQueue({
         </div>
       </div>
 
-      <div className="cdm-status-tabs" role="tablist" aria-label="Proposal status">
-        {STATUS_OPTIONS.map((opt) => (
-          <button
-            key={opt.value}
-            type="button"
-            role="tab"
-            aria-selected={statusFilter === opt.value}
-            className={`cdm-status-tab${statusFilter === opt.value ? ' cdm-status-tab-active' : ''}`}
-            onClick={() => setStatusFilter(opt.value)}
-          >
-            {opt.label}
-          </button>
-        ))}
-      </div>
+      <TabRow
+        tabs={STATUS_OPTIONS.map(
+          (opt): TabRowItem => ({ id: opt.value, label: opt.label }),
+        )}
+        activeId={statusFilter}
+        onSelect={(id) => setStatusFilter(id as CDMControlProposalStatus)}
+        aria-label="Proposal status"
+      />
 
       {statusFilter === 'proposed' && visibleProposedIds.length > 0 ? (
         <div className="cdm-bulk-bar">
@@ -520,7 +516,7 @@ export default function CDMReviewQueue({
             const recomputed = p.recompute_provider !== null
 
             return (
-              <li key={p.id} className="cdm-review-card">
+              <li key={p.id} className="cdm-review-card cdm-hairline-card">
                 <div className="cdm-review-card-header">
                   <div className="cdm-review-card-control">
                     {p.status === 'proposed' && statusFilter === 'proposed' ? (

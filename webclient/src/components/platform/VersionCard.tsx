@@ -24,10 +24,10 @@ export default function VersionCard({ status, loading = false }: VersionCardProp
       }}
     >
       <div>
-        <div style={{ fontSize: '0.8rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+        <div className="platform-stat-label">
           Catalog version
         </div>
-        <div style={{ fontSize: '1.6rem', fontWeight: 600 }}>
+        <div className="platform-version-num">
           {loading ? '…' : status?.catalog_version || 'Unversioned'}
         </div>
         {!loading && !status?.catalog_version && (
@@ -37,15 +37,15 @@ export default function VersionCard({ status, loading = false }: VersionCardProp
         )}
       </div>
       <div>
-        <div style={{ fontSize: '0.8rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+        <div className="platform-stat-label">
           Controls
         </div>
-        <div style={{ fontSize: '1.6rem', fontWeight: 600 }}>
+        <div className="platform-version-num">
           {loading ? '…' : (status ? status.controls.toLocaleString() : '—')}
         </div>
       </div>
       <div>
-        <div style={{ fontSize: '0.8rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+        <div className="platform-stat-label">
           Seeded
         </div>
         <div style={{ marginTop: '0.35rem' }}>

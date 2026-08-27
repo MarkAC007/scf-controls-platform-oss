@@ -84,20 +84,73 @@ export const DEFAULT_EVIDENCE_VIEW: EvidenceView = 'dashboard'
  */
 export type AppTab = SyncedTab | typeof DEFAULT_TAB
 
+/**
+ * The full `Tab` union — every screen id the app recognises.
+ * Identical to `AppTab`; exported under this alias so Header and test files can
+ * import the type without importing from App.tsx (which would create a cycle).
+ */
+export type Tab = AppTab
+
+/**
+ * Human-readable display label for each tab.
+ *
+ * Titles match the nav display labels shown in the Sidebar so the utility bar
+ * and the sidebar always agree. The `satisfies` assertion is the exhaustiveness
+ * check: adding a new tab to the `Tab` union without adding it here is a
+ * compile error.
+ */
+export const TAB_TITLES = {
+  'dashboard':          'Dashboard',
+  'capability-posture': 'Analytics',
+  'library':            'Control Library',
+  'mapping-matrix':     'Framework Mappings',
+  'scoping':            'Control Scoping',
+  'risk-register':      'Risk Register',
+  'vendors':            'Vendor Inventory',
+  'evidence':           'Evidence',
+  'cdm':                'Control Documents',
+  'document-map':       'Document Map',
+  'documents':          'Generated Documents',
+  'tasks':              'Task Management',
+  'systems':            'Systems Registry',
+  'users':              'User Management',
+  'engagements':        'Engagements',
+  'webhooks':           'Webhooks',
+  'audit-log':          'Audit Log',
+  'catalog-changelog':  'Catalog Changelog',
+  'consultant-portal':  'Consultant Portal',
+  'settings':           'Org Settings',
+  'platform-catalog':   'Catalog',
+  'platform-tenants':   'Tenants',
+} satisfies Record<Tab, string>
+
 export const PARAM_TAB = 'tab'
 export const PARAM_EVIDENCE_VIEW = 'view'
 export const PARAM_EVIDENCE_ITEM = 'item'
+export const PARAM_LIBRARY_ITEM = 'item'
+export const PARAM_RISK_ITEM = 'risk'
+export const PARAM_VENDOR_ITEM = 'vendor'
+export const PARAM_SYSTEM_ITEM = 'system'
+export const PARAM_TASK_ITEM = 'task'
 
 /**
  * Parameters that belong to a tab and must leave with it.
  *
  * A `doc` left behind on another screen's URL reopens that document on the
- * next reload; an `item` left behind does the same to an evidence item. Tabs
- * absent from this map own no parameters beyond `tab` itself.
+ * next reload; an `item` left behind does the same to an evidence or library
+ * item. Both evidence and library use the literal param name `item`, but they
+ * are tab-scoped by this mechanism — switching tabs clears the outgoing tab's
+ * params, so `item` from one tab never bleeds into the other. Tabs absent from
+ * this map own no parameters beyond `tab` itself.
  */
 export const TAB_OWNED_PARAMS: Partial<Record<SyncedTab, readonly string[]>> = {
   documents: ['doc', 'mode'],
   evidence: [PARAM_EVIDENCE_VIEW, PARAM_EVIDENCE_ITEM],
+  library: [PARAM_LIBRARY_ITEM],
+  'risk-register': [PARAM_RISK_ITEM],
+  vendors: [PARAM_VENDOR_ITEM],
+  systems: [PARAM_SYSTEM_ITEM],
+  tasks: [PARAM_TASK_ITEM],
 }
 
 export interface AppLocation {
@@ -105,8 +158,18 @@ export interface AppLocation {
   tab: SyncedTab | null
   /** Which evidence sub-screen, resolved. Only meaningful when tab is evidence. */
   evidenceView: EvidenceView
-  /** The evidence item to select, or null. */
+  /** The evidence item to select, or null. Only meaningful when tab is evidence. */
   evidenceItem: string | null
+  /** The library control to deep-link, or null. Only meaningful when tab is library. */
+  libraryItem: string | null
+  /** The risk assessment to deep-link, or null. Only meaningful when tab is risk-register. */
+  riskItem: string | null
+  /** The vendor to deep-link, or null. Only meaningful when tab is vendors. */
+  vendorItem: string | null
+  /** The system to deep-link, or null. Only meaningful when tab is systems. */
+  systemItem: string | null
+  /** The task to deep-link, or null. Only meaningful when tab is tasks. */
+  taskItem: string | null
 }
 
 function params(search: string): URLSearchParams {
@@ -123,16 +186,32 @@ export function readAppLocation(search: string): AppLocation {
   const requestedTab = p.get(PARAM_TAB)
   const tab = SYNCED_TABS.find(t => t === requestedTab) ?? null
 
-  const item = p.get(PARAM_EVIDENCE_ITEM)?.trim() || null
+  // `item` is the literal param name shared by both evidence and library, but
+  // it is tab-scoped: we read it as an evidence item only when the tab is
+  // evidence (or when evidence is inferred from the view), and as a library
+  // item only when the tab is library.
+  const rawItem = p.get(PARAM_EVIDENCE_ITEM)?.trim() || null
 
   const requestedView = p.get(PARAM_EVIDENCE_VIEW)
   const namedView = EVIDENCE_VIEWS.find(v => v === requestedView)
   // An item with no view still means "show me this item", and the item only
   // exists on the workspace sub-screen. Honouring the item while landing on
   // the dashboard would be the worst outcome: a link that looks like it worked.
-  const evidenceView = namedView ?? (item ? 'workspace' : DEFAULT_EVIDENCE_VIEW)
+  const evidenceView = namedView ?? (rawItem && tab === 'evidence' ? 'workspace' : DEFAULT_EVIDENCE_VIEW)
 
-  return { tab, evidenceView, evidenceItem: item }
+  // evidence item: only meaningful when on the evidence tab
+  const evidenceItem = tab === 'evidence' ? rawItem : null
+
+  // library item: only meaningful when on the library tab
+  const libraryItem = tab === 'library' ? rawItem : null
+
+  // detail params — each scoped to its own tab and its own param name
+  const riskItem = tab === 'risk-register' ? (p.get(PARAM_RISK_ITEM)?.trim() || null) : null
+  const vendorItem = tab === 'vendors' ? (p.get(PARAM_VENDOR_ITEM)?.trim() || null) : null
+  const systemItem = tab === 'systems' ? (p.get(PARAM_SYSTEM_ITEM)?.trim() || null) : null
+  const taskItem = tab === 'tasks' ? (p.get(PARAM_TASK_ITEM)?.trim() || null) : null
+
+  return { tab, evidenceView, evidenceItem, libraryItem, riskItem, vendorItem, systemItem, taskItem }
 }
 
 /**
@@ -211,6 +290,76 @@ export function evidenceItemSearch(search: string, item: string): string {
     withEvidenceView(withTab(search, 'evidence'), 'workspace'),
     item,
   )
+}
+
+/**
+ * The search string with the selected library control named, or cleared.
+ *
+ * Sets `item` while ensuring `tab=library` (switching tabs also clears any
+ * outgoing tab's owned params, so an evidence `item` present in the URL is
+ * removed automatically via `withTab`). When `itemId` is null the `item`
+ * param is removed, leaving the library list view.
+ */
+export function withLibraryItem(search: string, itemId: string | null): string {
+  // First land on the library tab (which clears any outgoing tab's params,
+  // including another tab's `item`), then set/clear the library's own item.
+  const p = params(withTab(search, 'library'))
+  if (itemId) p.set(PARAM_LIBRARY_ITEM, itemId)
+  else p.delete(PARAM_LIBRARY_ITEM)
+  return p.toString()
+}
+
+/**
+ * The search string with the selected risk item named, or cleared.
+ *
+ * Sets `risk` while ensuring `tab=risk-register` (switching tabs also clears
+ * any outgoing tab's owned params). When `itemId` is null the `risk` param is
+ * removed, leaving the risk register list view.
+ */
+export function withRiskItem(search: string, itemId: string | null): string {
+  const p = params(withTab(search, 'risk-register'))
+  if (itemId) p.set(PARAM_RISK_ITEM, itemId)
+  else p.delete(PARAM_RISK_ITEM)
+  return p.toString()
+}
+
+/**
+ * The search string with the selected vendor named, or cleared.
+ *
+ * Sets `vendor` while ensuring `tab=vendors`. When `itemId` is null the
+ * `vendor` param is removed, leaving the vendor list view.
+ */
+export function withVendorItem(search: string, itemId: string | null): string {
+  const p = params(withTab(search, 'vendors'))
+  if (itemId) p.set(PARAM_VENDOR_ITEM, itemId)
+  else p.delete(PARAM_VENDOR_ITEM)
+  return p.toString()
+}
+
+/**
+ * The search string with the selected system named, or cleared.
+ *
+ * Sets `system` while ensuring `tab=systems`. When `itemId` is null the
+ * `system` param is removed, leaving the systems list view.
+ */
+export function withSystemItem(search: string, itemId: string | null): string {
+  const p = params(withTab(search, 'systems'))
+  if (itemId) p.set(PARAM_SYSTEM_ITEM, itemId)
+  else p.delete(PARAM_SYSTEM_ITEM)
+  return p.toString()
+}
+
+/**
+ * The search string with the selected task named, or cleared.
+ *
+ * Sets `task` while ensuring `tab=tasks`. When `itemId` is null the `task`
+ * param is removed, leaving the task list view.
+ */
+export function withTaskItem(search: string, itemId: string | null): string {
+  const p = params(withTab(search, 'tasks'))
+  if (itemId) p.set(PARAM_TASK_ITEM, itemId)
+  else p.delete(PARAM_TASK_ITEM)
+  return p.toString()
 }
 
 /**

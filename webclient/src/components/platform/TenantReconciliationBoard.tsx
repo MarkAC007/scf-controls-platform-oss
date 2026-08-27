@@ -65,10 +65,10 @@ function TenantBoard() {
     <div>
       <h2 style={{ marginBottom: '1rem' }}>Tenants</h2>
       <div className="surface-bench" style={{ padding: '1.25rem 1.5rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
-          <h3 className="bench-header" style={{ margin: 0 }}>
-            <span className="container-title">Reconciliation board</span>
-          </h3>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.75rem', flexWrap: 'wrap', paddingBottom: '8px' }}>
+          <div className="platform-section-label" style={{ paddingBottom: 0 }}>
+            Reconciliation board{board?.total ? ` — ${board.total} organisation${board.total === 1 ? '' : 's'}` : ''}
+          </div>
           {board?.platform_catalog_version && (
             <span style={{ color: 'var(--muted)', fontSize: '0.85rem' }}>
               Platform catalog: <strong>{board.platform_catalog_version}</strong>
@@ -99,16 +99,11 @@ function TenantBoard() {
                   <tr
                     key={tenant.organization_id}
                     onClick={() => setSelectedOrg(tenant)}
-                    style={{
-                      cursor: 'pointer',
-                      background:
-                        tenant.organization_id === selectedOrg?.organization_id
-                          ? 'var(--bg-tertiary)'
-                          : undefined,
-                    }}
+                    className={tenant.organization_id === selectedOrg?.organization_id ? 'platform-board-row-selected' : undefined}
+                    style={{ cursor: 'pointer' }}
                   >
                     <td style={{ fontWeight: 500 }}>{tenant.organization_name}</td>
-                    <td>
+                    <td className="platform-mono-id">
                       {tenant.reconciled_catalog_version || (
                         <span style={{ color: 'var(--muted)' }}>—</span>
                       )}

@@ -1,14 +1,23 @@
 /**
  * RiskDashboard Component - Main Risk Register page
  *
- * Combines the risk matrix, assessment list, and detail panel into
- * a cohesive risk management interface.
+ * Phase 3 Task 5: Explorer chrome restyle (per ruling 4)
+ *  - Quiet level summary strip replaces the four hero cards
+ *  - Matrix-type toggle + view toggle moved into toolbar region
+ *  - "+ Add Custom Risk" wired via onAddCustomRisk prop to RiskAssessmentList
+ *
+ * Phase 4 Task 4: RiskDetailPage promotion
+ *  - `riskItem` + `onRiskItemChange` props wire ?risk= deep links (App owns URL writes)
+ *  - When riskItem is set, renders RiskDetailPage full-width via early return (list unmounts)
+ *  - Slide-over (RiskAssessmentDetail) removed — parity proven in RiskDetailPage
+ *  - Row click → onRiskItemChange (pushes URL via App), back → onRiskItemChange(null)
+ *  - Pager walks the current filtered+sorted list from RiskAssessmentList
  */
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { toast } from 'react-hot-toast'
 import RiskMatrix from './RiskMatrix'
 import RiskAssessmentList from './RiskAssessmentList'
-import RiskAssessmentDetail from './RiskAssessmentDetail'
+import RiskDetailPage from './RiskDetailPage'
 import type {
   RiskAssessment,
   RiskAssessmentUpdate,
@@ -33,11 +42,15 @@ import riskCodesData from '../data/risk_codes.json'
 interface RiskDashboardProps {
   organizationId: string
   onNavigateToControl?: (scfId: string) => void
+  /** The risk code to show in detail view, from ?risk= URL param. null = list/matrix view. */
+  riskItem?: string | null
+  /** Called when user opens/closes/pages detail. App owns push/replace decision. */
+  onRiskItemChange?: (riskCode: string | null) => void
 }
 
 type ViewMode = 'matrix' | 'list'
 
-export default function RiskDashboard({ organizationId, onNavigateToControl }: RiskDashboardProps) {
+export default function RiskDashboard({ organizationId, onNavigateToControl, riskItem = null, onRiskItemChange }: RiskDashboardProps) {
   const { riskThresholds } = useRiskProfile()
 
   // State
@@ -46,8 +59,9 @@ export default function RiskDashboard({ organizationId, onNavigateToControl }: R
   const [error, setError] = useState<string | null>(null)
   const [viewMode, setViewMode] = useState<ViewMode>('matrix')
   const [matrixType, setMatrixType] = useState<'inherent' | 'residual'>('inherent')
-  const [selectedRiskCode, setSelectedRiskCode] = useState<string | null>(null)
   const [selectedCell, setSelectedCell] = useState<{ likelihood: number; impact: number } | null>(null)
+  // filteredList: the current sorted+filtered assessment list from RiskAssessmentList (for paging)
+  const [filteredList, setFilteredList] = useState<RiskAssessment[]>([])
   const [users, setUsers] = useState<UserSimple[]>([])
   const [customDefs, setCustomDefs] = useState<CustomRiskDefinition[]>([])
   const [showCreateModal, setShowCreateModal] = useState(false)
@@ -73,7 +87,7 @@ export default function RiskDashboard({ organizationId, onNavigateToControl }: R
     return merged
   }, [scfRiskCodes, customDefs])
 
-  // Compute risk level counts for summary cards
+  // Compute risk level counts for summary strip
   const riskLevelCounts = useMemo(() => {
     const counts = { low: 0, medium: 0, high: 0, critical: 0 }
     for (const a of assessments) {
@@ -83,6 +97,12 @@ export default function RiskDashboard({ organizationId, onNavigateToControl }: R
     }
     return counts
   }, [assessments, riskThresholds])
+
+  // Computed assessed/unassessed counts for the strip
+  const assessedCount = useMemo(() =>
+    assessments.filter(a => a.likelihood != null && a.impact != null).length,
+    [assessments]
+  )
 
   // Load assessments
   const loadAssessments = useCallback(async () => {
@@ -158,7 +178,7 @@ export default function RiskDashboard({ organizationId, onNavigateToControl }: R
     try {
       await deleteCustomRisk(riskCode, organizationId)
       toast.success('Custom risk deleted')
-      setSelectedRiskCode(null)
+      onRiskItemChange?.(null)
       await Promise.all([loadCustomDefs(), loadAssessments()])
     } catch (err: any) {
       console.error('Failed to delete custom risk:', err)
@@ -213,19 +233,19 @@ export default function RiskDashboard({ organizationId, onNavigateToControl }: R
       return
     }
     setSelectedCell({ likelihood, impact })
-    // If only one risk in cell, select it
+    // If only one risk in cell, open detail
     if (riskCodes.length === 1) {
-      setSelectedRiskCode(riskCodes[0])
+      onRiskItemChange?.(riskCodes[0])
     }
   }
 
-  // Handle risk selection in list
+  // Handle risk selection in list (row click → open detail)
   const handleSelectRisk = (riskCode: string) => {
     if (riskCode === '') {
       setSelectedCell(null)
-      setSelectedRiskCode(null)
+      onRiskItemChange?.(null)
     } else {
-      setSelectedRiskCode(riskCode)
+      onRiskItemChange?.(riskCode)
     }
   }
 
@@ -243,7 +263,7 @@ export default function RiskDashboard({ organizationId, onNavigateToControl }: R
     }
   }
 
-  // Handle save from detail panel
+  // Handle save from detail page
   const handleDetailSave = async (riskCode: string, updates: RiskAssessmentUpdate) => {
     try {
       const updated = await updateRiskAssessment(riskCode, updates, organizationId)
@@ -258,8 +278,31 @@ export default function RiskDashboard({ organizationId, onNavigateToControl }: R
     }
   }
 
-  // Get selected assessment
-  const selectedAssessment = assessments.find(a => a.risk_code === selectedRiskCode) || null
+  // Get selected assessment (from riskItem prop)
+  const selectedAssessment = assessments.find(a => a.risk_code === riskItem) || null
+
+  // Pager: derive position in the filtered list
+  const riskItemIndex = riskItem ? filteredList.findIndex(a => a.risk_code === riskItem) : -1
+  const pagerPosition = useMemo(() => {
+    if (assessments.length === 0) return null
+    const total = filteredList.length || assessments.length
+    if (riskItemIndex === -1 && riskItem) return { index: null, total }
+    if (riskItemIndex === -1) return null
+    return { index: riskItemIndex, total }
+  }, [riskItem, riskItemIndex, filteredList, assessments])
+
+  // Pager navigation: walk the filtered list
+  const handlePrev = useCallback(() => {
+    if (riskItemIndex <= 0) return
+    const list = filteredList.length > 0 ? filteredList : assessments
+    onRiskItemChange?.(list[riskItemIndex - 1].risk_code)
+  }, [riskItemIndex, filteredList, assessments, onRiskItemChange])
+
+  const handleNext = useCallback(() => {
+    const list = filteredList.length > 0 ? filteredList : assessments
+    if (riskItemIndex >= list.length - 1) return
+    onRiskItemChange?.(list[riskItemIndex + 1].risk_code)
+  }, [riskItemIndex, filteredList, assessments, onRiskItemChange])
 
   if (loading && assessments.length === 0) {
     return (
@@ -279,75 +322,176 @@ export default function RiskDashboard({ organizationId, onNavigateToControl }: R
     )
   }
 
+  // Detail page open: riskItem is non-null
+  const showDetail = !!riskItem
+
+  if (showDetail) {
+    // Full-width detail page — list NOT mounted (early return); pager position
+    // is tracked in filteredIds/pagerPosition state that persists across renders.
+    return (
+      <div className="risk-dashboard">
+        {/* Detail page — full-width, list hidden */}
+        <RiskDetailPage
+          assessment={selectedAssessment}
+          riskCodes={riskCodes}
+          onSave={handleDetailSave}
+          onBack={() => onRiskItemChange?.(null)}
+          onPrev={handlePrev}
+          onNext={handleNext}
+          position={pagerPosition}
+          users={users}
+          onNavigateToControl={onNavigateToControl}
+          onDeleteCustomRisk={handleDeleteCustomRisk}
+        />
+
+        {/* Create Custom Risk Modal */}
+        {showCreateModal && (
+          <div className="modal-overlay" onClick={() => setShowCreateModal(false)}>
+            <div className="modal-content custom-risk-modal" onClick={e => e.stopPropagation()}>
+              <div className="modal-header">
+                <h2>Add Custom Risk</h2>
+                <button className="modal-close" onClick={() => setShowCreateModal(false)}>x</button>
+              </div>
+              <div className="modal-body">
+                <div className="form-group">
+                  <label>Title *</label>
+                  <input
+                    type="text"
+                    value={createForm.title}
+                    onChange={e => setCreateForm(f => ({ ...f, title: e.target.value }))}
+                    placeholder="e.g., Physical Security Breach"
+                    maxLength={100}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Description *</label>
+                  <textarea
+                    value={createForm.description}
+                    onChange={e => setCreateForm(f => ({ ...f, description: e.target.value }))}
+                    placeholder="Describe the risk scenario..."
+                    rows={3}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Category Name</label>
+                  <input
+                    type="text"
+                    value={createForm.category_name}
+                    onChange={e => setCreateForm(f => ({ ...f, category_name: e.target.value }))}
+                    placeholder="e.g., Physical Security"
+                    maxLength={50}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Category Color</label>
+                  <input
+                    type="color"
+                    value={createForm.category_color}
+                    onChange={e => setCreateForm(f => ({ ...f, category_color: e.target.value }))}
+                  />
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button
+                  className="btn-secondary"
+                  onClick={() => setShowCreateModal(false)}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="btn-primary"
+                  onClick={handleCreateCustomRisk}
+                  disabled={creating || !createForm.title.trim() || !createForm.description.trim()}
+                >
+                  {creating ? 'Creating...' : 'Create Risk'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  }
+
   return (
     <div className="risk-dashboard">
-      {/* Header */}
-      <div className="risk-dashboard-header">
-        <div className="header-left">
-          <h1 className="page-title">Risk Register</h1>
-          <span className="risk-count-badge">{assessments.length} risks</span>
+      {/* Quiet level summary strip (replaces four hero cards) */}
+      <div className="risk-level-strip">
+        <div className="risk-level-item risk-level-item--low">
+          <div className="risk-level-dot risk-level-dot--low" aria-hidden="true" />
+          <span className="risk-level-count">{riskLevelCounts.low}</span>
+          <span className="risk-level-label">LOW</span>
+        </div>
+        <div className="risk-level-item risk-level-item--medium">
+          <div className="risk-level-dot risk-level-dot--medium" aria-hidden="true" />
+          <span className="risk-level-count">{riskLevelCounts.medium}</span>
+          <span className="risk-level-label">MEDIUM</span>
+        </div>
+        <div className="risk-level-item risk-level-item--high">
+          <div className="risk-level-dot risk-level-dot--high" aria-hidden="true" />
+          <span className="risk-level-count">{riskLevelCounts.high}</span>
+          <span className="risk-level-label">HIGH</span>
+        </div>
+        <div className="risk-level-item risk-level-item--critical">
+          <div className="risk-level-dot risk-level-dot--critical" aria-hidden="true" />
+          <span className="risk-level-count">{riskLevelCounts.critical}</span>
+          <span className="risk-level-label">CRITICAL</span>
+        </div>
+        <div className="risk-level-strip-divider" aria-hidden="true" />
+        <div className="risk-level-item">
+          <span className="risk-level-count">{assessedCount}</span>
+          <span className="risk-level-label">ASSESSED</span>
+        </div>
+        <div className="risk-level-item">
+          <span className="risk-level-count risk-level-count--muted">
+            {assessments.length - assessedCount}
+          </span>
+          <span className="risk-level-label">NOT ASSESSED</span>
         </div>
 
-        <div className="header-controls">
+        {/* View mode + matrix type toggles + Add Custom Risk pushed to the right */}
+        <div className="risk-level-strip-controls">
+          {/* + Add Custom Risk button — always visible */}
           <button
-            className="btn-add-custom-risk"
+            className="risk-add-custom-btn"
             onClick={() => setShowCreateModal(true)}
+            title="Create a custom risk code"
           >
             + Add Custom Risk
           </button>
 
-          {/* View mode toggle */}
-          <div className="view-toggle">
+          {/* Matrix type toggle */}
+          <div className="toggle-group">
             <button
-              className={viewMode === 'matrix' ? 'active' : ''}
-              onClick={() => setViewMode('matrix')}
+              className={`toggle-btn${matrixType === 'inherent' ? ' active' : ''}`}
+              onClick={() => setMatrixType('inherent')}
             >
-              Matrix View
+              Inherent
             </button>
             <button
-              className={viewMode === 'list' ? 'active' : ''}
-              onClick={() => setViewMode('list')}
+              className={`toggle-btn${matrixType === 'residual' ? ' active' : ''}`}
+              onClick={() => setMatrixType('residual')}
             >
-              List View
+              Residual
             </button>
           </div>
 
-          {/* Matrix type toggle */}
-          <div className="matrix-type-toggle">
+          {/* View mode toggle */}
+          <div className="toggle-group">
             <button
-              className={matrixType === 'inherent' ? 'active' : ''}
-              onClick={() => setMatrixType('inherent')}
+              className={`toggle-btn${viewMode === 'matrix' ? ' active' : ''}`}
+              onClick={() => setViewMode('matrix')}
             >
-              Inherent Risk
+              Matrix
             </button>
             <button
-              className={matrixType === 'residual' ? 'active' : ''}
-              onClick={() => setMatrixType('residual')}
+              className={`toggle-btn${viewMode === 'list' ? ' active' : ''}`}
+              onClick={() => setViewMode('list')}
             >
-              Residual Risk
+              List
             </button>
           </div>
         </div>
-      </div>
-
-      {/* Risk level summary cards */}
-      <div className="risk-summary-row">
-        {[
-          { label: 'Low Risk', count: riskLevelCounts.low, color: 'var(--success)', icon: '\u2713' },
-          { label: 'Medium Risk', count: riskLevelCounts.medium, color: 'var(--warning)', icon: '\u2139' },
-          { label: 'High Risk', count: riskLevelCounts.high, color: '#fb923c', icon: '\u26A0' },
-          { label: 'Critical Risk', count: riskLevelCounts.critical, color: 'var(--destructive)', icon: '\u26D4' },
-        ].map(({ label, count, color, icon }) => (
-          <div key={label} className="risk-summary-card">
-            <div>
-              <p className="risk-summary-label">{label}</p>
-              <h3 className="risk-summary-value" style={{ color }}>{count}</h3>
-            </div>
-            <div className="risk-summary-icon" style={{ backgroundColor: `${color}15`, color }}>
-              <span>{icon}</span>
-            </div>
-          </div>
-        ))}
       </div>
 
       {/* Content area */}
@@ -376,9 +520,10 @@ export default function RiskDashboard({ organizationId, onNavigateToControl }: R
                     riskCodes={riskCodes}
                     onSelectRisk={handleSelectRisk}
                     onUpdateRisk={handleInlineUpdate}
-                    selectedRiskCode={selectedRiskCode}
+                    selectedRiskCode={riskItem}
                     filterByCell={selectedCell}
                     matrixType={matrixType}
+                    onFilteredListChange={setFilteredList}
                   />
                 </div>
               )}
@@ -389,30 +534,12 @@ export default function RiskDashboard({ organizationId, onNavigateToControl }: R
               riskCodes={riskCodes}
               onSelectRisk={handleSelectRisk}
               onUpdateRisk={handleInlineUpdate}
-              selectedRiskCode={selectedRiskCode}
+              selectedRiskCode={riskItem}
               filterByCell={null}
               matrixType={matrixType}
+              onFilteredListChange={setFilteredList}
             />
           )}
-        </div>
-      </div>
-
-      {/* Slide-over detail panel */}
-      <div className={`risk-detail-overlay ${selectedRiskCode ? 'visible' : ''}`}>
-        <div
-          className="risk-detail-backdrop"
-          onClick={() => setSelectedRiskCode(null)}
-        />
-        <div className="risk-detail-panel-container">
-          <RiskAssessmentDetail
-            assessment={selectedAssessment}
-            riskCodes={riskCodes}
-            onSave={handleDetailSave}
-            onClose={() => setSelectedRiskCode(null)}
-            users={users}
-            onNavigateToControl={onNavigateToControl}
-            onDeleteCustomRisk={handleDeleteCustomRisk}
-          />
         </div>
       </div>
 

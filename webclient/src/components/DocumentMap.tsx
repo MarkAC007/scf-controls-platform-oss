@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { useDocumentMap } from '../hooks/useDocumentMap'
 import DomainCard from './document-map/DomainCard'
 import DomainDetailPanel from './document-map/DomainDetailPanel'
-import MapLegend from './document-map/MapLegend'
+import MapLegend, { MapLegendInline } from './document-map/MapLegend'
 import OrphanRail from './document-map/OrphanRail'
 
 /**
@@ -137,14 +137,14 @@ export default function DocumentMap({ organizationId, onOpenDocuments }: Documen
                   : `${summary.gap} gap${summary.gap === 1 ? '' : 's'} remaining`}
               </span>
             </div>
-            <div className="kpi-card dm-kpi">
+            <div className="kpi-card dm-kpi dm-kpi-confirmed">
               <div className="kpi-card-header">
                 <span className="kpi-label">Confirmed mappings</span>
               </div>
               <div className="kpi-value">{mappingTotals.accepted}</div>
               <span className="dm-kpi-sub">accepted by a person</span>
             </div>
-            <div className="kpi-card dm-kpi">
+            <div className="kpi-card dm-kpi dm-kpi-suggested">
               <div className="kpi-card-header">
                 <span className="kpi-label">Suggested mappings</span>
               </div>
@@ -185,6 +185,7 @@ export default function DocumentMap({ organizationId, onOpenDocuments }: Documen
               <div className="dm-section-head">
                 <span className="dm-kicker">SCF Reference · {domains.length} domains</span>
                 <span className="dm-scf-tag">SCF catalog</span>
+                <MapLegendInline />
               </div>
               <div className="dm-grid">
                 {domains.map((domain) => (

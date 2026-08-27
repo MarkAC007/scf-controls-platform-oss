@@ -387,6 +387,11 @@ export default function OrgReconciliationWizard({
         <h3 className="bench-header" style={{ margin: 0 }}>
           <span className="container-title">{organizationName}</span>
         </h3>
+        {latestRun?.from_version && latestRun.to_version && (
+          <span className="platform-version-range">
+            — reconcile {latestRun.from_version} → {latestRun.to_version}
+          </span>
+        )}
         <button
           className="btn btn-secondary btn-sm"
           style={{ marginLeft: 'auto' }}

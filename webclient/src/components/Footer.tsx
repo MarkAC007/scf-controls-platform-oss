@@ -2,9 +2,9 @@ import { useState, useEffect, useCallback } from 'react'
 import { toast } from 'react-hot-toast'
 import { apiClient, type VersionInfo, type VersionUpdateInfo } from '../data/apiClient'
 
-// Documentation/Book SVG icon
+// Documentation/Book SVG icon — 15×15 per Explorer spec
 const DocsIcon = () => (
-  <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
     <path d="M21 5c-1.11-.35-2.33-.5-3.5-.5-1.95 0-4.05.4-5.5 1.5-1.45-1.1-3.55-1.5-5.5-1.5S2.45 4.9 1 6v14.65c0 .25.25.5.5.5.1 0 .15-.05.25-.05C3.1 20.45 5.05 20 6.5 20c1.95 0 4.05.4 5.5 1.5 1.35-.85 3.8-1.5 5.5-1.5 1.65 0 3.35.3 4.75 1.05.1.05.15.05.25.05.25 0 .5-.25.5-.5V6c-.6-.45-1.25-.75-2-1zm0 13.5c-1.1-.35-2.3-.5-3.5-.5-1.7 0-4.15.65-5.5 1.5V8c1.35-.85 3.8-1.5 5.5-1.5 1.2 0 2.4.15 3.5.5v11.5z"/>
   </svg>
 )
@@ -46,7 +46,11 @@ export default function Footer() {
     return () => { active = false }
   }, [])
 
-  const displayVersion = platformVersion || appVersion
+  // The backend self-reports '0.0.0' when it cannot determine its version
+  // (no /version/package.json mount, no PLATFORM_VERSION env) — treat that
+  // sentinel as absent and fall back to the build-time package.json version.
+  const realPlatformVersion = platformVersion && platformVersion !== '0.0.0' ? platformVersion : null
+  const displayVersion = realPlatformVersion || appVersion
 
   // On-demand version check: re-reads /version (which serves the daily
   // update-check state) and says the answer out loud instead of relying on
@@ -59,7 +63,8 @@ export default function Footer() {
       const upd = data?.update ?? null
       setUpdate(upd)
       setPlatformVersion(data?.platform?.version ?? null)
-      const current = data?.platform?.version || appVersion
+      const reported = data?.platform?.version
+      const current = reported && reported !== '0.0.0' ? reported : appVersion
       if (upd?.update_available) {
         toast(
           upd.skip_blocked
@@ -127,6 +132,7 @@ export default function Footer() {
           target="_blank"
           rel="noopener noreferrer"
           className="footer-docs-link"
+          aria-label="Documentation"
           title="View Documentation"
         >
           <DocsIcon />
