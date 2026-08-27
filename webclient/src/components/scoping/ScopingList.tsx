@@ -24,6 +24,7 @@ import {
   useMemo,
   useEffect,
   type JSX,
+  type ReactNode,
 } from 'react'
 import { FixedSizeList as List, type ListChildComponentProps } from 'react-window'
 
@@ -82,6 +83,13 @@ export interface ScopingListProps {
    * Absent or empty string → show placeholder text.
    */
   ownerByControlId?: Record<string, string>
+  /**
+   * Bulk-action bar, rendered between the toolbar and the rows (the artboard's
+   * placement). Owned by the container so selection state stays there; passed
+   * as a node rather than rendered as a page-level sibling, where the flex-row
+   * .scoping-page container would turn it into a full-height column.
+   */
+  bulkBar?: ReactNode
 }
 
 // ─── Constants ─────────────────────────────────────────────────────────────
@@ -131,6 +139,7 @@ export default function ScopingList({
   onScrollOffsetChange,
   frameworkNames = {},
   ownerByControlId,
+  bulkBar,
 }: ScopingListProps): JSX.Element {
   const [filtersCollapsed, setFiltersCollapsed] = useState(false)
   const [listHeight, setListHeight] = useState(DEFAULT_LIST_HEIGHT)
@@ -194,6 +203,10 @@ export default function ScopingList({
   const { controls, total } = flattenScopedControlPages(data?.pages)
 
   // ── Measure container height ──────────────────────────────────────────────
+  // hasBulkBar: the bar mounts above the rows, pushing rect.top down — without
+  // re-measuring, the virtualized list would overflow past the viewport while
+  // a selection is active.
+  const hasBulkBar = bulkBar != null
   useEffect(() => {
     const updateHeight = () => {
       if (listContainerRef.current) {
@@ -204,7 +217,7 @@ export default function ScopingList({
     updateHeight()
     window.addEventListener('resize', updateHeight)
     return () => window.removeEventListener('resize', updateHeight)
-  }, [filtersCollapsed])
+  }, [filtersCollapsed, hasBulkBar])
 
   // ── Infinite scroll: load more when 5 items from end ─────────────────────
   const handleScroll = useCallback(
@@ -525,6 +538,8 @@ export default function ScopingList({
             </button>
           }
         />
+
+        {bulkBar}
 
         <div className="scoping-list-rows" ref={listContainerRef}>
           {isLoading ? (

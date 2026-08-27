@@ -16,6 +16,7 @@
  *   - useOrganizationSettings, useTeamAssignments, useIsOrgAdmin — minimal stubs
  *   - react-hot-toast — vi.fn() stubs so we can assert toast calls
  */
+import type { ReactNode } from 'react'
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -36,11 +37,13 @@ vi.mock('../ScopingList', () => ({
     onScopeByFramework,
     selection,
     onSelectionChange,
+    bulkBar,
   }: {
     onOpenControl: (id: string) => void
     onScopeByFramework: () => void
     selection: Set<string>
     onSelectionChange: (s: Set<string>) => void
+    bulkBar?: ReactNode
   }) => (
     <div data-testid="scoping-list">
       <button onClick={() => onOpenControl('SCF-ABC-1.1')}>open-control</button>
@@ -57,6 +60,9 @@ vi.mock('../ScopingList', () => ({
         select-two
       </button>
       <span data-testid="selection-count">{selection.size}</span>
+      {/* The real list renders the bar between toolbar and rows; the stub
+          renders it so the bulk-loop tests can reach the (mocked) bar. */}
+      {bulkBar}
     </div>
   ),
 }))

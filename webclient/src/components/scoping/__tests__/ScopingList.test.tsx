@@ -473,3 +473,36 @@ describe('ScopingList', () => {
     })
   })
 })
+
+describe('bulk bar placement', () => {
+  // The artboard puts the bulk bar as a strip between the toolbar and the
+  // rows. Rendered as a page-level sibling instead, the flex-row
+  // .scoping-page container turns it into a full-height column that crushes
+  // the list (shipped that way originally) — so the placement is pinned.
+  it('renders the bulkBar node between the toolbar and the rows', () => {
+    setupMocks([makeScopedControl({ scf_id: 'GOV-01' })])
+    const { container } = render(
+      <ScopingList
+        {...defaultProps({
+          bulkBar: <div data-testid="test-bulk-bar">bulk actions</div>,
+        })}
+      />,
+    )
+    const body = container.querySelector('.scoping-list-body')
+    expect(body).not.toBeNull()
+    const children = Array.from(body!.children)
+    const toolbarIdx = children.findIndex((el) => el.querySelector('input[type="search"], input') !== null || el.className.includes('toolbar'))
+    const barIdx = children.findIndex((el) => el.querySelector('[data-testid="test-bulk-bar"]') !== null || (el as HTMLElement).dataset.testid === 'test-bulk-bar')
+    const rowsIdx = children.findIndex((el) => el.className.includes('scoping-list-rows'))
+    expect(barIdx).toBeGreaterThan(-1)
+    expect(rowsIdx).toBeGreaterThan(-1)
+    expect(barIdx).toBeGreaterThan(toolbarIdx)
+    expect(barIdx).toBeLessThan(rowsIdx)
+  })
+
+  it('renders no bar when the prop is absent', () => {
+    setupMocks([makeScopedControl({ scf_id: 'GOV-01' })])
+    render(<ScopingList {...defaultProps()} />)
+    expect(screen.queryByTestId('test-bulk-bar')).toBeNull()
+  })
+})
