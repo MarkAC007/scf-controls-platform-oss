@@ -275,17 +275,30 @@ export default function EvidenceDetailPage({
         </div>
 
         <div className="detail-content-compact">
-          {/* ── Required by Controls ─────────────────────────────────────────── */}
+          {/* ── Evidence Guidance ────────────────────────────────────────────── */}
           <ScfReference>
-            <div className="detail-section-container">
-              <div className="container-header">
-                <span className="container-icon">🔗</span>
-                <span className="container-title">Required by Controls</span>
+            <EvidenceTemplateGuidance
+              evidenceId={evidenceItem.id}
+              evidenceTemplates={evidenceTemplates}
+              orgId={scopingData.organizationId}
+              erlData={erlData}
+              tracking={evidenceTracking}
+            />
+          </ScfReference>
+
+          {/*
+            Required by Controls, as a strip rather than a section. It is
+            provenance — why this item is on the list at all — and it was taking
+            a full card's height to say something nobody comes to this page to
+            read. The chips still navigate.
+          */}
+          <ScfReference>
+            <div className="detail-section-container evidence-required-strip">
+              <div className="evidence-required-strip-row">
+                <span className="evidence-required-strip-label">Required by Controls</span>
                 <span className="container-count">{requiringControls.length}</span>
-              </div>
-              <div className="container-content">
                 {requiringControls.length === 0 ? (
-                  <p className="muted">No controls require this evidence</p>
+                  <p className="muted evidence-required-strip-empty">No controls require this evidence</p>
                 ) : (
                   <div className="requiring-controls-pills">
                     {requiringControls.map(ctrl => {
@@ -361,44 +374,6 @@ export default function EvidenceDetailPage({
               </div>
             </div>
           </ScfReference>
-
-          {/* ── Window Review Panel (flag-gated) ─────────────────────────────── */}
-          {scopingData.organizationId && PER_WINDOW_REVIEW_ENABLED && (
-            <WindowReviewPanel
-              orgId={scopingData.organizationId}
-              evidenceId={evidenceItem.id}
-              refreshTrigger={fileListRefreshTrigger}
-            />
-          )}
-
-          {/* ── Evidence Files ─────────────────────────────────────────────────── */}
-          {scopingData.organizationId && (
-            <div className="detail-section-container surface-bench">
-              <div className="container-header bench-header">
-                <span className="container-icon">{'📁'}</span>
-                <span className="container-title">Your Evidence Files</span>
-              </div>
-              <div className="container-content">
-                {!isTracked && (
-                  <UntrackedUploadNotice
-                    onStartTracking={() =>
-                      onUpdateTracking(evidenceItem.id, 'is_tracked', true)
-                    }
-                  />
-                )}
-                <EvidenceFileUpload
-                  orgId={scopingData.organizationId}
-                  evidenceId={evidenceItem.id}
-                  onUploadComplete={onFileUploaded}
-                />
-                <EvidenceFileList
-                  orgId={scopingData.organizationId}
-                  evidenceId={evidenceItem.id}
-                  refreshTrigger={fileListRefreshTrigger}
-                />
-              </div>
-            </div>
-          )}
 
           {/* ── Collection Record Form ─────────────────────────────────────────── */}
           <div className="detail-section-container surface-bench">
@@ -602,28 +577,61 @@ export default function EvidenceDetailPage({
             </div>
           </div>
 
-          {/* ── Template Guidance ─────────────────────────────────────────────── */}
-          <ScfReference>
-            <EvidenceTemplateGuidance
-              evidenceId={evidenceItem.id}
-              evidenceTemplates={evidenceTemplates}
-              orgId={scopingData.organizationId}
-              erlData={erlData}
-              tracking={evidenceTracking}
-            />
-          </ScfReference>
+          {/*
+            Tasks, unconditionally. The card used to disappear with the rest of
+            the collaboration block until a tracking row existed, so the one
+            state that needs to be told what to do next was the state that got
+            no card at all. It renders disabled instead, and says why.
+          */}
+          <EvidenceTaskList
+            evidenceTrackingId={evidenceDbId ?? ''}
+            evidenceId={evidenceItem.id}
+            organizationId={scopingData.organizationId ?? ''}
+            onTaskChange={() => {}}
+            disabled={!evidenceDbId || !scopingData.organizationId}
+          />
 
-          {/* ── Tasks, Assignments, Teams, Comments ──────────────────────────── */}
+          {/* ── Evidence Files ─────────────────────────────────────────────────── */}
+          {scopingData.organizationId && (
+            <div className="detail-section-container surface-bench">
+              <div className="container-header bench-header">
+                <span className="container-icon">{'📁'}</span>
+                <span className="container-title">Your Evidence Files</span>
+              </div>
+              <div className="container-content">
+                {!isTracked && (
+                  <UntrackedUploadNotice
+                    onStartTracking={() =>
+                      onUpdateTracking(evidenceItem.id, 'is_tracked', true)
+                    }
+                  />
+                )}
+                <EvidenceFileUpload
+                  orgId={scopingData.organizationId}
+                  evidenceId={evidenceItem.id}
+                  onUploadComplete={onFileUploaded}
+                />
+                <EvidenceFileList
+                  orgId={scopingData.organizationId}
+                  evidenceId={evidenceItem.id}
+                  refreshTrigger={fileListRefreshTrigger}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* ── Window Review Panel (flag-gated) ─────────────────────────────── */}
+          {scopingData.organizationId && PER_WINDOW_REVIEW_ENABLED && (
+            <WindowReviewPanel
+              orgId={scopingData.organizationId}
+              evidenceId={evidenceItem.id}
+              refreshTrigger={fileListRefreshTrigger}
+            />
+          )}
+
+          {/* ── Assignments, Teams, Comments ─────────────────────────────────── */}
           {evidenceDbId && scopingData.organizationId ? (
             <div className="evidence-collaboration-container">
-              {/* Collection Tasks */}
-              <EvidenceTaskList
-                evidenceTrackingId={evidenceDbId}
-                evidenceId={evidenceItem.id}
-                organizationId={scopingData.organizationId}
-                onTaskChange={() => {}}
-              />
-
               {/* Assignments */}
               <div className="evidence-collaboration-section">
                 <AssignmentPicker

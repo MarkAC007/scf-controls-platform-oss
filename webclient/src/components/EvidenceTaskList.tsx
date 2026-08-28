@@ -35,18 +35,30 @@ interface EvidenceTaskListProps {
   evidenceId: string;
   organizationId: string;
   onTaskChange?: () => void;
+  /**
+   * No tracking row saved yet, so there is nothing to hang a task off.
+   *
+   * The card still renders. Hiding it entirely was the old behaviour and it
+   * left no trace on the page that tasks exist at all, so the feature was
+   * invisible to exactly the people who had not yet done the one thing that
+   * turns it on.
+   */
+  disabled?: boolean;
 }
 
 export const EvidenceTaskList: React.FC<EvidenceTaskListProps> = ({
   evidenceTrackingId,
   evidenceId,
   organizationId,
-  onTaskChange
+  onTaskChange,
+  disabled = false
 }) => {
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!disabled);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
+  /** The one row showing its detail. Single-valued: opening one closes the last. */
+  const [openTaskId, setOpenTaskId] = useState<string | null>(null);
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
 
   /* Owning team (#822 phase 4). Every task here belongs to one evidence item,
@@ -76,8 +88,9 @@ export const EvidenceTaskList: React.FC<EvidenceTaskListProps> = ({
     });
 
   useEffect(() => {
+    if (disabled || !evidenceTrackingId) return;
     loadTasks();
-  }, [evidenceTrackingId]);
+  }, [evidenceTrackingId, disabled]);
 
   const loadTasks = async () => {
     try {
@@ -135,162 +148,178 @@ export const EvidenceTaskList: React.FC<EvidenceTaskListProps> = ({
     return diffDays;
   };
 
-  if (loading) {
-    return <div className="evidence-task-loading">Loading tasks...</div>;
-  }
-
   const openTasks = tasks.filter(t => t.status !== 'completed');
   const completedTasks = tasks.filter(t => t.status === 'completed');
 
   return (
-    <div className="evidence-task-list">
-      <div className="evidence-task-list-header">
-        <h4>
-          Evidence Tasks
-          <span className="evidence-task-count">{openTasks.length}</span>
-        </h4>
+    <div className={`detail-section-container evidence-task-list ${disabled ? 'evidence-task-list-disabled' : ''}`}>
+      <div className="container-header">
+        <span className="container-icon">{'✅'}</span>
+        <span className="container-title">Evidence Tasks</span>
+        <span className="container-count">{openTasks.length}</span>
         <button
           className="btn-create-task"
           onClick={() => setShowCreateModal(true)}
+          disabled={disabled}
         >
-          + Create Task
+          + New Task
         </button>
       </div>
 
-      {tasks.length === 0 ? (
-        <p className="evidence-task-empty">
-          No tasks created yet. Tasks are auto-generated based on collection frequency.
-        </p>
-      ) : (
-        <>
-          {/* Open Tasks */}
-          {openTasks.length > 0 && (
-            <div style={{ marginBottom: '1.5rem' }}>
-              <h5 className="evidence-task-section-title">Open Tasks</h5>
-              {openTasks.map((task) => {
-                const daysUntilDue = getDaysUntilDue(task.due_date);
-                const isOverdue = daysUntilDue < 0;
+      <div className="container-content">
+        {disabled ? (
+          <p className="evidence-task-empty">
+            Save this evidence tracking to enable tasks.
+          </p>
+        ) : loading ? (
+          <div className="evidence-task-loading">Loading tasks...</div>
+        ) : tasks.length === 0 ? (
+          <p className="evidence-task-empty">
+            No tasks created yet. Tasks are auto-generated based on collection frequency.
+          </p>
+        ) : (
+          <>
+            {/* Open Tasks */}
+            {openTasks.length > 0 && (
+              <div className="evidence-task-open-group">
+                <h5 className="evidence-task-section-title">Open Tasks</h5>
+                {openTasks.map((task) => {
+                  const daysUntilDue = getDaysUntilDue(task.due_date);
+                  const isOverdue = daysUntilDue < 0;
+                  const isOpen = openTaskId === task.id;
 
-                return (
-                  <div
-                    key={task.id}
-                    className={`evidence-task-card ${isOverdue ? 'overdue' : ''}`}
-                  >
-                    {/* Task Header with Badges */}
-                    <div className="evidence-task-badges">
-                      <span className={`task-type-badge ${getTaskTypeClass(task.task_type)}`}>
-                        {getTaskTypeLabel(task.task_type)}
-                      </span>
-                      <span className={`priority-badge ${getPriorityClass(task.priority)}`}>
-                        {task.priority}
-                      </span>
-                      <span className={`status-badge ${getStatusClass(task.status)}`}>
-                        {task.status.replace('_', ' ')}
-                      </span>
-                      {isOverdue && (
-                        <span className="status-badge status-overdue">OVERDUE</span>
-                      )}
-                    </div>
-
-                    {/* Task Title */}
-                    <div className="evidence-task-title">
-                      {task.title || 'Untitled Task'}
-                    </div>
-
-                    {/* Task Description */}
-                    {task.description && (
-                      <div className="evidence-task-description">
-                        {task.description}
-                      </div>
-                    )}
-
-                    {/* Task Details */}
-                    <div className="evidence-task-details">
-                      <div className="evidence-task-due">
-                        <strong>Due:</strong> {new Date(task.due_date).toLocaleDateString('en-US', {
-                          month: 'short',
-                          day: 'numeric',
-                          year: 'numeric'
-                        })}
-                        {isOverdue ? (
-                          <span className="days-overdue">
-                            ({Math.abs(daysUntilDue)} days overdue)
+                  return (
+                    <div
+                      key={task.id}
+                      className={`evidence-task-row-group ${isOverdue ? 'overdue' : ''} ${isOpen ? 'open' : ''}`}
+                    >
+                      {/* Collapsed row: everything needed to triage without opening it. */}
+                      <div className="evidence-task-row">
+                        <button
+                          type="button"
+                          className="evidence-task-row-toggle"
+                          aria-expanded={isOpen}
+                          onClick={() => setOpenTaskId(isOpen ? null : task.id)}
+                        >
+                          <span className="evidence-task-row-chevron" aria-hidden="true">
+                            {isOpen ? '▾' : '▸'}
                           </span>
-                        ) : (
-                          <span className={daysUntilDue <= 7 ? 'days-warning' : 'days-ok'}>
-                            ({daysUntilDue} days)
+                          <span className={`task-type-badge ${getTaskTypeClass(task.task_type)}`}>
+                            {getTaskTypeLabel(task.task_type)}
                           </span>
-                        )}
-                      </div>
-                      {task.assigned_user && (
-                        <div style={{ color: 'var(--muted)' }}>
-                          <strong>Assigned:</strong> {task.assigned_user.display_name || task.assigned_user.email}
-                        </div>
-                      )}
-                      {/* Rendered whether or not anybody is assigned. An
-                          unassigned task is not an unowned one — its evidence
-                          item's accountable team has it — and saying so here
-                          is what stops "nobody is on this" being read off a
-                          blank space. */}
-                      <TaskOwningTeamBadge
-                        ownership={ownershipOf(task)}
-                        memberType={memberTypeOf(ownershipOf(task).team?.person_user_id)}
-                        resolved={ownershipResolved}
-                      />
-                    </div>
+                          <span className="evidence-task-row-title">
+                            {task.title || 'Untitled Task'}
+                          </span>
+                          <span className={`status-badge ${getStatusClass(task.status)}`}>
+                            {task.status.replace('_', ' ')}
+                          </span>
+                          {isOverdue && (
+                            <span className="status-badge status-overdue">OVERDUE</span>
+                          )}
+                          <span className="evidence-task-row-due">
+                            {new Date(task.due_date).toLocaleDateString('en-US', {
+                              month: 'short',
+                              day: 'numeric',
+                              year: 'numeric'
+                            })}
+                            {isOverdue ? (
+                              <span className="days-overdue">
+                                ({Math.abs(daysUntilDue)} days overdue)
+                              </span>
+                            ) : (
+                              <span className={daysUntilDue <= 7 ? 'days-warning' : 'days-ok'}>
+                                ({daysUntilDue} days)
+                              </span>
+                            )}
+                          </span>
+                          <span className="evidence-task-row-assignee">
+                            {task.assigned_user
+                              ? task.assigned_user.display_name || task.assigned_user.email
+                              : 'Unassigned'}
+                          </span>
+                        </button>
 
-                    {/* Action Buttons */}
-                    <div className="evidence-task-actions">
-                      <button
-                        className="btn-task-edit"
-                        onClick={() => setEditingTask(task)}
-                      >
-                        ✏️ Edit Task
-                      </button>
-                      <button
-                        className="btn-task-comments"
-                        onClick={() => setExpandedTaskId(expandedTaskId === task.id ? null : task.id)}
-                      >
-                        💬 Comments ({expandedTaskId === task.id ? 'Hide' : 'Show'})
-                      </button>
-                    </div>
-
-                    {/* Expanded Comments Section */}
-                    {expandedTaskId === task.id && (
-                      <div className="evidence-task-comments-section">
-                        <ModernCommentThread
-                          commentableType="task"
-                          commentableId={task.id}
-                          organizationId={organizationId}
+                        {/* Stays on the collapsed row rather than moving into the
+                            detail. An unassigned task is not an unowned one — its
+                            evidence item's accountable team has it — and that only
+                            stops "nobody is on this" being read off the row if it is
+                            legible without opening the row first (#822). */}
+                        <TaskOwningTeamBadge
+                          ownership={ownershipOf(task)}
+                          memberType={memberTypeOf(ownershipOf(task).team?.person_user_id)}
+                          resolved={ownershipResolved}
                         />
                       </div>
+
+                      {isOpen && (
+                        <div className="evidence-task-row-body">
+                          <div className="evidence-task-badges">
+                            <span className={`priority-badge ${getPriorityClass(task.priority)}`}>
+                              {task.priority}
+                            </span>
+                          </div>
+
+                          {task.description && (
+                            <div className="evidence-task-description">
+                              {task.description}
+                            </div>
+                          )}
+
+                          {/* Action Buttons */}
+                          <div className="evidence-task-actions">
+                            <button
+                              className="btn-task-edit"
+                              onClick={() => setEditingTask(task)}
+                            >
+                              ✏️ Edit Task
+                            </button>
+                            <button
+                              className="btn-task-comments"
+                              onClick={() => setExpandedTaskId(expandedTaskId === task.id ? null : task.id)}
+                            >
+                              💬 Comments ({expandedTaskId === task.id ? 'Hide' : 'Show'})
+                            </button>
+                          </div>
+
+                          {/* Expanded Comments Section */}
+                          {expandedTaskId === task.id && (
+                            <div className="evidence-task-comments-section">
+                              <ModernCommentThread
+                                commentableType="task"
+                                commentableId={task.id}
+                                organizationId={organizationId}
+                              />
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Completed Tasks */}
+            {completedTasks.length > 0 && (
+              <details className="evidence-completed-tasks">
+                <summary>Completed Tasks ({completedTasks.length})</summary>
+                {completedTasks.map((task) => (
+                  <div key={task.id} className="evidence-completed-task-card">
+                    <div className="evidence-completed-task-line">
+                      <strong>Completed:</strong> {task.completed_date ? new Date(task.completed_date).toLocaleDateString() : 'N/A'}
+                    </div>
+                    {task.completion_notes && (
+                      <div className="evidence-completed-task-notes">
+                        <strong>Notes:</strong> {task.completion_notes}
+                      </div>
                     )}
                   </div>
-                );
-              })}
-            </div>
-          )}
-
-          {/* Completed Tasks */}
-          {completedTasks.length > 0 && (
-            <details className="evidence-completed-tasks">
-              <summary>Completed Tasks ({completedTasks.length})</summary>
-              {completedTasks.map((task) => (
-                <div key={task.id} className="evidence-completed-task-card">
-                  <div style={{ marginBottom: '0.25rem' }}>
-                    <strong>Completed:</strong> {task.completed_date ? new Date(task.completed_date).toLocaleDateString() : 'N/A'}
-                  </div>
-                  {task.completion_notes && (
-                    <div style={{ color: 'var(--muted)' }}>
-                      <strong>Notes:</strong> {task.completion_notes}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </details>
-          )}
-        </>
-      )}
+                ))}
+              </details>
+            )}
+          </>
+        )}
+      </div>
 
       {/* Task Creation Modal */}
       {showCreateModal && (

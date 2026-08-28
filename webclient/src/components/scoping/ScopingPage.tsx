@@ -25,7 +25,7 @@ import { toast } from 'react-hot-toast'
 import type {
   ScopedControlsFile,
   ScopedControl,
-  OwnerTeam,
+  Team,
   ERLFile,
   FrameworkNameMap,
   ResolvedArtifact,
@@ -40,11 +40,11 @@ import {
   useScopedControlsStats,
   flattenScopedControlPages,
 } from '../../hooks/useScopedControlsQuery'
-import { useOrganizationSettings } from '../../hooks/useOrganizationSettings'
 import { useTeamAssignments, accountableTeamLabel } from '../../hooks/useTeamAssignments'
 import { useIsOrgAdmin } from '../../hooks/useIsOrgAdmin'
 import { useDebounce } from '../../hooks/useDebounce'
 import type { BulkScopeFrameworkResponse, BulkUnscopeFrameworkResponse, ResetScopeResponse, ScopedControlWithCatalog } from '../../data/apiClient'
+import { listTeams, batchAssignTeamToItems } from '../../data/apiClient'
 import { ScopeByFrameworkModal } from '../ScopeByFrameworkModal'
 
 import ScopingList, { type ScopingFilters } from './ScopingList'
@@ -87,14 +87,6 @@ const DEFAULT_FILTERS: ScopingFilters = {
   functionId: 'all',
   ownerType: 'all',
 }
-
-const DEFAULT_OWNER_TEAMS = [
-  'Software Engineering',
-  'Security Operations',
-  'DevSecOps',
-  'Cyber Security',
-  'GRC',
-]
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -350,15 +342,29 @@ export default function ScopingPage({
 
   const canManageTeams = useIsOrgAdmin(organizationId)
 
-  // ── Org settings (owner teams) ─────────────────────────────────────────────
-  const { data: orgSettings } = useOrganizationSettings(organizationId)
-  const orgOwnerTeams = orgSettings?.owner_teams?.length ? orgSettings.owner_teams : null
-  const ownerTeams = orgOwnerTeams ?? DEFAULT_OWNER_TEAMS
+  // ── Teams for bulk owner assignment ────────────────────────────────────────
+  // The legacy settings-sourced owner label list is sunset: "owner" now means
+  // the accountable team in the team system (Users → Teams). One fetch for the
+  // whole page — options for a dropdown, never a per-row read.
+  const [teams, setTeams] = useState<Team[]>([])
+  useEffect(() => {
+    if (!organizationId) return
+    let cancelled = false
+    listTeams(organizationId)
+      .then((loaded) => {
+        if (!cancelled) setTeams(loaded)
+      })
+      .catch(() => {
+        // Quiet: the bulk bar just offers no teams; the list still renders.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [organizationId])
 
-  // Owner options for bulk assign (same source as detail page)
-  const ownerOptions = useMemo(
-    () => ownerTeams.map((t) => ({ value: t, label: t })),
-    [ownerTeams],
+  const teamOptions = useMemo(
+    () => teams.map((t) => ({ value: t.id, label: t.name })),
+    [teams],
   )
 
   // ── NavigateToId effect ────────────────────────────────────────────────────
@@ -519,10 +525,10 @@ export default function ScopingPage({
 
   // ── Bulk row actions ───────────────────────────────────────────────────────
 
-  type BulkActionType = 'applicable' | 'na' | 'owner'
+  type BulkActionType = 'applicable' | 'na'
 
   const runBulkAction = useCallback(
-    async (actionType: BulkActionType, ownerValue?: string) => {
+    async (actionType: BulkActionType) => {
       const scfIds = Array.from(rowSelection)
       if (scfIds.length === 0) return
 
@@ -539,14 +545,8 @@ export default function ScopingPage({
           let scoped = getScopedControl(scopingData, scf_id)
           if (!scoped) scoped = { scf_id, selected: false }
 
-          let patch: Partial<ScopedControl> = {}
-          if (actionType === 'applicable') {
-            patch = { selected: true }
-          } else if (actionType === 'na') {
-            patch = { selected: false }
-          } else if (actionType === 'owner') {
-            patch = { owner: ownerValue as OwnerTeam | undefined }
-          }
+          const patch: Partial<ScopedControl> =
+            actionType === 'applicable' ? { selected: true } : { selected: false }
 
           const updated = await updateScopedControl({ ...scopingData }, { ...scoped, ...patch } as ScopedControl)
           handleScopingDataChange(updated)
@@ -584,8 +584,46 @@ export default function ScopingPage({
   const handleSetApplicable = useCallback(() => runBulkAction('applicable'), [runBulkAction])
   const handleSetNA = useCallback(() => runBulkAction('na'), [runBulkAction])
   const handleAssignOwner = useCallback(
-    (owner: string) => runBulkAction('owner', owner),
-    [runBulkAction],
+    async (teamId: string) => {
+      const scfIds = Array.from(rowSelection)
+      if (scfIds.length === 0 || !organizationId) return
+
+      // Assignments key on the scoped control's database id. A control the
+      // server has never saved has none yet — report it rather than guess.
+      const itemIds = scfIds
+        .map((id) => scopedDbIdByScfId.get(id))
+        .filter((id): id is string => !!id)
+      const skipped = scfIds.length - itemIds.length
+      if (itemIds.length === 0) {
+        toast.error('None of the selected controls are saved yet — set their scope first.')
+        return
+      }
+
+      setBulkBusy(true)
+      setBulkProgress(`Assigning owner team to ${itemIds.length}…`)
+      try {
+        await batchAssignTeamToItems(organizationId, {
+          type: 'control',
+          team_id: teamId,
+          item_ids: itemIds,
+          is_accountable: true,
+        })
+        await reloadTeamAssignments()
+        const teamName = teams.find((t) => t.id === teamId)?.name ?? 'Team'
+        toast.success(
+          `${teamName} is now accountable for ${itemIds.length} control${itemIds.length !== 1 ? 's' : ''}` +
+            (skipped > 0 ? ` · ${skipped} skipped (not saved yet)` : ''),
+        )
+        setRowSelection(new Set())
+      } catch (err) {
+        console.error('Bulk team assignment failed:', err)
+        toast.error('Failed to assign the owner team')
+      } finally {
+        setBulkBusy(false)
+        setBulkProgress('')
+      }
+    },
+    [rowSelection, organizationId, scopedDbIdByScfId, reloadTeamAssignments, teams],
   )
 
   // ── Scoping entry for detail page ─────────────────────────────────────────
@@ -626,7 +664,7 @@ export default function ScopingPage({
           onReloadTeamAssignments={() => void reloadTeamAssignments()}
           organizationId={organizationId}
           scopingData={scopingData}
-          ownerTeams={ownerTeams}
+          accountableTeamLabel={selectedId ? ownerByControlId[selectedId] || null : null}
           canManageTeams={canManageTeams}
         />
         {showFrameworkModal && (
@@ -672,7 +710,7 @@ export default function ScopingPage({
                 enrichedControls.length > 0 &&
                 enrichedControls.every((c) => rowSelection.has(c.scf_id))
               }
-              ownerOptions={ownerOptions}
+              teamOptions={canManageTeams ? teamOptions : null}
               busy={bulkBusy}
               progressText={bulkBusy ? bulkProgress : undefined}
               onSelectAllVisible={() => {

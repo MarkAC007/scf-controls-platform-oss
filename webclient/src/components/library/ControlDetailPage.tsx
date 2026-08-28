@@ -15,8 +15,6 @@ import { getEvidenceTracking } from '../../data/scopingService'
 import { getEvidenceHealth, type EvidenceHealthResponse } from '../../data/apiClient'
 
 import GraphView from '../GraphView'
-import MaturityRoadmap from '../MaturityRoadmap'
-import BusinessSizeGuidance from '../BusinessSizeGuidance'
 import SCRMFocusBadges from '../SCRMFocusBadges'
 import RiskThreatContext from '../RiskThreatContext'
 import AssessmentObjectivesList from '../AssessmentObjectivesList'
@@ -321,6 +319,7 @@ export default function ControlDetailPage({
                   </>
                 )}
               </div>
+              <SCRMFocusBadges focus={control.scrm_focus} variant="bar" />
             </div>
 
             {/* Id + chips + weight bar row */}
@@ -370,9 +369,6 @@ export default function ControlDetailPage({
 
             {/* Description */}
             <p className="control-detail-description">{control.control_description}</p>
-
-            {/* SCRM badges */}
-            <SCRMFocusBadges focus={control.scrm_focus} />
           </div>
         </div>
 
@@ -457,12 +453,6 @@ export default function ControlDetailPage({
           </div>
         ) : (
           <>
-            {/* Maturity + Right-Sizing */}
-            <div className="scoping-card-grid">
-              <MaturityRoadmap maturity={control.cmm_maturity} />
-              <BusinessSizeGuidance guidance={control.business_size_guidance} />
-            </div>
-
             {/* ── Tabs ───────────────────────────────────────────────────────── */}
             <TabRow
               tabs={tabs}

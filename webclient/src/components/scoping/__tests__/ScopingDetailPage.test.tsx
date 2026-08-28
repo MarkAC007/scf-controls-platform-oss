@@ -134,7 +134,6 @@ const SCOPING_ENTRY = {
   priority: 'high' as const,
   maturity_level: 'L2' as const,
   selection_reason: 'Required by ISO 27001',
-  owner: 'GRC',
   target_date: '2025-12-31',
   completion_date: undefined,
   implementation_notes: 'Working on this now.',
@@ -164,7 +163,7 @@ function makeProps(overrides: Partial<ScopingDetailPageProps> = {}): ScopingDeta
     onReloadTeamAssignments: vi.fn(),
     organizationId: 'org-1',
     scopingData: SCOPING_DATA as ScopingDetailPageProps['scopingData'],
-    ownerTeams: ['GRC', 'Security Operations', 'DevSecOps'],
+    accountableTeamLabel: 'Security Operations',
     canManageTeams: true,
     ...overrides,
   }
@@ -460,12 +459,18 @@ describe('ScopingDetailPage', () => {
       expect(screen.getByText(/5\/120/)).toBeInTheDocument()
     })
 
-    it('owner-team select fires onFieldChange with owner', () => {
+    it('shows the accountable team read-only — the legacy owner select is sunset', () => {
       const onFieldChange = vi.fn()
       render(<ScopingDetailPage {...makeProps({ onFieldChange })} />)
-      const select = screen.getByRole('combobox', { name: /owner team label/i })
-      fireEvent.change(select, { target: { value: 'DevSecOps' } })
-      expect(onFieldChange).toHaveBeenCalledWith('owner', 'DevSecOps')
+      expect(screen.getByTestId('accountable-team')).toHaveTextContent('Security Operations')
+      // No select, no write path: ownership changes only on the Assignments tab.
+      expect(screen.queryByRole('combobox', { name: /owner team label/i })).toBeNull()
+      expect(onFieldChange).not.toHaveBeenCalledWith('owner', expect.anything())
+    })
+
+    it('says so when no team is accountable yet', () => {
+      render(<ScopingDetailPage {...makeProps({ accountableTeamLabel: null })} />)
+      expect(screen.getByTestId('accountable-team')).toHaveTextContent('No accountable team')
     })
 
     it('target date shown when status is in_progress', () => {

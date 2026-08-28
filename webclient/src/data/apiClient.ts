@@ -4491,6 +4491,7 @@ export async function removeTeamMember(
 import type {
   TeamAssignableType,
   TeamAssignment,
+  TeamAssignmentBatchResult,
   TeamAssignmentCreate,
   TeamAssignmentMap,
 } from '../types'
@@ -4611,6 +4612,30 @@ export async function clearAccountableTeam(
     team_id: target.teamId,
     is_accountable: false,
   })
+}
+
+/**
+ * Assign ONE team to MANY items in a single transaction (#822 phase 4).
+ *
+ * The bulk bars call this instead of looping the single POST: the batch is
+ * atomic (no half-assigned selection), each item's incumbent accountable team
+ * is demoted inside the same transaction, and recipients get ONE aggregate
+ * notification instead of one per item. Admin-only, like every assignment
+ * write.
+ */
+export async function batchAssignTeamToItems(
+  orgId: string,
+  batch: {
+    type: TeamAssignableType
+    team_id: string
+    item_ids: string[]
+    is_accountable?: boolean
+  }
+): Promise<TeamAssignmentBatchResult> {
+  return apiClient.post<TeamAssignmentBatchResult>(
+    `/organizations/${orgId}/team-assignments/batch`,
+    batch
+  )
 }
 
 /** Remove a team's ownership entirely. The team itself is untouched. */

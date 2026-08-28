@@ -1,7 +1,7 @@
 /**
  * Acting on many evidence items at once (#789).
  *
- * The list is where the same three answers — tracked, how often, who — are
+ * The list is where the same three answers — tracked, how often, which team — are
  * given eighty times in a row on a first run. What is pinned here is that the
  * bar states what it will act on, that each control fires exactly one narrow
  * command, and that the outcome (including the part that failed) is said out
@@ -11,13 +11,13 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, cleanup, fireEvent } from '@testing-library/react'
 import { EvidenceBulkActionsBar } from '../EvidenceBulkActionsBar'
 import type { EvidenceBulkActionsBarProps } from '../EvidenceBulkActionsBar'
-import type { UserSimple } from '../../../types'
 
 afterEach(cleanup)
 
-const members: UserSimple[] = [
-  { id: 'u1', email: 'ana@example.com', display_name: 'Ana Ruiz' },
-  { id: 'u2', email: 'sam@example.com' },
+// Team ids from the team system — the legacy per-user assign list is sunset.
+const teamOptions = [
+  { value: 'team-1', label: 'Security Operations' },
+  { value: 'team-2', label: 'GRC' },
 ]
 
 const handlers = () => ({
@@ -25,7 +25,7 @@ const handlers = () => ({
   onClear: vi.fn(),
   onSetTracked: vi.fn(),
   onSetFrequency: vi.fn(),
-  onAssign: vi.fn(),
+  onAssignTeam: vi.fn(),
   onDismissResult: vi.fn(),
 })
 
@@ -35,7 +35,7 @@ function renderBar(overrides: Partial<EvidenceBulkActionsBarProps> = {}) {
     selectedCount: 3,
     visibleCount: 12,
     allVisibleSelected: false,
-    members,
+    teamOptions,
     ...h,
     ...overrides,
   }
@@ -119,30 +119,34 @@ describe('each control fires one narrow command', () => {
     expect(select.value).toBe('')
   })
 
-  it('assigns by user id', () => {
+  it('assigns an owner team by TEAM ID, not a label', () => {
     const h = renderBar()
-    fireEvent.change(screen.getByLabelText(/assign to/i), { target: { value: 'u1' } })
-    expect(h.onAssign).toHaveBeenCalledWith('u1')
+    fireEvent.change(screen.getByLabelText(/assign owner team/i), { target: { value: 'team-1' } })
+    expect(h.onAssignTeam).toHaveBeenCalledWith('team-1')
   })
 
-  it('offers unassigning as a distinct choice from the placeholder', () => {
-    // '' is already "do nothing"; the two mean opposite things.
-    const h = renderBar()
-    fireEvent.change(screen.getByLabelText(/assign to/i), { target: { value: '__unassign__' } })
-    expect(h.onAssign).toHaveBeenCalledWith('')
-  })
-
-  it('labels a member with no display name by their email', () => {
+  it('lists the org teams by name', () => {
     renderBar()
-    expect(screen.getByRole('option', { name: 'sam@example.com' })).toBeInTheDocument()
-    expect(screen.getByRole('option', { name: 'Ana Ruiz' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'Security Operations' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'GRC' })).toBeInTheDocument()
+  })
+
+  it('hides the assign-owner control entirely for non-admins (teamOptions null)', () => {
+    renderBar({ teamOptions: null })
+    expect(screen.queryByLabelText(/assign owner team/i)).toBeNull()
+  })
+
+  it('renders disabled with a create-teams hint when the org has no teams yet', () => {
+    renderBar({ teamOptions: [] })
+    expect(screen.getByLabelText(/assign owner team/i)).toBeDisabled()
+    expect(screen.getByText('No teams yet')).toBeInTheDocument()
   })
 
   it('disables every action while a batch is in flight', () => {
     renderBar({ busy: true })
     expect(screen.getByRole('button', { name: /start tracking/i })).toBeDisabled()
     expect(screen.getByLabelText(/set frequency/i)).toBeDisabled()
-    expect(screen.getByLabelText(/assign to/i)).toBeDisabled()
+    expect(screen.getByLabelText(/assign owner team/i)).toBeDisabled()
     expect(screen.getByText(/applying/i)).toBeInTheDocument()
   })
 })
@@ -182,7 +186,7 @@ describe('the outcome is stated, including the part that failed', () => {
         selectedCount={3}
         visibleCount={12}
         allVisibleSelected={false}
-        members={members}
+        teamOptions={teamOptions}
         result={{ updated: 0, created: 0, failed: 3, errors: ['nope'] }}
         {...handlers()}
       />,
@@ -232,11 +236,20 @@ describe('how the list wires it up', () => {
 
   it('sends only the field being changed', () => {
     // `exclude_unset` on the API means an omitted key is left alone, so a bulk
-    // frequency change must not also blank forty assignees.
+    // frequency change must not also blank forty rows' other fields.
     const text = evidenceReview()
-    for (const call of ['applyBulk({ is_tracked:', 'applyBulk({ frequency }', 'applyBulk({ assigned_user_id:']) {
+    for (const call of ['applyBulk({ is_tracked:', 'applyBulk({ frequency }']) {
       expect(text).toContain(call)
     }
+  })
+
+  it('assigns the owner team through the batch team endpoint, never a tracking patch', () => {
+    // Ownership is the accountable team in the team system — the sunset legacy
+    // per-user assign must not creep back in as a tracking-field write.
+    const text = evidenceReview()
+    expect(text).toContain('onAssignTeam={assignOwnerTeamBulk}')
+    expect(text).toContain('batchAssignTeamToItems')
+    expect(text).not.toContain('applyBulk({ assigned_user_id:')
   })
 
   it('keeps the checkbox outside the row that owns the button role', () => {

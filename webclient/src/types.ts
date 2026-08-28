@@ -272,13 +272,6 @@ export type ImplementationStatus =
 
 export type Priority = 'critical' | 'high' | 'medium' | 'low'
 
-export type OwnerTeam =
-  | 'Software Engineering'
-  | 'Security Operations'
-  | 'DevSecOps'
-  | 'Cyber Security'
-  | 'GRC'
-
 // SCF C|P-CMM Maturity Levels (L0-L5) for Controls
 export type MaturityLevel =
   | 'L0'  // Not Performed
@@ -338,7 +331,12 @@ export interface ScopedControl {
   frameworks_driving_selection?: string[]
   implementation_status?: ImplementationStatus
   priority?: Priority
-  owner?: OwnerTeam
+  /**
+   * DEPRECATED legacy free-text owner label. Nothing writes it any more —
+   * ownership is the accountable team assignment (Users → Teams). Kept so
+   * historical values still deserialize.
+   */
+  owner?: string
   assigned_to?: string
   maturity_level?: MaturityLevel
   target_date?: string
@@ -1972,6 +1970,20 @@ export interface TeamAssignmentMapResponse {
  * membership, and a client able to name it could file one tenant's team
  * against another tenant's control.
  */
+/**
+ * What one batch team assignment did (#822 phase 4). Mirrors the backend's
+ * TeamAssignmentBatchResponse; `notified` is the aggregate-notification count
+ * that proves assigning fifty items did not page anyone fifty times.
+ */
+export interface TeamAssignmentBatchResult {
+  type: string
+  team_id: string
+  created: number
+  updated: number
+  demoted: number
+  notified: number
+}
+
 export interface TeamAssignmentCreate {
   type: TeamAssignableType
   item_id: string

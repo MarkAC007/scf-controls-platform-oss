@@ -5,7 +5,8 @@
  *   - Selection count + select-all-visible shortcut
  *   - Set applicable (selected=true)
  *   - Set N/A (selected=false)
- *   - Assign owner (dropdown of owner label options)
+ *   - Assign owner (dropdown of the org's teams — claims the ACCOUNTABLE
+ *     team through the team system; the legacy free-text owner list is gone)
  *   - Clear selection
  *
  * Mirrors EvidenceBulkActionsBar's interaction idioms (ruling 1):
@@ -15,7 +16,8 @@
  */
 import { useState, type JSX } from 'react'
 
-export interface OwnerOption {
+export interface TeamOption {
+  /** Team id from the team system (Users → Teams). */
   value: string
   label: string
 }
@@ -26,8 +28,12 @@ export interface ScopingBulkBarProps {
   visibleCount: number
   /** True when every visible control is already checked. */
   allVisibleSelected: boolean
-  /** Owner label options from org settings. */
-  ownerOptions: OwnerOption[]
+  /**
+   * The org's teams for the Assign-owner action. `null` hides the control
+   * entirely (non-admins cannot write assignments); `[]` renders it disabled
+   * with a create-teams hint.
+   */
+  teamOptions: TeamOption[] | null
   /** True while a bulk operation is in flight. */
   busy?: boolean
   /** Optional progress message shown while busy ("Updating 3 of 12…"). */
@@ -35,8 +41,8 @@ export interface ScopingBulkBarProps {
   onSelectAllVisible: () => void
   onSetApplicable: () => void
   onSetNA: () => void
-  /** Called with the chosen owner label value. */
-  onAssignOwner: (owner: string) => void
+  /** Called with the chosen team id; the page claims it accountable. */
+  onAssignOwner: (teamId: string) => void
   onClear: () => void
 }
 
@@ -44,7 +50,7 @@ export default function ScopingBulkBar({
   selectedCount,
   visibleCount,
   allVisibleSelected,
-  ownerOptions,
+  teamOptions,
   busy = false,
   progressText,
   onSelectAllVisible,
@@ -106,29 +112,38 @@ export default function ScopingBulkBar({
           Set N/A
         </button>
 
-        <label className="scoping-bulk-field">
-          <span className="scoping-bulk-field-label">Assign owner</span>
-          <select
-            aria-label="Assign owner"
-            className="form-control form-control-sm"
-            value={owner}
-            disabled={busy}
-            onChange={(e) => {
-              const value = e.target.value
-              if (!value) return
-              onAssignOwner(value)
-              // Command, not bound value — reset to placeholder
-              setOwner('')
-            }}
-          >
-            <option value="">Choose…</option>
-            {ownerOptions.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
+        {teamOptions !== null && (
+          <label className="scoping-bulk-field">
+            <span className="scoping-bulk-field-label">Assign owner</span>
+            <select
+              aria-label="Assign owner team"
+              className="form-control form-control-sm"
+              value={owner}
+              disabled={busy || teamOptions.length === 0}
+              title={
+                teamOptions.length === 0
+                  ? 'No teams yet — create them under Users → Teams'
+                  : undefined
+              }
+              onChange={(e) => {
+                const value = e.target.value
+                if (!value) return
+                onAssignOwner(value)
+                // Command, not bound value — reset to placeholder
+                setOwner('')
+              }}
+            >
+              <option value="">
+                {teamOptions.length === 0 ? 'No teams yet' : 'Choose team…'}
               </option>
-            ))}
-          </select>
-        </label>
+              {teamOptions.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
 
         {/* Progress text while busy */}
         {busy && progressText !== undefined && (

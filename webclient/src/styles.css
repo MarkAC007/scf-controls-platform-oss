@@ -21559,10 +21559,12 @@ textarea.form-control{
   cursor: default;
 }
 
-/* 3-column split: description left, widgets center, SCRM right */
+/* 3-column split: description left, widgets center, SCRM right.
+   The centre column now carries the roadmap + right-sizing blocks as well as
+   the widgets, so it is capped to keep the description column readable. */
 .detail-header-split {
   display: grid;
-  grid-template-columns: 1fr auto auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 460px) auto;
   gap: 28px;
   margin-bottom: 0;
   align-items: start;
@@ -21607,6 +21609,7 @@ textarea.form-control{
   display: flex;
   flex-direction: column;
   gap: 14px;
+  max-width: 460px;
   background: var(--muted-bg);
   border: 1px solid var(--border);
   border-radius: var(--card-radius);
@@ -21786,141 +21789,250 @@ textarea.form-control{
   font-size: 1.1rem;
 }
 
-/* === Iteration 4: Maturity Stepper === */
-.maturity-stepper {
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding: 20px 10px 10px;
+/* === Maturity Roadmap: compact single-row chip stepper ===
+   Prefixed `roadmap-`, not `maturity-`: components/maturity/MaturityStepper.tsx
+   defines `.maturity-stepper` / `.maturity-step` later in this file, and its
+   column layout was winning here and stacking L0–L5 vertically. */
+.roadmap-block {
   position: relative;
-}
-
-.maturity-step {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  position: relative;
-  z-index: 1;
-  flex-shrink: 0;
+  gap: 6px;
 }
 
-.maturity-circle {
-  width: 36px;
-  height: 36px;
+.roadmap-block-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.roadmap-block-head .detail-widget-group-label {
+  margin-bottom: 0;
+}
+
+.roadmap-target-label {
+  margin-left: auto;
+  color: var(--success);
+  text-transform: uppercase;
+  font-weight: 700;
+  font-size: 0.6rem;
+  letter-spacing: var(--label-tracking);
+  white-space: nowrap;
+}
+
+.roadmap-stepper {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 34px;
+}
+
+.roadmap-step {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.roadmap-circle {
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.7rem;
+  font-size: 0.62rem;
   font-weight: 700;
   transition: all 0.2s;
   cursor: default;
 }
 
-.maturity-circle.active {
+.roadmap-circle.active {
   background: var(--primary);
   color: var(--primary-foreground);
 }
 
-.maturity-circle.target {
-  width: 44px;
-  height: 44px;
+.roadmap-circle.target {
+  width: 32px;
+  height: 32px;
   background: var(--success);
   color: #fff;
-  font-size: 0.8rem;
-  box-shadow: 0 0 0 4px var(--success-bg);
+  font-size: 0.68rem;
+  box-shadow: 0 0 0 3px var(--success-bg);
 }
 
-.maturity-circle.inactive {
+.roadmap-circle.inactive {
   background: transparent;
   border: 1px solid var(--border-visible);
   color: var(--muted);
 }
 
-.maturity-connector {
-  flex: 1;
-  height: 3px;
-  min-width: 24px;
-  align-self: center;
-  margin-top: -8px;
+.roadmap-connector {
+  flex: 1 1 auto;
+  height: 2px;
+  min-width: 8px;
   border-radius: 2px;
 }
 
-.maturity-connector.active {
+.roadmap-connector.active {
   background: var(--primary);
 }
 
-.maturity-connector.inactive {
+.roadmap-connector.inactive {
   background: var(--border-visible);
   opacity: 0.5;
 }
 
-.maturity-step-label {
-  font-size: 0.6rem;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  margin-top: 8px;
-  color: var(--muted);
-  text-align: center;
-  white-space: nowrap;
+/* === Right-Sizing Guidance: pills only, guidance on hover === */
+.sizing-block {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
-.maturity-step-label.target {
-  color: var(--success);
-  font-weight: 700;
+.sizing-block .size-pills {
+  margin-bottom: 0;
+  gap: 6px;
 }
 
-.maturity-step-label.active {
-  color: var(--text);
+.size-pill-wrap {
+  display: inline-flex;
 }
 
-.maturity-target-label {
-  color: var(--success);
-  text-transform: uppercase;
-  font-weight: 700;
-  font-size: 0.7rem;
-  letter-spacing: var(--label-tracking);
-  margin-left: auto;
+.sizing-block .size-pill {
+  padding: 4px 12px;
+  font-size: 0.75rem;
 }
 
-/* Maturity popover on hover */
-.maturity-popover {
+/* Shared hover popover for the roadmap chips and the sizing pills.
+   Anchored to the block rather than the individual chip so it can never
+   overflow the right viewport edge from the header's right column. */
+.guidance-popover {
   position: absolute;
-  bottom: calc(100% + 16px);
-  left: 50%;
-  transform: translateX(-50%);
+  bottom: calc(100% + 8px);
+  left: 0;
+  right: 0;
   background: var(--surface-highest, var(--card));
   border: 1px solid var(--border-visible);
-  border-radius: 8px;
-  padding: 12px 16px;
-  min-width: 300px;
-  max-width: 460px;
+  border-radius: var(--card-radius);
+  padding: 10px 14px;
   z-index: 20;
   box-shadow: var(--shadow-lg);
   pointer-events: none;
 }
 
-.maturity-popover::after {
-  content: '';
-  position: absolute;
-  top: 100%;
-  left: 50%;
-  transform: translateX(-50%);
-  border: 6px solid transparent;
-  border-top-color: var(--border-visible);
-}
-
-.maturity-popover-title {
+.guidance-popover-title {
   font-weight: 700;
-  font-size: 0.8rem;
+  font-size: 0.75rem;
   color: var(--text);
-  margin-bottom: 6px;
+  margin-bottom: 4px;
 }
 
-.maturity-popover-text {
-  font-size: 0.8rem;
+.guidance-popover-text {
+  font-size: 0.78rem;
   color: var(--muted);
   line-height: 1.5;
+}
+
+/* Right-Sizing sits under the classification/coverage widgets in the header's
+   right column — a hairline rule keeps the groups readable. */
+.detail-header-right .sizing-block {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+/* === Maturity duo: current › next, inline in the control's top badge row ===
+   Same roadmap-* family as the full stepper; the full L0–L5 variant still
+   renders on the library control detail page. */
+.roadmap-duo {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.roadmap-duo-label,
+.roadmap-duo-hint {
+  text-transform: uppercase;
+  letter-spacing: var(--label-tracking);
+  font-size: 0.6rem;
+  font-weight: 700;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.roadmap-duo-hint {
+  font-weight: 500;
+  opacity: 0.75;
+}
+
+.roadmap-duo-chips {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.roadmap-duo-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: var(--badge-radius);
+  border: 1px solid var(--border-visible);
+  background: transparent;
+  cursor: default;
+  white-space: nowrap;
+}
+
+.roadmap-duo-chip.current {
+  border-color: var(--success);
+  background: var(--success-bg);
+}
+
+.roadmap-duo-chip.next {
+  border-color: var(--primary);
+}
+
+.roadmap-duo-lv {
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.roadmap-duo-chip.current .roadmap-duo-lv {
+  color: var(--success);
+}
+
+.roadmap-duo-chip.next .roadmap-duo-lv {
+  color: var(--primary);
+}
+
+.roadmap-duo-nm {
+  font-size: 0.58rem;
+  text-transform: uppercase;
+  letter-spacing: var(--label-tracking);
+  color: var(--muted);
+  line-height: 1;
+}
+
+.roadmap-duo-arrow {
+  color: var(--muted);
+  font-size: 0.95rem;
+  line-height: 1;
+  opacity: 0.7;
+}
+
+/* The duo sits near the top of the page, so its popover opens downward and is
+   anchored to the block's left edge — the badge row wraps it leftward on narrow
+   viewports, so a left anchor can never push it off the right edge. */
+.roadmap-duo .guidance-popover {
+  top: calc(100% + 8px);
+  bottom: auto;
+  left: 0;
+  right: auto;
+  width: 320px;
+  max-width: calc(100vw - 32px);
 }
 
 /* === Iteration 6: Risk/Threat & Supply Chain Restyling === */
@@ -21993,19 +22105,75 @@ textarea.form-control{
   line-height: 1;
 }
 
-/* === Iteration 7: Two-Column Grid + Tab Navigation === */
-
-/* Side-by-side card grids */
-.scoping-card-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--section-gap);
+/* === Supply-chain tiers, compact bar variant ===
+   Inline in the library control detail header badge row. Same tier data as the
+   full-width .scrm-tier-card section, same chip scale as .roadmap-duo. */
+.scrm-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
-@media (max-width: 900px) {
-  .scoping-card-grid {
-    grid-template-columns: 1fr;
-  }
+.scrm-bar-label {
+  text-transform: uppercase;
+  letter-spacing: var(--label-tracking);
+  font-size: 0.6rem;
+  font-weight: 700;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.scrm-bar-tiles {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.scrm-bar-tile {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: var(--badge-radius);
+  border: 1px solid var(--border-visible);
+  background: transparent;
+  cursor: default;
+  white-space: nowrap;
+}
+
+.scrm-bar-tile.active {
+  border-color: var(--success);
+  background: var(--success-bg);
+}
+
+/* Inapplicable tiers stay visible — dimmed, never hidden. */
+.scrm-bar-tile.off {
+  opacity: 0.45;
+}
+
+.scrm-bar-check {
+  font-size: 0.65rem;
+  line-height: 1;
+  color: var(--success);
+}
+
+.scrm-bar-id {
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--muted);
+}
+
+.scrm-bar-tile.active .scrm-bar-id {
+  color: var(--success);
+}
+
+.scrm-bar-sub {
+  font-size: 0.58rem;
+  text-transform: uppercase;
+  letter-spacing: var(--label-tracking);
+  color: var(--muted);
+  line-height: 1;
 }
 
 /* === Light Mode Contrast Fixes === */
@@ -22076,13 +22244,13 @@ textarea.form-control{
 
 /* size-pill.active now uses var(--primary) directly — works in both themes */
 
-/* Light mode inactive maturity circle border — make more visible */
-[data-theme="light"] .maturity-circle.inactive {
+/* Light mode inactive roadmap chip border — make more visible */
+[data-theme="light"] .roadmap-circle.inactive {
   border-color: hsl(214, 20%, 78%);
 }
 
-/* Light mode maturity connector — ensure inactive is visible */
-[data-theme="light"] .maturity-connector.inactive {
+/* Light mode roadmap connector — ensure inactive is visible */
+[data-theme="light"] .roadmap-connector.inactive {
   background: hsl(214, 20%, 84%);
 }
 
@@ -34816,4 +34984,278 @@ button.risk-list-header-cell:hover {
 
 .explorer-filter-select {
   font-size: 13px;
+}
+
+/* Accountable-team read-only field on the scoping detail page (owner-list
+   sunset: ownership is displayed from the team system, written on the
+   Assignments tab). */
+.scoping-detail-owner-readonly {
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-lowest);
+  font-size: 14px;
+  color: var(--text);
+}
+
+/* ============================================================================
+   Evidence detail page — reordered layout (guidance → controls strip →
+   collection record → tasks → files → collaboration).
+
+   Everything below composes from the shared tokens only, so both themes follow
+   from :root and [data-theme="dark"] without a theme-specific rule here.
+   ========================================================================= */
+
+/* ── Evidence Guidance: open on arrival, two columns ─────────────────────── */
+
+/* The page is a flex column with its own gap; the component's own top margin
+   was doubling it. */
+.evidence-template-guidance.detail-section-container {
+  margin-top: 0;
+}
+
+.container-collapse-icon {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--muted);
+}
+
+/* Good evidence beside common mistakes rather than under it — the pair is the
+   comparison, and stacked it pushed the form below the fold. */
+.template-guidance-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 24px;
+}
+
+.template-guidance-columns .template-section {
+  margin-bottom: 0;
+  min-width: 0;
+}
+
+.template-guidance-content .template-section:last-child {
+  margin-bottom: 0;
+}
+
+@media (max-width: 900px) {
+  .template-guidance-columns {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── Required by Controls: one strip, not a section ──────────────────────── */
+
+.evidence-required-strip .evidence-required-strip-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 8px var(--card-padding);
+}
+
+.evidence-required-strip-label {
+  flex: none;
+  text-transform: uppercase;
+  letter-spacing: var(--label-tracking);
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--label-color);
+  white-space: nowrap;
+}
+
+.evidence-required-strip-empty {
+  margin: 0;
+  font-size: 12px;
+}
+
+/* Chips stay on the one line and scroll rather than growing the strip. The
+   tooltips are position:fixed, so they are not clipped by this. */
+.evidence-required-strip .requiring-controls-pills {
+  flex: 1;
+  min-width: 0;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.evidence-required-strip .control-pill {
+  display: inline-block;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.5;
+}
+
+/* ── Evidence Tasks: a section card with collapsible rows ────────────────── */
+
+.evidence-task-list.detail-section-container {
+  margin-top: 0;
+}
+
+.evidence-task-list .container-header .btn-create-task {
+  flex: none;
+  padding: 6px 14px;
+  border-radius: var(--badge-radius);
+  font-size: 12px;
+}
+
+.evidence-task-list .container-header .btn-create-task:disabled {
+  background-color: var(--muted);
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.evidence-task-list-disabled .container-content {
+  opacity: 0.65;
+}
+
+.evidence-task-open-group {
+  margin-bottom: 1.5rem;
+}
+
+.evidence-task-row-group {
+  margin-bottom: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--badge-radius);
+  background: var(--card);
+  overflow: hidden;
+}
+
+.evidence-task-row-group.overdue {
+  border-color: var(--priority-critical);
+}
+
+.evidence-task-row-group.open {
+  border-color: var(--primary);
+}
+
+.evidence-task-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-right: 12px;
+}
+
+/* The whole row is the disclosure control, so it is a real button and gets the
+   keyboard contract from the element rather than from a handler. */
+.evidence-task-row-toggle {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 44px;
+  padding: 0 4px 0 12px;
+  background: none;
+  border: none;
+  font: inherit;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.evidence-task-row-toggle:hover {
+  background: var(--card-hover);
+}
+
+.evidence-task-row-chevron {
+  flex: none;
+  width: 10px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.evidence-task-row-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.evidence-task-row-due,
+.evidence-task-row-assignee {
+  flex: none;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.evidence-task-row-due {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.evidence-task-row-toggle .task-type-badge,
+.evidence-task-row-toggle .status-badge {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: var(--badge-radius);
+  font-size: 10px;
+}
+
+.evidence-task-row .task-owning-team-badge {
+  flex: none;
+  max-width: 32%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 12px;
+}
+
+.evidence-task-row-body {
+  padding: 12px 16px 14px 34px;
+  border-top: 1px solid var(--border);
+  background: var(--secondary);
+}
+
+.evidence-task-row-body .evidence-task-description:last-child,
+.evidence-task-row-body .evidence-task-badges:last-child {
+  margin-bottom: 0;
+}
+
+/* Below this width the row cannot hold the trailing metadata on one line, so it
+   drops the parts the title and status already imply. */
+@media (max-width: 1100px) {
+  .evidence-task-row .task-owning-team-badge {
+    display: none;
+  }
+}
+
+@media (max-width: 860px) {
+  .evidence-task-row-due,
+  .evidence-task-row-assignee {
+    display: none;
+  }
+}
+
+.evidence-completed-task-line {
+  margin-bottom: 0.25rem;
+}
+
+.evidence-completed-task-notes {
+  color: var(--muted);
+}
+
+/* ── Collaboration tail ──────────────────────────────────────────────────── */
+
+/* Was a hard-coded #fff, which showed as a white slab in dark mode. The task
+   list has moved out of this container, so the first remaining section must not
+   still be wearing the rule that used to separate it from the tasks above. */
+.evidence-collaboration-container {
+  margin-top: 0;
+  padding: var(--card-padding);
+  background-color: var(--card);
+  border-radius: var(--card-radius);
+}
+
+.evidence-collaboration-container .evidence-collaboration-section:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
 }

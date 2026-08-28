@@ -46,7 +46,11 @@ vi.mock('../../BusinessSizeGuidance', () => ({
 }))
 
 vi.mock('../../SCRMFocusBadges', () => ({
-  default: () => <div data-testid="scrm-focus-badges">SCRMFocusBadges mock</div>,
+  default: ({ variant }: { variant?: string }) => (
+    <div data-testid="scrm-focus-badges" data-variant={variant ?? 'card'}>
+      SCRMFocusBadges mock
+    </div>
+  ),
 }))
 
 vi.mock('../../RiskThreatContext', () => ({
@@ -432,19 +436,33 @@ describe('ControlDetailPage', () => {
     expect(screen.getByTestId('risk-threat-context')).toBeInTheDocument()
   })
 
-  it('renders SCRM focus badges component', () => {
+  it('renders SCRM focus as the compact bar variant, not the full-width card', () => {
     render(<ControlDetailPage {...makeProps()} />)
-    expect(screen.getByTestId('scrm-focus-badges')).toBeInTheDocument()
+    const scrm = screen.getByTestId('scrm-focus-badges')
+    expect(scrm).toBeInTheDocument()
+    expect(scrm).toHaveAttribute('data-variant', 'bar')
   })
 
-  it('renders maturity roadmap component', () => {
-    render(<ControlDetailPage {...makeProps()} />)
-    expect(screen.getByTestId('maturity-roadmap')).toBeInTheDocument()
+  it('renders the SCRM bar inside the header source row', () => {
+    const { container } = render(<ControlDetailPage {...makeProps()} />)
+    const sourceRow = container.querySelector('.control-detail-source-row')
+    expect(sourceRow).not.toBeNull()
+    expect(sourceRow!.querySelector('[data-testid="scrm-focus-badges"]')).not.toBeNull()
   })
 
-  it('renders business size guidance component', () => {
+  it('no longer renders the maturity roadmap', () => {
     render(<ControlDetailPage {...makeProps()} />)
-    expect(screen.getByTestId('business-size-guidance')).toBeInTheDocument()
+    expect(screen.queryByTestId('maturity-roadmap')).not.toBeInTheDocument()
+  })
+
+  it('no longer renders business size guidance', () => {
+    render(<ControlDetailPage {...makeProps()} />)
+    expect(screen.queryByTestId('business-size-guidance')).not.toBeInTheDocument()
+  })
+
+  it('leaves no empty card-grid wrapper behind', () => {
+    const { container } = render(<ControlDetailPage {...makeProps()} />)
+    expect(container.querySelector('.scoping-card-grid')).toBeNull()
   })
 
   // ── Evidence count in evidence card ───────────────────────────────────────

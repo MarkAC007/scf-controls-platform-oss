@@ -117,7 +117,7 @@ vi.mock('../ScopingBulkBar', () => ({
         <button onClick={onSetNA} disabled={busy}>
           set-na
         </button>
-        <button onClick={() => onAssignOwner('Security Operations')} disabled={busy}>
+        <button onClick={() => onAssignOwner('team-1')} disabled={busy}>
           assign-owner
         </button>
         <button onClick={onClear}>clear</button>
@@ -208,12 +208,6 @@ vi.mock('../../../hooks/useScopedControlsQuery', () => ({
   }),
 }))
 
-vi.mock('../../../hooks/useOrganizationSettings', () => ({
-  useOrganizationSettings: () => ({
-    data: { owner_teams: ['Security Operations', 'GRC'] },
-  }),
-}))
-
 vi.mock('../../../hooks/useTeamAssignments', () => ({
   useTeamAssignments: () => ({
     accountableFor: () => null,
@@ -239,9 +233,18 @@ vi.mock('../../../hooks/useCatalogFilters', () => ({
   }),
 }))
 
+const mockBatchAssignTeamToItems = vi.fn().mockResolvedValue({
+  type: 'control',
+  team_id: 'team-1',
+  created: 2,
+  updated: 0,
+  demoted: 0,
+  notified: 1,
+})
 vi.mock('../../../data/apiClient', () => ({
-  listTeams: vi.fn().mockResolvedValue([]),
+  listTeams: vi.fn().mockResolvedValue([{ id: 'team-1', name: 'Security Operations' }]),
   listFunctions: vi.fn().mockResolvedValue([]),
+  batchAssignTeamToItems: (...args: unknown[]) => mockBatchAssignTeamToItems(...args),
 }))
 
 const mockToastSuccess = vi.fn()
@@ -423,7 +426,7 @@ describe('ScopingPage', () => {
       })
     })
 
-    it('calls updateScopedControl with owner field for assign owner', async () => {
+    it('assigns the owner team through ONE batch team-assignment call, not the scoped-control loop', async () => {
       renderPage({})
       fireEvent.click(screen.getByText('select-two'))
       await waitFor(() => screen.getByTestId('bulk-bar'))
@@ -433,10 +436,20 @@ describe('ScopingPage', () => {
       })
 
       await waitFor(() => {
-        const calls = mockUpdateScopedControl.mock.calls
-        expect(calls.length).toBeGreaterThan(0)
-        expect(calls[0][1]).toMatchObject({ owner: 'Security Operations' })
+        expect(mockBatchAssignTeamToItems).toHaveBeenCalledTimes(1)
       })
+      const [orgArg, batchArg] = mockBatchAssignTeamToItems.mock.calls[0]
+      expect(orgArg).toBe('org-1')
+      expect(batchArg).toEqual({
+        type: 'control',
+        team_id: 'team-1',
+        // The scoped controls' DATABASE ids, in selection order — assignments
+        // never key on scf_id.
+        item_ids: ['db-1', 'db-2'],
+        is_accountable: true,
+      })
+      // The legacy owner column is dead: no scoped-control write happens.
+      expect(mockUpdateScopedControl).not.toHaveBeenCalled()
     })
 
     it('refetches list and stats after bulk operation', async () => {

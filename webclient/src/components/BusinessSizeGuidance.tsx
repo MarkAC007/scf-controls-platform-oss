@@ -17,6 +17,7 @@ type SizeKey = typeof SIZES[number]['key']
 
 export default function BusinessSizeGuidance({ guidance }: Props) {
   const [selectedSize, setSelectedSize] = useState<SizeKey>('medium')
+  const [hoveredSize, setHoveredSize] = useState<SizeKey | null>(null)
 
   if (!guidance) {
     return null
@@ -27,36 +28,41 @@ export default function BusinessSizeGuidance({ guidance }: Props) {
     return null
   }
 
-  const guidanceText = guidance[selectedSize as keyof BusinessSizeGuidanceType]
+  const hovered = SIZES.find(s => s.key === hoveredSize)
+  const hoveredText = hovered ? guidance[hovered.key as keyof BusinessSizeGuidanceType] : undefined
 
   return (
-    <div className="detail-section-container">
-      <div className="container-header">
-        <span className="container-icon">🏢</span>
-        <span className="container-title">Right-Sizing Guidance</span>
-      </div>
-      <div className="container-content">
-        <div className="size-pills">
-          {SIZES.map(size => {
-            const hasGuidance = !!guidance[size.key as keyof BusinessSizeGuidanceType]
-            return (
+    <div className="sizing-block">
+      <div className="detail-widget-group-label">Right-Sizing Guidance</div>
+
+      <div className="size-pills">
+        {SIZES.map(size => {
+          const hasGuidance = !!guidance[size.key as keyof BusinessSizeGuidanceType]
+          return (
+            <div
+              key={size.key}
+              className="size-pill-wrap"
+              onMouseEnter={() => hasGuidance && setHoveredSize(size.key)}
+              onMouseLeave={() => setHoveredSize(null)}
+            >
               <button
-                key={size.key}
                 className={`size-pill ${selectedSize === size.key ? 'active' : ''} ${!hasGuidance ? 'empty' : ''}`}
                 onClick={() => setSelectedSize(size.key)}
                 title={size.title}
               >
                 {size.label}
               </button>
-            )
-          })}
-        </div>
-        {guidanceText ? (
-          <div className="size-guidance-text">{guidanceText}</div>
-        ) : (
-          <div className="size-guidance-empty">No specific guidance available for this organization size</div>
-        )}
+            </div>
+          )
+        })}
       </div>
+
+      {hovered && hoveredText && (
+        <div className="guidance-popover">
+          <div className="guidance-popover-title">{hovered.title}</div>
+          <div className="guidance-popover-text">{hoveredText}</div>
+        </div>
+      )}
     </div>
   )
 }

@@ -251,32 +251,37 @@ describe('team ownership never claims to grant access', () => {
   })
 })
 
-describe('the legacy free-text owner column is preserved in ScopingDetailPage', () => {
-  // Phase 3: the owner field (free-text from settings) moved to ScopingDetailPage.
-  // ScopingPage owns the write (updateField → updateScopedControl).
-  it('still writes scoped_controls.owner from the settings list', () => {
+describe('the legacy free-text owner list is sunset — owner IS the team system', () => {
+  // Mark's ruling (2026-08-27): the settings-sourced owner label list is gone
+  // everywhere a user could write it. "Assign owner" now means claiming the
+  // ACCOUNTABLE team through the team system (Users → Teams), and it goes
+  // through the batch endpoint so fifty controls produce one notification.
+  it('ScopingPage bulk-assigns through the batch team endpoint, not the scoped-control loop', () => {
     const page = source('components/scoping/ScopingPage.tsx')
-    expect(page).toContain('DEFAULT_OWNER_TEAMS')
-    expect(page).toContain('orgOwnerTeams')
+    expect(page).not.toContain('DEFAULT_OWNER_TEAMS')
+    expect(page).not.toContain('owner_teams')
+    expect(page).toContain('batchAssignTeamToItems')
+    expect(page).toContain("type: 'control'")
+    expect(page).toContain('is_accountable: true')
+  })
+
+  it('ScopingDetailPage shows the accountable team read-only and writes nothing', () => {
     const detail = source('components/scoping/ScopingDetailPage.tsx')
-    expect(detail).toContain("onFieldChange('owner'")
-    expect(detail).toContain('DEFAULT_OWNER_TEAMS')
+    expect(detail).not.toContain("onFieldChange('owner'")
+    expect(detail).not.toContain('DEFAULT_OWNER_TEAMS')
+    expect(detail).toContain('accountableTeamLabel')
   })
 
-  it('is labelled so it cannot be mistaken for a real team', () => {
-    const flattened = source('components/scoping/ScopingDetailPage.tsx').replace(/\s+/g, ' ')
-    expect(flattened).toContain('Owner Team Label')
-    expect(flattened).toContain('it is not one of the teams under Users')
+  it('evidence bulk assignment claims the accountable team through the same batch endpoint', () => {
+    const review = source('components/EvidenceReview.tsx')
+    expect(review).toContain('batchAssignTeamToItems')
+    expect(review).toContain("type: 'evidence'")
+    expect(review).toContain('is_accountable: true')
   })
 
-  it('does not put a second team picker beside it', () => {
-    // The one team selector on the details form is the legacy label. Owning
-    // teams lives on the Assignments tab, next to the per-user picker.
-    const text = source('components/scoping/ScopingDetailPage.tsx')
-    const detailsForm = text.slice(
-      text.indexOf('Owner Team Label'),
-      text.indexOf("'notes'"),
-    )
-    expect(detailsForm).not.toContain('<OwningTeams')
+  it('the client batch write posts to the batch endpoint the API declares', () => {
+    const api = source('data/apiClient.ts')
+    expect(api).toContain('export async function batchAssignTeamToItems')
+    expect(api).toContain('team-assignments/batch')
   })
 })

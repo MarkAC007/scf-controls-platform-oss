@@ -1,8 +1,5 @@
 import { useState } from 'react'
-import type { MemberType, UserSimple } from '../../types'
 import { FREQUENCY_OPTIONS } from '../../data/frequencyVocabulary'
-import { userLabel } from '../../data/userDisplay'
-import { withContractorSuffix } from '../ContractorBadge'
 
 /**
  * Acting on many evidence items at once (#789).
@@ -10,7 +7,8 @@ import { withContractorSuffix } from '../ContractorBadge'
  * The evidence list is the only place in the product where the same decision is
  * obviously made repeatedly — an organisation scopes a framework, gets back
  * eighty artifacts, and every one of them needs the same three answers: are we
- * tracking it, how often, and who does it. Row by row that is 240 interactions,
+ * tracking it, how often, and which team owns it. Row by row that is 240
+ * interactions,
  * each with its own debounced save, and the review's complaint ("no bulk
  * actions") is really a complaint about a first run that cannot be finished in
  * one sitting.
@@ -44,19 +42,21 @@ export interface EvidenceBulkActionsBarProps {
   /** Items currently visible under the search and domain filters. */
   visibleCount: number
   allVisibleSelected: boolean
-  members: UserSimple[]
   /**
-   * Per-organisation internal/contractor lookup (#822 phase 2), supplied by the
-   * screen. Optional — without it this bar renders exactly as it did before.
+   * The org's teams for the Assign-owner action (the legacy per-user assign
+   * list is sunset — ownership is the ACCOUNTABLE team in the team system).
+   * `null` hides the control (non-admins cannot write assignments); `[]`
+   * renders it disabled with a create-teams hint.
    */
-  memberTypeOf?: (userId: string | null | undefined) => MemberType | undefined
+  teamOptions: { value: string; label: string }[] | null
   busy?: boolean
   result?: BulkActionResult | null
   onSelectAllVisible: () => void
   onClear: () => void
   onSetTracked: (tracked: boolean) => void
   onSetFrequency: (frequency: string) => void
-  onAssign: (userId: string) => void
+  /** Called with the chosen team id; the screen claims it accountable. */
+  onAssignTeam: (teamId: string) => void
   onDismissResult: () => void
 }
 
@@ -64,15 +64,14 @@ export function EvidenceBulkActionsBar({
   selectedCount,
   visibleCount,
   allVisibleSelected,
-  members,
-  memberTypeOf,
+  teamOptions,
   busy = false,
   result,
   onSelectAllVisible,
   onClear,
   onSetTracked,
   onSetFrequency,
-  onAssign,
+  onAssignTeam,
   onDismissResult,
 }: EvidenceBulkActionsBarProps) {
   const [frequency, setFrequency] = useState('')
@@ -147,36 +146,37 @@ export function EvidenceBulkActionsBar({
             </select>
           </label>
 
-          <label className="evidence-bulk-field">
-            <span className="evidence-bulk-field-label">Assign to</span>
-            <select
-              className="form-control form-control-sm"
-              value={assignee}
-              disabled={busy}
-              onChange={e => {
-                const value = e.target.value
-                if (!value) return
-                // '__unassign__' is a sentinel, not a user id: '' cannot be
-                // used because it is already the placeholder, and the two mean
-                // opposite things — "do nothing" and "clear every assignee".
-                onAssign(value === '__unassign__' ? '' : value)
-                setAssignee('')
-              }}
-            >
-              <option value="">Choose…</option>
-              {/*
-                * Text suffix rather than the badge component: an <option>
-                * accepts no elements. Assigning work to a contractor in bulk
-                * is allowed — the suffix says who they are, nothing more.
-                */}
-              {members.map(member => (
-                <option key={member.id} value={member.id}>
-                  {withContractorSuffix(userLabel(member), memberTypeOf?.(member.id))}
+          {teamOptions !== null && (
+            <label className="evidence-bulk-field">
+              <span className="evidence-bulk-field-label">Assign owner</span>
+              <select
+                aria-label="Assign owner team"
+                className="form-control form-control-sm"
+                value={assignee}
+                disabled={busy || teamOptions.length === 0}
+                title={
+                  teamOptions.length === 0
+                    ? 'No teams yet — create them under Users → Teams'
+                    : undefined
+                }
+                onChange={e => {
+                  const value = e.target.value
+                  if (!value) return
+                  onAssignTeam(value)
+                  setAssignee('')
+                }}
+              >
+                <option value="">
+                  {teamOptions.length === 0 ? 'No teams yet' : 'Choose team…'}
                 </option>
-              ))}
-              <option value="__unassign__">Unassign</option>
-            </select>
-          </label>
+                {teamOptions.map(option => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
 
           {busy && <span className="evidence-bulk-busy">Applying…</span>}
         </div>
