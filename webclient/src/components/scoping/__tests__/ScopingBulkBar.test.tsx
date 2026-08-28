@@ -9,9 +9,10 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 import ScopingBulkBar from '../ScopingBulkBar'
 import type { ScopingBulkBarProps } from '../ScopingBulkBar'
 
-const defaultOwnerOptions = [
-  { value: 'GRC', label: 'GRC' },
-  { value: 'SecOps', label: 'Security Operations' },
+// Team ids from the team system — the legacy owner-label list is sunset.
+const defaultTeamOptions = [
+  { value: 'team-1', label: 'GRC' },
+  { value: 'team-2', label: 'Security Operations' },
 ]
 
 function defaultProps(overrides: Partial<ScopingBulkBarProps> = {}): ScopingBulkBarProps {
@@ -19,7 +20,7 @@ function defaultProps(overrides: Partial<ScopingBulkBarProps> = {}): ScopingBulk
     selectedCount: 3,
     visibleCount: 10,
     allVisibleSelected: false,
-    ownerOptions: defaultOwnerOptions,
+    teamOptions: defaultTeamOptions,
     busy: false,
     progressText: undefined,
     onSelectAllVisible: vi.fn(),
@@ -103,17 +104,29 @@ describe('ScopingBulkBar', () => {
       expect(onSetNA).toHaveBeenCalledTimes(1)
     })
 
-    it('renders the "Assign owner" select with owner options', () => {
+    it('renders the "Assign owner" select with the org teams', () => {
       render(<ScopingBulkBar {...defaultProps()} />)
       expect(screen.getByRole('combobox', { name: /assign owner/i })).toBeInTheDocument()
     })
 
-    it('calls onAssignOwner with selected owner value', () => {
+    it('calls onAssignOwner with the selected TEAM ID, not a label', () => {
       const onAssignOwner = vi.fn()
       render(<ScopingBulkBar {...defaultProps({ onAssignOwner })} />)
       const select = screen.getByRole('combobox', { name: /assign owner/i })
-      fireEvent.change(select, { target: { value: 'GRC' } })
-      expect(onAssignOwner).toHaveBeenCalledWith('GRC')
+      fireEvent.change(select, { target: { value: 'team-1' } })
+      expect(onAssignOwner).toHaveBeenCalledWith('team-1')
+    })
+
+    it('hides the assign-owner control entirely for non-admins (teamOptions null)', () => {
+      render(<ScopingBulkBar {...defaultProps({ teamOptions: null })} />)
+      expect(screen.queryByRole('combobox', { name: /assign owner/i })).toBeNull()
+    })
+
+    it('renders disabled with a create-teams hint when the org has no teams yet', () => {
+      render(<ScopingBulkBar {...defaultProps({ teamOptions: [] })} />)
+      const select = screen.getByRole('combobox', { name: /assign owner/i })
+      expect(select).toBeDisabled()
+      expect(screen.getByText('No teams yet')).toBeInTheDocument()
     })
 
     it('renders "Clear" button when selection is partial', () => {

@@ -19,6 +19,15 @@ import type { EnrichedControl, ScopedControlsFile } from '../../types'
 vi.mock('../../data/apiClient', () => ({
   getSystems: vi.fn().mockResolvedValue([]),
   getOrgMembers: vi.fn().mockResolvedValue([]),
+  listTeams: vi.fn().mockResolvedValue([]),
+  batchAssignTeamToItems: vi.fn().mockResolvedValue({
+    type: 'evidence',
+    team_id: 'team-1',
+    created: 0,
+    updated: 0,
+    demoted: 0,
+    notified: 0,
+  }),
   getEvidenceSuggestions: vi.fn().mockResolvedValue(null),
   submitRecipeFeedback: vi.fn().mockResolvedValue(undefined),
   batchUpdateEvidenceTracking: vi.fn().mockResolvedValue({

@@ -22,8 +22,16 @@ import { useAuth } from '../contexts/AuthContext'
 import { getOrgMemberships } from '../data/apiClient'
 
 export function useIsOrgAdmin(organizationId: string | null | undefined): boolean {
-  const { user, isPlatformAdmin } = useAuth()
+  const { user, isPlatformAdmin, isAuthenticated, authReady } = useAuth()
   const [isOrgAdmin, setIsOrgAdmin] = useState(false)
+
+  // API-key mode has no user profile at all (AuthContext sets user: null with
+  // an authenticated session). That bearer token is the organisation's master
+  // credential and the backend authorises every admin write with it, so a
+  // membership lookup can only fail closed here for the wrong reason — hiding
+  // controls that would succeed. The signal is checked after authReady so a
+  // real session's not-yet-loaded profile does not flash admin UI.
+  const apiKeyMode = authReady && isAuthenticated && user === null
 
   // The user's row in this organisation. ``db_id`` is the database user id —
   // ``id`` is the identity-provider subject and will never match a member row.
@@ -50,7 +58,7 @@ export function useIsOrgAdmin(organizationId: string | null | undefined): boolea
     }
   }, [organizationId, userDbId])
 
-  return isOrgAdmin || isPlatformAdmin
+  return apiKeyMode || isOrgAdmin || isPlatformAdmin
 }
 
 export default useIsOrgAdmin

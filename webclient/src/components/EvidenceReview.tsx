@@ -25,7 +25,7 @@ import {
   updateEvidenceTracking as updateEvidenceTrackingInData
 } from '../data/scopingService'
 import { getSystems, getEvidenceSuggestions, submitRecipeFeedback, getOrgMembers } from '../data/apiClient'
-import type { System, EvidenceSuggestionsResponse, UserSimple } from '../types'
+import type { System, EvidenceSuggestionsResponse, UserSimple, Team } from '../types'
 import TeamListFilters, { ALL as ALL_TEAMS } from './TeamListFilters'
 import { useOrgMemberTypes } from '../hooks/useOrgMemberTypes'
 import AccountableOwnerTypeFilter, {
@@ -37,7 +37,7 @@ import { useIsOrgAdmin } from '../hooks/useIsOrgAdmin'
 import { useTeamFilteredEvidence } from '../hooks/useTeamFilteredEvidence'
 import { CollectionWizard, EvidenceAssigneeSelect, EvidenceBulkActionsBar } from './evidence'
 import type { BulkActionResult } from './evidence/EvidenceBulkActionsBar'
-import { batchUpdateEvidenceTracking } from '../data/apiClient'
+import { batchUpdateEvidenceTracking, listTeams, batchAssignTeamToItems } from '../data/apiClient'
 import type { BatchEvidenceTrackingOperation } from '../data/apiClient'
 import { ScfReference } from './provenance/ScfReference'
 import { frequencyOptionsFor } from '../data/frequencyVocabulary'
@@ -391,6 +391,30 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
 
   const canManageTeams = useIsOrgAdmin(scopingData.organizationId)
 
+  // Teams for bulk owner assignment. The legacy per-user "Assign to" list is
+  // sunset: bulk ownership is the accountable team from the team system.
+  const [teams, setTeams] = useState<Team[]>([])
+  useEffect(() => {
+    const orgId = scopingData.organizationId
+    if (!orgId) return
+    let cancelled = false
+    listTeams(orgId)
+      .then(loaded => {
+        if (!cancelled) setTeams(loaded)
+      })
+      .catch(() => {
+        // Quiet: the bulk bar just offers no teams; the list still renders.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [scopingData.organizationId])
+
+  const teamOptions = useMemo(
+    () => teams.map(t => ({ value: t.id, label: t.name })),
+    [teams],
+  )
+
   /** Catalogue evidence id (E-0001) → its tracking row's database id, if saved. */
   const trackingDbIdFor = useCallback(
     (evidenceId: EvidenceId): string | null =>
@@ -683,6 +707,61 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
     }
   }
 
+  const assignOwnerTeamBulk = async (teamId: string) => {
+    const ids = Array.from(bulkSelection)
+    const orgId = scopingData.organizationId
+    if (ids.length === 0 || !orgId) return
+
+    setBulkBusy(true)
+    setBulkResult(null)
+    try {
+      // Team assignments key on the tracking row's database id, and an
+      // untracked item has none yet. The batch tracking endpoint upserts and
+      // returns every row's id, so one no-op-patch call makes the whole
+      // selection assignable without changing any tracking field.
+      const response = await batchUpdateEvidenceTracking(
+        ids.map(evidence_id => ({ evidence_id })),
+        orgId,
+      )
+
+      const merged = { ...(scopingData.evidence_tracking || {}) }
+      for (const row of response.evidence) {
+        merged[row.evidence_id] = {
+          ...(merged[row.evidence_id] || {}),
+          id: row.id,
+        }
+      }
+      setLocalEvidenceState(merged)
+      onScopingDataChange({ ...scopingData, evidence_tracking: merged })
+
+      const trackingIds = response.evidence.map(row => row.id)
+      await batchAssignTeamToItems(orgId, {
+        type: 'evidence',
+        team_id: teamId,
+        item_ids: trackingIds,
+        is_accountable: true,
+      })
+      await reloadTeamAssignments()
+
+      setBulkResult({
+        updated: trackingIds.length,
+        created: 0,
+        failed: ids.length - trackingIds.length,
+        errors: [],
+      })
+    } catch (error) {
+      console.error('Bulk owner-team assignment failed:', error)
+      setBulkResult({
+        updated: 0,
+        created: 0,
+        failed: ids.length,
+        errors: [error instanceof Error ? error.message : 'The request failed.'],
+      })
+    } finally {
+      setBulkBusy(false)
+    }
+  }
+
   // Show message if no controls are selected
   if (selectedControls.length === 0) {
     return (
@@ -921,8 +1000,7 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
               filteredEvidenceItems.length > 0 &&
               filteredEvidenceItems.every(item => bulkSelection.has(item.id))
             }
-            members={orgMembers}
-            memberTypeOf={memberTypeOf}
+            teamOptions={canManageTeams ? teamOptions : null}
             busy={bulkBusy}
             result={bulkResult}
             onSelectAllVisible={() =>
@@ -932,7 +1010,7 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
             onDismissResult={() => setBulkResult(null)}
             onSetTracked={(tracked: boolean) => applyBulk({ is_tracked: tracked })}
             onSetFrequency={(frequency: string) => applyBulk({ frequency })}
-            onAssign={(userId: string) => applyBulk({ assigned_user_id: userId || null })}
+            onAssignTeam={assignOwnerTeamBulk}
           />
         )}
 

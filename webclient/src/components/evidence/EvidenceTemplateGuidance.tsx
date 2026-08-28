@@ -32,7 +32,10 @@ export function EvidenceTemplateGuidance({
   erlData,
   tracking,
 }: EvidenceTemplateGuidanceProps) {
-  const [collapsed, setCollapsed] = useState(true)
+  /* Open on arrival. The section sits directly under the header now, and it is
+     what tells somebody what to upload — behind a click it was answering a
+     question after the upload had already gone wrong. */
+  const [collapsed, setCollapsed] = useState(false)
   const [feedbackSubmitted, setFeedbackSubmitted] = useState(false)
 
   const { tier, guidance } = resolveEvidenceGuidance(evidenceId, {
@@ -69,8 +72,7 @@ export function EvidenceTemplateGuidance({
         asserts on this file's source and a literal in a comment would defeat it.)
       */}
       <div
-        className="container-header"
-        style={{ cursor: 'pointer' }}
+        className="container-header collapsible"
         aria-expanded={!collapsed}
         {...interactiveRowProps(() => setCollapsed(!collapsed))}
       >
@@ -79,13 +81,13 @@ export function EvidenceTemplateGuidance({
         {badge && (
           <span className={`template-generic-badge template-tier-${tier}`}>{badge}</span>
         )}
-        <span className="container-collapse-icon" style={{ marginLeft: 'auto' }}>
+        <span className="container-collapse-icon">
           {collapsed ? '▶' : '▼'}
         </span>
       </div>
 
       {!collapsed && (
-        <div className="container-content">
+        <div className="container-content template-guidance-content">
           {/* Summary */}
           <p className="template-summary">{guidance.summary}</p>
 
@@ -99,24 +101,32 @@ export function EvidenceTemplateGuidance({
             </div>
           </div>
 
-          {/* Good Examples */}
-          <div className="template-section">
-            <div className="template-section-label template-good-label">Good Evidence</div>
-            <ul className="template-examples template-good-examples">
-              {guidance.good_examples.map((ex, i) => (
-                <li key={i}>{ex}</li>
-              ))}
-            </ul>
-          </div>
+          {/*
+            Good evidence and common mistakes read as a pair — what to send and
+            what gets rejected — so they sit beside each other rather than
+            stacked, which is also what keeps this section short enough to live
+            above the form. Below ~900px the columns stack.
+          */}
+          <div className="template-guidance-columns">
+            {/* Good Examples */}
+            <div className="template-section">
+              <div className="template-section-label template-good-label">Good Evidence</div>
+              <ul className="template-examples template-good-examples">
+                {guidance.good_examples.map((ex, i) => (
+                  <li key={i}>{ex}</li>
+                ))}
+              </ul>
+            </div>
 
-          {/* Bad Examples */}
-          <div className="template-section">
-            <div className="template-section-label template-bad-label">Common Mistakes</div>
-            <ul className="template-examples template-bad-examples">
-              {guidance.bad_examples.map((ex, i) => (
-                <li key={i}>{ex}</li>
-              ))}
-            </ul>
+            {/* Bad Examples */}
+            <div className="template-section">
+              <div className="template-section-label template-bad-label">Common Mistakes</div>
+              <ul className="template-examples template-bad-examples">
+                {guidance.bad_examples.map((ex, i) => (
+                  <li key={i}>{ex}</li>
+                ))}
+              </ul>
+            </div>
           </div>
 
           {/* Redaction Warnings */}

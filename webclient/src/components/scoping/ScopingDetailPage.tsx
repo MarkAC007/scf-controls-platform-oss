@@ -84,7 +84,6 @@ export interface ScopingEntry {
   priority?: Priority
   maturity_level?: MaturityLevel
   selection_reason?: string
-  owner?: string
   target_date?: string
   completion_date?: string
   implementation_notes?: string
@@ -121,10 +120,10 @@ export interface ScopingDetailPageProps {
   /** Full scoping file for evidence tracking lookups (artifact tab). */
   scopingData?: ScopedControlsFile
   /**
-   * Owner-team options from org settings.
-   * Falls back to DEFAULT_OWNER_TEAMS when absent / empty.
+   * The accountable team's name from the team system, for read-only display.
+   * Writes happen on the Assignments tab (OwningTeams) — never here.
    */
-  ownerTeams?: string[]
+  accountableTeamLabel?: string | null
   /** Whether the current user can manage owning-team assignments. */
   canManageTeams?: boolean
 }
@@ -132,14 +131,6 @@ export interface ScopingDetailPageProps {
 type ScopingTab = 'details' | 'notes' | 'assignments' | 'history' | 'knowledge-base'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-
-const DEFAULT_OWNER_TEAMS = [
-  'Software Engineering',
-  'Security Operations',
-  'DevSecOps',
-  'Cyber Security',
-  'GRC',
-]
 
 /** Statuses that show the Target Date field. */
 const TARGET_DATE_STATUSES: ImplementationStatus[] = [
@@ -203,7 +194,7 @@ export default function ScopingDetailPage({
   onReloadTeamAssignments,
   organizationId,
   scopingData,
-  ownerTeams,
+  accountableTeamLabel = null,
   canManageTeams = false,
 }: ScopingDetailPageProps): JSX.Element {
   const [activeTab, setActiveTab] = useState<ScopingTab>('details')
@@ -308,7 +299,6 @@ export default function ScopingDetailPage({
   const isInScope = scopingEntry?.selected === true
   const currentStatus = scopingEntry?.implementation_status ?? 'not_started'
   const showTargetDate = TARGET_DATE_STATUSES.includes(currentStatus as ImplementationStatus)
-  const resolvedOwnerTeams = ownerTeams?.length ? ownerTeams : DEFAULT_OWNER_TEAMS
   const controlDbId = scopingEntry?.id
 
   // Defensive filter: strip any internal-prefix keys the container may not have removed.
@@ -432,6 +422,11 @@ export default function ScopingDetailPage({
                 </>
               )}
             </div>
+            <MaturityRoadmap
+              variant="duo"
+              maturity={control.cmm_maturity}
+              level={(localMaturityLevel as MaturityLevel | undefined) ?? null}
+            />
           </div>
 
           <h1 className="control-title">{control.control_name}</h1>
@@ -480,6 +475,7 @@ export default function ScopingDetailPage({
                   </div>
                 </div>
               </div>
+              <BusinessSizeGuidance guidance={control.business_size_guidance} />
             </div>
             <div className="detail-header-scrm">
               <SCRMFocusBadges focus={control.scrm_focus} />
@@ -490,13 +486,6 @@ export default function ScopingDetailPage({
         {/* ── SCF-derived reference guidance ─────────────────────────────────── */}
         <div className="scoping-detail-content-compact surface-bedrock">
           <RiskThreatContext mapping={control.risk_threat_mapping} />
-          <div className="scoping-card-grid">
-            <MaturityRoadmap
-              maturity={control.cmm_maturity}
-              targetLevel={(localMaturityLevel as MaturityLevel | undefined) ?? null}
-            />
-            <BusinessSizeGuidance guidance={control.business_size_guidance} />
-          </div>
         </div>
 
         {/* ── Tab navigation ──────────────────────────────────────────────────── */}
@@ -621,28 +610,18 @@ export default function ScopingDetailPage({
                 </span>
               </div>
 
-              {/* Owner Team Label */}
+              {/* Accountable team — read-only mirror of the team system.
+                  The legacy free-text owner label is sunset: ownership is
+                  exclusively the accountable team under Users → Teams. */}
               <div className="form-group">
-                <label htmlFor="scoping-detail-owner">Owner Team Label</label>
+                <label>Accountable Team</label>
                 <span className="form-hint-block">
-                  A free-text label from your organisation&apos;s settings. It records a
-                  name only — it is not one of the teams under Users &rarr; Teams. To
-                  record which real team owns this control, use &ldquo;Owning teams&rdquo; on the
-                  Assignments tab.
+                  Recorded through the team system (Users &rarr; Teams). Change it
+                  under &ldquo;Owning teams&rdquo; on the Assignments tab.
                 </span>
-                <select
-                  id="scoping-detail-owner"
-                  value={scopingEntry?.owner ?? ''}
-                  onChange={(e) => onFieldChange('owner', e.target.value)}
-                  className="form-control"
-                >
-                  <option value="">Select Team...</option>
-                  {resolvedOwnerTeams.map((team) => (
-                    <option key={team} value={team}>
-                      {team}
-                    </option>
-                  ))}
-                </select>
+                <div className="scoping-detail-owner-readonly" data-testid="accountable-team">
+                  {accountableTeamLabel || 'No accountable team'}
+                </div>
               </div>
 
               {/* Target Date — only for non-terminal statuses */}
