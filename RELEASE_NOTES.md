@@ -1,11 +1,11 @@
-# v0.25.0
+# v0.25.1
 
 Adds SCF document generation to the platform — generated documents with versions, sections and review transitions. Migration docgen001 creates five new tables and changes no existing schema.
 
-## What's new
+## Fixes and improvements
 
-- Bulk owner assignment via the team system — legacy owner list sunset (PR 846)
+- Add framework-coverage tagline to intro (PR 849)
 
 ## Upgrading
 
-- Run `scripts/upgrade.sh v0.25.0` (read `UPGRADING.md` first).
+- Run `scripts/upgrade.sh v0.25.1` (read `UPGRADING.md` first).

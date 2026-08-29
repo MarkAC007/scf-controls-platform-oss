@@ -525,3 +525,40 @@ describe('TasksPage — row display fields', () => {
     expect(screen.getByText('Dec 31, 2030')).toBeInTheDocument()
   })
 })
+
+// ──────────────────────────────────────────────────────────────────────────────
+describe('TasksPage — org scoping', () => {
+  const taskListUrls = () =>
+    mockApi.get.mock.calls
+      .map(c => c[0] as string)
+      .filter(u => u.startsWith('/evidence-tasks?'))
+
+  it('always requests tasks for the active organization only', async () => {
+    // Without this param the endpoint returns every accessible org's tasks
+    // commingled — a consultant on several client orgs saw cross-org rows.
+    renderPage()
+
+    await screen.findByText('Collect CloudTrail logs')
+
+    const urls = taskListUrls()
+    expect(urls.length).toBeGreaterThan(0)
+    for (const url of urls) {
+      expect(url).toContain(`organization_id=${ORG}`)
+    }
+  })
+
+  it('refetches for the new organization when the active org changes', async () => {
+    // The dep-array half of the fix: switching org must not leave the
+    // previous org's tasks frozen on screen.
+    const { rerender } = render(
+      <TasksPage organizationId={ORG} onNavigateToEvidence={vi.fn()} />
+    )
+    await screen.findByText('Collect CloudTrail logs')
+
+    rerender(<TasksPage organizationId="org-2" onNavigateToEvidence={vi.fn()} />)
+
+    await waitFor(() => {
+      expect(taskListUrls().some(u => u.includes('organization_id=org-2'))).toBe(true)
+    })
+  })
+})

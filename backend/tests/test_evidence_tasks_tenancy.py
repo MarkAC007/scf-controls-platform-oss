@@ -401,6 +401,7 @@ class TestListEvidenceTasks:
                 assigned_user_id=None,
                 overdue_only=False,
                 frameworks=None,
+                organization_id=None,
                 db=db,
                 current_user=caller,
             )
@@ -410,6 +411,95 @@ class TestListEvidenceTasks:
         assert "evidence_tracking" in sql_text(statement)
         assert "organization_id" in sql_text(statement)
         assert str(org_b) in bind_values(statement)
+
+    @pytest.mark.asyncio
+    async def test_org_filter_narrows_to_requested_org_only(self, caller, org_a, org_b):
+        """A multi-org caller asking for one org gets that org's tasks only.
+
+        This is the cross-org commingling defect: without the filter a
+        consultant on several client orgs saw every org's tasks on one
+        org's Tasks page.
+        """
+        from api.evidence_tasks import list_evidence_tasks
+
+        db = FakeSession([[]])
+
+        with patch(
+            "api.evidence_tasks.get_accessible_org_ids", accessible_orgs(org_a, org_b)
+        ):
+            await list_evidence_tasks(
+                status_filter=None,
+                assigned_user_id=None,
+                overdue_only=False,
+                frameworks=None,
+                organization_id=org_b,
+                db=db,
+                current_user=caller,
+            )
+
+        assert len(db.statements) == 1
+        values = bind_values(db.statements[0])
+        assert str(org_b) in values
+        assert str(org_a) not in values
+
+    @pytest.mark.asyncio
+    async def test_rows_carry_their_organization_id(self, caller, victim_task, org_a):
+        """Union-view consumers must be able to tell rows apart by org."""
+        from api.evidence_tasks import list_evidence_tasks
+
+        victim_task.organization_id = org_a
+        evidence = MagicMock()
+        evidence.evidence_id = "E-1"
+        evidence.frequency = None
+        evidence.collecting_system = None
+        evidence.method_of_collection = None
+        evidence.owner_user = None
+        db = FakeSession([[victim_task], evidence])
+
+        with patch(
+            "api.evidence_tasks.get_accessible_org_ids", accessible_orgs(org_a)
+        ):
+            result = await list_evidence_tasks(
+                status_filter=None,
+                assigned_user_id=None,
+                overdue_only=False,
+                frameworks=None,
+                organization_id=None,
+                db=db,
+                current_user=caller,
+            )
+
+        assert len(result) == 1
+        assert result[0]["organization_id"] == org_a
+
+    @pytest.mark.asyncio
+    async def test_inaccessible_org_filter_returns_empty_without_querying(
+        self, caller, org_a, org_b
+    ):
+        """Asking for an org outside the accessible set yields [], no query.
+
+        Indistinguishable from an org with no tasks — same shape as the
+        cross-tenant 404 convention on the item routes.
+        """
+        from api.evidence_tasks import list_evidence_tasks
+
+        db = FakeSession()
+
+        with patch(
+            "api.evidence_tasks.get_accessible_org_ids", accessible_orgs(org_b)
+        ):
+            result = await list_evidence_tasks(
+                status_filter=None,
+                assigned_user_id=None,
+                overdue_only=False,
+                frameworks=None,
+                organization_id=org_a,
+                db=db,
+                current_user=caller,
+            )
+
+        assert result == []
+        assert db.statements == []
 
     @pytest.mark.asyncio
     async def test_no_accessible_orgs_returns_empty(self, caller):
@@ -423,6 +513,7 @@ class TestListEvidenceTasks:
                 assigned_user_id=None,
                 overdue_only=False,
                 frameworks=None,
+                organization_id=None,
                 db=db,
                 current_user=caller,
             )
