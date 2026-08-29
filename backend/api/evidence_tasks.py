@@ -1,6 +1,8 @@
 """
 Evidence Collection Tasks API endpoints - manage evidence collection tasks and dashboard.
 """
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_, text
@@ -27,6 +29,8 @@ from schemas import (
     EvidenceCollectionTaskResponse,
     SuccessResponse
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     tags=["evidence_tasks"],
@@ -119,6 +123,14 @@ async def list_evidence_tasks(
     evidence_tracking_id: Optional[UUID] = Query(
         None, description="Only tasks belonging to this evidence tracking row"
     ),
+    organization_id: Optional[UUID] = Query(
+        None,
+        description=(
+            "Only tasks belonging to this organization. An organization the "
+            "caller cannot access yields an empty list, indistinguishable "
+            "from an org with no tasks."
+        ),
+    ),
     task_type: Optional[str] = Query(
         None,
         # `pattern`, not the `regex=` used above: that spelling is deprecated
@@ -144,10 +156,30 @@ async def list_evidence_tasks(
     if not accessible_org_ids:
         return []
 
+    # Org-scoped callers (the Tasks page) must not see other orgs' tasks
+    # commingled: a consultant on N client orgs viewing org A's Tasks page
+    # gets org A's tasks only. Cross-org aggregation remains available by
+    # omitting the parameter (personal "my work" style consumers).
+    if organization_id is not None:
+        if organization_id not in accessible_org_ids:
+            # The UI always sends an org the caller can access, so this is
+            # either a probe or a stale client. The response stays an empty
+            # list (indistinguishable from an org with no tasks); the log line
+            # is what lets support tell "no tasks" from "access refused".
+            logger.warning(
+                "SECURITY: user %s requested evidence tasks for inaccessible org %s",
+                current_user.db_id or current_user.email,
+                organization_id,
+            )
+            return []
+        org_scope = [organization_id]
+    else:
+        org_scope = accessible_org_ids
+
     query = (
         select(EvidenceCollectionTask)
         .join(EvidenceTracking, EvidenceCollectionTask.evidence_tracking_id == EvidenceTracking.id)
-        .where(EvidenceTracking.organization_id.in_(accessible_org_ids))
+        .where(EvidenceTracking.organization_id.in_(org_scope))
     )
 
     # Framework filter: 2-step JSONB pre-query
@@ -251,6 +283,9 @@ async def list_evidence_tasks(
         task_dict = {
             "id": task.id,
             "evidence_tracking_id": task.evidence_tracking_id,
+            # Lets a caller reading the multi-org union (no organization_id
+            # param) tell which org each row belongs to.
+            "organization_id": task.organization_id,
             "evidence_id": evidence.evidence_id if evidence else None,
             "task_type": task.task_type,
             "title": task.title,

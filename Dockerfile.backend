@@ -84,5 +84,12 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()" || exit 1
 
-# Start the application with uvicorn
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Start the application with uvicorn.
+# --proxy-headers + --forwarded-allow-ips: TLS terminates at Cloudflare/ALB and
+# nginx forwards X-Forwarded-Proto, but uvicorn's default forwarded-allow-ips is
+# 127.0.0.1, so it ignores the header from the (non-loopback) nginx container and
+# builds redirect Location URLs from its own http scheme — emitting http:// on the
+# trailing-slash 307s (issue #856). Trusting the forwarded proto fixes the scheme.
+# "*" is safe here: the backend port is only reachable behind nginx on the compose
+# network, never directly from the public edge.
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]

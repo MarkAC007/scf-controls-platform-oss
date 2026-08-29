@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { apiClient } from '../data/apiClient';
 import { ModernCommentThread } from './ModernCommentThread';
 import { frequencyLabel } from '../data/frequencyVocabulary'
@@ -164,9 +164,22 @@ export const TasksPage: React.FC<TasksPageProps> = ({
 
   useEffect(() => {
     loadTasks();
-  }, [view, statusFilter, taskTypeFilter]);
+  }, [view, statusFilter, taskTypeFilter, organizationId]);
+
+  // Guards against an out-of-order response after an org/filter switch: a
+  // slower response for the previous org must not render under the new one.
+  const loadSeq = useRef(0);
 
   const loadTasks = async () => {
+    const seq = ++loadSeq.current;
+    // Fail closed: without an org there is nothing this page may show.
+    // (URLSearchParams would stringify undefined into "undefined" and the
+    // backend would 422 the whole request.)
+    if (!organizationId) {
+      setTasks([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
       // Every filter is a query param (#788). "My Tasks" previously fetched
@@ -175,19 +188,25 @@ export const TasksPage: React.FC<TasksPageProps> = ({
       // the status dropdown was silently ignored on that view. `assigned_to_me`
       // is resolved from the caller's token server-side.
       const params = new URLSearchParams();
+      // This page shows one organisation's tasks. Without this param the
+      // endpoint returns every accessible org's tasks commingled, so a
+      // consultant on several client orgs saw cross-org rows here.
+      params.set('organization_id', organizationId);
       if (view === 'my-tasks') params.set('assigned_to_me', 'true');
       if (statusFilter !== 'all') params.set('status_filter', statusFilter);
       if (taskTypeFilter !== 'all') params.set('task_type', taskTypeFilter);
-      const query = params.toString();
-      const allTasks = await apiClient.get(
-        query ? `/evidence-tasks?${query}` : '/evidence-tasks'
-      );
+      // No bare-/evidence-tasks arm: the un-scoped URL is exactly the
+      // cross-org fetch this page must never make again.
+      const allTasks = await apiClient.get(`/evidence-tasks?${params.toString()}`);
 
+      if (seq !== loadSeq.current) return;
       setTasks(allTasks);
     } catch (error) {
       console.error('Failed to load tasks:', error);
+      // A failed fetch must not leave the previous org's tasks on screen.
+      if (seq === loadSeq.current) setTasks([]);
     } finally {
-      setLoading(false);
+      if (seq === loadSeq.current) setLoading(false);
     }
   };
 
