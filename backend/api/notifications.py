@@ -3,14 +3,14 @@ Notifications API endpoints - manage user notifications and settings.
 """
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, update
+from sqlalchemy import select, and_, update, func
 from typing import List
 from uuid import UUID
 from datetime import datetime
 
 from database import get_db
-from auth import require_auth, User
-from models import Notification, User as DBUser
+from auth import require_auth, get_accessible_org_ids, User
+from models import Notification, Organization, User as DBUser
 from services.notification_targets import resolve_reference_keys
 from schemas import (
     NotificationResponse,
@@ -31,7 +31,13 @@ async def list_notifications(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_auth)
 ):
-    """List notifications for current user with unread count."""
+    """List notifications for current user with unread count.
+
+    Scoped to the caller's currently accessible organizations (#852): a
+    notification from an org the user has left is not listed and not counted.
+    The bell shows all accessible orgs, not just the active one, so a
+    consultant working across client orgs misses nothing.
+    """
     if not current_user.db_id:
         return {
             "unread_count": 0,
@@ -40,20 +46,36 @@ async def list_notifications(
 
     user_id = UUID(current_user.db_id)
 
+    # Org boundary (#852): same helper and doctrine as the task routes
+    # (PR #851) — empty scope means an empty result, never an error.
+    accessible_org_ids = await get_accessible_org_ids(current_user, db)
+    if not accessible_org_ids:
+        return {
+            "unread_count": 0,
+            "notifications": []
+        }
+
     # Get unread count
     result = await db.execute(
-        select(Notification)
+        select(func.count())
+        .select_from(Notification)
         .where(
             and_(
                 Notification.user_id == user_id,
+                Notification.organization_id.in_(accessible_org_ids),
                 Notification.is_read == False
             )
         )
     )
-    unread_count = len(result.scalars().all())
+    unread_count = result.scalar() or 0
 
     # Get notifications
-    query = select(Notification).where(Notification.user_id == user_id)
+    query = select(Notification).where(
+        and_(
+            Notification.user_id == user_id,
+            Notification.organization_id.in_(accessible_org_ids),
+        )
+    )
 
     if unread_only:
         query = query.where(Notification.is_read == False)
@@ -68,10 +90,22 @@ async def list_notifications(
     # the notification -- see services/notification_targets.py.
     reference_keys = await resolve_reference_keys(db, notifications)
 
+    # One batched lookup so the bell can label each row with its org — a
+    # consultant seeing all accessible orgs needs to know which is which.
+    org_ids = {n.organization_id for n in notifications}
+    org_names = {}
+    if org_ids:
+        org_result = await db.execute(
+            select(Organization.id, Organization.name).where(Organization.id.in_(org_ids))
+        )
+        org_names = {row.id: row.name for row in org_result.all()}
+
     notification_list = [
         {
             "id": n.id,
             "user_id": n.user_id,
+            "organization_id": n.organization_id,
+            "organization_name": org_names.get(n.organization_id),
             "type": n.type,
             "reference_type": n.reference_type,
             "reference_id": n.reference_id,
@@ -108,6 +142,13 @@ async def mark_notification_read(
     if not notification:
         raise HTTPException(status_code=404, detail="Notification not found")
 
+    # Org boundary (#852): a notification from an org the caller can no
+    # longer access is indistinguishable from one that does not exist —
+    # 404, not 403, matching the task routes' empty-not-error doctrine.
+    accessible_org_ids = await get_accessible_org_ids(current_user, db)
+    if notification.organization_id not in accessible_org_ids:
+        raise HTTPException(status_code=404, detail="Notification not found")
+
     # Verify it belongs to current user
     if str(notification.user_id) != current_user.db_id:
         raise HTTPException(status_code=403, detail="You can only mark your own notifications as read")
@@ -124,6 +165,7 @@ async def mark_notification_read(
     return {
         "id": notification.id,
         "user_id": notification.user_id,
+        "organization_id": notification.organization_id,
         "type": notification.type,
         "reference_type": notification.reference_type,
         "reference_id": notification.reference_id,
@@ -146,12 +188,21 @@ async def mark_all_notifications_read(
 
     user_id = UUID(current_user.db_id)
 
+    # Org boundary (#852): "all" means all the caller can currently see.
+    # Rows from orgs the user has left stay untouched — they are invisible
+    # to this user, and clearing them would destroy another tenant's state
+    # should the user ever be re-admitted.
+    accessible_org_ids = await get_accessible_org_ids(current_user, db)
+    if not accessible_org_ids:
+        return SuccessResponse(message="All notifications marked as read")
+
     # Update all unread notifications
     await db.execute(
         update(Notification)
         .where(
             and_(
                 Notification.user_id == user_id,
+                Notification.organization_id.in_(accessible_org_ids),
                 Notification.is_read == False
             )
         )

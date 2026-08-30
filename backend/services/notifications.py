@@ -76,7 +76,9 @@ from models import (
     Notification,
     User,
     Assignment,
+    AuditEngagement,
     Comment,
+    EngagementQuery,
     EvidenceCollectionTask,
     EvidenceTracking,
     OrganizationMember,
@@ -194,6 +196,7 @@ async def _emit(
     notification_type: str,
     reference_type: str,
     reference_id: UUID,
+    organization_id: UUID,
     message: str,
     recipient_ids: Iterable[UUID],
     dedup_on: Optional[date] = None,
@@ -203,6 +206,8 @@ async def _emit(
     """Write one notification per recipient, atomically, and send the emails.
 
     Args:
+        organization_id: the tenant the referenced entity belongs to (#852).
+            Required — a notification without an org has no read boundary.
         dedup_on: when given, the whole emission is skipped if any
             notification of this type already exists for this reference on or
             after that date. This is the event-level key described in
@@ -239,6 +244,7 @@ async def _emit(
         for user in users:
             db.add(Notification(
                 user_id=user.id,
+                organization_id=organization_id,
                 type=notification_type,
                 reference_type=reference_type,
                 reference_id=reference_id,
@@ -274,6 +280,38 @@ async def _emit(
                 logger.error(f"Failed to send {notification_type} email: {e}")
 
     return len(users)
+
+
+async def _resolve_org_for(
+    db: AsyncSession,
+    item_type: str,
+    item_id: UUID,
+) -> Optional[UUID]:
+    """Resolve the tenant that owns the referenced entity (#852).
+
+    Used by the directed events (assignment, mention) and the
+    single-recipient task helpers, whose callers do not pass an org.
+    Returns None when the entity no longer exists — the caller must then
+    skip the notification rather than write a row with no tenant.
+    """
+    if item_type == 'control':
+        stmt = select(ScopedControl.organization_id).where(ScopedControl.id == item_id)
+    elif item_type == 'evidence':
+        stmt = select(EvidenceTracking.organization_id).where(EvidenceTracking.id == item_id)
+    elif item_type == 'task':
+        stmt = select(EvidenceCollectionTask.organization_id).where(EvidenceCollectionTask.id == item_id)
+    elif item_type == 'engagement_query':
+        stmt = (
+            select(AuditEngagement.organization_id)
+            .join(EngagementQuery, EngagementQuery.engagement_id == AuditEngagement.id)
+            .where(EngagementQuery.id == item_id)
+        )
+    else:
+        logger.warning(f"Cannot resolve org for unknown item type {item_type}")
+        return None
+
+    result = await db.execute(stmt)
+    return result.scalars().first()
 
 
 async def create_assignment_notification(
@@ -317,10 +355,19 @@ async def create_assignment_notification(
         assigned_by_name = await _get_user_name(db, assigned_by_user_id)
         message = f"{assigned_by_name} assigned you to a {assignable_type}"
 
+        organization_id = await _resolve_org_for(db, assignable_type, assignable_id)
+        if organization_id is None:
+            logger.warning(
+                f"No org resolvable for {assignable_type} {assignable_id} - "
+                f"skipping assignment notification"
+            )
+            return None
+
         notification = None
         for user in users:
             notification = Notification(
                 user_id=user.id,
+                organization_id=organization_id,
                 type='assignment',
                 reference_type=assignable_type,
                 reference_id=assignable_id,
@@ -398,6 +445,14 @@ async def create_mention_notifications(
         comment = comment_result.scalar_one_or_none()
         comment_preview = comment.content if comment else "No preview available"
 
+        organization_id = await _resolve_org_for(db, commentable_type, commentable_id)
+        if organization_id is None:
+            logger.warning(
+                f"No org resolvable for {commentable_type} {commentable_id} - "
+                f"skipping mention notifications"
+            )
+            return 0
+
         for user_id in recipients.user_ids:
             # Get mentioned user details
             user_result = await db.execute(
@@ -412,6 +467,7 @@ async def create_mention_notifications(
             # Create in-app notification
             notification = Notification(
                 user_id=user_id,
+                organization_id=organization_id,
                 type='mention',
                 reference_type='comment',
                 reference_id=comment_id,
@@ -477,8 +533,14 @@ async def create_task_due_notification(
     :func:`_emit` in one transaction — see :func:`check_and_notify_due_tasks`.
     """
     try:
+        organization_id = await _resolve_org_for(db, 'task', task_id)
+        if organization_id is None:
+            logger.warning(f"No org resolvable for task {task_id} - skipping due notification")
+            return None
+
         notification = Notification(
             user_id=user_id,
+            organization_id=organization_id,
             type='task_due',
             reference_type='task',
             reference_id=task_id,
@@ -509,8 +571,14 @@ async def create_task_overdue_notification(
     through here — it resolves a set and gates on the escalation threshold.
     """
     try:
+        organization_id = await _resolve_org_for(db, 'task', task_id)
+        if organization_id is None:
+            logger.warning(f"No org resolvable for task {task_id} - skipping overdue notification")
+            return None
+
         notification = Notification(
             user_id=user_id,
+            organization_id=organization_id,
             type='task_overdue',
             reference_type='task',
             reference_id=task_id,
@@ -607,6 +675,7 @@ async def check_and_notify_due_tasks(db: AsyncSession):
                 notification_type='task_due',
                 reference_type='task',
                 reference_id=task.id,
+                organization_id=task.organization_id,
                 message=message,
                 recipient_ids=recipients.user_ids,
                 # Once per task per day, for the whole recipient set, however
@@ -707,6 +776,7 @@ async def check_and_notify_overdue_tasks(db: AsyncSession):
                 notification_type='task_overdue',
                 reference_type='task',
                 reference_id=task.id,
+                organization_id=task.organization_id,
                 message=message,
                 recipient_ids=recipients.user_ids,
                 # No date-based dedup: the threshold gate above already
@@ -799,6 +869,7 @@ async def create_evidence_rejected_notifications(
             notification_type='evidence_rejected',
             reference_type='evidence',
             reference_id=tracking.id,
+            organization_id=organization_id,
             message=message,
             recipient_ids=recipients.user_ids,
             email_subject=f"Evidence {evidence_id} was rejected",
@@ -852,6 +923,7 @@ async def create_control_ready_for_review_notifications(
             notification_type='control_ready_for_review',
             reference_type='control',
             reference_id=scoped_control_id,
+            organization_id=organization_id,
             message=message,
             recipient_ids=recipients.user_ids,
             email_subject=f"Control {scf_id} is ready for review",
@@ -900,6 +972,7 @@ async def create_engagement_query_raised_notifications(
             notification_type='engagement_query_raised',
             reference_type='engagement_query',
             reference_id=query_id,
+            organization_id=organization_id,
             message=message,
             recipient_ids=recipients.user_ids,
             email_subject=f"New query raised on control {scf_id}",
@@ -970,6 +1043,7 @@ def create_composite_insufficient_notifications_sync(
 
             notification = Notification(
                 user_id=user_id,
+                organization_id=organization_id,
                 type='composite_insufficient',
                 reference_type='control',
                 reference_id=control.id,
@@ -1049,6 +1123,7 @@ async def create_catalog_reconciliation_notifications(
             notification_type=notification_type,
             reference_type='catalog',
             reference_id=run_id,
+            organization_id=organization_id,
             message=message,
             recipient_ids=recipients.user_ids,
             email_subject=subject,
@@ -1134,6 +1209,7 @@ async def create_bulk_team_assignment_notifications(
             notification_type='team_assignment',
             reference_type='team',
             reference_id=team_id,
+            organization_id=organization_id,
             message=message,
             recipient_ids=recipients,
             email_subject=f"{len(items)} {noun} assigned to {team_name}",

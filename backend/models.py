@@ -754,6 +754,10 @@ class Notification(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    # Org boundary (#852): a notification always belongs to exactly one tenant.
+    # reference_id is untyped, so the DB cannot enforce that the referenced
+    # entity belongs to this org — creation paths derive it from the reference.
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
     # 'assignment', 'mention', 'task_due', 'task_overdue', 'evidence_rejected',
     # 'control_ready_for_review', 'composite_insufficient', 'engagement_query_raised'
     type = Column(String(50), nullable=False)

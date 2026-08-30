@@ -489,6 +489,99 @@ def collect_referenced_user_ids(model, rows) -> Set[UUID]:
     return referenced
 
 
+async def backfill_notification_orgs(
+    db: AsyncSession,
+    rows: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Fill organization_id on notification rows from pre-#852 backups.
+
+    notifications.organization_id is NOT NULL since migration notiforg1, but
+    a backup taken before it carries rows without the key — and hydrate_row
+    deliberately omits absent keys, so the insert would fail whole. Backups
+    only ever include notifications referencing assignables (control /
+    evidence / task) and comments (see the backup's scoping above), so the
+    org is derived exactly as the migration derived it: from the referenced
+    entity, which this restore has just written in earlier steps. Rows whose
+    reference cannot be resolved are dropped, mirroring the migration's
+    treatment of orphans.
+    """
+    missing = [r for r in rows if not r.get("organization_id")]
+    if not missing:
+        return rows
+
+    def ids_for(ref_type: str) -> List[Any]:
+        return [r["reference_id"] for r in missing if r.get("reference_type") == ref_type]
+
+    org_by_ref: Dict[str, Any] = {}
+
+    async def load(model, id_col, org_col, ids):
+        if not ids:
+            return
+        result = await db.execute(
+            select(id_col, org_col).where(id_col.in_([UUID(str(i)) for i in ids]))
+        )
+        for row in result.all():
+            org_by_ref[str(row[0])] = row[1]
+
+    await load(ScopedControl, ScopedControl.id, ScopedControl.organization_id, ids_for("control"))
+    await load(EvidenceTracking, EvidenceTracking.id, EvidenceTracking.organization_id, ids_for("evidence"))
+    await load(EvidenceCollectionTask, EvidenceCollectionTask.id, EvidenceCollectionTask.organization_id, ids_for("task"))
+
+    # comment: two hops — comment row -> commentable entity -> org. The
+    # commentables are the same three tables, all restored before step 11.
+    comment_ids = ids_for("comment")
+    if comment_ids:
+        comment_result = await db.execute(
+            select(Comment.id, Comment.commentable_type, Comment.commentable_id)
+            .where(Comment.id.in_([UUID(str(i)) for i in comment_ids]))
+        )
+        commentables = {"control": [], "evidence": [], "task": []}
+        comment_targets = {}
+        for cid, ctype, ctarget in comment_result.all():
+            comment_targets[str(cid)] = (ctype, str(ctarget))
+            if ctype in commentables:
+                commentables[ctype].append(ctarget)
+        target_org: Dict[str, Any] = {}
+
+        async def load_target(model, ids):
+            if not ids:
+                return
+            result = await db.execute(
+                select(model.id, model.organization_id).where(model.id.in_(ids))
+            )
+            for row in result.all():
+                target_org[str(row[0])] = row[1]
+
+        await load_target(ScopedControl, commentables["control"])
+        await load_target(EvidenceTracking, commentables["evidence"])
+        await load_target(EvidenceCollectionTask, commentables["task"])
+        for cid, (ctype, ctarget) in comment_targets.items():
+            org = target_org.get(ctarget)
+            if org is not None:
+                org_by_ref[cid] = org
+
+    kept: List[Dict[str, Any]] = []
+    dropped = 0
+    for r in rows:
+        if r.get("organization_id"):
+            kept.append(r)
+            continue
+        org = org_by_ref.get(str(r.get("reference_id")))
+        if org is None:
+            dropped += 1
+            continue
+        r = dict(r)
+        r["organization_id"] = str(org)
+        kept.append(r)
+
+    if dropped:
+        logger.warning(
+            f"Restore: dropped {dropped} pre-#852 notification rows whose "
+            f"reference could not be resolved to an organization"
+        )
+    return kept
+
+
 async def restore_table(
     db: AsyncSession,
     model,
@@ -1318,7 +1411,8 @@ async def restore_database(
 
         # 11. Notifications
         record("notifications", await restore_table(
-            db, Notification, backup_table_rows(data, "notifications"),
+            db, Notification,
+            await backfill_notification_orgs(db, backup_table_rows(data, "notifications")),
         ))
 
         # 12. Comment history

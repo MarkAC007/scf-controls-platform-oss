@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useOrgLogo } from '../hooks/useOrgLogo'
 import { useOrganization } from '../contexts/OrganizationContext'
 import { getCatalogStatusExtended } from '../data/catalogUpgradeApi'
+import { DEFAULT_APP_TITLE, getAppLogo } from '../branding'
 
 type Tab = 'dashboard' | 'capability-posture' | 'library' | 'scoping' | 'evidence' | 'mapping-matrix' | 'tasks' | 'systems' | 'users' | 'consultant-portal' | 'risk-register' | 'vendors' | 'settings' | 'webhooks' | 'audit-log' | 'engagements' | 'cdm' | 'document-map' | 'documents' | 'platform-catalog' | 'platform-tenants' | 'catalog-changelog'
 
@@ -287,15 +288,12 @@ const PLATFORM_TABS: Tab[] = ['platform-catalog', 'platform-tenants']
 // Role-gated item ids: shown only when the relevant flag is set.
 const ROLE_GATED_TABS: Tab[] = ['consultant-portal', 'platform-catalog', 'platform-tenants']
 
-const DEFAULT_APP_TITLE = 'SCF Controls Platform'
-
 /** Brand block — needs QueryClient + OrganizationProvider */
 function SidebarBrandBlock() {
   const { currentOrg } = useOrganization()
   const { data: orgLogoUrl } = useOrgLogo(currentOrg?.id)
 
-  const appLogoEnv = import.meta.env.VITE_APP_LOGO
-  const appLogo = appLogoEnv === '' ? null : (appLogoEnv || '/cropped-Logo-301x101.webp')
+  const appLogo = getAppLogo()
   const logoSrc = orgLogoUrl || appLogo
 
   // Degrade broken logo to wordmark alone (#807)
