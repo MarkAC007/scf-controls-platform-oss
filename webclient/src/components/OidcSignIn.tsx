@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import Footer from './Footer'
+import { getAppLogo, getAppTitle } from '../branding'
 
 // Human-readable copy for the auth_error codes the backend can redirect with.
 const AUTH_ERROR_MESSAGES: Record<string, string> = {
@@ -10,10 +11,9 @@ const AUTH_ERROR_MESSAGES: Record<string, string> = {
 export default function OidcSignIn() {
   const [isRedirecting, setIsRedirecting] = useState(false)
 
-  // Configurable logo and title, matching GoogleSignIn.
-  const appLogoEnv = import.meta.env.VITE_APP_LOGO
-  const appLogo = appLogoEnv === '' ? null : (appLogoEnv || '/compliancegenie-logo.png')
-  const appTitle = import.meta.env.VITE_APP_TITLE || 'SCF Controls Platform'
+  // Configurable logo and title, matching GoogleSignIn (shared semantics).
+  const appLogo = getAppLogo()
+  const appTitle = getAppTitle()
 
   // Surface the backend-provided auth_error (set on the callback failure redirect).
   const authError = new URLSearchParams(window.location.search).get('auth_error')

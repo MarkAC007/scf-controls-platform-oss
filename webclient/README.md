@@ -109,7 +109,7 @@ Note: Please start/stop the server yourself when you're ready.
 Create a `webclient/.env` file to configure the application:
 
 #### Branding
-- `VITE_APP_LOGO` - Path to your logo image (default: `/cropped-Logo-301x101.webp`)
+- `VITE_APP_LOGO` - Path to your logo image (default: `/compliancegenie-logo.png`)
   - Can be a path relative to `public/` directory (e.g., `/my-logo.png`)
   - Or a full URL (e.g., `https://example.com/logo.png`)
   - Set to empty string to hide the logo

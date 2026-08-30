@@ -3,15 +3,15 @@ import { useAuth } from '../contexts/AuthContext'
 import { useState } from 'react'
 import toast from 'react-hot-toast'
 import Footer from './Footer'
+import { getAppLogo, getAppTitle } from '../branding'
 
 export default function GoogleSignIn() {
   const { login } = useAuth()
   const [isLoading, setIsLoading] = useState(false)
 
-  // Get configurable logo and title from environment variables
-  const appLogoEnv = import.meta.env.VITE_APP_LOGO
-  const appLogo = appLogoEnv === '' ? null : (appLogoEnv || '/compliancegenie-logo.png')
-  const appTitle = import.meta.env.VITE_APP_TITLE || 'SCF Controls Platform'
+  // Configurable logo and title from environment variables (shared semantics)
+  const appLogo = getAppLogo()
+  const appTitle = getAppTitle()
 
   const googleLogin = useGoogleLogin({
     onSuccess: async (tokenResponse) => {

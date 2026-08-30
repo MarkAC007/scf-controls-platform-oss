@@ -167,6 +167,14 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
                       {notification.message}
                     </div>
                     <div className="notification-item-time">
+                      {/* Org label (#852): the bell aggregates every accessible
+                          org, so a consultant needs to see which is which. */}
+                      {notification.organization_name && (
+                        <span className="notification-item-org">
+                          {notification.organization_name}
+                          {' · '}
+                        </span>
+                      )}
                       {new Date(notification.created_at).toLocaleString()}
                     </div>
                   </div>

@@ -674,8 +674,17 @@ class EvidenceCollectionTaskResponse(EvidenceCollectionTaskBase):
 
 # Notification Schemas
 class NotificationBase(BaseModel):
-    type: str = Field(..., pattern="^(assignment|mention|task_due|task_overdue|task_assigned)$")
-    reference_type: str = Field(..., pattern="^(control|evidence|comment|task)$")
+    # Keep these patterns in lockstep with the writers in
+    # services/notifications.py. They were stale for a while (#852 review):
+    # PATCH /{id}/read serializes through NotificationResponse, so any type
+    # missing here made marking that notification read 500.
+    type: str = Field(..., pattern=(
+        "^(assignment|mention|task_due|task_overdue|task_assigned"
+        "|evidence_rejected|control_ready_for_review|composite_insufficient"
+        "|engagement_query_raised|catalog_reconciliation_applied"
+        "|catalog_reconciliation_rolled_back|team_assignment)$"
+    ))
+    reference_type: str = Field(..., pattern="^(control|evidence|comment|task|engagement_query|catalog|team)$")
     reference_id: UUID
     message: str
 
@@ -687,6 +696,8 @@ class NotificationCreate(NotificationBase):
 class NotificationResponse(NotificationBase):
     id: UUID
     user_id: UUID
+    # Org boundary (#852): every notification belongs to exactly one tenant.
+    organization_id: UUID
     is_read: bool
     read_at: Optional[datetime] = None
     created_at: datetime
