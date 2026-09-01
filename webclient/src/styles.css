@@ -5814,7 +5814,12 @@ textarea.form-control{
 }
 
 .app-content {
-  flex: 1;
+  /* `flex: 1` alone means flex-basis 0%, and .app-main has no definite height
+     (.app-layout is min-height only), so that basis resolved to *content* and
+     the viewport-height rule below was dead: any in-flow page grew .app-content
+     to its full content height and the document scrolled instead of this pane.
+     An auto basis lets the height rule be the basis. */
+  flex: 1 1 auto;
   min-height: 0;
   position: relative;
   overflow-y: auto;
@@ -30760,6 +30765,23 @@ button.assessment-queue-link:hover {
 .evidence-workspace-content {
   flex: 1;
   overflow: hidden;
+  /* Flex column so the in-flow children (.evidence-detail-page, the dashboard)
+     are flex items: their `flex: 1; min-height: 0` only binds under a flex
+     parent. As a block this box clipped the detail page instead of giving
+     .evidence-detail-body a bounded height to scroll within. The list view is
+     position:absolute and unaffected. */
+  display: flex;
+  flex-direction: column;
+}
+
+/* The Dashboard view (.ehd-container) used to rely on the document growing;
+   under the flex parent it must scroll itself. width:100% because its cross-axis
+   auto margins would otherwise shrink it to fit-content instead of stretching. */
+.evidence-workspace-content > .ehd-container {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  overflow-y: auto;
 }
 
 /* TabRow inside evidence-workspace uses narrower padding */

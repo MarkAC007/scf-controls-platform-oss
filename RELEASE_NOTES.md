@@ -1,17 +1,12 @@
-# v0.25.4
+# v0.25.5
 
 Adds SCF document generation to the platform — generated documents with versions, sections and review transitions. Migration docgen001 creates five new tables and changes no existing schema.
 
 ## Fixes and improvements
 
-- AI Evidence Assessment v2 — AO-grounded assessment, human confirmation, foundation repair, self-hosted cleanup (PR 882)
-
-## Migrations
-
-- `evassessver1` — Append-only version history for AI evidence assessments (#881).
-
-Migrations run automatically on upgrade. Review them before upgrading a deployment you cannot restore.
+- Evidence detail/dashboard scroll in their own pane, not the document (iPad) (PR 885)
+- Widen waitFor on owning-team pills to stop CI flake (PR 884)
 
 ## Upgrading
 
-- Run `scripts/upgrade.sh v0.25.4` (read `UPGRADING.md` first).
+- Run `scripts/upgrade.sh v0.25.5` (read `UPGRADING.md` first).

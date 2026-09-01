@@ -152,7 +152,11 @@ describe('EvidenceTaskList owning team', () => {
     renderList()
 
     expect(await screen.findByText('Collect the export')).toBeInTheDocument()
-    await waitFor(() => expect(screen.getByText('Inherited')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('Inherited')).toBeInTheDocument(), {
+      // Three chained reads (assignments, teams, team detail) resolve behind
+      // this pill; on a loaded CI runner the 1s default has timed out.
+      timeout: 5000,
+    })
     const inherited = screen.getByText('Inherited').parentElement as HTMLElement
     expect(within(inherited).getByText('Security Operations')).toBeInTheDocument()
     // The person the work actually reaches, named on the row.
@@ -163,7 +167,11 @@ describe('EvidenceTaskList owning team', () => {
     renderList()
 
     expect(await screen.findByText('Review the export')).toBeInTheDocument()
-    await waitFor(() => expect(screen.getByText('Override')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('Override')).toBeInTheDocument(), {
+      // Three chained reads (assignments, teams, team detail) resolve behind
+      // this pill; on a loaded CI runner the 1s default has timed out.
+      timeout: 5000,
+    })
     const override = screen.getByText('Override').parentElement as HTMLElement
     expect(within(override).getByText('GRC')).toBeInTheDocument()
     // Both pills present at once — one inherited, one overridden.

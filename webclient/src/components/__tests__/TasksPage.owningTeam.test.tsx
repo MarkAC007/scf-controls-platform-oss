@@ -173,7 +173,11 @@ describe('TasksPage owning team column', () => {
     expect(await screen.findByText('Sign off the quarter')).toBeInTheDocument()
     // Without this pill a deliberate setup/review split is indistinguishable
     // from a team that simply followed the parent.
-    await waitFor(() => expect(screen.getByText('Override')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('Override')).toBeInTheDocument(), {
+      // Three chained reads (assignments, teams, team detail) resolve behind
+      // this pill; on a loaded CI runner the 1s default has timed out.
+      timeout: 5000,
+    })
     // Scoped to the badge: "GRC" also appears as an option in the team filter,
     // and matching that would prove nothing about the row.
     const badge = screen.getByText('Override').parentElement as HTMLElement
