@@ -9,13 +9,16 @@ import {
   getEvidenceHealth,
   getUpcomingEvidence,
   getWindowAssessmentSummary,
+  getAssessmentSummary,
   refreshStaleWindowAssessments,
   type EvidenceHealthResponse,
   type UpcomingEvidenceItem,
+  type EvidenceAssessmentSummary,
 } from '../../data/apiClient'
 import { getScopedControl, getEvidenceTracking } from '../../data/scopingService'
 import { evidenceOwnerLabel, evidenceOwnerUserId } from '../../data/userDisplay'
 import { ContractorBadge } from '../ContractorBadge'
+import { AssessmentReviewQueueCard } from './AssessmentReviewQueueCard'
 import { useOrgMemberTypes } from '../../hooks/useOrgMemberTypes'
 import { frequencyLabel } from '../../data/frequencyVocabulary'
 import {
@@ -362,6 +365,116 @@ function AssessmentSummaryCard({ organizationId }: { organizationId: string }) {
   )
 }
 
+// ---- AI Assessment Summary Card (per file) ----
+
+/**
+ * The per-file counterpart to the windowed card above (#881).
+ *
+ * The two answer different questions and both matter: the windowed card says
+ * whether each collection period is covered, this one says how far the file-by
+ * -file sweep has actually got. ``unassessed_count`` is the reason it earns
+ * its space — a dashboard showing only what was assessed lets a large untouched
+ * backlog read as silence.
+ *
+ * ``total_cost_cents`` is in the API response and is deliberately not rendered:
+ * internal inference spend is not a customer-facing number.
+ */
+function FileAssessmentSummaryCard({ organizationId }: { organizationId: string }) {
+  const [summary, setSummary] = useState<EvidenceAssessmentSummary | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    setLoading(true)
+    getAssessmentSummary(organizationId)
+      .then(setSummary)
+      .catch(() => setSummary(null))
+      .finally(() => setLoading(false))
+  }, [organizationId])
+
+  if (loading) return null
+  if (!summary) return null
+
+  const hasAny = summary.total_assessed > 0 || summary.unassessed_count > 0
+
+  return (
+    <div className="ai-assessment-card">
+      <div className="ai-assessment-card-header">
+        <h3 className="ai-assessment-card-title">Evidence Files Assessed</h3>
+        <span className="ai-advisory-label">AI Advisory</span>
+      </div>
+
+      {hasAny ? (
+        <>
+          <div className="ai-assessment-stats">
+            <div className="ai-assessment-stat">
+              <span className="ai-assessment-stat-count">{summary.total_assessed}</span>
+              <span className="ai-assessment-stat-label">Assessed</span>
+            </div>
+            <div className="ai-assessment-stat">
+              <span className="ai-assessment-stat-count">{summary.sufficient_count}</span>
+              <span className="ai-assessment-stat-label">Sufficient</span>
+            </div>
+            <div className="ai-assessment-stat">
+              <span className="ai-assessment-stat-count">{summary.partial_count}</span>
+              <span className="ai-assessment-stat-label">Partial</span>
+            </div>
+            <div className="ai-assessment-stat">
+              <span className="ai-assessment-stat-count">{summary.insufficient_count}</span>
+              <span className="ai-assessment-stat-label">Insufficient</span>
+            </div>
+            {summary.pending_count > 0 && (
+              <div className="ai-assessment-stat">
+                <span className="ai-assessment-stat-count">{summary.pending_count}</span>
+                <span className="ai-assessment-stat-label">Pending</span>
+              </div>
+            )}
+            {summary.error_count > 0 && (
+              <div className="ai-assessment-stat">
+                <span className="ai-assessment-stat-count">{summary.error_count}</span>
+                <span className="ai-assessment-stat-label">Error</span>
+              </div>
+            )}
+            {/* Nothing could be read out of these. Shown beside the verdict
+                buckets rather than hidden, because otherwise the four buckets
+                above visibly fail to sum to the total and the gap reads as an
+                arithmetic bug. */}
+            {summary.unassessable_count > 0 && (
+              <div className="ai-assessment-stat">
+                <span className="ai-assessment-stat-count">{summary.unassessable_count}</span>
+                <span className="ai-assessment-stat-label">Unassessable</span>
+              </div>
+            )}
+            {/* Always shown, including at zero. The size of the untouched
+                backlog is the number a reader is most likely to be misled by
+                if it is only rendered when inconvenient. */}
+            <div className="ai-assessment-stat">
+              <span className="ai-assessment-stat-count">{summary.unassessed_count}</span>
+              <span className="ai-assessment-stat-label">Not Assessed</span>
+            </div>
+            {/* Always shown, including at zero: "everything has been reviewed"
+                is a real and reassuring answer, and hiding the stat when it is
+                zero would leave a reader unable to tell that from "this
+                platform does not track review at all". */}
+            <div className="ai-assessment-stat">
+              <span className="ai-assessment-stat-count">{summary.awaiting_review_count}</span>
+              <span className="ai-assessment-stat-label">Awaiting Confirmation</span>
+            </div>
+          </div>
+          {summary.average_relevance_score !== null && (
+            <div className="ai-assessment-score">
+              Avg Relevance: <strong>{Math.round(summary.average_relevance_score)}/100</strong>
+            </div>
+          )}
+        </>
+      ) : (
+        <div className="ai-assessment-empty">
+          No evidence files have been assessed yet.
+        </div>
+      )}
+    </div>
+  )
+}
+
 /** One skip reason plus every evidence id it applied to (#788). */
 interface SkipGroup {
   reason: string
@@ -636,6 +749,8 @@ export default function EvidenceDashboardTab({
         </div>
         <div className="edt-stats-section">
           <AssessmentSummaryCard organizationId={organizationId} />
+          <FileAssessmentSummaryCard organizationId={organizationId} />
+          <AssessmentReviewQueueCard orgId={organizationId} />
         </div>
       </div>
 

@@ -8,18 +8,46 @@ SHA-256 hashing for audit trail reproducibility.
 import hashlib
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from catalog_models import SCFCatalogEvidence, SCFCatalogControl
+from catalog_models import (
+    SCFCatalogAssessmentObjective,
+    SCFCatalogEvidence,
+    SCFCatalogControl,
+)
 
 logger = logging.getLogger(__name__)
 
-# Prompt template version — increment when changing prompt structure
-PROMPT_VERSION = "1.1.0"
+# Prompt template version — increment when changing prompt structure.
+# 2.0.0 is the AO-grounded rewrite (#881): the model now answers per SCF
+# assessment objective rather than producing one opinion about the file, and
+# extracts the evidence's own effective date. Major bump because the output
+# contract changed shape — a 1.x verdict cannot be read as a 2.x one, and the
+# version is how a reader tells them apart.
+PROMPT_VERSION = "2.0.0"
+
+# How many assessment objectives may enter one prompt. Mapped controls can
+# carry a long tail of AOs, and past roughly this many the objective list
+# crowds out the evidence itself — the model reads less of the document to
+# answer more questions about it, which is the wrong trade. Objectives are
+# taken in ao_id order so the cut is deterministic and the context hash stays
+# stable; the caller discloses the cap in the findings.
+MAX_ASSESSMENT_OBJECTIVES = 60
+
+# The advisory vocabulary. These four words are the product contract: they are
+# deliberately NOT the CAP assessor's terms (satisfied / other-than-satisfied),
+# because this platform advises a preparer and must never look like it has
+# rendered an assessor's determination.
+AO_DESIGNATIONS = (
+    "appears_satisfied",
+    "gap_identified",
+    "not_applicable",
+    "cannot_assess",
+)
 
 # Output schema for structured AI response
 ASSESSMENT_OUTPUT_SCHEMA = {
@@ -32,14 +60,63 @@ ASSESSMENT_OUTPUT_SCHEMA = {
         "status": {
             "type": "string",
             "enum": ["sufficient", "partial", "insufficient"],
-            "description": "Overall sufficiency determination",
+            "description": (
+                "Your overall impression of sufficiency. Advisory only — the "
+                "file's recorded status is derived by the server from your "
+                "per-objective designations."
+            ),
         },
         "summary": {
             "type": "string",
             "description": "2-3 sentence summary of the assessment",
         },
+        "evidence_effective_date": {
+            "type": ["string", "null"],
+            "description": (
+                "YYYY-MM-DD date this evidence CONTENT is effective (approval "
+                "date, report period end, screenshot capture date). null when "
+                "the document does not state one — never infer or guess."
+            ),
+        },
+        "effective_date_source": {
+            "type": ["string", "null"],
+            "description": (
+                "Where in the document the date came from, quoted or described "
+                "(e.g. 'Approved: 14 March 2026 on page 1'). null when the date is null."
+            ),
+        },
+        "ao_findings": {
+            "type": "array",
+            "description": (
+                "Exactly one entry per assessment objective listed in the "
+                "prompt, and no entries for anything else."
+            ),
+            "items": {
+                "type": "object",
+                "properties": {
+                    "ao_id": {
+                        "type": "string",
+                        "description": "Must be one of the AO ids listed in the prompt, copied exactly",
+                    },
+                    "suggested_designation": {
+                        "type": "string",
+                        "enum": list(AO_DESIGNATIONS),
+                    },
+                    "rationale": {
+                        "type": "string",
+                        "description": "Why, citing what the evidence does or does not show",
+                    },
+                    "suggestion": {
+                        "type": "string",
+                        "description": "Concrete next step to close the gap; empty string when there is nothing to add",
+                    },
+                },
+                "required": ["ao_id", "suggested_designation", "rationale", "suggestion"],
+            },
+        },
         "findings": {
             "type": "array",
+            "description": "File-level observations that are not about a single objective",
             "items": {
                 "type": "object",
                 "properties": {
@@ -59,7 +136,10 @@ ASSESSMENT_OUTPUT_SCHEMA = {
             },
         },
     },
-    "required": ["relevance_score", "status", "summary", "findings"],
+    "required": [
+        "relevance_score", "status", "summary",
+        "evidence_effective_date", "ao_findings", "findings",
+    ],
 }
 
 
@@ -117,6 +197,76 @@ class ControlContext:
     controls: List[Dict[str, str]]  # [{scf_id, control_name, control_description}]
     context_hash: str  # SHA-256 of the assembled context
     framework_version: str
+    # SCF assessment objectives for the mapped controls, ao_id-ordered.
+    # [{ao_id, scf_id, objective_text, expected_results}]. Defaulted so the
+    # eval harness and other direct constructions keep working unchanged.
+    objectives: List[Dict[str, str]] = field(default_factory=list)
+    # True when the mapped controls carry more objectives than one prompt can
+    # usefully hold and the list was cut at MAX_ASSESSMENT_OBJECTIVES. The
+    # caller discloses this; silently assessing against a subset would present
+    # partial coverage as complete.
+    objectives_capped: bool = False
+
+
+def _objective_entry(ao) -> Dict[str, str]:
+    """Serialize one catalog assessment objective for the prompt context."""
+    return {
+        "ao_id": ao.ao_id,
+        "scf_id": ao.scf_id,
+        "objective_text": ao.objective_text or "",
+        "expected_results": ao.expected_results or "",
+    }
+
+
+def _objectives_query(control_ids: List[str]):
+    """Select active assessment objectives for the mapped controls.
+
+    Ordered by ao_id so the assembled context is byte-stable across runs: the
+    objectives enter context_data, so any non-determinism here would change
+    the context hash and re-assess every file for no reason.
+    """
+    return (
+        select(SCFCatalogAssessmentObjective)
+        .where(
+            SCFCatalogAssessmentObjective.scf_id.in_(control_ids),
+            SCFCatalogAssessmentObjective.status == "active",
+        )
+        .order_by(SCFCatalogAssessmentObjective.ao_id)
+    )
+
+
+def _cap_objectives(objectives: List[Dict[str, str]]) -> tuple[List[Dict[str, str]], bool]:
+    """Trim the objective list to what one prompt can carry."""
+    if len(objectives) <= MAX_ASSESSMENT_OBJECTIVES:
+        return objectives, False
+    return objectives[:MAX_ASSESSMENT_OBJECTIVES], True
+
+
+def _context_hash(
+    evidence_id: str,
+    catalog_entry,
+    controls: List[Dict[str, str]],
+    objectives: List[Dict[str, str]],
+) -> str:
+    """SHA-256 over everything that can change the answer.
+
+    Objectives are part of the hash, which is what makes the assessment cache
+    self-invalidating: a catalog upgrade that adds, retires or rewords an AO
+    moves the hash, and the next run re-assesses instead of serving a verdict
+    reached against objectives that no longer exist.
+    """
+    context_data = {
+        "evidence_id": evidence_id,
+        "artifact_title": catalog_entry.artifact_title,
+        "artifact_description": catalog_entry.artifact_description or "",
+        "area_of_focus": catalog_entry.area_of_focus,
+        "controls": controls,
+        "objectives": objectives,
+        "catalog_version": catalog_entry.catalog_version or "",
+        "prompt_version": PROMPT_VERSION,
+    }
+    context_json = json.dumps(context_data, sort_keys=True, default=str)
+    return hashlib.sha256(context_json.encode()).hexdigest()
 
 
 async def assemble_control_context(
@@ -142,6 +292,7 @@ async def assemble_control_context(
     # Resolve control mappings
     control_ids = catalog_entry.control_mappings or []
     controls = []
+    objectives: List[Dict[str, str]] = []
 
     if control_ids:
         ctrl_result = await db.execute(
@@ -152,18 +303,10 @@ async def assemble_control_context(
         for ctrl in ctrl_result.scalars().all():
             controls.append(_control_entry(ctrl))
 
-    # Build context hash (for cache invalidation and audit)
-    context_data = {
-        "evidence_id": evidence_id,
-        "artifact_title": catalog_entry.artifact_title,
-        "artifact_description": catalog_entry.artifact_description or "",
-        "area_of_focus": catalog_entry.area_of_focus,
-        "controls": controls,
-        "catalog_version": catalog_entry.catalog_version or "",
-        "prompt_version": PROMPT_VERSION,
-    }
-    context_json = json.dumps(context_data, sort_keys=True, default=str)
-    context_hash = hashlib.sha256(context_json.encode()).hexdigest()
+        ao_result = await db.execute(_objectives_query(control_ids))
+        objectives = [_objective_entry(ao) for ao in ao_result.scalars().all()]
+
+    objectives, capped = _cap_objectives(objectives)
 
     return ControlContext(
         evidence_id=evidence_id,
@@ -171,8 +314,10 @@ async def assemble_control_context(
         artifact_description=catalog_entry.artifact_description or "",
         area_of_focus=catalog_entry.area_of_focus,
         controls=controls,
-        context_hash=context_hash,
+        context_hash=_context_hash(evidence_id, catalog_entry, controls, objectives),
         framework_version=catalog_entry.catalog_version or "unknown",
+        objectives=objectives,
+        objectives_capped=capped,
     )
 
 
@@ -196,6 +341,7 @@ def assemble_control_context_sync(
 
     control_ids = catalog_entry.control_mappings or []
     controls = []
+    objectives: List[Dict[str, str]] = []
 
     if control_ids:
         ctrl_result = session.execute(
@@ -206,17 +352,10 @@ def assemble_control_context_sync(
         for ctrl in ctrl_result.scalars().all():
             controls.append(_control_entry(ctrl))
 
-    context_data = {
-        "evidence_id": evidence_id,
-        "artifact_title": catalog_entry.artifact_title,
-        "artifact_description": catalog_entry.artifact_description or "",
-        "area_of_focus": catalog_entry.area_of_focus,
-        "controls": controls,
-        "catalog_version": catalog_entry.catalog_version or "",
-        "prompt_version": PROMPT_VERSION,
-    }
-    context_json = json.dumps(context_data, sort_keys=True, default=str)
-    context_hash = hashlib.sha256(context_json.encode()).hexdigest()
+        ao_result = session.execute(_objectives_query(control_ids))
+        objectives = [_objective_entry(ao) for ao in ao_result.scalars().all()]
+
+    objectives, capped = _cap_objectives(objectives)
 
     return ControlContext(
         evidence_id=evidence_id,
@@ -224,9 +363,58 @@ def assemble_control_context_sync(
         artifact_description=catalog_entry.artifact_description or "",
         area_of_focus=catalog_entry.area_of_focus,
         controls=controls,
-        context_hash=context_hash,
+        context_hash=_context_hash(evidence_id, catalog_entry, controls, objectives),
         framework_version=catalog_entry.catalog_version or "unknown",
+        objectives=objectives,
+        objectives_capped=capped,
     )
+
+
+def _truncation_notice(truncated: bool) -> str:
+    """Factual disclosure appended to the evidence block when text was cut."""
+    if not truncated:
+        return ""
+    return (
+        "\n**Note:** the content above is only the beginning of this document; "
+        "it was truncated to fit the assessment budget. Judge what you can see, "
+        "and do not treat the absence of later material as a gap in the evidence."
+    )
+
+
+def _assessment_objectives_block(
+    objectives: List[Dict[str, str]],
+    capped: bool,
+) -> str:
+    """Render the assessment objectives the model must answer, grouped by control.
+
+    Objectives arrive in ao_id order, so grouping preserves that order within
+    each control and the block is byte-stable for a given catalog.
+    """
+    if not objectives:
+        return (
+            "No assessment objectives are published for the mapped controls. "
+            "Return an empty `ao_findings` array and judge the file at the "
+            "control level in `findings` instead."
+        )
+
+    grouped: Dict[str, List[Dict[str, str]]] = {}
+    for obj in objectives:
+        grouped.setdefault(obj["scf_id"], []).append(obj)
+
+    lines: List[str] = []
+    for scf_id, group in grouped.items():
+        lines.append(f"### {scf_id}")
+        for obj in group:
+            lines.append(f"- **{obj['ao_id']}**: {obj['objective_text']}")
+            if obj.get("expected_results"):
+                lines.append(f"  - Expected results: {obj['expected_results']}")
+    if capped:
+        lines.append("")
+        lines.append(
+            f"_Only the first {MAX_ASSESSMENT_OBJECTIVES} objectives (by AO id) are "
+            "listed. Answer these and do not speculate about the rest._"
+        )
+    return "\n".join(lines)
 
 
 def build_assessment_prompt(
@@ -235,32 +423,47 @@ def build_assessment_prompt(
     filename: str,
     content_type: str,
     assessment_date: str = "",
+    truncated: bool = False,
 ) -> tuple[str, str]:
     """Build the full assessment prompt.
 
     Returns (system_prompt, user_prompt) tuple.
     Also returns the prompt hash for audit trail.
+
+    ``truncated`` discloses to the model that it is seeing only the head of
+    the document. Without it the model reads a cut-off policy as an incomplete
+    policy and marks the evidence down for gaps that exist in our extraction
+    budget, not in the customer's evidence.
     """
     # Format control requirements (deprecated controls get a note line)
     controls_text = _control_requirements_block(control_context.controls)
+    objectives_text = _assessment_objectives_block(
+        control_context.objectives, control_context.objectives_capped,
+    )
+    ao_ids = [obj["ao_id"] for obj in control_context.objectives]
 
     date_line = f"\n\nToday's date is {assessment_date}. Evaluate all date references relative to this date." if assessment_date else ""
 
     system_prompt = f"""You are a GRC (Governance, Risk, Compliance) evidence assessor for the Secure Controls Framework (SCF).{date_line}
 
-Your task is to evaluate whether uploaded evidence content actually demonstrates compliance with the control requirements it is mapped to.
+You evaluate uploaded evidence against the SCF **assessment objectives** of the controls it is mapped to. An assessment objective is a single, testable statement; you answer each one separately, from what the document actually shows.
 
-You must:
-1. Assess RELEVANCE — does this evidence relate to the control requirements?
-2. Assess COMPLETENESS — does it cover all aspects of the requirements?
-3. Assess QUALITY — is the evidence current, clear, and substantive?
-4. Flag ERRORS — blank documents, placeholder text, wrong content, dates unreasonably old relative to today's date, redacted critical info
+For every objective you return one of exactly four designations:
 
-You are advisory only. Your assessment helps human reviewers prioritise their review. Be specific about what's present, what's missing, and what would improve the evidence.
+- `appears_satisfied` — the evidence shows this objective being met. Say what shows it.
+- `gap_identified` — the evidence is on topic but does not show this objective being met, or shows it only partly.
+- `not_applicable` — this objective cannot apply to this organisation or this artifact type. Use sparingly and justify it.
+- `cannot_assess` — this artifact is not the kind of evidence that could demonstrate this objective, or the document does not contain enough to judge. This is not a criticism of the evidence.
 
-Respond with valid JSON matching the required schema."""
+`gap_identified` and `cannot_assess` are different answers. A gap means "I looked and it is not here"; cannot_assess means "this document was never going to tell me". Do not use one for the other.
 
-    user_prompt = f"""Assess the following evidence file against its mapped control requirements.
+You are ADVISORY. You are not an assessor and you do not issue determinations — a human reviewer confirms or overrides everything you say. Never use assessor vocabulary such as "satisfied", "other than satisfied", "finding", "nonconformity", "pass" or "fail". Use only the four designations above.
+
+Be specific. A rationale that could have been written without reading the document is worthless.
+
+Respond with valid JSON matching the required schema. No prose outside the JSON."""
+
+    user_prompt = f"""Assess the following evidence file against the assessment objectives of its mapped controls.
 
 ## Evidence Item
 - **Evidence ID:** {control_context.evidence_id}
@@ -273,17 +476,23 @@ Respond with valid JSON matching the required schema."""
 ## Mapped Control Requirements
 {controls_text}
 
+## Assessment Objectives
+{objectives_text}
+
 ## Evidence Content
 ```
 {extracted_text}
 ```
+{_truncation_notice(truncated)}
 
 ## Assessment Instructions
-1. Score relevance 0-100 (how well does this content address the control requirements?)
-2. Determine sufficiency: "sufficient" (evidence adequately demonstrates compliance), "partial" (some coverage but gaps), "insufficient" (does not demonstrate compliance)
-3. Provide specific findings with categories (relevance, completeness, quality, error)
-4. For each finding, suggest concrete improvement actions where applicable
-5. Reference specific control IDs in findings where relevant
+1. Answer EVERY assessment objective listed above — exactly one `ao_findings` entry per AO id, using the id verbatim. Do not invent, merge, split or omit ids, and do not answer an objective that is not listed. There are {len(ao_ids)} to answer.
+2. Give each objective a `suggested_designation` from: {", ".join(f"`{d}`" for d in AO_DESIGNATIONS)}. Cite what the evidence does or does not show in `rationale`. Put a concrete next step in `suggestion`, or an empty string when there is nothing useful to add.
+3. Extract `evidence_effective_date`: the date this CONTENT is effective — the approval or issue date of a policy, the period end of a report, the capture date of a screenshot or export. It is not the upload date, and it is not today. If the document does not state a date you can rely on, return null. Do not estimate, infer from context, or guess: a wrong date in a compliance record is worse than an absent one. When you do return one, say where it came from in `effective_date_source`.
+4. Evidence supporting an assessment is normally expected to be no more than 12 months old at the time of assessment. If the effective date you found is older than that, add a `quality` finding saying so and recommending refreshed evidence — but do NOT downgrade the objective designations for age alone. Age is a currency problem for the reviewer to weigh, not an absence of the control.
+5. Score `relevance_score` 0-100: how well this content addresses the mapped controls overall.
+6. Set `status` to your overall impression. It is advisory — the recorded status is derived by the server from your per-objective designations — so spend your effort on the objectives, not on this field.
+7. Use `findings` for observations about the file as a whole (blank or placeholder content, wrong document, illegible scan, missing signatures, currency). Keep objective-specific reasoning in `ao_findings`.
 
 Respond with JSON only, matching this schema:
 {json.dumps(ASSESSMENT_OUTPUT_SCHEMA, indent=2)}"""

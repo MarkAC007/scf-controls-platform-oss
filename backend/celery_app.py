@@ -94,11 +94,11 @@ if _use_tls:
 
 # Broker + result-backend transport options.
 # health_check_interval pings the underlying Redis socket every N seconds; when
-# Redis force-reboots on the Azure side (Basic SKU has no replication, so its
-# backend can recycle and leave clients holding dead sockets), the next health
-# check detects the stale socket and reconnects transparently rather than
-# blocking task enqueue indefinitely. socket_keepalive helps middleboxes (Front
-# Door, NSGs) keep idle connections alive between bursts.
+# Redis restarts (container restart, `docker compose restart redis`, host
+# reboot) clients can be left holding dead sockets, and the next health check
+# detects the stale socket and reconnects transparently rather than blocking
+# task enqueue indefinitely. socket_keepalive keeps idle connections alive
+# between bursts when Redis is reached across a network hop.
 _REDIS_TRANSPORT_OPTS = {
     "socket_connect_timeout": 5,
     "socket_timeout": 30,
@@ -185,23 +185,24 @@ celery_app.conf.update(
         "tasks_assessment.assess_evidence_task": {"queue": "evidence_assessment"},
         "tasks_window_assessment.assess_window_task": {"queue": "evidence_window"},
         "tasks_window_assessment.nightly_window_refresh_task": {"queue": "evidence_window"},
-        # Route automation jobs to default deliberately: docker-compose.yml:202
-        # starts workers with an explicit -Q list, but
-        # terraform-aws/scripts/user-data.sh:266 and GCP Cloud Run start
-        # celery -A celery_app worker with no -Q, consuming only default.
+        # Route automation jobs to default deliberately: default is the one
+        # queue every Celery worker consumes out of the box, so these jobs
+        # still run even under a worker started as a bare
+        # `celery -A celery_app worker` with no -Q list (an operator
+        # debugging, or a compose override that trims the -Q list).
         "tasks_automation.generate_evidence_tasks_task": {"queue": "default"},
         "tasks_automation.notify_due_tasks_task": {"queue": "default"},
         "tasks_automation.notify_overdue_tasks_task": {"queue": "default"},
         # Document generation routes to default for the same reason as the
-        # automation tasks above: a dedicated queue would be consumed by the
-        # compose worker's -Q list but not by the AWS/GCP workers, which start
-        # with no -Q at all. A queue that works locally and is silently dead in
-        # production is worse than sharing default.
+        # automation tasks above: a dedicated queue only works if every worker
+        # launch command remembers to subscribe to it. A queue that works with
+        # the stock compose -Q list and is silently dead under any other
+        # worker invocation is worse than sharing default.
         "doc_gen.generate": {"queue": "default"},
         # Evidence integrity verification routes to default for the same reason
-        # again (#57). This one matters most of the three: a malware scan that
-        # runs in compose and is silently dead on AWS/GCP would show a green
-        # control on the dashboard while nothing was ever scanned.
+        # again (#57). This one matters most of the three: a malware scan whose
+        # queue no running worker consumes would show a green control on the
+        # dashboard while nothing was ever scanned.
         "tasks_evidence_integrity.verify_evidence_file_task": {"queue": "default"},
         "tasks_evidence_integrity.sweep_unverified_evidence_task": {"queue": "default"},
         "cdm.classify_intent": {"queue": "cdm_intent"},
@@ -310,18 +311,15 @@ celery_app.conf.update(
 # ---------------------------------------------------------------------------
 # Beat liveness (#784).
 #
-# Set here rather than as a `-S` flag on the command line because beat is
-# started from five places: docker-compose.yml, terraform-aws/ecs-celery.tf,
-# terraform-aws/scripts/user-data.sh, terraform-gcp/cloud-run-celery.tf and
-# terraform-azure/container-apps.tf. Configuration travels with the app; a CLI
-# flag has to be remembered five times.
+# Set here rather than as a `-S` flag on the command line so the configuration
+# travels with the app instead of having to be remembered in every launcher —
+# docker-compose.yml's celery-beat service, and any beat an operator starts by
+# hand.
 #
 # An explicit `-S`/`--scheduler` still overrides this — correct precedence for
-# an operator, and the reason ecs-celery.tf had to drop the
-# `--scheduler=celery.beat:PersistentScheduler` it used to pass. Left in place,
-# that one line would have excluded production from this fix. If you add a
-# `--scheduler` flag anywhere, you are opting that deployment out of beat
-# liveness; tests/test_celery_observability.py fails the build if you do.
+# an operator. If you add a `--scheduler` flag anywhere, you are opting that
+# deployment out of beat liveness; tests/test_celery_observability.py fails
+# the build if you do.
 #
 # The CLASS, not a "module.Class" string: celery resolves the string form with
 # kombu's symbol_by_name, which uses plain importlib and — unlike the
@@ -375,8 +373,8 @@ celery_app.Task = BaseTask
 # The mechanism here is easy to misread: merely having a receiver connected to
 # `setup_logging` is what tells Celery to skip its own logging configuration.
 # The receiver's body is irrelevant to that decision. So connecting this
-# unconditionally meant that on every deployment without Application Insights —
-# which is every local, docker-compose and self-hosted install — Celery skipped
+# unconditionally meant that on every install without Application Insights —
+# the default for a docker-compose install — Celery skipped
 # its setup, nothing else attached a handler to root, and Python fell back to
 # `logging.lastResort`: stderr, WARNING and above, no formatter.
 #
@@ -403,10 +401,10 @@ def _preserve_otel_logging(loglevel=None, **kwargs):
     # Celery emits after_setup_logger / after_setup_task_logger only inside the
     # `if not receivers:` branch of Logging.setup_logging_subsystem — i.e. only
     # when nothing is connected to setup_logging. Connecting THIS receiver is
-    # what suppresses them, so on Azure (the only place App Insights is set)
-    # the worker would otherwise still have no CR/LF filter: precisely the gap
-    # the block below claims to close. Attach it here too; the OTel handler is
-    # already on root by this point.
+    # what suppresses them, so on an install with App Insights configured (the
+    # only case this receiver is connected) the worker would otherwise still
+    # have no CR/LF filter: precisely the gap the block below claims to close.
+    # Attach it here too; the OTel handler is already on root by this point.
     _attach_log_sanitizer()
 
 

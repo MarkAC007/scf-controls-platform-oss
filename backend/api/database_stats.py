@@ -85,6 +85,13 @@ TENANT_SCOPED_EXCLUDED_TABLES: Dict[str, str] = {
     # the whole-DB dump in scripts/backup.sh, not this portable export.
     "audit_log": "append-only audit trail; captured by scripts/backup.sh",
     "audit_engagements": "audit trail; captured by scripts/backup.sh",
+    # Unlike evidence_assessments below, this one is NOT recomputable — a
+    # frozen verdict cannot be regenerated, only re-derived into a different
+    # one. It is excluded on the same grounds as audit_log rather than on
+    # recomputability: it is an append-only trail belonging to the source
+    # deployment. A tenant moved by this export arrives with its current
+    # verdicts and without their history.
+    "evidence_assessment_versions": "append-only assessment history; captured by scripts/backup.sh",
     # Evidence & generated artifacts — the blobs live in MinIO and are captured
     # by scripts/backup.sh; their rows are not part of the migration export.
     "evidence_files": "blob metadata; blobs live in MinIO (scripts/backup.sh)",

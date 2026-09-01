@@ -1,7 +1,7 @@
 # Docker Compose for testing production nginx frontend locally
 # Usage: docker compose -f docker-compose.prod-test.yml up --build
 #
-# This tests the nginx-based frontend (same as GCP deployment) against the local backend.
+# This tests the production nginx-based frontend (Dockerfile.frontend) against the local backend.
 # The nginx proxy connects to backend:8000 on the Docker network.
 
 services:
@@ -54,7 +54,7 @@ services:
       timeout: 5s
       retries: 5
 
-  # Production nginx frontend (same as GCP deployment)
+  # Production nginx frontend (same image as a production install)
   frontend:
     build:
       context: .

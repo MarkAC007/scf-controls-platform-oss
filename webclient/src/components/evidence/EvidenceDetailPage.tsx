@@ -43,6 +43,7 @@ import { ScfReference } from '../provenance/ScfReference'
 import { frequencyOptionsFor } from '../../data/frequencyVocabulary'
 import { PER_WINDOW_REVIEW_ENABLED } from '../../data/featureFlags'
 import { getEvidenceTracking } from '../../data/scopingService'
+import { useIsOrgEditor } from '../../hooks/useHasOrgRole'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -132,6 +133,18 @@ export default function EvidenceDetailPage({
   onNavigateToControl,
 }: EvidenceDetailPageProps): JSX.Element {
   const isTracked = tracking.is_tracked || false
+
+  // Who may review a file or queue an AI assessment: an editor of this
+  // organisation, which is the rank the backend enforces on both
+  // (``require_org_role("editor")`` on the per-file review and assess-bulk
+  // routes). Until this landed the review buttons had no way to switch on and
+  // were dead for every user — the prop was optional and nothing passed it.
+  //
+  // A courtesy gate, not a boundary: the API refuses the write regardless.
+  // Derived here rather than in ``EvidenceReview`` — the other permission on
+  // this page (``canManageTeams``) arrives as a prop, and that remains the
+  // grain for anything a sibling screen also needs.
+  const canReviewFiles = useIsOrgEditor(scopingData.organizationId)
 
   // ── Keyboard shortcuts ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -615,6 +628,8 @@ export default function EvidenceDetailPage({
                   orgId={scopingData.organizationId}
                   evidenceId={evidenceItem.id}
                   refreshTrigger={fileListRefreshTrigger}
+                  canReview={canReviewFiles}
+                  canAssess={canReviewFiles}
                 />
               </div>
             </div>

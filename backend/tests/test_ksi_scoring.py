@@ -213,3 +213,46 @@ class TestBands:
 class TestWeights:
     def test_default_weights_sum_to_one(self):
         assert sum(KPS_DEFAULT_WEIGHTS) == pytest.approx(1.0)
+
+
+class TestUnassessableExcludedFromQuality:
+    """#881 — files the extractor could not read carry no quality signal.
+
+    Before the 'unassessable' status existed, an image or spreadsheet was
+    stored as 'insufficient' with score 0 and entered EQ's denominator at
+    weight 0.0, so uploading unreadable evidence looked identical to
+    uploading bad evidence.
+    """
+
+    def test_unassessable_does_not_dilute_the_score(self):
+        # Five good files stay a perfect score with ten unreadable ones beside them.
+        assert compute_eq(5, 0, 0, avg_relevance_0_100=100, unassessable=10) == 1.0
+
+    def test_matches_the_same_population_without_them(self):
+        with_unreadable = compute_eq(3, 2, 1, avg_relevance_0_100=80, unassessable=7)
+        without = compute_eq(3, 2, 1, avg_relevance_0_100=80)
+        assert with_unreadable == without
+
+    def test_only_unassessable_is_none_not_zero(self):
+        # No assessable evidence means undefined quality, not failed quality.
+        assert compute_eq(0, 0, 0, avg_relevance_0_100=None, unassessable=6) is None
+
+    def test_old_insufficient_behaviour_still_scores_zero(self):
+        # Genuine insufficiency is unchanged — it is still a real verdict.
+        assert compute_eq(0, 0, 4, avg_relevance_0_100=100) == 0.0
+
+
+class TestEQWarningExcludesUnassessable:
+    def test_unreadable_files_no_longer_suppress_the_warning(self):
+        # 7 unreadable + 3 assessable, none of the 3 assessed. Counting the
+        # unreadable ones gives 3/10 = 0.30 and stays silent; the truth is
+        # that 100% of the assessable evidence is unassessed.
+        assert compute_eq_warning(3, 10) is None
+        assert compute_eq_warning(3, 10, unassessable_count=7) == "low_ai_coverage"
+
+    def test_no_warning_when_nothing_is_assessable(self):
+        assert compute_eq_warning(0, 6, unassessable_count=6) is None
+
+    def test_unchanged_when_no_unassessable_files(self):
+        assert compute_eq_warning(4, 10, unassessable_count=0) == "low_ai_coverage"
+        assert compute_eq_warning(3, 10, unassessable_count=0) is None

@@ -151,8 +151,10 @@ def _build_extraction_prompt(
 def _call_llm(system_prompt: str, user_prompt: str) -> Optional[dict]:
     """Call Claude for artifact-type extraction.
 
-    Mirrors services.ai_assessment_service._call_llm so the extraction path
-    has no FastAPI dependency and can run from a CLI script.
+    Mirrors tasks_assessment._call_llm so the extraction path has no FastAPI
+    dependency and can run from a CLI script. Note the deliberate difference:
+    that one raises on failure so its Celery task can retry, this one returns
+    None because its callers have no retry mechanism to hand the error to.
     """
     try:
         import anthropic

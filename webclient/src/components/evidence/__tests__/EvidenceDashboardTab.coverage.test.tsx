@@ -20,11 +20,27 @@ vi.mock('../../../data/apiClient', () => ({
   getEvidenceHealth: vi.fn(),
   getUpcomingEvidence: vi.fn(),
   getWindowAssessmentSummary: vi.fn(),
+  // #881: the per-file assessment card sits alongside the windowed one.
+  // Rejecting is the honest default here — these tests are about the health
+  // cards, and the card renders nothing when the summary cannot be loaded.
+  getAssessmentSummary: vi.fn(() => Promise.reject(new Error('not under test'))),
+  // #881 WS3: the confirmation queue card is part of this tab now. Rejecting
+  // keeps it out of the way of tests about the health cards, and the card
+  // renders its own error state rather than affecting anything asserted here.
+  getAssessmentReviewQueue: vi.fn(() => Promise.reject(new Error('not under test'))),
   refreshStaleWindowAssessments: vi.fn(),
   // #822 phase 2: the Owner Workload cards resolve member_type through this to
   // badge a contractor owner. Empty means no badge, leaving these tests to
   // assert the freshness and coverage behaviour they were written for.
   getOrgMemberSummaries: vi.fn(() => Promise.resolve([])),
+}))
+
+// #881 WS3: the queue card gates its call-to-action on org role, and the role
+// hook reads AuthContext. Without this the tab cannot render outside a
+// provider at all — see hooks/useHasOrgRole.
+vi.mock('../../../hooks/useHasOrgRole', () => ({
+  useHasOrgRole: () => false,
+  useIsOrgEditor: () => false,
 }))
 
 vi.mock('../../../data/scopingService', () => ({

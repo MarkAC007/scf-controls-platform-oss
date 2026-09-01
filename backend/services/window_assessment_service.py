@@ -10,7 +10,7 @@ Entry points:
     assess_window(session, org_id, evidence_id, ...) -> EvidenceWindowAssessment
 
 Synchronous (psycopg2) so it can run in Celery workers. Intentionally parallel
-in structure to services.ai_assessment_service.assess_evidence, but keyed on
+in structure to tasks_assessment.assess_evidence_task, but keyed on
 evidence_id + window rather than file id.
 """
 from __future__ import annotations

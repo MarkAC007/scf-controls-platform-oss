@@ -137,7 +137,7 @@ class TestOtelLoggingGate:
         assert result["setup_logging_receivers"] == 0
 
     def test_successful_configure_still_preserves_the_otel_handler(self):
-        """The original behaviour must survive: Azure deployments still opt out."""
+        """The original behaviour must survive: installs with App Insights configured still opt out."""
         result = _probe_import(
             {"APPLICATIONINSIGHTS_CONNECTION_STRING": "InstrumentationKey=abc"},
             fake_azure_succeeds=True,
@@ -187,7 +187,7 @@ class TestSanitizerReachesTheWorker:
         Celery sends after_setup_logger / after_setup_task_logger ONLY inside
         the `if not receivers:` branch of Logging.setup_logging_subsystem.
         Connecting `_preserve_otel_logging` to setup_logging is exactly what
-        makes `receivers` truthy — so on Azure, the one environment where App
+        makes `receivers` truthy — so precisely when App
         Insights is configured, both signals are silent and relying on them
         alone left the worker with no CR/LF filter. Attaching from inside the
         receiver is what closes it; without this test the gap regresses
@@ -531,58 +531,33 @@ class TestSchedulerIsSelected:
 # ---------------------------------------------------------------------------
 # 4. Class sweep over the deployment definitions
 #
-# The issue named docker-compose. There were three copies of the process-name
-# probe (compose, the ECS task definition, the EC2 user-data compose file) and
-# one task definition pinning --scheduler, which would have silently excluded
-# production from the fix. Assert the class, not the instance.
+# The platform ships one deployment: docker-compose.yml. Historically there
+# were three more copies of the process-name probe in cloud launcher files
+# (since removed), and one of them pinned --scheduler, which would have
+# silently excluded that environment from the fix. Assert the class, not the
+# instance, so any launcher added later gets listed here and swept too.
 # ---------------------------------------------------------------------------
 
 DEPLOYMENT_FILES = [
     "docker-compose.yml",
-    "terraform-aws/ecs-celery.tf",
-    "terraform-aws/scripts/user-data.sh",
-    "terraform-gcp/cloud-run-celery.tf",
-    "terraform-azure/container-apps.tf",
 ]
 
-#: Files that define a beat liveness probe today. GCP and Azure define none —
-#: they are swept for regressions but have nothing to assert positively.
+#: Files that define a beat liveness probe today.
 FILES_WITH_A_BEAT_PROBE = [
     "docker-compose.yml",
-    "terraform-aws/ecs-celery.tf",
-    "terraform-aws/scripts/user-data.sh",
 ]
 
 
 def _deployment_path(relpath):
-    """Resolve a DEPLOYMENT_FILES entry, or say precisely why it is not there.
+    """Resolve a DEPLOYMENT_FILES entry, failing loudly if it is gone.
 
-    Two different things look identical here — a file that MOVED, and a file
-    this distribution never shipped — and each needs the opposite verdict.
-    The public OSS snapshot is Docker-only: scripts/prepare-oss.sh deletes
-    terraform-aws/, terraform-gcp/ and terraform-azure/ wholesale and then
-    asserts their absence as a release gate, while shipping backend/tests/
-    intact. Over there these entries are missing BY DESIGN. Here, a missing
-    entry means the sweep has quietly gone blind, which is the failure #784
-    landed this file to prevent.
-
-    The tell is that stripping removes the whole TREE, whereas moving a file
-    leaves its tree behind. So an absent top-level directory is a distribution
-    that does not carry this deployment; anything else absent is a rename
-    nobody propagated. Deriving it from the tree rather than from a marker
-    file keeps this honest with no third list to drift out of step with
-    prepare-oss.sh — and nothing an operator can drop into a checkout can
-    flip the verdict.
-
-    A root-level entry (docker-compose.yml) has no tree to lose, so it always
-    fails when absent — it ships everywhere, in every distribution.
+    Every entry ships in every distribution (the OSS snapshot included), so an
+    absent entry is a rename nobody propagated — the failure #784 landed this
+    file to prevent — never a distribution difference.
     """
     path = REPO_ROOT / relpath
     if path.exists():
         return path
-    top, _, rest = relpath.partition("/")
-    if rest and not (REPO_ROOT / top).is_dir():
-        pytest.skip(f"{top}/ is not shipped in this distribution")
     pytest.fail(f"{relpath} moved — update DEPLOYMENT_FILES")
 
 
@@ -629,7 +604,7 @@ def test_no_process_name_beat_probe_survives(relpath):
 def test_no_deployment_pins_the_scheduler(relpath):
     """An explicit --scheduler overrides celery_app.conf.beat_scheduler.
 
-    terraform-aws/ecs-celery.tf pinned celery.beat:PersistentScheduler, so
+    A since-removed cloud launcher pinned celery.beat:PersistentScheduler, so
     without this the heartbeat would have shipped everywhere except the
     environment it exists for.
     """
@@ -648,8 +623,8 @@ def test_no_deployment_pins_the_scheduler(relpath):
 def test_each_beat_probe_uses_the_heartbeat(relpath):
     """Asserted per file rather than by counting.
 
-    A count would fail the day someone does the right thing and adds a probe to
-    GCP or Azure — and would report it as "a beat container was added or
+    A count would fail the day someone adds a probe to a newly listed
+    launcher — and would report it as "a beat container was added or
     removed", which is exactly backwards.
     """
     path = _deployment_path(relpath)

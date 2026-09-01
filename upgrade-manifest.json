@@ -1,11 +1,11 @@
 {
   "schema": 1,
-  "version": "0.25.3",
-  "released": "2026-09-01T12:56:58Z",
+  "version": "0.25.4",
+  "released": "2026-09-01T17:46:23Z",
   "min_upgradable_version": "0.0.0",
   "breaking": false,
   "required_stops": [],
-  "release_url": "https://github.com/MarkAC007/scf-controls-platform-oss/releases/tag/v0.25.3",
+  "release_url": "https://github.com/MarkAC007/scf-controls-platform-oss/releases/tag/v0.25.4",
   "summary": "Adds SCF document generation to the platform \u2014 generated documents with versions, sections and review transitions. Migration docgen001 creates five new tables and changes no existing schema.",
   "migration_range": [
     "20260119_000000_62bdef86f249_initial_schema",
@@ -87,7 +87,8 @@
     "20260824_150000_organization_invite_member_type",
     "20260824_160000_evidence_task_org_and_owning_team",
     "20260824_170000_team_functions_many_to_many",
-    "20260830_090000_notification_org_boundary"
+    "20260830_090000_notification_org_boundary",
+    "20260901_150000_evidence_assessment_versions"
   ],
   "env_added": [],
   "min_compose_action": "rebuild"

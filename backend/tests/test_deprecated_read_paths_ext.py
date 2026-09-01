@@ -485,6 +485,9 @@ class TestConsumer11AssessmentPrompts:
         db.execute = AsyncMock(side_effect=[
             _result(scalar_one_or_none=_catalog_entry()),
             _result(scalars_all=[_prompt_ctrl(deprecated=True)]),
+            # Assessment objectives for the mapped controls (#881 WS2). None
+            # published for this test control.
+            _result(scalars_all=[]),
         ])
 
         context = await assemble_control_context(db, "EVID100")
@@ -505,8 +508,16 @@ class TestConsumer11AssessmentPrompts:
 
     @pytest.mark.asyncio
     async def test_active_control_context_shape_is_unchanged(self):
-        """Hash stability: an active control's context entry carries exactly
-        the pre-upgrade keys, so existing context hashes do not shift."""
+        """An active control's context entry carries exactly the pre-upgrade
+        keys, so deprecation support adds nothing to an active control's
+        contribution to the hash.
+
+        This is no longer a claim that context hashes are stable overall: the
+        AO-grounded rewrite (#881 WS2) deliberately put assessment objectives
+        and prompt version 2.0.0 into the hash, which re-assesses every file
+        once. What is asserted here is narrower and still true — the *control*
+        entry gained nothing.
+        """
         from services.assessment_prompts import (
             assemble_control_context, build_assessment_prompt,
         )
@@ -515,6 +526,7 @@ class TestConsumer11AssessmentPrompts:
         db.execute = AsyncMock(side_effect=[
             _result(scalar_one_or_none=_catalog_entry()),
             _result(scalars_all=[_prompt_ctrl(deprecated=False)]),
+            _result(scalars_all=[]),
         ])
 
         context = await assemble_control_context(db, "EVID100")

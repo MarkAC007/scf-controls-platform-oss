@@ -17,6 +17,15 @@ import { describe, expect, it, vi, afterEach } from 'vitest'
 
 // ─── Stubs ────────────────────────────────────────────────────────────────────
 
+// #881: the page resolves the viewer's org role to decide whether the evidence
+// file list may offer review and AI-assess controls. These tests are about
+// layout and keyboard behaviour, so the role is stubbed rather than provided
+// through a real AuthProvider — the gate itself is covered in
+// hooks/__tests__/useHasOrgRole.test.ts.
+vi.mock('../../../hooks/useHasOrgRole', () => ({
+  useHasOrgRole: () => false,
+  useIsOrgEditor: () => false,
+}))
 vi.mock('../MaturityStepper', () => ({
   MaturityStepper: () => <div data-testid="maturity-stepper" />,
 }))

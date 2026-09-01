@@ -15,7 +15,7 @@ name: Semgrep SAST
 # possible moment. That is what happened to OSS PR #39.
 #
 # The fix is a gate, not a wall. A full `--config auto` scan of this repo
-# currently returns ~175 findings (mostly terraform hardening advisories and
+# returns a triple-digit findings baseline (mostly hardening advisories and
 # mutable action tags). Failing on all of them would block every PR on day one
 # and would be promptly disabled, so the gate fails ONLY on findings sitting on
 # lines the pull request actually ADDED. Pre-existing debt stays visible in the

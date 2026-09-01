@@ -50,11 +50,6 @@
       "groupName": "typescript types"
     },
     {
-      "description": "Group Terraform providers",
-      "matchManagers": ["terraform"],
-      "groupName": "terraform dependencies"
-    },
-    {
       "description": "Group Docker base images",
       "matchManagers": ["dockerfile"],
       "groupName": "docker base images"
@@ -85,9 +80,6 @@
       "(^|/)requirements-.*\\.txt$",
       "(^|/)pyproject\\.toml$"
     ]
-  },
-  "terraform": {
-    "enabled": true
   },
   "docker": {
     "enabled": true

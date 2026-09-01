@@ -4,10 +4,12 @@ import {
   deleteEvidenceFile,
   reviewEvidenceFile,
   getAssessment,
+  bulkAssess,
   type EvidenceFileResponse,
   type EvidenceAssessmentResponse,
 } from '../../data/apiClient'
 import { EvidenceFilePreviewModal } from './EvidenceFilePreviewModal'
+import { ASSESSMENT_STATUS_LABELS, verdictPresentation } from './assessmentVerdict'
 
 // M4 (#574) — when the per-window review workflow is enabled, the per-file
 // Approve/Reject buttons are hidden because reviews now happen at the window
@@ -24,7 +26,19 @@ interface EvidenceFileListProps {
   refreshTrigger: number
   canDelete?: boolean
   canReview?: boolean
+  /** Whether this user may request AI assessments. Backend requires ``editor``. */
+  canAssess?: boolean
 }
+
+/**
+ * The server queues at most this many files per bulk-assess request and
+ * silently drops the rest.
+ *
+ * The client slices to the same number and says it is doing so. Sending 200
+ * and reporting "queued" for all of them would be the platform lying about
+ * work it never scheduled.
+ */
+const BULK_ASSESS_MAX = 50
 
 // ---- Helpers (exported for use by EvidenceFilePreviewModal) ----
 
@@ -87,20 +101,44 @@ const REVIEW_STATUS_CONFIG: Record<string, { label: string; className: string }>
   needs_revision: { label: 'Needs Revision', className: 'review-badge-needs-revision' },
 }
 
-const AI_STATUS_CONFIG: Record<string, { label: string; className: string }> = {
-  sufficient: { label: 'AI: Sufficient', className: 'ai-chip-sufficient' },
-  partial: { label: 'AI: Partial', className: 'ai-chip-partial' },
-  insufficient: { label: 'AI: Insufficient', className: 'ai-chip-insufficient' },
-  pending: { label: 'AI: Assessing...', className: 'ai-chip-pending' },
-  processing: { label: 'AI: Assessing...', className: 'ai-chip-pending' },
-  error: { label: 'AI: Error', className: 'ai-chip-error' },
+const AI_STATUS_TITLES: Record<string, string> = {
+  error: 'The assessment ran and failed. This is not a finding about the evidence.',
+  unassessable:
+    'No readable text could be extracted from this file, so it was not assessed. '
+    + 'Open the file to see why.',
 }
 
-function AssessmentChip({ status }: { status: string | null }) {
-  if (!status) return null
-  const config = AI_STATUS_CONFIG[status]
-  if (!config) return null
-  return <span className={`ai-chip ${config.className}`}>{config.label}</span>
+const AI_UNREVIEWED_TITLE =
+  'A suggestion from the AI assessor. Nobody has confirmed it yet — open the file to review it.'
+
+/** What the list knows about one file's AI verdict. */
+export interface FileAssessmentSummary {
+  status: string
+  /** 'confirmed' | 'overridden' | null. Null means still a suggestion. */
+  reviewDecision: string | null
+}
+
+/**
+ * The verdict chip in a file row.
+ *
+ * Reads "AI suggests: Partial" until a person has confirmed it, and
+ * "Confirmed: Partial" (or "Corrected: …") afterwards. The wording comes from
+ * the shared vocabulary in ``assessmentVerdict`` rather than a local map,
+ * because the list and the modal saying different things about the same
+ * verdict is precisely the failure that vocabulary exists to prevent.
+ */
+function AssessmentChip({ assessment }: { assessment: FileAssessmentSummary | null }) {
+  if (!assessment?.status) return null
+  if (!ASSESSMENT_STATUS_LABELS[assessment.status]) return null
+  const verdict = verdictPresentation(assessment.status, assessment.reviewDecision)
+  const title =
+    AI_STATUS_TITLES[assessment.status] ||
+    (verdict.isReviewed ? undefined : AI_UNREVIEWED_TITLE)
+  return (
+    <span className={verdict.className} title={title}>
+      {verdict.text}
+    </span>
+  )
 }
 
 // ---- Integrity badge (#57) ----
@@ -168,7 +206,10 @@ interface FileRowProps {
   isLoadingPreview: boolean
   canDelete?: boolean
   canReview?: boolean
-  assessmentStatus?: string | null
+  assessment?: FileAssessmentSummary | null
+  selectable?: boolean
+  selected?: boolean
+  onToggleSelected?: (fileId: string) => void
 }
 
 /**
@@ -210,7 +251,7 @@ function EffectivePeriodChip({ start, end }: { start: string | null; end: string
   )
 }
 
-function FileRow({ file, onDelete, onReview, isDeleting, isReviewing, onView, isLoadingPreview, canDelete, canReview, assessmentStatus }: FileRowProps) {
+function FileRow({ file, onDelete, onReview, isDeleting, isReviewing, onView, isLoadingPreview, canDelete, canReview, assessment, selectable, selected, onToggleSelected }: FileRowProps) {
   const [confirmDelete, setConfirmDelete] = useState(false)
 
   function handleDeleteClick() {
@@ -233,6 +274,18 @@ function FileRow({ file, onDelete, onReview, isDeleting, isReviewing, onView, is
 
   return (
     <div className={`evidence-files-row${isDeleting ? ' evidence-files-row--deleting' : ''}`}>
+      {selectable && (
+        <div className="evidence-files-select-col">
+          <input
+            type="checkbox"
+            className="evidence-files-select"
+            checked={selected ?? false}
+            onChange={() => onToggleSelected?.(file.id)}
+            aria-label={`Select ${file.filename} for AI assessment`}
+          />
+        </div>
+      )}
+
       {/* File type icon */}
       <div className="evidence-files-icon-col" aria-hidden="true">
         <span className="evidence-files-type-icon">
@@ -282,10 +335,10 @@ function FileRow({ file, onDelete, onReview, isDeleting, isReviewing, onView, is
               <IntegrityBadge badge={file.integrity_badge} />
             </>
           )}
-          {assessmentStatus && (
+          {assessment && (
             <>
               <span className="evidence-files-separator" aria-hidden="true">{'\u00B7'}</span>
-              <AssessmentChip status={assessmentStatus} />
+              <AssessmentChip assessment={assessment} />
             </>
           )}
         </span>
@@ -385,6 +438,7 @@ export function EvidenceFileList({
   refreshTrigger,
   canDelete,
   canReview,
+  canAssess,
 }: EvidenceFileListProps) {
   const [files, setFiles] = useState<EvidenceFileResponse[]>([])
   const [loading, setLoading] = useState(true)
@@ -393,7 +447,10 @@ export function EvidenceFileList({
   const [reviewingIds, setReviewingIds] = useState<Set<string>>(new Set())
   const [previewFile, setPreviewFile] = useState<EvidenceFileResponse | null>(null)
   const [loadingPreviewId, setLoadingPreviewId] = useState<string | null>(null)
-  const [assessments, setAssessments] = useState<Record<string, string>>({}) // fileId -> status
+  const [assessments, setAssessments] = useState<Record<string, FileAssessmentSummary>>({}) // fileId -> verdict
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
+  const [bulkBusy, setBulkBusy] = useState(false)
+  const [bulkMessage, setBulkMessage] = useState<string | null>(null)
 
   // Track the last fetch key (trigger + evidenceId) to avoid re-fetch loops while
   // still re-fetching when the evidence item changes without a trigger increment.
@@ -429,19 +486,81 @@ export function EvidenceFileList({
     Promise.all(
       files.map(f =>
         getAssessment(orgId, evidenceId, f.id)
-          .then(r => ({ fileId: f.id, status: r?.status ?? null }))
-          .catch(() => ({ fileId: f.id, status: null }))
+          .then(r => ({
+            fileId: f.id,
+            status: r?.status ?? null,
+            // Carried alongside the status because the chip's wording turns on
+            // it: without the decision, every verdict in the list would read as
+            // settled regardless of whether anyone had looked at it.
+            reviewDecision: r?.review_decision ?? null,
+          }))
+          .catch(() => ({ fileId: f.id, status: null, reviewDecision: null }))
       )
     ).then(results => {
       if (cancelled) return
-      const map: Record<string, string> = {}
+      const map: Record<string, FileAssessmentSummary> = {}
       for (const r of results) {
-        if (r.status) map[r.fileId] = r.status
+        if (r.status) map[r.fileId] = { status: r.status, reviewDecision: r.reviewDecision }
       }
       setAssessments(map)
     })
     return () => { cancelled = true }
   }, [files, orgId, evidenceId])
+
+  // Clear a stale selection when the evidence item changes — the ids would
+  // refer to files that are no longer on screen.
+  useEffect(() => {
+    setSelectedIds(new Set())
+    setBulkMessage(null)
+  }, [evidenceId])
+
+  const selectableIds = files.map(f => f.id)
+  const allSelected = selectableIds.length > 0 && selectableIds.every(id => selectedIds.has(id))
+  const selectedCount = selectedIds.size
+
+  const toggleSelected = useCallback((fileId: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(fileId)) next.delete(fileId)
+      else next.add(fileId)
+      return next
+    })
+  }, [])
+
+  const toggleSelectAll = useCallback(() => {
+    setSelectedIds(prev => {
+      const ids = files.map(f => f.id)
+      if (ids.every(id => prev.has(id))) return new Set<string>()
+      return new Set<string>(ids)
+    })
+  }, [files])
+
+  const handleBulkAssess = useCallback(async () => {
+    // Slice here, not server-side-and-hope. The server takes the first 50 and
+    // drops the rest without complaint; the user is told which 50 they got.
+    const ids = files.map(f => f.id).filter(id => selectedIds.has(id))
+    const batch = ids.slice(0, BULK_ASSESS_MAX)
+    const dropped = ids.length - batch.length
+
+    setBulkBusy(true)
+    setBulkMessage(null)
+    try {
+      const result = await bulkAssess(orgId, { evidence_id: evidenceId, file_ids: batch })
+      const queued = `Queued ${result.queued} file${result.queued === 1 ? '' : 's'} for assessment.`
+      setBulkMessage(
+        dropped > 0
+          ? `${queued} ${dropped} more were not sent — a maximum of ${BULK_ASSESS_MAX} files can be `
+            + 'queued at once. Select the rest and run it again.'
+          : queued
+      )
+      setSelectedIds(new Set())
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to queue assessments'
+      setBulkMessage(`Could not queue assessments: ${message}`)
+    } finally {
+      setBulkBusy(false)
+    }
+  }, [orgId, evidenceId, files, selectedIds])
 
   const handleDelete = useCallback(async (fileId: string) => {
     setDeletingIds(prev => new Set(prev).add(fileId))
@@ -540,6 +659,53 @@ export function EvidenceFileList({
         className="evidence-files-list"
         hidden={isCollapsible && !expanded}
       >
+        {/* Bulk assess bar — only for a user the backend would actually let
+            queue a run, and only when there is something to select. */}
+        {canAssess && !loading && !error && files.length > 0 && (
+          <div className="evidence-files-bulk-bar">
+            <label className="evidence-files-bulk-select-all">
+              <input
+                type="checkbox"
+                checked={allSelected}
+                onChange={toggleSelectAll}
+                disabled={bulkBusy}
+                aria-label={allSelected ? 'Clear selection' : 'Select all files'}
+              />
+              <span>
+                {allSelected
+                  ? `All ${files.length} selected`
+                  : `Select all ${files.length}`}
+              </span>
+            </label>
+            {selectedCount > 0 && (
+              <>
+                <span className="evidence-files-bulk-count">
+                  {selectedCount} selected
+                </span>
+                <button
+                  type="button"
+                  className="evidence-files-bulk-assess-btn"
+                  onClick={handleBulkAssess}
+                  disabled={bulkBusy}
+                >
+                  {bulkBusy ? 'Queueing…' : `Assess selected (${Math.min(selectedCount, BULK_ASSESS_MAX)})`}
+                </button>
+              </>
+            )}
+            {selectedCount > BULK_ASSESS_MAX && (
+              <span className="evidence-files-bulk-cap-note">
+                Only the first {BULK_ASSESS_MAX} will be queued.
+              </span>
+            )}
+          </div>
+        )}
+
+        {bulkMessage && (
+          <div className="evidence-files-bulk-message" role="status">
+            {bulkMessage}
+          </div>
+        )}
+
         {/* Loading skeletons */}
         {loading && (
           <>
@@ -591,7 +757,10 @@ export function EvidenceFileList({
               isLoadingPreview={loadingPreviewId === file.id}
               canDelete={canDelete}
               canReview={canReview}
-              assessmentStatus={assessments[file.id] ?? null}
+              assessment={assessments[file.id] ?? null}
+              selectable={canAssess}
+              selected={selectedIds.has(file.id)}
+              onToggleSelected={toggleSelected}
             />
           ))
         )}

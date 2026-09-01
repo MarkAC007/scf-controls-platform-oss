@@ -37,16 +37,23 @@ from services.assurance_policy import (  # noqa: E402
 )
 
 
-# The SQL that shipped, hashed before the attested_only refactor split each
-# constant into a builder. Parameterising a query is only safe if the
-# default rendering comes out byte-for-byte identical; "it looks the same"
-# is not a proof, and a stray alias or a shifted space would change the
-# plan for every existing org.
+# The SQL that ships for an org with no assurance policy, hashed. The pin
+# exists because parameterising a query is only safe if the default rendering
+# comes out byte-for-byte identical; "it looks the same" is not a proof, and a
+# stray alias or a shifted space would change the plan for every existing org.
+#
+# Re-pinned deliberately by #881 WS3. Every ungated variant gained an
+# `unassessable_count` column, and the per-file pair additionally gained the
+# three `*_confirmed_count` columns behind the confirmation weighting. These
+# are additive SELECT columns over the same FROM/WHERE, so no row set moved —
+# but the strings did, and a pin that were quietly loosened to accommodate that
+# would stop being a pin. Anything that changes these hashes again should be a
+# decision somebody wrote down here, not a diff that slid past.
 SHIPPED_HASHES = {
-    "per_file": "278e4d290e4700175ff374cdceebf3aaeb10ff444e2f07bf18628827067dcd12",
-    "window": "bf46a4008e1528e1cfe6da3b7f29f459292872ba8f752bfc028129863b617e4c",
-    "composite": "0c2ca8ff747b173d9c435535035a142b08188cb202423434bfa7bbb234537358",
-    "composite_window": "067bdf22b58e6ef6eece7b47cd5a7382f4b33ba418b4c50ea4cf8c41e4007e22",
+    "per_file": "af1ce345428aea2d4edaa3b2db1da708751eca772cede7db5ab4189ab76f5e43",
+    "window": "70dab84ffc8b3d5febd5d786b8ef91fef303cb5b5bfeb65053886954504bc71b",
+    "composite": "489182bbf5015e59871ed3c8af3734d618e860166ed49db9a0b14bdcc8de6c6e",
+    "composite_window": "21cb324951742c386df9ca3ec31204cf2125132762bd30ad9d6aa03e98ad4759",
 }
 
 OPEN_VARIANTS = {
