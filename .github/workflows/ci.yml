@@ -267,6 +267,24 @@ jobs:
     needs: detect
     if: needs.detect.outputs.has_python == 'true'
     runs-on: ubuntu-latest
+    # A throwaway PostgreSQL for the backup/restore round-trip tests, which
+    # exercise cascade + constraint behaviour a mocked session cannot express
+    # (test_database_backup_restore.py). Wired via TEST_RESTORE_DATABASE_URL
+    # below; the schema is created and dropped by the test's own fixtures.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: scftest
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -305,6 +323,21 @@ jobs:
           else
             echo "No tests directory found, skipping tests"
           fi
+
+      # The backup/restore endpoints are the most destructive pair in the
+      # platform and their tests skip whenever TEST_RESTORE_DATABASE_URL is
+      # unset — which, before this, was everywhere including CI. Run them
+      # explicitly against the Postgres service so the cross-tenant write guard
+      # (#870) and the blast-radius regressions cannot silently rot.
+      - name: Backup/restore security tests (Postgres)
+        if: hashFiles('backend/tests/test_database_backup_restore.py') != ''
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/scftest
+          TEST_RESTORE_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/scftest
+          DB_INIT_MODE: alembic
+        run: |
+          pytest tests/test_database_backup_restore.py -v
 
       - name: Upload coverage
         if: always()

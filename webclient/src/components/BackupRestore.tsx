@@ -192,9 +192,13 @@ export default function BackupRestore({ organizationId }: BackupRestoreProps) {
 
   return (
     <div className="settings-group backup-restore-section surface-bench">
-      <h2 className="bench-header"><span className="container-title">Your Backups</span></h2>
+      <h2 className="bench-header"><span className="container-title">Tenant Export / Import</span></h2>
       <p style={{ color: 'var(--muted)', fontSize: '14px', marginBottom: '16px' }}>
-        Download a complete backup of your organization's data or restore from a previous backup.
+        Export this organization's core records to a JSON file for moving a tenant
+        between deployments, or import a previously exported file. This is a partial
+        export for tenant migration, not a disaster-recovery backup — it does not
+        include every table, the identity store, or evidence files. For a complete
+        backup, use the server-side <code>scripts/backup.sh</code>.
       </p>
 
       {message && (
@@ -319,14 +323,14 @@ export default function BackupRestore({ organizationId }: BackupRestoreProps) {
             className="btn btn-primary"
             disabled={backupLoading || restoreLoading}
           >
-            {backupLoading ? 'Creating Backup...' : 'Download Backup'}
+            {backupLoading ? 'Creating Export...' : 'Download Tenant Export'}
           </button>
           <button
             onClick={() => fileInputRef.current?.click()}
             className="btn btn-secondary"
             disabled={backupLoading || restoreLoading}
           >
-            Restore from Backup
+            Import Tenant Data
           </button>
           <input
             type="file"

@@ -51,6 +51,7 @@ if DSN:  # imports touch settings that are pointless to load when skipping
     import main  # noqa: E402
     from auth import User, require_platform_admin  # noqa: E402
     from database import get_db  # noqa: E402
+    from rate_limiting import limiter  # noqa: E402
     from models import (  # noqa: E402
         Base,
         EvidenceTracking,
@@ -162,9 +163,19 @@ def client_raw(db_engine):
 
     main.app.dependency_overrides[get_db] = _get_db
     main.app.dependency_overrides[require_platform_admin] = _admin
-    with TestClient(main.app) as c:
-        yield c
-    main.app.dependency_overrides.clear()
+    # backup + restore are auth-tier rate limited (10/min, #858). These tests
+    # legitimately call them far more than that in a minute; the rate limit is
+    # exercised by the dedicated rate-limiting suites, not here. Disable the
+    # shared limiter for the lifetime of this client and restore it after, so
+    # neither this module nor a later one in the same session is affected.
+    limiter_was_enabled = limiter.enabled
+    limiter.enabled = False
+    try:
+        with TestClient(main.app) as c:
+            yield c
+    finally:
+        limiter.enabled = limiter_was_enabled
+        main.app.dependency_overrides.clear()
 
 
 @pytest.fixture(scope="function")
@@ -427,6 +438,46 @@ async def test_out_of_scope_rows_are_dropped_and_reported(client, seeded):
         result = await session.execute(text(
             "SELECT count(*) FROM scoped_controls WHERE scf_id = 'SMUGGLED-01'"))
         assert result.scalar() == 0
+
+
+@pytest.mark.asyncio
+async def test_indirect_child_row_targeting_foreign_org_is_dropped(client, seeded):
+    """The polymorphic half of the cross-tenant write guard (#870).
+
+    Comments carry no organization_id; their tenant is the org of the entity
+    they hang off (commentable_id). A backup scoped to TARGET that appends a
+    comment pointing at OTHER org's control must not write that comment — the
+    parent is outside scope — and the drop must be reported, exactly as the
+    directly-scoped case above is. Without the guard the comment would be
+    inserted (its commentable_id is untyped, so no foreign key stops it) and
+    become a cross-tenant write into OTHER's control thread.
+    """
+    backup = _scope_to_target_only(_take_backup(client))
+
+    async with seeded() as session:
+        other_control_id = (await session.execute(text(
+            "SELECT id FROM scoped_controls WHERE organization_id = :org"),
+            {"org": str(OTHER_ORG_ID)})).scalar()
+
+    smuggled_comment_id = str(uuid.uuid4())
+    backup["data"].setdefault("comments", []).append({
+        "id": smuggled_comment_id,
+        "commentable_type": "control",
+        "commentable_id": str(other_control_id),
+        "user_id": str(ADMIN_USER_ID),
+        "content": "cross-tenant write attempt",
+    })
+
+    resp = client.post("/api/database/restore",
+                       json={"backup_data": backup, "confirm_clear": True})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["skipped_rows"].get("comments") == 1
+
+    async with seeded() as session:
+        written = (await session.execute(text(
+            "SELECT count(*) FROM comments WHERE id = :cid"),
+            {"cid": smuggled_comment_id})).scalar()
+        assert written == 0, "a comment on another tenant's control must not be written"
 
 
 @pytest.mark.asyncio
