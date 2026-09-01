@@ -156,7 +156,7 @@ services:
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-minioadmin}
       AWS_ENDPOINT_URL: ${AWS_ENDPOINT_URL-http://minio:9000}
       EVIDENCE_PUBLIC_ENDPOINT: ${EVIDENCE_PUBLIC_ENDPOINT-http://localhost:${MINIO_PORT:-9000}}
-      # Azure Blob Storage (set these for Azure deployments)
+      # Azure Blob Storage (set these to store evidence in Azure Blob instead of MinIO/S3)
       AZURE_STORAGE_ACCOUNT_NAME: ${AZURE_STORAGE_ACCOUNT_NAME:-}
       AZURE_STORAGE_ACCOUNT_KEY: ${AZURE_STORAGE_ACCOUNT_KEY:-}
       EVIDENCE_CONTAINER: ${EVIDENCE_CONTAINER:-evidence}
@@ -342,8 +342,8 @@ services:
       - cg-network
     restart: unless-stopped
     # Override the inherited backend-image healthcheck (HTTP probe to :8000) —
-    # the worker serves no HTTP, so that check can never pass. Mirrors the
-    # proven ECS worker check (terraform-aws/ecs-celery.tf).
+    # the worker serves no HTTP, so that check can never pass. A celery
+    # inspect ping against the worker's own node is the proven equivalent.
     healthcheck:
       test: ["CMD-SHELL", "celery -A celery_app inspect ping -d celery@$$HOSTNAME || exit 1"]
       interval: 30s

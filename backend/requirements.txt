@@ -59,10 +59,10 @@ kombu>=5.3.0  # Celery messaging library
 weasyprint>=62.0
 markdown>=3.5
 
-# AWS SDK (Lambda invocation for DPSIA)
+# AWS SDK (S3-compatible evidence storage — bundled MinIO or real S3)
 boto3>=1.34.0
 
-# Azure Blob Storage (evidence storage on Azure deployments)
+# Azure Blob Storage (optional evidence-storage backend)
 azure-storage-blob>=12.19.0
 
 # Testing

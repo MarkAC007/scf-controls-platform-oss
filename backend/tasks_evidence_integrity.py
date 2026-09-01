@@ -30,12 +30,13 @@ Two entry points:
   egress job that cannot report progress or be resumed.
 
 **Queue routing.** Both tasks route to `default`, and that is not laziness.
-`terraform-aws/scripts/user-data.sh` and the GCP Cloud Run worker both start
-`celery -A celery_app worker` with no `-Q`, so they consume `default` and
-nothing else. A dedicated `evidence_integrity` queue would work perfectly in
-compose and be silently dead in production — which for a security control is the
-worst possible failure mode, because the dashboard would show scanning enabled
-and no file would ever be scanned.
+`default` is the one queue every Celery worker consumes out of the box, so
+these tasks still run under a worker started as a bare
+`celery -A celery_app worker` with no `-Q`. A dedicated `evidence_integrity`
+queue would work with the stock compose `-Q` list and be silently dead under
+any other worker invocation — which for a security control is the worst
+possible failure mode, because the dashboard would show scanning enabled and
+no file would ever be scanned.
 """
 import asyncio
 import logging

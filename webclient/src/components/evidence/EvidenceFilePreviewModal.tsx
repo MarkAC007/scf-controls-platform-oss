@@ -1,8 +1,14 @@
 import { useEffect, useState } from 'react'
-import { type EvidenceFileResponse, type AssessmentFinding } from '../../data/apiClient'
+import {
+  type EvidenceFileResponse,
+  type AssessmentFinding,
+  type EvidenceAssessmentResponse,
+} from '../../data/apiClient'
 import { useAssessmentPolling } from '../../hooks/useAssessmentPolling'
 import { formatFileSize, fileTypeIcon, relativeTime } from './EvidenceFileList'
 import { PreparerAssertionPanel } from './PreparerAssertionPanel'
+import { AssessmentReviewPanel } from './AssessmentReviewPanel'
+import { verdictPresentation } from './assessmentVerdict'
 
 // ---- Props ----
 
@@ -27,6 +33,83 @@ const AI_STATUS_LABELS: Record<string, string> = {
   pending: 'Pending',
   processing: 'Processing',
   error: 'Error',
+  unassessable: 'Unassessable',
+}
+
+/**
+ * What a failed *request* means, in the reader's terms (#881).
+ *
+ * Each line has one job: stop the reader concluding anything about their
+ * evidence from an outage. "Insufficient" is a verdict; none of these are.
+ */
+const REQUEST_ERROR_COPY: Record<string, string> = {
+  load: 'Could not load the AI assessment for this file.',
+  poll: 'Lost contact while waiting for the assessment to finish. It may still be running.',
+  trigger: 'Could not start the assessment.',
+}
+
+/**
+ * Provenance for a stored verdict: which model, which prompt, and when.
+ *
+ * Rendered for every terminal assessment, including one missing the fields —
+ * an assessment nobody can attribute to a model version is one nobody can
+ * reproduce, and that is a fact an auditor needs on the face of the record
+ * rather than discovered later.
+ */
+/**
+ * The finding that carries the truncation disclosure, if there is one.
+ *
+ * Identified by its ``truncated`` marker, never by matching the message text —
+ * the wording belongs to the backend and is free to change.
+ */
+function findTruncationFinding(
+  assessment: EvidenceAssessmentResponse,
+): AssessmentFinding | undefined {
+  return assessment.findings.find(f => f.truncated)
+}
+
+/**
+ * What to tell the reader about a truncated read.
+ *
+ * Prefers the backend's own sentence, which carries the real character count
+ * from the extractor. The fallback exists for assessments stored before the
+ * disclosure finding was added, and states the limitation without inventing a
+ * figure it does not have.
+ */
+function truncationNotice(assessment: EvidenceAssessmentResponse): string {
+  const finding = findTruncationFinding(assessment)
+  if (finding?.message) return finding.message
+  const chars = assessment.truncated_at_chars
+  return chars
+    ? `Only the first ${chars.toLocaleString()} characters of this document were assessed. `
+      + 'Findings may not reflect later sections.'
+    : 'This document was truncated before analysis. Findings may not reflect later sections.'
+}
+
+function AssessmentProvenance({ assessment }: { assessment: EvidenceAssessmentResponse }) {
+  const assessedAt = assessment.assessed_at
+    ? new Date(assessment.assessed_at).toLocaleString()
+    : 'not recorded'
+  return (
+    <div className="ai-assessment-provenance" data-testid="ai-assessment-provenance">
+      <span className="ai-assessment-provenance-item">
+        <span className="ai-assessment-provenance-label">Model</span>
+        <span className="ai-assessment-provenance-value">
+          {assessment.model_id || 'not recorded'}
+        </span>
+      </span>
+      <span className="ai-assessment-provenance-item">
+        <span className="ai-assessment-provenance-label">Prompt</span>
+        <span className="ai-assessment-provenance-value">
+          {assessment.prompt_version || 'not recorded'}
+        </span>
+      </span>
+      <span className="ai-assessment-provenance-item">
+        <span className="ai-assessment-provenance-label">Assessed</span>
+        <span className="ai-assessment-provenance-value">{assessedAt}</span>
+      </span>
+    </div>
+  )
 }
 
 function FindingRow({ finding }: { finding: AssessmentFinding }) {
@@ -70,7 +153,36 @@ export function EvidenceFilePreviewModal({
   const [codeLoading, setCodeLoading] = useState(false)
   const [codeError, setCodeError] = useState<string | null>(null)
   const [panelExpanded, setPanelExpanded] = useState(true)
-  const { assessment, loading: assessLoading, triggering, trigger } = useAssessmentPolling(orgId, evidenceId, file.id)
+  const {
+    assessment: polledAssessment,
+    loading: assessLoading,
+    triggering,
+    trigger,
+    requestError,
+    retry,
+  } = useAssessmentPolling(orgId, evidenceId, file.id)
+
+  // A recorded review returns the updated row, and it is fresher than anything
+  // the poller is holding. Keyed to the *version*, not just the row id: the
+  // assessment row is rewritten in place on every re-assessment, so an id match
+  // alone would let a decision about the previous verdict keep masking a new
+  // one that is genuinely awaiting review.
+  const [reviewed, setReviewed] = useState<EvidenceAssessmentResponse | null>(null)
+  const assessment =
+    reviewed &&
+    polledAssessment &&
+    reviewed.id === polledAssessment.id &&
+    reviewed.version_number === polledAssessment.version_number
+      ? reviewed
+      : polledAssessment
+
+  // The truncation disclosure is shown once, at the top, as a caveat over the
+  // whole verdict — so it is lifted out of the findings list rather than
+  // repeated inside it.
+  const truncationFinding = assessment ? findTruncationFinding(assessment) : undefined
+  const visibleFindings = assessment
+    ? assessment.findings.filter(f => !f.truncated)
+    : []
   // ESC key handler
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -320,13 +432,52 @@ export function EvidenceFilePreviewModal({
 
           {panelExpanded && (
             <>
+              {/* A failed request, stated as a failed request. It sits above
+                  the verdict rather than replacing it: the last assessment we
+                  did fetch was true when we fetched it, and hiding it would
+                  lose information. What must not happen is the reader taking
+                  an outage for a judgement on their evidence. */}
+              {requestError && (
+                <div className="ai-assessment-request-error" role="alert">
+                  <div className="ai-assessment-request-error-message">
+                    {REQUEST_ERROR_COPY[requestError.kind] || 'The assessment request failed.'}
+                  </div>
+                  <div className="ai-assessment-request-error-detail">
+                    {requestError.message}
+                  </div>
+                  <div className="ai-assessment-request-error-note">
+                    This is a problem reaching the assessment service — not a finding about this file.
+                  </div>
+                  {/* Retry the thing that actually failed. A trigger that
+                      never started needs starting again; a fetch that failed
+                      needs re-fetching, and must not silently re-run a model
+                      the user did not ask for a second time. */}
+                  <button
+                    type="button"
+                    className="ai-assess-btn ai-assess-retry-btn"
+                    onClick={() => (requestError.kind === 'trigger' ? trigger() : retry())}
+                    disabled={triggering}
+                  >
+                    {requestError.kind === 'trigger' ? 'Try again' : 'Retry'}
+                  </button>
+                </div>
+              )}
+
               {assessLoading ? (
                 <div className="ai-assessment-empty">Loading assessment...</div>
               ) : assessment && assessment.status !== 'pending' && assessment.status !== 'processing' ? (
                 <>
                   <div className="ai-assessment-panel-status">
-                    <span className={`ai-chip ai-chip-${assessment.status}`}>
-                      {AI_STATUS_LABELS[assessment.status] || assessment.status}
+                    {/* "AI suggests: Partial" until a person confirms it, then
+                        "Confirmed: Partial". The wording is the one place a
+                        reader learns whether this verdict has been stood
+                        behind, so it comes from the shared vocabulary rather
+                        than from a label map local to this file. */}
+                    <span
+                      className={verdictPresentation(assessment.status, assessment.review_decision).className}
+                      data-testid="ai-assessment-verdict-chip"
+                    >
+                      {verdictPresentation(assessment.status, assessment.review_decision).text}
                     </span>
                     {assessment.relevance_score !== null && (
                       <span className="ai-assessment-panel-score">
@@ -334,20 +485,72 @@ export function EvidenceFilePreviewModal({
                       </span>
                     )}
                   </div>
+
+                  {/* Nothing was read, so nothing was judged. Said plainly,
+                      because "Unassessable" next to a score of nothing invites
+                      the reader to assume the file failed on its merits. */}
+                  {assessment.status === 'unassessable' && (
+                    <div className="ai-assessment-unassessable-note">
+                      No readable text could be extracted from this file, so it has not been
+                      assessed. This is not a judgement on the evidence — a scanned image or a
+                      binary format can be perfectly good evidence that this check cannot read.
+                      {/* The specific extraction error is not a separate field:
+                          the backend writes it into `summary` and the first
+                          finding, both rendered below. Repeating it here would
+                          just say the same thing twice. */}
+                    </div>
+                  )}
+
+                  {/* The model saw part of the document. Anything it did not
+                      read, it cannot have found a gap in — so an unqualified
+                      "Sufficient" over a truncated read would overclaim.
+                      Promoted out of the findings list to the top, because a
+                      caveat that changes how every finding below it should be
+                      read does not belong buried among them. */}
+                  {assessment.truncated && (
+                    <div className="ai-assessment-truncation" data-testid="ai-assessment-truncation">
+                      <div>{truncationNotice(assessment)}</div>
+                      {truncationFinding?.suggestion && (
+                        <div className="ai-assessment-truncation-suggestion">
+                          {truncationFinding.suggestion}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {assessment.summary && (
                     <div className="ai-assessment-panel-summary">{assessment.summary}</div>
                   )}
-                  {assessment.findings.length > 0 && (
+                  {visibleFindings.length > 0 && (
                     <div className="ai-findings-list">
-                      {assessment.findings.map((f, i) => (
+                      {visibleFindings.map((f, i) => (
                         <FindingRow key={i} finding={f} />
                       ))}
                     </div>
                   )}
+
+                  {/* Where the AI's suggestions get answered. Below the
+                      file-level findings because a reviewer decides objective
+                      by objective, and above Re-assess because correcting a
+                      verdict is the more common next step than replacing it. */}
+                  <AssessmentReviewPanel
+                    orgId={orgId}
+                    evidenceId={evidenceId}
+                    fileId={file.id}
+                    assessment={assessment}
+                    onReviewed={setReviewed}
+                  />
+
+                  <AssessmentProvenance assessment={assessment} />
+
                   <div style={{ marginTop: 8 }}>
+                    {/* Re-assess forces a fresh run. Without ``force`` the
+                        backend may serve the cached verdict, and the button
+                        would look broken to the one user who most wants a
+                        second opinion. */}
                     <button
                       className="ai-assess-btn"
-                      onClick={trigger}
+                      onClick={() => trigger({ force: true })}
                       disabled={triggering}
                     >
                       {triggering ? 'Re-assessing...' : 'Re-assess'}
@@ -359,12 +562,17 @@ export function EvidenceFilePreviewModal({
                   <span className="ai-chip ai-chip-pending">Assessing...</span>
                   <span>AI assessment in progress</span>
                 </div>
+              ) : requestError ? (
+                // The fetch failed, so we do not know whether an assessment
+                // exists. Saying "No AI assessment yet" here would be a claim
+                // we cannot support; the error block above is the whole story.
+                null
               ) : (
                 <div className="ai-assessment-empty">
                   <span>No AI assessment yet</span>
                   <button
                     className="ai-assess-btn"
-                    onClick={trigger}
+                    onClick={() => trigger()}
                     disabled={triggering}
                   >
                     {triggering ? 'Starting...' : 'Assess with AI'}

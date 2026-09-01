@@ -77,7 +77,7 @@ logger = logging.getLogger(__name__)
 CURRENT_COMPUTATION_VERSION: int = 1
 
 #: Recompute target queue. Added to the celery_app queue list and to the
-#: docker-compose / Terraform worker -Q flag in this PR.
+#: docker-compose worker -Q flag in this PR.
 COMPOSITE_QUEUE = "evidence_composite"
 
 #: Idempotency-key TTL (ISC-14). Short-circuit duplicate computes within

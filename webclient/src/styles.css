@@ -20845,9 +20845,18 @@ textarea.form-control{
   background: var(--secondary);
 }
 
-.ehd-val-pass { color: var(--success); }
-.ehd-val-fail { color: var(--destructive); }
+/* Validation vocabulary (#881).
+   The class is built as `ehd-val-${latest_validation_status}` and the backend
+   stores exactly four values — valid | partial | warning | invalid (see
+   `services/validation_service.py:_STATUS_SEVERITY`). The rules here used to
+   read `pass` / `fail`, which the data never produces: `valid` and `invalid`
+   rendered unstyled while `.ehd-val-pass` and `.ehd-val-fail` matched nothing
+   at all. Aligned to the stored vocabulary — the data is the authority, and a
+   stylesheet cannot rename a database value by disagreeing with it. */
+.ehd-val-valid { color: var(--success); }
+.ehd-val-partial { color: var(--warning); }
 .ehd-val-warning { color: var(--warning); }
+.ehd-val-invalid { color: var(--destructive); }
 
 /* AI Assessment pill on health cards */
 .ehd-card-assessment {
@@ -20887,6 +20896,28 @@ textarea.form-control{
   color: #dc2626;
 }
 
+/* The non-verdict states (#881). These statuses were already reachable —
+   `ehd-assessment-${status}` is built from whatever the API returns — but had
+   no rules, so a pending or failed assessment rendered as an unstyled pill
+   indistinguishable from a verdict. Greys, not reds: none of these is a
+   finding about the evidence. */
+.ehd-assessment-pending .ehd-assessment-pill,
+.ehd-assessment-processing .ehd-assessment-pill {
+  background: rgba(100, 116, 139, 0.12);
+  color: #475569;
+  border: 1px dashed rgba(100, 116, 139, 0.45);
+}
+.ehd-assessment-error .ehd-assessment-pill {
+  background: rgba(100, 116, 139, 0.1);
+  color: #475569;
+  border: 1px dashed rgba(100, 116, 139, 0.35);
+}
+.ehd-assessment-unassessable .ehd-assessment-pill {
+  background: transparent;
+  color: #64748b;
+  border: 1px dotted rgba(100, 116, 139, 0.5);
+}
+
 [data-theme="dark"] .ehd-assessment-sufficient .ehd-assessment-pill {
   background: rgba(34, 197, 94, 0.2);
   color: #4ade80;
@@ -20898,6 +20929,21 @@ textarea.form-control{
 [data-theme="dark"] .ehd-assessment-insufficient .ehd-assessment-pill {
   background: rgba(239, 68, 68, 0.2);
   color: #f87171;
+}
+[data-theme="dark"] .ehd-assessment-pending .ehd-assessment-pill,
+[data-theme="dark"] .ehd-assessment-processing .ehd-assessment-pill {
+  background: rgba(148, 163, 184, 0.15);
+  color: #cbd5e1;
+  border-color: rgba(148, 163, 184, 0.5);
+}
+[data-theme="dark"] .ehd-assessment-error .ehd-assessment-pill {
+  background: rgba(148, 163, 184, 0.12);
+  color: #cbd5e1;
+  border-color: rgba(148, 163, 184, 0.4);
+}
+[data-theme="dark"] .ehd-assessment-unassessable .ehd-assessment-pill {
+  color: #94a3b8;
+  border-color: rgba(148, 163, 184, 0.5);
 }
 
 /* Loading / Error / Empty */
@@ -22340,6 +22386,17 @@ textarea.form-control{
   opacity: 0.7;
 }
 
+/* Unassessable — nothing could be read, so nothing was judged.
+   Deliberately outside the indigo verdict family and dotted rather than
+   dashed: `error` (the run failed) and `unassessable` (there was nothing to
+   run on) are different claims, and the difference must survive being
+   printed in greyscale or read by someone who cannot separate the hues. */
+.ai-chip-unassessable {
+  color: #64748b;
+  background: transparent;
+  border: 1px dotted #94a3b8;
+}
+
 [data-theme="dark"] .ai-chip-sufficient {
   color: #c7d2fe;
   background: rgba(99, 102, 241, 0.2);
@@ -22366,6 +22423,11 @@ textarea.form-control{
 [data-theme="dark"] .ai-chip-error {
   color: #818cf8;
   border-color: rgba(99, 102, 241, 0.2);
+}
+
+[data-theme="dark"] .ai-chip-unassessable {
+  color: #94a3b8;
+  border-color: rgba(148, 163, 184, 0.45);
 }
 
 @keyframes ai-pulse {
@@ -22668,6 +22730,614 @@ textarea.form-control{
 
 [data-theme="dark"] .ai-assessment-empty {
   color: #6366f1;
+}
+
+/* ============================================================================
+   Human confirmation of AI assessments (#881 WS3)
+
+   The one rule this whole block serves: an AI verdict is a suggestion until a
+   person confirms it, and a reader must be able to tell which they are looking
+   at. The distinction is carried by **border style and a leading glyph**, never
+   by hue alone — the same commitment `.ai-chip-unassessable` already makes.
+   Dashed edge + ◇ = proposed. Solid heavier edge + ✓ = a person stands behind
+   it.
+   ========================================================================= */
+
+.ai-chip-suggested {
+  border-style: dashed;
+}
+
+.ai-chip-suggested::before {
+  content: "◇";
+  font-size: 0.6rem;
+  opacity: 0.8;
+}
+
+.ai-chip-reviewed {
+  border-style: solid;
+  border-width: 1px;
+  box-shadow: inset 3px 0 0 0 currentColor;
+  padding-left: 10px;
+  font-weight: 600;
+}
+
+.ai-chip-reviewed::before {
+  content: "✓";
+  font-size: 0.62rem;
+}
+
+/* ---- Review panel (evidence file preview modal) ---- */
+
+.assessment-review {
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid #c7d2fe;
+  border-radius: 10px;
+  background: #f8faff;
+}
+
+[data-theme="dark"] .assessment-review {
+  border-color: rgba(99, 102, 241, 0.25);
+  background: rgba(99, 102, 241, 0.06);
+}
+
+.assessment-review-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.assessment-review-title {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #4338ca;
+}
+
+[data-theme="dark"] .assessment-review-title {
+  color: #a5b4fc;
+}
+
+.assessment-review-framing,
+.assessment-review-empty {
+  margin: 0 0 10px;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: #64748b;
+}
+
+[data-theme="dark"] .assessment-review-framing,
+[data-theme="dark"] .assessment-review-empty {
+  color: #94a3b8;
+}
+
+.assessment-review-decided {
+  margin-top: 10px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #4338ca;
+}
+
+[data-theme="dark"] .assessment-review-decided {
+  color: #a5b4fc;
+}
+
+.assessment-review-error,
+.assessment-history-error,
+.assessment-queue-error {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--destructive, #dc2626);
+  border-radius: 6px;
+  font-size: 0.75rem;
+  color: var(--destructive, #dc2626);
+  background: transparent;
+}
+
+.assessment-review-readonly,
+.assessment-queue-readonly {
+  margin-top: 10px;
+  font-size: 0.72rem;
+  font-style: italic;
+  color: #64748b;
+}
+
+[data-theme="dark"] .assessment-review-readonly,
+[data-theme="dark"] .assessment-queue-readonly {
+  color: #94a3b8;
+}
+
+.assessment-review-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.assessment-review-confirm-btn,
+.assessment-review-override-btn,
+.assessment-review-cancel-btn {
+  font-size: 0.75rem;
+  font-weight: 600;
+  border-radius: 6px;
+  padding: 6px 12px;
+  cursor: pointer;
+  border: 1px solid #a5b4fc;
+  background: transparent;
+  color: #4338ca;
+}
+
+.assessment-review-confirm-btn {
+  background: #e0e7ff;
+}
+
+.assessment-review-cancel-btn {
+  border-color: #cbd5e1;
+  color: #64748b;
+  font-weight: 500;
+}
+
+.assessment-review-confirm-btn:hover:not(:disabled),
+.assessment-review-override-btn:hover:not(:disabled) {
+  background: #eef2ff;
+  border-color: #6366f1;
+}
+
+.assessment-review-confirm-btn:disabled,
+.assessment-review-override-btn:disabled,
+.assessment-review-cancel-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+[data-theme="dark"] .assessment-review-confirm-btn,
+[data-theme="dark"] .assessment-review-override-btn {
+  color: #c7d2fe;
+  border-color: rgba(99, 102, 241, 0.4);
+  background: transparent;
+}
+
+[data-theme="dark"] .assessment-review-confirm-btn {
+  background: rgba(99, 102, 241, 0.18);
+}
+
+[data-theme="dark"] .assessment-review-cancel-btn {
+  color: #94a3b8;
+  border-color: rgba(148, 163, 184, 0.35);
+}
+
+.assessment-review-override-form {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed #c7d2fe;
+}
+
+[data-theme="dark"] .assessment-review-override-form {
+  border-top-color: rgba(99, 102, 241, 0.25);
+}
+
+.assessment-review-reason-label {
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 600;
+  margin-bottom: 4px;
+  color: #4338ca;
+}
+
+[data-theme="dark"] .assessment-review-reason-label {
+  color: #a5b4fc;
+}
+
+.assessment-review-reason {
+  width: 100%;
+  box-sizing: border-box;
+  font-size: 0.78rem;
+  font-family: inherit;
+  padding: 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: var(--background, #fff);
+  color: inherit;
+  resize: vertical;
+}
+
+[data-theme="dark"] .assessment-review-reason {
+  border-color: rgba(148, 163, 184, 0.35);
+  background: rgba(15, 23, 42, 0.4);
+}
+
+.assessment-review-override-summary {
+  margin-top: 6px;
+  font-size: 0.7rem;
+  color: #64748b;
+}
+
+[data-theme="dark"] .assessment-review-override-summary {
+  color: #94a3b8;
+}
+
+.assessment-review-history-toggle {
+  margin-top: 12px;
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: 0.72rem;
+  font-weight: 500;
+  text-decoration: underline;
+  cursor: pointer;
+  color: #6366f1;
+}
+
+[data-theme="dark"] .assessment-review-history-toggle {
+  color: #a5b4fc;
+}
+
+/* ---- Per-objective findings ---- */
+
+.ao-finding-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ao-finding {
+  padding: 8px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: var(--background, #fff);
+}
+
+[data-theme="dark"] .ao-finding {
+  border-color: rgba(148, 163, 184, 0.22);
+  background: rgba(15, 23, 42, 0.3);
+}
+
+.ao-finding-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.ao-finding-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #475569;
+}
+
+[data-theme="dark"] .ao-finding-id {
+  color: #cbd5e1;
+}
+
+.ao-finding-rationale,
+.ao-finding-suggestion,
+.ao-finding-override-note {
+  margin: 6px 0 0;
+  font-size: 0.74rem;
+  line-height: 1.5;
+  color: #64748b;
+}
+
+.ao-finding-override-note {
+  font-style: italic;
+}
+
+[data-theme="dark"] .ao-finding-rationale,
+[data-theme="dark"] .ao-finding-suggestion,
+[data-theme="dark"] .ao-finding-override-note {
+  color: #94a3b8;
+}
+
+.ao-finding-disagreement {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  font-size: 0.72rem;
+}
+
+.ao-finding-disagreement-note {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #64748b;
+}
+
+[data-theme="dark"] .ao-finding-disagreement-note {
+  color: #94a3b8;
+}
+
+/* ---- Designation badges ----
+   Shape carries the meaning as well as colour: satisfied is filled, a gap is
+   outlined, not-applicable is dotted, and cannot-assess is dashed. */
+
+.ao-designation {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.7rem;
+  font-weight: 500;
+  border-radius: 9999px;
+  padding: 1px 8px;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+
+.ao-designation-appears-satisfied {
+  color: #166534;
+  background: #dcfce7;
+  border-color: #86efac;
+}
+
+.ao-designation-gap-identified {
+  color: #b45309;
+  background: transparent;
+  border-color: #fbbf24;
+}
+
+.ao-designation-not-applicable {
+  color: #64748b;
+  background: transparent;
+  border-style: dotted;
+  border-color: #94a3b8;
+}
+
+.ao-designation-cannot-assess {
+  color: #64748b;
+  background: transparent;
+  border-style: dashed;
+  border-color: #cbd5e1;
+}
+
+.ao-designation-superseded {
+  color: #94a3b8;
+  background: transparent;
+  border-color: transparent;
+  padding: 0;
+  text-decoration: line-through;
+}
+
+[data-theme="dark"] .ao-designation-appears-satisfied {
+  color: #86efac;
+  background: rgba(34, 197, 94, 0.15);
+  border-color: rgba(34, 197, 94, 0.35);
+}
+
+[data-theme="dark"] .ao-designation-gap-identified {
+  color: #fbbf24;
+  border-color: rgba(251, 191, 36, 0.4);
+}
+
+[data-theme="dark"] .ao-designation-not-applicable,
+[data-theme="dark"] .ao-designation-cannot-assess,
+[data-theme="dark"] .ao-designation-superseded {
+  color: #94a3b8;
+  border-color: rgba(148, 163, 184, 0.35);
+}
+
+[data-theme="dark"] .ao-designation-superseded {
+  border-color: transparent;
+}
+
+.ao-finding-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.ao-designation-option {
+  font-size: 0.7rem;
+  padding: 3px 9px;
+  border-radius: 9999px;
+  border: 1px solid #cbd5e1;
+  background: transparent;
+  color: #475569;
+  cursor: pointer;
+}
+
+.ao-designation-option:hover {
+  border-color: #6366f1;
+}
+
+/* Selected state is bold + a leading marker, not just a fill. */
+.ao-designation-option-selected {
+  border-color: #6366f1;
+  background: #e0e7ff;
+  color: #4338ca;
+  font-weight: 600;
+}
+
+.ao-designation-option-selected::before {
+  content: "● ";
+  font-size: 0.6rem;
+}
+
+[data-theme="dark"] .ao-designation-option {
+  color: #cbd5e1;
+  border-color: rgba(148, 163, 184, 0.3);
+}
+
+[data-theme="dark"] .ao-designation-option-selected {
+  color: #c7d2fe;
+  background: rgba(99, 102, 241, 0.2);
+  border-color: rgba(99, 102, 241, 0.5);
+}
+
+/* ---- Version history ---- */
+
+.assessment-history {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.assessment-history-entry {
+  padding-left: 10px;
+  border-left: 2px solid #c7d2fe;
+}
+
+[data-theme="dark"] .assessment-history-entry {
+  border-left-color: rgba(99, 102, 241, 0.3);
+}
+
+.assessment-history-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.assessment-history-version {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #4338ca;
+}
+
+[data-theme="dark"] .assessment-history-version {
+  color: #a5b4fc;
+}
+
+.assessment-history-date,
+.assessment-history-provenance,
+.assessment-history-reason,
+.assessment-history-loading,
+.assessment-history-empty,
+.assessment-history-override-note {
+  font-size: 0.7rem;
+  color: #64748b;
+}
+
+.assessment-history-provenance,
+.assessment-history-reason {
+  margin-top: 3px;
+}
+
+[data-theme="dark"] .assessment-history-date,
+[data-theme="dark"] .assessment-history-provenance,
+[data-theme="dark"] .assessment-history-reason,
+[data-theme="dark"] .assessment-history-loading,
+[data-theme="dark"] .assessment-history-empty,
+[data-theme="dark"] .assessment-history-override-note {
+  color: #94a3b8;
+}
+
+.assessment-history-overrides {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.assessment-history-override {
+  font-size: 0.72rem;
+}
+
+/* ---- Review queue card (evidence dashboard) ---- */
+
+.assessment-queue-framing {
+  margin: 0 0 12px;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: #6366f1;
+}
+
+[data-theme="dark"] .assessment-queue-framing {
+  color: #a5b4fc;
+}
+
+.assessment-queue-count {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #4338ca;
+  margin-bottom: 8px;
+}
+
+[data-theme="dark"] .assessment-queue-count {
+  color: #a5b4fc;
+}
+
+.assessment-queue-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.assessment-queue-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  width: 100%;
+  text-align: left;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  font-size: 0.76rem;
+  color: inherit;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.assessment-queue-link-static {
+  cursor: default;
+}
+
+button.assessment-queue-link:hover {
+  border-color: #a5b4fc;
+  background: #eef2ff;
+}
+
+[data-theme="dark"] button.assessment-queue-link:hover {
+  border-color: rgba(99, 102, 241, 0.4);
+  background: rgba(99, 102, 241, 0.12);
+}
+
+.assessment-queue-filename {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.assessment-queue-counts {
+  display: inline-flex;
+  gap: 6px;
+  font-size: 0.68rem;
+  color: #64748b;
+}
+
+[data-theme="dark"] .assessment-queue-counts {
+  color: #94a3b8;
+}
+
+.assessment-queue-gap {
+  font-weight: 600;
+  color: #b45309;
+}
+
+[data-theme="dark"] .assessment-queue-gap {
+  color: #fbbf24;
 }
 
 /* ============================================================================
@@ -35258,4 +35928,178 @@ button.risk-list-header-cell:hover {
   margin-top: 0;
   padding-top: 0;
   border-top: none;
+}
+
+/* ===========================================================================
+   AI evidence assessment — honesty surfaces (#881)
+   ---------------------------------------------------------------------------
+   Everything below exists to keep three things from being read as a verdict on
+   somebody's evidence: a request that failed, a document that was only partly
+   read, and a file nothing could be extracted from. They are styled as notes
+   and disclosures, deliberately not in the red of a compliance failure.
+   =========================================================================== */
+
+/* ---- Failed request banner (preview modal) ---- */
+
+.ai-assessment-request-error {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--secondary);
+  font-size: 0.78rem;
+}
+
+.ai-assessment-request-error-message {
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.ai-assessment-request-error-detail {
+  margin-top: 2px;
+  color: var(--muted-foreground);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.72rem;
+  word-break: break-word;
+}
+
+.ai-assessment-request-error-note {
+  margin-top: 4px;
+  color: var(--muted-foreground);
+  font-size: 0.72rem;
+}
+
+.ai-assess-retry-btn {
+  margin-top: 8px;
+}
+
+/* ---- Truncation disclosure ---- */
+
+.ai-assessment-truncation {
+  margin: 8px 0;
+  padding: 6px 10px;
+  border-left: 3px solid var(--warning);
+  background: var(--secondary);
+  border-radius: 0 4px 4px 0;
+  font-size: 0.75rem;
+  color: var(--foreground);
+}
+
+.ai-assessment-truncation-suggestion {
+  margin-top: 4px;
+  color: var(--muted-foreground);
+}
+
+/* ---- Unassessable explanation ---- */
+
+.ai-assessment-unassessable-note {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px dotted var(--border);
+  background: var(--secondary);
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+  line-height: 1.5;
+}
+
+/* ---- Provenance (which model, which prompt, when) ---- */
+
+.ai-assessment-provenance {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  font-size: 0.7rem;
+  color: var(--muted-foreground);
+}
+
+.ai-assessment-provenance-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.ai-assessment-provenance-label {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.62rem;
+  opacity: 0.8;
+}
+
+.ai-assessment-provenance-value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--foreground);
+  word-break: break-word;
+}
+
+/* ---- Bulk assess bar (evidence file list) ---- */
+
+.evidence-files-select-col {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.evidence-files-select {
+  cursor: pointer;
+  margin: 0;
+}
+
+.evidence-files-bulk-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--secondary);
+  font-size: 0.78rem;
+}
+
+.evidence-files-bulk-select-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  color: var(--muted-foreground);
+}
+
+.evidence-files-bulk-count {
+  color: var(--foreground);
+  font-weight: 600;
+}
+
+.evidence-files-bulk-assess-btn {
+  padding: 4px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--foreground);
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.evidence-files-bulk-assess-btn:hover:not(:disabled) {
+  background: var(--accent);
+}
+
+.evidence-files-bulk-assess-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* The cap is stated before the click, not discovered after it. */
+.evidence-files-bulk-cap-note {
+  color: var(--warning);
+  font-size: 0.72rem;
+}
+
+.evidence-files-bulk-message {
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
 }

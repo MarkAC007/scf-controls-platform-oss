@@ -24,6 +24,53 @@ KPS_DEFAULT_WEIGHTS: Tuple[float, float, float, float] = (0.35, 0.20, 0.20, 0.25
 MATURITY_SAMPLE_SIZE_FLOOR = 3
 EQ_LOW_AI_COVERAGE_THRESHOLD = 0.30
 
+EQ_UNCONFIRMED_WEIGHT = 0.5
+"""What an AI verdict is worth on the quality axis before a human confirms it.
+
+The platform's standing position is that an AI assessment is a *suggestion*
+until somebody stands behind it. The quality axis has to say the same thing in
+numbers, or the UI's careful "AI suggests…" language is contradicted by a score
+that already treats the suggestion as fact.
+
+Half, specifically, and for the same reason `partial` is worth half a file: an
+unconfirmed verdict is genuinely half a signal. It is not worthless — the
+assessor read the document and reported something, which is more than the
+platform knew before — and it is not whole, because nobody has checked it. The
+weight is applied in both directions by construction: it scales the numerator's
+contribution for `sufficient` files, so an organisation cannot lift its quality
+score by generating verdicts nobody reads, and it leaves the denominator alone,
+so confirming a verdict that turned out to be poor does not flatter the score
+either.
+
+Deliberately not configurable per organisation. An assurance number whose
+meaning varies by tenant cannot be compared across tenants, and the point of
+this weight is to make "reviewed" mean one thing everywhere.
+"""
+
+
+def apply_confirmation_weight(
+    total: int,
+    confirmed: Optional[int],
+    weight: float = EQ_UNCONFIRMED_WEIGHT,
+) -> float:
+    """Weight a status bucket by how much of it a human has confirmed.
+
+    ``confirmed`` of ``None`` means "this metrics tier does not model
+    confirmation" and returns the total untouched. That distinction matters:
+    only the per-file SQL variants emit confirmation counts, and reading a
+    missing column as zero would halve the evidence-quality axis for every
+    organisation on a windowed or composite tier without anyone having asked
+    for it. Absent data is not evidence of absence.
+
+    ``confirmed`` above ``total`` is clamped rather than trusted — a bucket
+    cannot contain more confirmations than members, and a count that says
+    otherwise must not be able to inflate a score.
+    """
+    if confirmed is None:
+        return float(total)
+    confirmed = max(0, min(int(confirmed), int(total)))
+    return confirmed + weight * (total - confirmed)
+
 
 def compute_ic(
     monitored: int,
@@ -77,13 +124,27 @@ def compute_ec(
 
 
 def compute_eq(
-    sufficient: int,
-    partial: int,
-    insufficient: int,
+    sufficient: float,
+    partial: float,
+    insufficient: float,
     avg_relevance_0_100: Optional[float],
-    insufficient_sample: int = 0,
+    insufficient_sample: float = 0,
+    unassessable: int = 0,
+    total_assessed: Optional[float] = None,
 ) -> Optional[float]:
     """Evidence Quality axis.
+
+    The bucket counts are floats rather than ints because they may arrive
+    already weighted by ``apply_confirmation_weight`` — an unconfirmed verdict
+    contributes a fraction of a file. Nothing in the arithmetic below cares
+    which it is getting.
+
+    ``total_assessed`` defaults to the sum of the buckets, which is right
+    whenever they are plain counts. Pass it explicitly when they have been
+    confirmation-weighted, because the weight answers "how much is this verdict
+    worth", not "does this file exist": letting the denominator shrink with the
+    numerator cancels the weighting exactly, and four unconfirmed sufficient
+    files would score the same 1.0 as four confirmed ones.
 
     EQ = (1.0·sufficient + 0.5·partial + 0.5·insufficient_sample + 0.0·insufficient)
        / total_assessed
@@ -94,13 +155,23 @@ def compute_eq(
     uploaded in the window. Scored like `partial` because content quality
     isn't the issue; sample breadth is.
 
+    `unassessable` files — images, spreadsheets, archives, anything the text
+    extractor could not read — are excluded from the denominator entirely and
+    accepted only to make that exclusion explicit at the call site. They carry
+    no information about evidence quality in either direction: the pipeline
+    never read them, so scoring them at 0.0 (as they were when they were
+    stored as `insufficient`) reports a quality failure the customer did not
+    commit, and scoring them at 1.0 would invent a pass. An org whose evidence
+    is entirely unassessable gets EQ = None, not EQ = 0.
+
     Pending/processing/unassessed files are excluded from the denominator;
     they are accounted for via compute_eq_warning.
 
     Returns None when no files have a terminal AI assessment status.
     """
-    total_assessed = sufficient + partial + insufficient + insufficient_sample
-    if total_assessed == 0:
+    if total_assessed is None:
+        total_assessed = sufficient + partial + insufficient + insufficient_sample
+    if total_assessed <= 0:
         return None
     quality_fraction = (
         1.0 * sufficient
@@ -112,11 +183,33 @@ def compute_eq(
     return max(0.0, min(1.0, quality_fraction * relevance_factor))
 
 
-def compute_eq_warning(unassessed_count: int, total_files: int) -> Optional[str]:
-    """Return 'low_ai_coverage' when unassessed ratio exceeds the threshold."""
-    if total_files == 0:
+def compute_eq_warning(
+    unassessed_count: int,
+    total_files: int,
+    unassessable_count: int = 0,
+) -> Optional[str]:
+    """Return 'low_ai_coverage' when unassessed ratio exceeds the threshold.
+
+    `unassessable_count` is removed from the denominator, not from the
+    numerator. This warning asks one question — "is enough of this evidence
+    actually going through the assessor to trust the quality axis?" — and only
+    files the assessor *can* read belong in that population. Leaving them in
+    dilutes the ratio and suppresses the warning exactly when it matters most:
+    seven unreadable screenshots plus three never-assessed PDFs reads as 30%
+    uncovered and stays silent, when the truth is that none of the three
+    readable files has been assessed.
+
+    A population that is entirely unassessable yields no warning (None) rather
+    than a new one. There is no AI-coverage gap to close there — no amount of
+    re-running the assessor will read a screenshot — and that condition is
+    already surfaced per-file as the 'unassessable' status. Worth revisiting if
+    the dashboard grows a place to say "this evidence cannot be assessed at
+    all", which is a real and different problem.
+    """
+    assessable_files = total_files - unassessable_count
+    if assessable_files <= 0:
         return None
-    if unassessed_count / total_files > EQ_LOW_AI_COVERAGE_THRESHOLD:
+    if unassessed_count / assessable_files > EQ_LOW_AI_COVERAGE_THRESHOLD:
         return "low_ai_coverage"
     return None
 

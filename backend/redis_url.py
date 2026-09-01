@@ -7,17 +7,17 @@ deliberately does not import the Celery app — so it would have read the raw
 `rediss://` URL and applied redis-py's defaults (`ssl_cert_reqs="required"`,
 hostname verification) while beat itself was connected with verification off.
 
-That disagreement is not academic: `terraform-aws/elasticache.tf` writes
-`rediss://` into the SSM parameters the ECS beat task consumes whenever transit
-encryption is on. The probe would fail the TLS handshake against a perfectly
-healthy beat, and ECS — where the beat container is `essential = true` — would
-stop and replace a working scheduler every couple of minutes, forever.
+That disagreement is not academic for any install whose `REDIS_URL` is
+`rediss://` (an operator pointing the stack at a TLS-terminated Redis): the
+probe would fail the TLS handshake against a perfectly healthy beat, and a
+supervisor restarting on failed healthchecks would stop and replace a working
+scheduler every couple of minutes, forever.
 """
 from __future__ import annotations
 
 
 def fix_rediss_url(url: str) -> str:
-    """Append ssl_cert_reqs=CERT_NONE for ElastiCache TLS connections."""
+    """Append ssl_cert_reqs=CERT_NONE for rediss:// TLS connections."""
     if url.startswith("rediss://") and "ssl_cert_reqs" not in url:
         sep = "&" if "?" in url else "?"
         return f"{url}{sep}ssl_cert_reqs=CERT_NONE"

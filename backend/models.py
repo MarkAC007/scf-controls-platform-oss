@@ -2425,10 +2425,41 @@ class EvidenceAssessment(Base):
     evidence_id = Column(String(50), nullable=False)  # ERL evidence ID
 
     # Assessment result
-    status = Column(String(20), default="pending", server_default="pending", nullable=False)  # pending, processing, sufficient, partial, insufficient, error
+    status = Column(String(20), default="pending", server_default="pending", nullable=False)  # pending, processing, sufficient, partial, insufficient, unassessable, error
     relevance_score = Column(Numeric(5, 2), nullable=True)  # 0.00-100.00
     findings = Column(JSONB, nullable=False, default=list)  # [{category, level, message, control_id, suggestion}]
     summary = Column(Text, nullable=True)  # Human-readable assessment summary
+
+    # Per-assessment-objective findings — the AO-grounded verdict (#881 WS2).
+    # [{ao_id, suggested_designation, rationale, suggestion}]. Denormalized from
+    # the current version row so the detail view and the review queue read one
+    # table; the frozen copy lives on EvidenceAssessmentVersion.
+    ao_findings = Column(JSONB, nullable=False, default=list, server_default="[]")
+    gap_count = Column(SmallInteger, nullable=False, default=0, server_default="0")
+    cannot_assess_count = Column(SmallInteger, nullable=False, default=0, server_default="0")
+
+    # Evidence currency, as read out of the document by the model. This is the
+    # date the CONTENT is effective, not the upload date, and it is null
+    # whenever the model could not determine one — a guessed date in a
+    # compliance record is worse than no date. It never propagates to
+    # EvidenceFile.effective_period_start/end: those are preparer assertions
+    # and must stay human-asserted.
+    evidence_effective_date = Column(Date, nullable=True)
+    effective_date_source = Column(Text, nullable=True)  # where in the document the date was found
+    # Server-computed from evidence_effective_date (>365 days). NULL when there
+    # is no date to measure — not False, which would read as "this is current".
+    age_exceeds_12_months = Column(Boolean, nullable=True)
+
+    # Only the head of the document was assessed. Wave 1 (#881) carried this
+    # inside the findings JSONB because the column did not exist; it is a real
+    # column now and the JSONB carrier is no longer the source of truth.
+    truncated = Column(Boolean, nullable=False, default=False, server_default="false")
+    # Which bytes this verdict was computed over. Lets the cache gate compare
+    # hashes instead of merely checking that a hash exists.
+    assessed_file_sha256 = Column(String(64), nullable=True)
+    # Why the pipeline could not assess the file at all (extraction failure,
+    # every objective unassessable). Empty for every other status.
+    unassessable_reason = Column(Text, nullable=True)
 
     # Audit trail (frozen inference chain)
     model_id = Column(String(100), nullable=True)  # e.g. "claude-sonnet-4-6"
@@ -2451,6 +2482,29 @@ class EvidenceAssessment(Base):
     assessment_source = Column(String(30), nullable=False, default="on_demand")  # on_demand, auto, bulk
     requested_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
+    # Version pointer. The row above is a mutable read cache; the immutable
+    # record of every verdict this file has ever received lives in
+    # evidence_assessment_versions. use_alter defers the constraint because the
+    # two tables reference each other.
+    current_version_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey(
+            "evidence_assessment_versions.id",
+            ondelete="SET NULL",
+            use_alter=True,
+            name="fk_evidence_assessments_current_version",
+        ),
+        nullable=True,
+    )
+    version_number = Column(Integer, nullable=False, default=0, server_default="0")  # 0 = never assessed
+
+    # Human review of the AI verdict, denormalized from the current version so
+    # the review queue and the quality-axis SQL need no join. NULL here is the
+    # definition of "awaiting review".
+    review_decision = Column(String(16), nullable=True)  # confirmed, overridden
+    reviewed_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    reviewed_at = Column(DateTime(timezone=False), nullable=True)
+
     # Lifecycle
     assessed_at = Column(DateTime(timezone=False), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
@@ -2459,9 +2513,119 @@ class EvidenceAssessment(Base):
     evidence_file = relationship("EvidenceFile", backref="assessment")
     organization = relationship("Organization", back_populates="evidence_assessments")
     requested_by = relationship("User", foreign_keys=[requested_by_user_id])
+    # Two FKs to users now, so both relationships must name theirs. post_update
+    # breaks the insert-order cycle with the versions table.
+    reviewed_by = relationship("User", foreign_keys=[reviewed_by_user_id])
+    current_version = relationship(
+        "EvidenceAssessmentVersion",
+        foreign_keys=[current_version_id],
+        post_update=True,
+    )
 
     def __repr__(self):
         return f"<EvidenceAssessment(file={self.evidence_file_id}, status={self.status})>"
+
+
+class EvidenceAssessmentVersion(Base):
+    """One frozen AI verdict for an evidence file, plus its provenance.
+
+    ``evidence_assessments`` is unique per evidence_file_id and is rewritten in
+    place on every re-assessment, so before this table each re-run destroyed
+    the previous verdict *and* the inference chain that produced it — the model
+    id, the prompt hash, the control context, the findings a reviewer may have
+    already acted on. An assessment history that can be overwritten is not an
+    audit trail.
+
+    Rows here are append-only, enforced by database triggers (revision
+    ``evassessver1``), with exactly one permitted mutation: the review block
+    below, written once, NULL -> set. A corrected verdict is a new version, not
+    an edit.
+
+    ``schema_version`` says which contract produced the row: 1 for verdicts
+    backfilled from the pre-AO era (file-level findings only), 2 for
+    AO-grounded verdicts. Backfilled rows are labelled honestly rather than
+    being dressed up as something they are not.
+    """
+    __tablename__ = "evidence_assessment_versions"
+    __table_args__ = (
+        # Also the concurrency guard for the write protocol: two workers
+        # racing to append version N both compute current+1, and the loser
+        # gets an integrity error instead of a duplicate history entry.
+        UniqueConstraint(
+            'assessment_id', 'version_number',
+            name='uq_evidence_assessment_versions_assessment_version',
+        ),
+        Index('ix_evidence_assessment_versions_org_file', 'organization_id', 'evidence_file_id'),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    assessment_id = Column(UUID(as_uuid=True), ForeignKey("evidence_assessments.id", ondelete="CASCADE"), nullable=False)
+    # Denormalized so history can be listed for a file without joining the parent.
+    evidence_file_id = Column(UUID(as_uuid=True), ForeignKey("evidence_files.id", ondelete="CASCADE"), nullable=False)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    evidence_id = Column(String(50), nullable=False)  # ERL evidence ID
+
+    version_number = Column(Integer, nullable=False)  # 1-based, monotonic per assessment_id
+    schema_version = Column(Integer, nullable=False, default=2, server_default="2")  # 1 = legacy backfill, 2 = AO-grounded
+
+    # Verdict snapshot
+    status = Column(String(20), nullable=False)  # sufficient, partial, insufficient, unassessable, error
+    relevance_score = Column(Numeric(5, 2), nullable=True)
+    summary = Column(Text, nullable=True)
+    findings = Column(JSONB, nullable=False, default=list, server_default="[]")  # file-level findings
+    ao_findings = Column(JSONB, nullable=False, default=list, server_default="[]")  # [{ao_id, suggested_designation, rationale, suggestion}]
+    gap_count = Column(SmallInteger, nullable=False, default=0, server_default="0")
+    cannot_assess_count = Column(SmallInteger, nullable=False, default=0, server_default="0")
+
+    # AI-extracted currency of the evidence CONTENT. Never written back to
+    # EvidenceFile.effective_period_start/end — those are preparer assertions.
+    evidence_effective_date = Column(Date, nullable=True)
+    effective_date_source = Column(Text, nullable=True)
+    age_exceeds_12_months = Column(Boolean, nullable=True)  # server-computed; NULL when no date
+
+    truncated = Column(Boolean, nullable=False, default=False, server_default="false")
+    unassessable_reason = Column(Text, nullable=True)
+
+    # Frozen provenance — the inference chain, as it stood when this verdict
+    # was reached. Nothing here is recomputed on read.
+    model_id = Column(String(100), nullable=True)
+    prompt_hash = Column(String(64), nullable=True)
+    prompt_version = Column(String(16), nullable=True)
+    control_context_hash = Column(String(64), nullable=True)
+    framework_version = Column(String(50), nullable=True)
+    input_token_count = Column(Integer, nullable=True)
+    output_token_count = Column(Integer, nullable=True)
+    cost_cents = Column(Numeric(8, 4), nullable=True)
+    processing_time_ms = Column(Integer, nullable=True)
+    assessed_file_sha256 = Column(String(64), nullable=True)  # the bytes this verdict was computed over
+
+    assessment_source = Column(String(30), nullable=False, default="on_demand", server_default="on_demand")
+    requested_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    assessed_at = Column(DateTime(timezone=False), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    # Review block — the ONLY mutable part of this row, and only once.
+    review_decision = Column(String(16), nullable=True)  # confirmed, overridden
+    review_reason = Column(Text, nullable=True)
+    reviewed_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    reviewed_at = Column(DateTime(timezone=False), nullable=True)
+    # [{ao_id, ai_designation, human_designation, note}]. ai_designation is
+    # snapshotted by the server from this row's ao_findings, never accepted
+    # from the client — otherwise the record of what the AI said is written by
+    # the person disagreeing with it.
+    ao_overrides = Column(JSONB, nullable=True)
+
+    # Relationships (one-way: the counterpart classes are not modified here)
+    assessment = relationship("EvidenceAssessment", foreign_keys=[assessment_id])
+    organization = relationship("Organization")
+    requested_by = relationship("User", foreign_keys=[requested_by_user_id])
+    reviewed_by = relationship("User", foreign_keys=[reviewed_by_user_id])
+
+    def __repr__(self):
+        return (
+            f"<EvidenceAssessmentVersion(file={self.evidence_file_id}, "
+            f"v={self.version_number}, status={self.status})>"
+        )
 
 
 class EvidenceWindowAssessment(Base):

@@ -88,8 +88,7 @@ Add `--yes` to skip the confirmation prompt (for unattended runs).
   > No supported deployment is affected: PostgreSQL 15 is what this platform
   > already pins and documents everywhere — `postgres:15-alpine` in
   > `docker-compose.yml`, `docker-compose.dev-demo.yml` and
-  > `docker-compose.prod-test.yml`, `POSTGRES_15` in `terraform-gcp/cloud-sql.tf`,
-  > `engine_version = "15"` in `terraform-aws/rds.tf`, and PostgreSQL 15 in both
+  > `docker-compose.prod-test.yml`, and PostgreSQL 15 in both
   > READMEs. What changes is that the floor is now **load-bearing rather than
   > conventional**. If you self-host against your own PostgreSQL instance rather
   > than the bundled container, check its version with `SELECT version();`

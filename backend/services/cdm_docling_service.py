@@ -48,8 +48,9 @@ Errors:
   ``ingest_status='failed'``.
 
 Environment:
-- ``CDM_DOCLING_URL`` — REQUIRED. Base URL of the scf-cdm-docling
-  Container App (e.g. ``http://scf-cdm-docling.internal.<env-id>.<region>.azurecontainerapps.io``).
+- ``CDM_DOCLING_URL`` — REQUIRED. Base URL of a docling-serve
+  instance (e.g. ``http://docling:5001`` for a container the operator
+  runs alongside the compose stack).
 - ``DOCLING_MAX_POLLS`` — optional, default 180. Max poll attempts.
 - ``DOCLING_POLL_INTERVAL_SECONDS`` — optional, default 2.0. Seconds
   between poll attempts.

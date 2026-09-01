@@ -36,7 +36,7 @@ async def get_redis_client() -> Redis:
             retry_on_timeout=True,
             socket_keepalive=True,
             # Periodic ping pings the connection every N seconds; if the underlying
-            # socket has gone stale (e.g., Redis force-rebooted on the Azure side),
+            # socket has gone stale (e.g., the Redis container restarted),
             # the next health_check call will detect it and reconnect transparently
             # rather than blocking the next real request indefinitely.
             health_check_interval=30,

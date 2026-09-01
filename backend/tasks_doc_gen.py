@@ -12,12 +12,12 @@ merge's decisions. One run at a time per organisation removes the race without
 a distributed lock service.
 
 **Queue choice.** These tasks route to ``default``, not to a dedicated queue.
-``docker-compose.yml`` starts workers with an explicit ``-Q`` list, but
-``terraform-aws/scripts/user-data.sh`` starts them with none — consuming
-``default`` only. A ``doc_gen`` queue would therefore work locally and be
-silently dead on AWS, which is the worst of both outcomes. ``tasks_automation``
-routes to ``default`` for exactly this reason; this follows the precedent
-rather than inventing a second convention.
+``default`` is the one queue every Celery worker consumes out of the box, so
+these tasks still run under a worker started with no ``-Q`` list at all. A
+``doc_gen`` queue would work with the stock compose ``-Q`` list and be
+silently dead under any other worker invocation, which is the worst of both
+outcomes. ``tasks_automation`` routes to ``default`` for exactly this reason;
+this follows the precedent rather than inventing a second convention.
 """
 import json
 import logging

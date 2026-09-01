@@ -1,10 +1,10 @@
 """CDM v2 — pluggable document extraction (epic #709, Part 4).
 
-CDM v1's ingest path routes every binary format to a Docling sidecar defined
-only in ``terraform-azure/container-apps-cdm-docling.tf`` — a decommissioned
-Azure Container App. ``docker-compose.yml`` does not ship it, so a self-hoster
-uploading a PDF fails at extraction, before retrieval is ever reached. That
-makes CDM's ingest unusable on the deployment target we actually ship.
+CDM v1's ingest path routes every binary format to a Docling sidecar that
+ran on since-decommissioned cloud infrastructure. ``docker-compose.yml`` does
+not ship it, so a self-hoster uploading a PDF fails at extraction, before
+retrieval is ever reached. That makes CDM's ingest unusable on the deployment
+target we actually ship.
 
 This module makes **in-process extraction the default** and demotes Docling to
 an opt-in backend, mirroring what the retrieval tier does with LightRAG.

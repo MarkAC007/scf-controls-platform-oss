@@ -271,7 +271,7 @@ async def _persist_oidc_user(
                     )
                     db.add(subscription)
                 elif os.getenv("OPEN_REGISTRATION", "false").lower() == "true":
-                    # OPEN_REGISTRATION mode (Azure / test environments only):
+                    # OPEN_REGISTRATION mode (test environments only):
                     # auto-provision user on first login without website signup.
                     logger.info(f"Open registration: auto-provisioning user {_mask_email(email)}")
                     db_user = DBUser(

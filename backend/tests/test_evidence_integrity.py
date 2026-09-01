@@ -391,8 +391,8 @@ class TestQueueRouting:
     than one that is visibly off: the dashboard would show scanning enabled while
     nothing was ever scanned.
 
-    The AWS and GCP workers start `celery -A celery_app worker` with no `-Q`, so
-    they consume `default` and nothing else.
+    A worker started as a bare `celery -A celery_app worker` with no `-Q`
+    consumes `default` and nothing else, so these tasks must route there.
     """
 
     def test_both_tasks_route_to_default(self):

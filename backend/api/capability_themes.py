@@ -32,6 +32,7 @@ from schemas import (
     CapabilityThemeScorecardResponse,
 )
 from api.ksi_scoring import (
+    apply_confirmation_weight,
     band_for_axis,
     compute_ec,
     compute_eq,
@@ -116,6 +117,18 @@ _FILE_SCORE_ATTESTED = (
     " AS relevance_score"
 )
 
+#: Has a human confirmed or overridden this AI verdict (#881 WS3)? Read
+#: straight off the denormalized column on `evidence_assessments`, so this
+#: costs no join — the frozen version rows are not touched here.
+#:
+#: There is no attested variant, and that is not an omission. Under the
+#: attestation gate an unapproved file's status is already degraded to
+#: 'unassessed', which drops it out of every bucket this flag qualifies, so a
+#: gated copy of the predicate would be unreachable code pretending to be a
+#: control. The two mechanisms compose in sequence: the gate decides whether a
+#: verdict counts at all, then confirmation decides how much it is worth.
+_FILE_CONFIRMED = "(ea.review_decision IS NOT NULL) AS assessment_confirmed"
+
 #: Window tier: the disposition lives on `evidence_window_assessments`.
 #: Note this yields 'unassessed' rather than NULL, so `has_window` stays true
 #: and the row remains evidence-level. An unattested window must not silently
@@ -173,6 +186,7 @@ def _build_per_file_sql(attested_only: bool = False) -> "text":
     """Legacy per-file EQ metrics, optionally gated on human attestation."""
     status = _FILE_STATUS_ATTESTED if attested_only else _FILE_STATUS_OPEN
     score = _FILE_SCORE_ATTESTED if attested_only else _FILE_SCORE_OPEN
+    confirmed = _FILE_CONFIRMED
     # Verified false positive. The template is a module-level literal and every
     # interpolated fragment is one of the module-private constants above,
     # selected by a boolean. No string crosses this function's boundary --
@@ -206,7 +220,8 @@ def _build_per_file_sql(attested_only: bool = False) -> "text":
             ef.evidence_id,
             ef.id AS file_id,
             {status},
-            {score}
+            {score},
+            {confirmed}
         FROM evidence_files ef
         LEFT JOIN evidence_assessments ea ON ea.evidence_file_id = ef.id
         WHERE ef.organization_id = :org_id
@@ -220,6 +235,10 @@ def _build_per_file_sql(attested_only: bool = False) -> "text":
         COUNT(DISTINCT oe.file_id) FILTER (WHERE oe.assessment_status = 'partial') AS partial_count,
         COUNT(DISTINCT oe.file_id) FILTER (WHERE oe.assessment_status = 'insufficient') AS insufficient_count,
         0 AS insufficient_sample_count,
+        COUNT(DISTINCT oe.file_id) FILTER (WHERE oe.assessment_status = 'sufficient' AND oe.assessment_confirmed) AS sufficient_confirmed_count,
+        COUNT(DISTINCT oe.file_id) FILTER (WHERE oe.assessment_status = 'partial' AND oe.assessment_confirmed) AS partial_confirmed_count,
+        COUNT(DISTINCT oe.file_id) FILTER (WHERE oe.assessment_status = 'insufficient' AND oe.assessment_confirmed) AS insufficient_confirmed_count,
+        COUNT(DISTINCT oe.file_id) FILTER (WHERE oe.assessment_status = 'unassessable') AS unassessable_count,
         COUNT(DISTINCT oe.file_id) FILTER (WHERE oe.assessment_status IN ('pending', 'processing')) AS pending_count,
         COUNT(DISTINCT oe.file_id) FILTER (WHERE oe.assessment_status = 'unassessed') AS unassessed_count,
         AVG(oe.relevance_score) FILTER (WHERE oe.relevance_score IS NOT NULL) AS avg_relevance_score
@@ -337,6 +356,7 @@ def _build_window_aware_sql(attested_only: bool = False) -> "text":
         COUNT(*) FILTER (WHERE u.assessment_status = 'partial') AS partial_count,
         COUNT(*) FILTER (WHERE u.assessment_status = 'insufficient') AS insufficient_count,
         COUNT(*) FILTER (WHERE u.assessment_status = 'insufficient_sample') AS insufficient_sample_count,
+        COUNT(*) FILTER (WHERE u.assessment_status = 'unassessable') AS unassessable_count,
         COUNT(*) FILTER (WHERE u.assessment_status IN ('pending', 'processing')) AS pending_count,
         COUNT(*) FILTER (WHERE u.assessment_status = 'unassessed') AS unassessed_count,
         AVG(u.relevance_score) FILTER (WHERE u.relevance_score IS NOT NULL) AS avg_relevance_score
@@ -556,6 +576,7 @@ def _build_composite_aware_sql(
             COUNT(*) FILTER (WHERE assessment_status = 'partial') AS partial_count,
             COUNT(*) FILTER (WHERE assessment_status = 'insufficient') AS insufficient_count,
             COUNT(*) FILTER (WHERE assessment_status = 'insufficient_sample') AS insufficient_sample_count,
+            COUNT(*) FILTER (WHERE assessment_status = 'unassessable') AS unassessable_count,
             COUNT(*) FILTER (WHERE assessment_status IN ('pending', 'processing')) AS pending_count,
             COUNT(*) FILTER (WHERE assessment_status = 'unassessed') AS unassessed_count,
             AVG(relevance_score) FILTER (WHERE relevance_score IS NOT NULL) AS avg_relevance_score
@@ -695,6 +716,13 @@ def _compute_axis_bundle(
         # M1a: insufficient_sample is new — emitted only by window-aware SQL.
         insufficient_sample = getattr(evidence_row, "insufficient_sample_count", 0) or 0
         unassessed = evidence_row.unassessed_count or 0
+        unassessable = getattr(evidence_row, "unassessable_count", 0) or 0
+        # #881 WS3 — how much of each bucket a human has stood behind. None,
+        # not zero, when the SQL variant does not model confirmation: see
+        # apply_confirmation_weight for why the difference is load-bearing.
+        sufficient_confirmed = getattr(evidence_row, "sufficient_confirmed_count", None)
+        partial_confirmed = getattr(evidence_row, "partial_confirmed_count", None)
+        insufficient_confirmed = getattr(evidence_row, "insufficient_confirmed_count", None)
         avg_relevance = (
             float(evidence_row.avg_relevance_score)
             if evidence_row.avg_relevance_score is not None
@@ -702,12 +730,24 @@ def _compute_axis_bundle(
         )
     else:
         controls_with_evidence = total_files = sufficient = partial = insufficient = 0
-        insufficient_sample = unassessed = 0
+        insufficient_sample = unassessed = unassessable = 0
+        sufficient_confirmed = partial_confirmed = insufficient_confirmed = None
         avg_relevance = None
 
     ec = compute_ec(controls_with_evidence, scoped, posture.not_applicable)
-    eq = compute_eq(sufficient, partial, insufficient, avg_relevance, insufficient_sample)
-    eq_warning = compute_eq_warning(unassessed, total_files)
+    # The denominator is the unweighted population — how much evidence went
+    # through the assessor — while the numerator buckets are discounted by how
+    # much of that a person has confirmed. Weighting both would cancel out.
+    eq = compute_eq(
+        apply_confirmation_weight(sufficient, sufficient_confirmed),
+        apply_confirmation_weight(partial, partial_confirmed),
+        apply_confirmation_weight(insufficient, insufficient_confirmed),
+        avg_relevance,
+        insufficient_sample,
+        unassessable=unassessable,
+        total_assessed=sufficient + partial + insufficient + insufficient_sample,
+    )
+    eq_warning = compute_eq_warning(unassessed, total_files, unassessable_count=unassessable)
     kps = compute_kps(ic, maturity_score / 5.0 if maturity_score is not None else None, ec, eq)
 
     return {

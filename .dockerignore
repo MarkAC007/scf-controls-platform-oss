@@ -37,8 +37,3 @@ docs/
 
 # Archives
 _archive/
-
-# Terraform state
-**/*.tfstate
-**/*.tfstate.*
-.terraform/

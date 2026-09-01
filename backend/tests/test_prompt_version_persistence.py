@@ -15,6 +15,7 @@ import inspect
 import os
 import re
 import sys
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -67,23 +68,70 @@ class TestApiExposure:
 
 
 class TestWriters:
+    """The per-file writer went through one function in #881 WS2.
+
+    These were source-text assertions pinning a specific UPDATE statement.
+    That statement no longer exists — every terminal verdict now goes through
+    ``_write_terminal_verdict``, which writes the version row and the visible
+    row together — so the same invariant is asserted against what the writer
+    actually sends, which is stronger than pinning its text.
+    """
+
+    def _params(self, verdict) -> dict:
+        """Capture the parameters one terminal write sends to the database."""
+        sent: list[dict] = []
+
+        class RecordingSession:
+            def execute(self, stmt, params=None):
+                if params is not None:
+                    sent.append(params)
+                result = MagicMock()
+                result.mappings.return_value.first.return_value = {
+                    "id": "a" * 32, "version_number": 0,
+                }
+                return result
+
+            def commit(self):
+                pass
+
+            def rollback(self):  # pragma: no cover - not reached in these tests
+                pass
+
+        tasks_assessment._write_terminal_verdict(
+            RecordingSession(), "file-id", "org-id", verdict,
+        )
+        return sent[-1]
+
     def test_per_file_success_path_writes_it(self):
-        source = inspect.getsource(tasks_assessment)
-        assert "prompt_version = :prompt_version" in source
-        assert '"prompt_version": PROMPT_VERSION' in source
+        params = self._params(tasks_assessment.TerminalVerdict(
+            status="sufficient", summary="s", findings=[], prompt_hash="h" * 64,
+        ))
+        assert params["prompt_version"] == PROMPT_VERSION
 
     def test_per_file_error_path_writes_it_only_alongside_a_hash(self):
-        # The version travels with the hash: stamping a version onto a row
-        # whose prompt_hash was left untouched would claim provenance for
-        # a prompt this run never recorded.
-        source = inspect.getsource(tasks_assessment._update_assessment_error)
-        assert "prompt_version = CASE WHEN :prompt_hash IS NULL" in source
+        # The version travels with the hash: stamping a version onto a verdict
+        # that recorded no prompt_hash would claim provenance for a prompt this
+        # run never made.
+        params = self._params(tasks_assessment.TerminalVerdict(
+            status="error", summary="it broke", findings=[],
+        ))
+        assert params["prompt_hash"] is None
+        assert params["prompt_version"] is None
 
     def test_no_llm_result_path_does_not_claim_a_prompt(self):
-        # _update_assessment_result records a verdict reached without
-        # calling a model. There was no prompt, so there is no version.
-        source = inspect.getsource(tasks_assessment._update_assessment_result)
-        assert "prompt_version" not in source
+        # An extraction failure is a verdict reached without calling a model.
+        # There was no prompt, so there is no template version.
+        params = self._params(tasks_assessment.TerminalVerdict(
+            status="unassessable", summary="cannot read it", findings=[],
+            unassessable_reason="unsupported content type",
+        ))
+        assert params["prompt_version"] is None
+
+    def test_the_statement_still_carries_the_column(self):
+        """A verdict with a prompt must reach both rows, not just one."""
+        source = inspect.getsource(tasks_assessment)
+        assert "prompt_version = :prompt_version" in source
+        assert ":model_id, :prompt_hash, :prompt_version" in source
 
     @pytest.mark.parametrize(
         "count_at_least,fragment",

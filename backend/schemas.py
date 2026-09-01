@@ -3554,6 +3554,38 @@ class AssessmentFindingSchema(BaseModel):
     message: str = Field(..., description="Human-readable finding description")
     control_id: Optional[str] = Field(None, description="SCF control ID this finding relates to")
     suggestion: Optional[str] = Field(None, description="Suggested remediation action")
+    # Declared so the truncation disclosure survives serialization. Pydantic
+    # drops undeclared keys, so without these two the marker the task writes
+    # into the findings JSONB would vanish on the way out and a client would
+    # have no way to tell which finding is the disclosure.
+    truncated: Optional[bool] = Field(
+        None, description="Set on the truncation disclosure finding; absent on all others"
+    )
+    truncated_at_chars: Optional[int] = Field(
+        None, description="Characters actually assessed, on the truncation disclosure finding"
+    )
+
+
+class AOFindingSchema(BaseModel):
+    """The AI's advisory read of one SCF assessment objective.
+
+    The four designations are deliberately not the CAP assessor vocabulary:
+    this platform advises a preparer and must never read as though it has
+    issued an assessor's determination.
+    """
+    ao_id: str = Field(..., description="SCF assessment objective identifier")
+    suggested_designation: str = Field(
+        ...,
+        description=(
+            "One of: appears_satisfied (the evidence shows this objective met), "
+            "gap_identified (on topic but not shown, or shown only partly), "
+            "not_applicable (cannot apply to this organisation or artifact), "
+            "cannot_assess (this document was never going to demonstrate it). "
+            "Advisory — a human reviewer confirms or overrides it."
+        ),
+    )
+    rationale: str = Field("", description="What the evidence does or does not show")
+    suggestion: str = Field("", description="Concrete next step; empty when there is nothing to add")
 
 
 class EvidenceAssessmentResponse(BaseModel):
@@ -3562,10 +3594,70 @@ class EvidenceAssessmentResponse(BaseModel):
     evidence_file_id: UUID
     organization_id: UUID
     evidence_id: str
-    status: str = Field(..., description="Assessment status: pending, processing, sufficient, partial, insufficient, error")
+    status: str = Field(
+        ...,
+        description=(
+            "Assessment status: pending, processing, sufficient, partial, "
+            "insufficient, unassessable, error. 'unassessable' means the file's "
+            "text could not be extracted (image, spreadsheet, archive, damaged "
+            "file) — it is not a judgement on the evidence and does not count "
+            "toward the evidence quality score."
+        ),
+    )
     relevance_score: Optional[float] = Field(None, description="0.00-100.00 relevance to mapped controls")
     findings: List[AssessmentFindingSchema]
     summary: Optional[str] = Field(None, description="Human-readable assessment summary")
+
+    # AO-grounded result (#881). `status` above is DERIVED from these
+    # designations, not quoted from the model, so a file whose objectives all
+    # show gaps cannot be recorded sufficient because the model felt positive.
+    ao_findings: List[AOFindingSchema] = Field(
+        default_factory=list,
+        description="One entry per SCF assessment objective of the mapped controls",
+    )
+    gap_count: int = Field(0, description="Objectives designated gap_identified")
+    cannot_assess_count: int = Field(
+        0, description="Objectives this artifact could not demonstrate either way"
+    )
+
+    # Evidence currency, read out of the document by the model.
+    evidence_effective_date: Optional[date] = Field(
+        None,
+        description=(
+            "Date the evidence CONTENT is effective — approval date, report "
+            "period end, capture date. Null when the document does not state "
+            "one the model could rely on; it never guesses. This does not set "
+            "the file's asserted effective period, which stays human-asserted."
+        ),
+    )
+    effective_date_source: Optional[str] = Field(
+        None, description="Where in the document the effective date was found"
+    )
+    age_exceeds_12_months: Optional[bool] = Field(
+        None,
+        description=(
+            "Server-computed from evidence_effective_date. Null — not false — "
+            "when there is no date to measure."
+        ),
+    )
+    unassessable_reason: Optional[str] = Field(
+        None, description="Why the file could not be assessed; null for every other status"
+    )
+
+    # Version pointer and review state (denormalized from the current version)
+    version_number: int = Field(0, description="How many verdicts this file has received; 0 = never assessed")
+    current_version_id: Optional[UUID] = Field(
+        None, description="The frozen version row this result was copied from"
+    )
+    review_decision: Optional[str] = Field(
+        None,
+        description=(
+            "confirmed or overridden once a human has reviewed this verdict; "
+            "null means it is still awaiting review."
+        ),
+    )
+    reviewed_by_user_id: Optional[UUID] = None
+    reviewed_at: Optional[datetime] = None
 
     # Audit metadata
     model_id: Optional[str] = None
@@ -3585,12 +3677,63 @@ class EvidenceAssessmentResponse(BaseModel):
     assessed_at: Optional[datetime] = None
     created_at: datetime
 
+    # Read straight off the column (#881 WS2). It used to be inferred from a
+    # marker inside the findings JSONB, because there was nowhere else to put it.
+    truncated: bool = Field(
+        False,
+        description=(
+            "True when only the head of the document was assessed — the rest "
+            "was cut to fit the model's context budget."
+        ),
+    )
+    truncated_at_chars: Optional[int] = Field(
+        None,
+        description=(
+            "Characters actually assessed when `truncated` is true; null "
+            "otherwise. Use this rather than assuming the extractor's limit — "
+            "it is a backend constant that can change."
+        ),
+    )
+    cached: bool = Field(
+        False,
+        description=(
+            "True when this result was reused rather than freshly computed: "
+            "the file, its control context and the prompt version were all "
+            "unchanged, so no model call was made."
+        ),
+    )
+
     model_config = ConfigDict(from_attributes=True)
+
+    @classmethod
+    def from_assessment(cls, assessment, cached: bool = False) -> "EvidenceAssessmentResponse":
+        """Build the response from an EvidenceAssessment ORM row.
+
+        `truncated` is a plain column read now. The character count still has
+        to be lifted from the raw findings JSONB: it has no column, and
+        AssessmentFindingSchema would have dropped it during validation if it
+        were not declared there too.
+        """
+        from tasks_assessment import assessment_truncated_chars
+
+        findings = getattr(assessment, "findings", None)
+        response = cls.model_validate(assessment)
+        response.truncated_at_chars = assessment_truncated_chars(findings)
+        response.cached = cached
+        return response
 
 
 class EvidenceAssessmentRequest(BaseModel):
     """Request to trigger AI assessment of an evidence file."""
     assessment_source: str = Field("on_demand", description="Trigger source: on_demand, auto, bulk")
+    force: bool = Field(
+        False,
+        description=(
+            "Re-assess even when a valid cached verdict exists. Without this, "
+            "a file whose content, control context and prompt version are all "
+            "unchanged returns the stored result with HTTP 200 and no model call."
+        ),
+    )
 
 
 class EvidenceAssessmentBulkRequest(BaseModel):
@@ -3606,11 +3749,170 @@ class EvidenceAssessmentSummary(BaseModel):
     sufficient_count: int
     partial_count: int
     insufficient_count: int
+    # Files the pipeline could not read at all. Without this bucket the five
+    # others do not add up to total_assessed, and the difference — which is a
+    # real and actionable population — reads as an arithmetic bug.
+    unassessable_count: int = 0
     pending_count: int
     error_count: int
     unassessed_count: int = 0
+    # Terminal verdicts nobody has confirmed or overridden yet. This is the
+    # size of the review queue, and it is the number that says how much of the
+    # quality axis is currently resting on unreviewed AI output.
+    awaiting_review_count: int = 0
     average_relevance_score: Optional[float] = None
     total_cost_cents: Optional[float] = None
+
+
+# ---------------------------------------------------------------------------
+# Human confirmation of an AI assessment (#881 WS3)
+# ---------------------------------------------------------------------------
+
+#: What a human may designate an objective as. Identical to the vocabulary the
+#: model is given: a reviewer disagreeing with the AI has to be able to say the
+#: things the AI could have said, and nothing else — a wider human vocabulary
+#: would make the two designations incomparable in the same column.
+HUMAN_AO_DESIGNATIONS = ("appears_satisfied", "gap_identified", "not_applicable", "cannot_assess")
+_HUMAN_AO_DESIGNATIONS_PATTERN = "|".join(HUMAN_AO_DESIGNATIONS)
+
+
+class AOOverrideRequestItem(BaseModel):
+    """One objective a reviewer is answering differently from the AI."""
+    ao_id: str = Field(..., min_length=1, description="Objective being overridden; must be one the AI answered")
+    human_designation: str = Field(
+        ...,
+        pattern=f"^({_HUMAN_AO_DESIGNATIONS_PATTERN})$",
+        description=f"Reviewer's designation. One of: {', '.join(HUMAN_AO_DESIGNATIONS)}",
+    )
+    note: str = Field("", description="Why, for this objective specifically. Optional.")
+
+
+class AOOverrideSchema(BaseModel):
+    """A recorded disagreement: what the AI said, and what the human said instead."""
+    ao_id: str
+    ai_designation: Optional[str] = Field(
+        None, description="Snapshotted by the server from the frozen version, never sent by the client"
+    )
+    human_designation: str
+    note: str = ""
+
+
+class EvidenceAssessmentReviewRequest(BaseModel):
+    """Confirm or override an AI verdict.
+
+    Confirming is a bare assertion that the AI was right, so it needs nothing
+    else. Overriding replaces part of a compliance record with a human
+    judgement, so it needs both a reason and the specific objectives being
+    changed — an override with no stated disagreement is an unexplained edit,
+    and this is exactly the record an auditor reads to find out why a verdict
+    changed.
+    """
+    decision: str = Field(
+        ...,
+        pattern="^(confirmed|overridden)$",
+        description="confirmed = the AI verdict stands; overridden = a human is changing it",
+    )
+    reason: Optional[str] = Field(
+        None, description="Required when overriding. Free text; recorded on the frozen version."
+    )
+    ao_overrides: Optional[List[AOOverrideRequestItem]] = Field(
+        None,
+        description=(
+            "Objectives being re-designated. Required (at least one) when overriding, "
+            "forbidden when confirming. Objectives not listed keep the AI's designation."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _check_override_completeness(self):
+        if self.decision == "overridden":
+            if self.reason is None or not self.reason.strip():
+                raise ValueError(
+                    "reason is required when overriding an AI assessment — an "
+                    "unexplained override is not a reviewable record"
+                )
+            if not self.ao_overrides:
+                raise ValueError(
+                    "ao_overrides must name at least one objective when overriding; "
+                    "to accept the verdict as it stands, confirm it instead"
+                )
+        elif self.ao_overrides:
+            raise ValueError(
+                "ao_overrides cannot accompany a confirmation — confirming means "
+                "the AI's designations stand unchanged"
+            )
+        return self
+
+
+class EvidenceAssessmentVersionResponse(BaseModel):
+    """One frozen verdict from a file's assessment history.
+
+    Everything here is as it was when the verdict was reached. The review block
+    is the only part written after the fact, and only once.
+    """
+    id: UUID
+    version_number: int
+    schema_version: int = Field(
+        2, description="1 = pre-objective backfill (file-level findings only), 2 = AO-grounded"
+    )
+
+    status: str
+    relevance_score: Optional[float] = None
+    summary: Optional[str] = None
+    findings: List[AssessmentFindingSchema] = Field(default_factory=list)
+    ao_findings: List[AOFindingSchema] = Field(default_factory=list)
+    gap_count: int = 0
+    cannot_assess_count: int = 0
+
+    evidence_effective_date: Optional[date] = None
+    effective_date_source: Optional[str] = None
+    age_exceeds_12_months: Optional[bool] = None
+    truncated: bool = False
+    unassessable_reason: Optional[str] = None
+
+    model_id: Optional[str] = None
+    prompt_version: Optional[str] = None
+    assessed_at: Optional[datetime] = None
+    created_at: datetime
+
+    review_decision: Optional[str] = None
+    review_reason: Optional[str] = None
+    reviewed_by_user_id: Optional[UUID] = None
+    reviewed_at: Optional[datetime] = None
+    ao_overrides: Optional[List[AOOverrideSchema]] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AssessmentReviewQueueItem(BaseModel):
+    """One file waiting for (or already carrying) a human decision."""
+    file_id: UUID
+    evidence_id: str
+    filename: Optional[str] = None
+    uploaded_at: Optional[datetime] = None
+    uploaded_by_user_id: Optional[UUID] = None
+
+    status: str
+    relevance_score: Optional[float] = None
+    gap_count: int = 0
+    cannot_assess_count: int = 0
+    version_number: int = 0
+    assessed_at: Optional[datetime] = None
+
+    review_decision: Optional[str] = None
+    reviewed_at: Optional[datetime] = None
+
+
+class AssessmentReviewQueueResponse(BaseModel):
+    """A page of the confirmation queue, worst first.
+
+    ``total`` counts the whole filtered set, not the page, so the UI can say
+    how much work is left rather than how much of it fitted on screen.
+    """
+    items: List[AssessmentReviewQueueItem]
+    total: int
+    limit: int
+    offset: int
 
 
 # ---------------------------------------------------------------------------

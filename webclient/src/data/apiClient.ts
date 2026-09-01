@@ -3459,6 +3459,17 @@ export interface AssessmentFinding {
   message: string
   control_id?: string
   suggestion?: string
+  /**
+   * Set only on the truncation disclosure finding; null on every other.
+   *
+   * The assessment row has no ``truncated`` column yet, so the backend
+   * persists the fact inside the findings payload and marks the one finding
+   * that carries it. Identify it with ``f.truncated`` rather than by matching
+   * on the message text — the wording is the backend's to change.
+   */
+  truncated?: boolean | null
+  /** Characters actually assessed, on the truncation disclosure finding. */
+  truncated_at_chars?: number | null
 }
 
 export interface EvidenceAssessmentResponse {
@@ -3466,6 +3477,15 @@ export interface EvidenceAssessmentResponse {
   evidence_file_id: string
   organization_id: string
   evidence_id: string
+  /**
+   * ``sufficient`` | ``partial`` | ``insufficient`` | ``pending`` |
+   * ``processing`` | ``error`` | ``unassessable``.
+   *
+   * ``error`` and ``unassessable`` are different claims and must stay
+   * distinguishable: ``error`` means the assessment was attempted and failed,
+   * ``unassessable`` means no text could be extracted from the file in the
+   * first place, so no judgement was ever formed about it.
+   */
   status: string
   relevance_score: number | null
   findings: AssessmentFinding[]
@@ -3482,6 +3502,188 @@ export interface EvidenceAssessmentResponse {
   requested_by_user_id: string | null
   assessed_at: string | null
   created_at: string
+
+  // ---- Provenance and honesty fields (#881) ----
+  // Optional on the wire so a client can run against a backend that predates
+  // them; ``normalizeAssessment`` below fills the defaults, so UI code may read
+  // them unguarded.
+  /** Version of the assessment prompt that produced this verdict. */
+  prompt_version?: string | null
+  /** True when the document was cut short before analysis. */
+  truncated?: boolean
+  /** Characters actually assessed when ``truncated`` is true. */
+  truncated_at_chars?: number | null
+  /**
+   * True on a trigger response the backend served from an existing verdict
+   * without re-running the model.
+   *
+   * There is deliberately no separate "why is this unassessable" field: the
+   * extraction error is written into ``summary`` and into the first finding's
+   * message, so the reason renders through the paths that already exist.
+   */
+  cached?: boolean
+
+  // ---- AO-grounded verdict and human review (#881 WS2/WS3) ----
+  /**
+   * One entry per SCF assessment objective of the mapped controls. This is
+   * what the AI actually answered; ``status`` above is derived from these
+   * designations rather than quoted from the model.
+   */
+  ao_findings?: AOFinding[]
+  gap_count?: number
+  cannot_assess_count?: number
+  /**
+   * ``confirmed`` or ``overridden`` once a person has reviewed this verdict.
+   * Null means it is still a suggestion — the distinction the whole review UI
+   * exists to make visible.
+   */
+  review_decision?: string | null
+  reviewed_by_user_id?: string | null
+  reviewed_at?: string | null
+  /** How many verdicts this file has received. 0 = never assessed. */
+  version_number?: number
+  current_version_id?: string | null
+  evidence_effective_date?: string | null
+  effective_date_source?: string | null
+  age_exceeds_12_months?: boolean | null
+  unassessable_reason?: string | null
+}
+
+/** The AI's advisory read of one assessment objective. */
+export interface AOFinding {
+  ao_id: string
+  /** appears_satisfied | gap_identified | not_applicable | cannot_assess */
+  suggested_designation: string
+  rationale: string
+  suggestion: string
+  /** Set client-side by the backend when a reviewer re-designated this objective. */
+  overridden_by_human?: boolean
+  override_note?: string
+}
+
+/** A recorded disagreement: what the AI said, and what the human said instead. */
+export interface AOOverride {
+  ao_id: string
+  ai_designation: string | null
+  human_designation: string
+  note: string
+}
+
+/** One frozen verdict from a file's assessment history. */
+export interface AssessmentVersion {
+  id: string
+  version_number: number
+  /** 1 = pre-objective backfill (file-level findings only), 2 = AO-grounded. */
+  schema_version: number
+  status: string
+  relevance_score: number | null
+  summary: string | null
+  findings: AssessmentFinding[]
+  ao_findings: AOFinding[]
+  gap_count: number
+  cannot_assess_count: number
+  evidence_effective_date: string | null
+  effective_date_source: string | null
+  age_exceeds_12_months: boolean | null
+  truncated: boolean
+  unassessable_reason: string | null
+  model_id: string | null
+  prompt_version: string | null
+  assessed_at: string | null
+  created_at: string
+  review_decision: string | null
+  review_reason: string | null
+  reviewed_by_user_id: string | null
+  reviewed_at: string | null
+  ao_overrides: AOOverride[] | null
+}
+
+export interface AssessmentReviewQueueItem {
+  file_id: string
+  evidence_id: string
+  filename: string | null
+  uploaded_at: string | null
+  uploaded_by_user_id: string | null
+  status: string
+  relevance_score: number | null
+  gap_count: number
+  cannot_assess_count: number
+  version_number: number
+  assessed_at: string | null
+  review_decision: string | null
+  reviewed_at: string | null
+}
+
+export interface AssessmentReviewQueueResponse {
+  items: AssessmentReviewQueueItem[]
+  total: number
+  limit: number
+  offset: number
+}
+
+/** One objective a reviewer is answering differently from the AI. */
+export interface AOOverrideRequestItem {
+  ao_id: string
+  human_designation: string
+  note?: string
+}
+
+export interface AssessmentReviewRequest {
+  decision: 'confirmed' | 'overridden'
+  reason?: string
+  ao_overrides?: AOOverrideRequestItem[]
+}
+
+/**
+ * The single seam between the assessment wire format and the UI (#881).
+ *
+ * Every assessment the client hands out passes through here, so if a field is
+ * renamed server-side it is remapped in one place rather than at each of the
+ * half-dozen render sites. The defaults are deliberate: an absent ``truncated``
+ * must read as "not truncated" rather than leak ``undefined`` into a
+ * disclosure an auditor is relying on, and an absent ``cache_hit`` must read as
+ * "we really did re-run it".
+ */
+/**
+ * Read a backend timestamp as the UTC instant it actually is.
+ *
+ * ``assessed_at`` and friends are stored as ``DateTime(timezone=False)`` and
+ * serialize with no zone designator ("2026-09-01T12:00:00"). Handed to
+ * ``new Date()`` that is interpreted as *local* time, so every displayed
+ * assessment time would be wrong by the viewer's UTC offset — an hour out in
+ * British Summer Time, eight in California, and silently so.
+ *
+ * Idempotent by design: a value that already carries ``Z`` or a numeric offset
+ * is returned untouched, so this keeps working if the backend ever starts
+ * emitting zone-aware timestamps.
+ */
+export function asUtcIso(value: string | null): string | null {
+  if (!value) return null
+  return /(Z|[+-]\d{2}:?\d{2})$/.test(value) ? value : `${value}Z`
+}
+
+function normalizeAssessment(raw: EvidenceAssessmentResponse): EvidenceAssessmentResponse {
+  return {
+    ...raw,
+    // Normalised here so every consumer gets a correct instant without each
+    // one having to remember the naive-datetime quirk.
+    assessed_at: asUtcIso(raw.assessed_at),
+    prompt_version: raw.prompt_version ?? null,
+    truncated: raw.truncated ?? false,
+    truncated_at_chars: raw.truncated_at_chars ?? null,
+    cached: raw.cached ?? false,
+    // An absent review decision must read as "nobody has confirmed this",
+    // never as undefined: every "AI suggests" / "Confirmed" decision in the UI
+    // turns on this field, and undefined would make an unreviewed verdict
+    // render as though it had been reviewed by nobody in particular.
+    ao_findings: raw.ao_findings ?? [],
+    gap_count: raw.gap_count ?? 0,
+    cannot_assess_count: raw.cannot_assess_count ?? 0,
+    review_decision: raw.review_decision ?? null,
+    reviewed_by_user_id: raw.reviewed_by_user_id ?? null,
+    reviewed_at: asUtcIso(raw.reviewed_at ?? null),
+    version_number: raw.version_number ?? 0,
+  }
 }
 
 export interface EvidenceAssessmentSummary {
@@ -3489,37 +3691,109 @@ export interface EvidenceAssessmentSummary {
   sufficient_count: number
   partial_count: number
   insufficient_count: number
+  /** Files nothing could be read out of. Without it the buckets do not sum. */
+  unassessable_count: number
   pending_count: number
   error_count: number
   unassessed_count: number
+  /** Terminal verdicts still awaiting a human decision — the queue's size. */
+  awaiting_review_count: number
   average_relevance_score: number | null
   total_cost_cents: number | null
 }
 
+/**
+ * Request an assessment for one evidence file.
+ *
+ * ``force`` re-runs the model even when an assessment for this exact
+ * file/prompt/control context is already cached. A user pressing "Re-assess"
+ * is asking for a fresh verdict, so that path sends it; a first-time "Assess
+ * with AI" does not, and is happy to be served the cache.
+ */
 export async function triggerAssessment(
   orgId: string,
   evidenceId: string,
   fileId: string,
   source: string = 'on_demand',
+  force: boolean = false,
 ): Promise<EvidenceAssessmentResponse> {
-  return apiFetch<EvidenceAssessmentResponse>(
+  const result = await apiFetch<EvidenceAssessmentResponse>(
     `/organizations/${orgId}/evidence/${evidenceId}/files/${fileId}/assess`,
-    { method: 'POST', body: JSON.stringify({ assessment_source: source }) },
+    { method: 'POST', body: JSON.stringify({ assessment_source: source, force }) },
   )
+  return normalizeAssessment(result)
 }
 
+/**
+ * Fetch the stored assessment for one evidence file, or ``null`` when there
+ * genuinely isn't one yet.
+ *
+ * Only a 404 becomes ``null``. Every other failure — 403, 500, a dropped
+ * connection — is re-thrown, because "no assessment exists" and "we could not
+ * find out" are different answers and the UI has to be able to say which one it
+ * is holding.
+ */
 export async function getAssessment(
   orgId: string,
   evidenceId: string,
   fileId: string,
 ): Promise<EvidenceAssessmentResponse | null> {
   try {
-    return await apiFetch<EvidenceAssessmentResponse>(
+    const result = await apiFetch<EvidenceAssessmentResponse>(
       `/organizations/${orgId}/evidence/${evidenceId}/files/${fileId}/assessment`,
     )
-  } catch {
-    return null // 404 — no assessment exists
+    return normalizeAssessment(result)
+  } catch (err: unknown) {
+    if ((err as { status?: number } | null)?.status === 404) return null
+    throw err
   }
+}
+
+/**
+ * Record a human decision on the current AI verdict for one file (#881 WS3).
+ *
+ * This is not the same call as ``reviewEvidenceFile``. That one answers "do we
+ * accept this document as evidence"; this one answers "was the machine right
+ * about it". A file can be approved while its assessment is still an
+ * unreviewed suggestion, and the two verbs are labelled differently in the UI
+ * for exactly that reason.
+ */
+export async function reviewAssessment(
+  orgId: string,
+  evidenceId: string,
+  fileId: string,
+  body: AssessmentReviewRequest,
+): Promise<EvidenceAssessmentResponse> {
+  const result = await apiFetch<EvidenceAssessmentResponse>(
+    `/organizations/${orgId}/evidence/${evidenceId}/files/${fileId}/assessment/review`,
+    { method: 'POST', body: JSON.stringify(body) },
+  )
+  return normalizeAssessment(result)
+}
+
+/** Every verdict this file has received, newest first. */
+export async function listAssessmentVersions(
+  orgId: string,
+  evidenceId: string,
+  fileId: string,
+): Promise<AssessmentVersion[]> {
+  return apiFetch<AssessmentVersion[]>(
+    `/organizations/${orgId}/evidence/${evidenceId}/files/${fileId}/assessment/versions`,
+  )
+}
+
+/** Files whose AI verdict is waiting for a human decision, worst first. */
+export async function getAssessmentReviewQueue(
+  orgId: string,
+  params: { status?: string; limit?: number; offset?: number } = {},
+): Promise<AssessmentReviewQueueResponse> {
+  const query = new URLSearchParams()
+  query.set('status', params.status ?? 'awaiting')
+  if (params.limit !== undefined) query.set('limit', String(params.limit))
+  if (params.offset !== undefined) query.set('offset', String(params.offset))
+  return apiFetch<AssessmentReviewQueueResponse>(
+    `/organizations/${orgId}/evidence/assessment/review-queue?${query.toString()}`,
+  )
 }
 
 export async function bulkAssess(
