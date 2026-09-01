@@ -1,3 +1,8 @@
+# Local backup sets produced by scripts/backup.sh and scripts/upgrade.sh
+# (Postgres dumps, MinIO evidence tarballs, checksums, git-ref records). These
+# hold live tenant data and evidence blobs — never commit them.
+backups/
+
 # Python virtual environments
 .venv/
 backend/.venv/
