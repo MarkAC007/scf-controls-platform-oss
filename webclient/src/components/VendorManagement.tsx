@@ -3,6 +3,7 @@ import VendorRegistry from './VendorRegistry'
 import VendorDetailPage from './VendorDetailPage'
 import VendorModal from './VendorModal'
 import { deleteVendor } from '../data/apiClient'
+import { useModalDismiss } from '../hooks/useModalDismiss'
 import type { Vendor } from '../types'
 
 interface VendorManagementProps {
@@ -32,6 +33,13 @@ export default function VendorManagement({ organizationId, vendorItem = null, on
   const [refreshKey, setRefreshKey] = useState(0)
   const [deleteConfirm, setDeleteConfirm] = useState<{ vendor: Vendor } | null>(null)
   const [deleting, setDeleting] = useState(false)
+
+  // Same guard the backdrop uses — a delete in flight holds the dialog open.
+  // VendorModal owns its own dismissal, and being the later registration it
+  // takes Escape while it is the one on top.
+  useModalDismiss(deleteConfirm !== null, () => {
+    if (!deleting) setDeleteConfirm(null)
+  })
 
   const handleSelectVendor = useCallback((vendorId: string) => {
     onVendorItemChange?.(vendorId)

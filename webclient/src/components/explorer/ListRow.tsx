@@ -42,7 +42,9 @@ export default function ExplorerListRow({
       />
       {monoId !== undefined && <div className="explorer-row-id">{monoId}</div>}
       <div className="explorer-row-body">
-        <div className="explorer-row-title">{title}</div>
+        <div className="explorer-row-title" title={title}>
+          {title}
+        </div>
         {description !== undefined && (
           <div className="explorer-row-desc">{description}</div>
         )}

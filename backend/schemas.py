@@ -2837,7 +2837,7 @@ class AuditLogResponse(BaseModel):
     field_name: Optional[str] = None
     old_value: Optional[str] = None
     new_value: Optional[str] = None
-    changed_by_user_id: UUID
+    changed_by_user_id: Optional[UUID] = None
     changed_by_email: Optional[str] = None
     changed_at: datetime
     ip_address: Optional[str] = None

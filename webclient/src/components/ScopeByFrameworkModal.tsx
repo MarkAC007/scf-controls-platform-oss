@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import { fetchFrameworks, type FrameworkInfo } from '../data/catalogApi'
+import { useModalDismiss } from '../hooks/useModalDismiss'
 import {
   bulkScopeByFramework,
   bulkUnscopeByFramework,
@@ -26,6 +27,8 @@ export const ScopeByFrameworkModal: React.FC<ScopeByFrameworkModalProps> = ({
   onClose,
   onSuccess,
 }) => {
+  useModalDismiss(true, onClose)
+
   const [mode, setMode] = useState<ModalMode>(initialMode)
   const [frameworks, setFrameworks] = useState<FrameworkInfo[]>([])
   const [selectedFrameworks, setSelectedFrameworks] = useState<Set<string>>(new Set())

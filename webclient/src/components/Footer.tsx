@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { toast } from 'react-hot-toast'
 import { apiClient, type VersionInfo, type VersionUpdateInfo } from '../data/apiClient'
 
@@ -32,6 +32,7 @@ export default function Footer() {
   const [update, setUpdate] = useState<VersionUpdateInfo | null>(null)
   const [platformVersion, setPlatformVersion] = useState<string | null>(null)
   const [checking, setChecking] = useState(false)
+  const footerRef = useRef<HTMLElement | null>(null)
 
   useEffect(() => {
     let active = true
@@ -44,6 +45,31 @@ export default function Footer() {
       })
       .catch(() => { if (active) setUpdate(null) })
     return () => { active = false }
+  }, [])
+
+  // The footer is `position: fixed` at the bottom of the viewport and its height
+  // changes as the version/credit/docs row wraps — 28px on a wide desktop, 56px
+  // on a phone in landscape. Scroll containers therefore cannot hardcode the
+  // clearance they need to keep their last row out from under it; they read this
+  // property instead (styles.css, `--app-footer-height`).
+  useEffect(() => {
+    const el = footerRef.current
+    if (!el) return
+
+    const publishHeight = () => {
+      document.documentElement.style.setProperty('--app-footer-height', `${el.offsetHeight}px`)
+    }
+
+    // Publish once up front: the observer's first callback is async, and until it
+    // lands every consumer would fall back to the 28px default.
+    publishHeight()
+
+    const observer = new ResizeObserver(publishHeight)
+    observer.observe(el)
+    return () => {
+      observer.disconnect()
+      document.documentElement.style.removeProperty('--app-footer-height')
+    }
   }, [])
 
   // The backend self-reports '0.0.0' when it cannot determine its version
@@ -90,7 +116,7 @@ export default function Footer() {
   const amber = Boolean(update?.breaking || update?.skip_blocked)
 
   return (
-    <footer className="app-footer">
+    <footer className="app-footer" ref={footerRef}>
       <div className="footer-left">
         <button
           type="button"

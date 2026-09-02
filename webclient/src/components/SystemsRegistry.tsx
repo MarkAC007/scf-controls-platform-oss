@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { getSystems, deleteSystem } from '../data/apiClient'
 import type { System, SystemType, SystemStatus, CollectionInterfacesFile, CollectionInterface } from '../types'
-import FilterSidebar, { FilterGroup, FilterSelect } from './explorer/FilterSidebar'
+import FilterSidebar, { FilterGroup, FilterSelect, defaultFiltersCollapsed } from './explorer/FilterSidebar'
 import ListToolbar from './explorer/ListToolbar'
 import ExplorerListRow, { RowMeta } from './explorer/ListRow'
 
@@ -107,7 +107,7 @@ export const SystemsRegistry: React.FC<SystemsRegistryProps> = ({
   const [statusFilter, setStatusFilter] = useState<string>('all')
   const [searchQuery, setSearchQuery] = useState('')
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
-  const [filtersCollapsed, setFiltersCollapsed] = useState(false)
+  const [filtersCollapsed, setFiltersCollapsed] = useState(defaultFiltersCollapsed)
 
   useEffect(() => {
     loadSystems()

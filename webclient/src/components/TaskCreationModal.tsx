@@ -3,6 +3,7 @@ import { apiClient } from '../data/apiClient';
 import { withContractorSuffix } from './ContractorBadge';
 import { useOrgMemberTypes } from '../hooks/useOrgMemberTypes';
 import TaskOwningTeamField from './TaskOwningTeamField';
+import { useModalDismiss } from '../hooks/useModalDismiss';
 
 interface User {
   id: string;
@@ -41,6 +42,8 @@ export const TaskCreationModal: React.FC<TaskCreationModalProps> = ({
   onClose,
   onTaskCreated
 }) => {
+  useModalDismiss(true, onClose);
+
   const [taskType, setTaskType] = useState('collection');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');

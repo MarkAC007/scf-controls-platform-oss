@@ -58,6 +58,19 @@ export default function FilterSidebar({
   )
 }
 
+// Phones default the filter rail closed — expanded it eats over half the
+// viewport. The toggle still opens it; this only sets the initial state.
+// jsdom does not implement matchMedia, so the capability check is not
+// redundant with the window check — without it every test rendering an
+// explorer page throws.
+export function defaultFiltersCollapsed(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(max-width: 700px)').matches
+  )
+}
+
 export function FilterGroup({
   label,
   children,

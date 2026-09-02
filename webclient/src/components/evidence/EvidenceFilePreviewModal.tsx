@@ -192,6 +192,15 @@ export function EvidenceFilePreviewModal({
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [onClose])
 
+  // The dialog scrolls its own content, so the wheel must not scroll the page
+  // behind it. The previous value is restored rather than cleared: clearing
+  // would release a lock this modal never took.
+  useEffect(() => {
+    const previousBodyOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = previousBodyOverflow }
+  }, [])
+
   const contentType = file.content_type ?? ''
   const isImage = contentType.startsWith('image/')
   const isPdf = contentType === 'application/pdf'
@@ -401,186 +410,188 @@ export function EvidenceFilePreviewModal({
           </button>
         </div>
 
-        {/* Body */}
-        {renderBody()}
+        <div className="evidence-preview-scroll">
+          {/* Body */}
+          {renderBody()}
 
-        {/* What the preparer asserted (#786, #802). Rendered for every file,
-            including one with nothing asserted — "no claim was made about this
-            evidence's period, population or provenance" is exactly the finding
-            an auditor needs, and hiding the panel would hide it. Note the meta
-            card inside renderBody() only appears for unsupported file types, so
-            this is the only always-visible metadata region in the modal. */}
-        <PreparerAssertionPanel file={file} />
+          {/* What the preparer asserted (#786, #802). Rendered for every file,
+              including one with nothing asserted — "no claim was made about this
+              evidence's period, population or provenance" is exactly the finding
+              an auditor needs, and hiding the panel would hide it. Note the meta
+              card inside renderBody() only appears for unsupported file types, so
+              this is the only always-visible metadata region in the modal. */}
+          <PreparerAssertionPanel file={file} />
 
-        {/* AI Assessment Panel */}
-        <div className="ai-assessment-panel">
-          <div
-            className="ai-assessment-panel-header"
-            onClick={() => setPanelExpanded(!panelExpanded)}
-          >
-            <h4 className="ai-assessment-panel-title">AI Assessment</h4>
-            <span className="ai-advisory-label">AI Advisory</span>
-            {assessment?.assessed_at && (
-              <span className="ai-assessment-panel-timestamp">
-                {relativeTime(assessment.assessed_at)}
-              </span>
-            )}
-            <span className="ai-assessment-panel-toggle">
-              {panelExpanded ? '\u25B2' : '\u25BC'}
-            </span>
-          </div>
-
-          {panelExpanded && (
-            <>
-              {/* A failed request, stated as a failed request. It sits above
-                  the verdict rather than replacing it: the last assessment we
-                  did fetch was true when we fetched it, and hiding it would
-                  lose information. What must not happen is the reader taking
-                  an outage for a judgement on their evidence. */}
-              {requestError && (
-                <div className="ai-assessment-request-error" role="alert">
-                  <div className="ai-assessment-request-error-message">
-                    {REQUEST_ERROR_COPY[requestError.kind] || 'The assessment request failed.'}
-                  </div>
-                  <div className="ai-assessment-request-error-detail">
-                    {requestError.message}
-                  </div>
-                  <div className="ai-assessment-request-error-note">
-                    This is a problem reaching the assessment service — not a finding about this file.
-                  </div>
-                  {/* Retry the thing that actually failed. A trigger that
-                      never started needs starting again; a fetch that failed
-                      needs re-fetching, and must not silently re-run a model
-                      the user did not ask for a second time. */}
-                  <button
-                    type="button"
-                    className="ai-assess-btn ai-assess-retry-btn"
-                    onClick={() => (requestError.kind === 'trigger' ? trigger() : retry())}
-                    disabled={triggering}
-                  >
-                    {requestError.kind === 'trigger' ? 'Try again' : 'Retry'}
-                  </button>
-                </div>
+          {/* AI Assessment Panel */}
+          <div className="ai-assessment-panel">
+            <div
+              className="ai-assessment-panel-header"
+              onClick={() => setPanelExpanded(!panelExpanded)}
+            >
+              <h4 className="ai-assessment-panel-title">AI Assessment</h4>
+              <span className="ai-advisory-label">AI Advisory</span>
+              {assessment?.assessed_at && (
+                <span className="ai-assessment-panel-timestamp">
+                  {relativeTime(assessment.assessed_at)}
+                </span>
               )}
+              <span className="ai-assessment-panel-toggle">
+                {panelExpanded ? '\u25B2' : '\u25BC'}
+              </span>
+            </div>
 
-              {assessLoading ? (
-                <div className="ai-assessment-empty">Loading assessment...</div>
-              ) : assessment && assessment.status !== 'pending' && assessment.status !== 'processing' ? (
-                <>
-                  <div className="ai-assessment-panel-status">
-                    {/* "AI suggests: Partial" until a person confirms it, then
-                        "Confirmed: Partial". The wording is the one place a
-                        reader learns whether this verdict has been stood
-                        behind, so it comes from the shared vocabulary rather
-                        than from a label map local to this file. */}
-                    <span
-                      className={verdictPresentation(assessment.status, assessment.review_decision).className}
-                      data-testid="ai-assessment-verdict-chip"
-                    >
-                      {verdictPresentation(assessment.status, assessment.review_decision).text}
-                    </span>
-                    {assessment.relevance_score !== null && (
-                      <span className="ai-assessment-panel-score">
-                        {Math.round(assessment.relevance_score)}/100
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Nothing was read, so nothing was judged. Said plainly,
-                      because "Unassessable" next to a score of nothing invites
-                      the reader to assume the file failed on its merits. */}
-                  {assessment.status === 'unassessable' && (
-                    <div className="ai-assessment-unassessable-note">
-                      No readable text could be extracted from this file, so it has not been
-                      assessed. This is not a judgement on the evidence — a scanned image or a
-                      binary format can be perfectly good evidence that this check cannot read.
-                      {/* The specific extraction error is not a separate field:
-                          the backend writes it into `summary` and the first
-                          finding, both rendered below. Repeating it here would
-                          just say the same thing twice. */}
+            {panelExpanded && (
+              <>
+                {/* A failed request, stated as a failed request. It sits above
+                    the verdict rather than replacing it: the last assessment we
+                    did fetch was true when we fetched it, and hiding it would
+                    lose information. What must not happen is the reader taking
+                    an outage for a judgement on their evidence. */}
+                {requestError && (
+                  <div className="ai-assessment-request-error" role="alert">
+                    <div className="ai-assessment-request-error-message">
+                      {REQUEST_ERROR_COPY[requestError.kind] || 'The assessment request failed.'}
                     </div>
-                  )}
-
-                  {/* The model saw part of the document. Anything it did not
-                      read, it cannot have found a gap in — so an unqualified
-                      "Sufficient" over a truncated read would overclaim.
-                      Promoted out of the findings list to the top, because a
-                      caveat that changes how every finding below it should be
-                      read does not belong buried among them. */}
-                  {assessment.truncated && (
-                    <div className="ai-assessment-truncation" data-testid="ai-assessment-truncation">
-                      <div>{truncationNotice(assessment)}</div>
-                      {truncationFinding?.suggestion && (
-                        <div className="ai-assessment-truncation-suggestion">
-                          {truncationFinding.suggestion}
-                        </div>
-                      )}
+                    <div className="ai-assessment-request-error-detail">
+                      {requestError.message}
                     </div>
-                  )}
-
-                  {assessment.summary && (
-                    <div className="ai-assessment-panel-summary">{assessment.summary}</div>
-                  )}
-                  {visibleFindings.length > 0 && (
-                    <div className="ai-findings-list">
-                      {visibleFindings.map((f, i) => (
-                        <FindingRow key={i} finding={f} />
-                      ))}
+                    <div className="ai-assessment-request-error-note">
+                      This is a problem reaching the assessment service — not a finding about this file.
                     </div>
-                  )}
-
-                  {/* Where the AI's suggestions get answered. Below the
-                      file-level findings because a reviewer decides objective
-                      by objective, and above Re-assess because correcting a
-                      verdict is the more common next step than replacing it. */}
-                  <AssessmentReviewPanel
-                    orgId={orgId}
-                    evidenceId={evidenceId}
-                    fileId={file.id}
-                    assessment={assessment}
-                    onReviewed={setReviewed}
-                  />
-
-                  <AssessmentProvenance assessment={assessment} />
-
-                  <div style={{ marginTop: 8 }}>
-                    {/* Re-assess forces a fresh run. Without ``force`` the
-                        backend may serve the cached verdict, and the button
-                        would look broken to the one user who most wants a
-                        second opinion. */}
+                    {/* Retry the thing that actually failed. A trigger that
+                        never started needs starting again; a fetch that failed
+                        needs re-fetching, and must not silently re-run a model
+                        the user did not ask for a second time. */}
                     <button
-                      className="ai-assess-btn"
-                      onClick={() => trigger({ force: true })}
+                      type="button"
+                      className="ai-assess-btn ai-assess-retry-btn"
+                      onClick={() => (requestError.kind === 'trigger' ? trigger() : retry())}
                       disabled={triggering}
                     >
-                      {triggering ? 'Re-assessing...' : 'Re-assess'}
+                      {requestError.kind === 'trigger' ? 'Try again' : 'Retry'}
                     </button>
                   </div>
-                </>
-              ) : assessment && (assessment.status === 'pending' || assessment.status === 'processing') ? (
-                <div className="ai-assessment-empty">
-                  <span className="ai-chip ai-chip-pending">Assessing...</span>
-                  <span>AI assessment in progress</span>
-                </div>
-              ) : requestError ? (
-                // The fetch failed, so we do not know whether an assessment
-                // exists. Saying "No AI assessment yet" here would be a claim
-                // we cannot support; the error block above is the whole story.
-                null
-              ) : (
-                <div className="ai-assessment-empty">
-                  <span>No AI assessment yet</span>
-                  <button
-                    className="ai-assess-btn"
-                    onClick={() => trigger()}
-                    disabled={triggering}
-                  >
-                    {triggering ? 'Starting...' : 'Assess with AI'}
-                  </button>
-                </div>
-              )}
-            </>
-          )}
+                )}
+
+                {assessLoading ? (
+                  <div className="ai-assessment-empty">Loading assessment...</div>
+                ) : assessment && assessment.status !== 'pending' && assessment.status !== 'processing' ? (
+                  <>
+                    <div className="ai-assessment-panel-status">
+                      {/* "AI suggests: Partial" until a person confirms it, then
+                          "Confirmed: Partial". The wording is the one place a
+                          reader learns whether this verdict has been stood
+                          behind, so it comes from the shared vocabulary rather
+                          than from a label map local to this file. */}
+                      <span
+                        className={verdictPresentation(assessment.status, assessment.review_decision).className}
+                        data-testid="ai-assessment-verdict-chip"
+                      >
+                        {verdictPresentation(assessment.status, assessment.review_decision).text}
+                      </span>
+                      {assessment.relevance_score !== null && (
+                        <span className="ai-assessment-panel-score">
+                          {Math.round(assessment.relevance_score)}/100
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Nothing was read, so nothing was judged. Said plainly,
+                        because "Unassessable" next to a score of nothing invites
+                        the reader to assume the file failed on its merits. */}
+                    {assessment.status === 'unassessable' && (
+                      <div className="ai-assessment-unassessable-note">
+                        No readable text could be extracted from this file, so it has not been
+                        assessed. This is not a judgement on the evidence — a scanned image or a
+                        binary format can be perfectly good evidence that this check cannot read.
+                        {/* The specific extraction error is not a separate field:
+                            the backend writes it into `summary` and the first
+                            finding, both rendered below. Repeating it here would
+                            just say the same thing twice. */}
+                      </div>
+                    )}
+
+                    {/* The model saw part of the document. Anything it did not
+                        read, it cannot have found a gap in — so an unqualified
+                        "Sufficient" over a truncated read would overclaim.
+                        Promoted out of the findings list to the top, because a
+                        caveat that changes how every finding below it should be
+                        read does not belong buried among them. */}
+                    {assessment.truncated && (
+                      <div className="ai-assessment-truncation" data-testid="ai-assessment-truncation">
+                        <div>{truncationNotice(assessment)}</div>
+                        {truncationFinding?.suggestion && (
+                          <div className="ai-assessment-truncation-suggestion">
+                            {truncationFinding.suggestion}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {assessment.summary && (
+                      <div className="ai-assessment-panel-summary">{assessment.summary}</div>
+                    )}
+                    {visibleFindings.length > 0 && (
+                      <div className="ai-findings-list">
+                        {visibleFindings.map((f, i) => (
+                          <FindingRow key={i} finding={f} />
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Where the AI's suggestions get answered. Below the
+                        file-level findings because a reviewer decides objective
+                        by objective, and above Re-assess because correcting a
+                        verdict is the more common next step than replacing it. */}
+                    <AssessmentReviewPanel
+                      orgId={orgId}
+                      evidenceId={evidenceId}
+                      fileId={file.id}
+                      assessment={assessment}
+                      onReviewed={setReviewed}
+                    />
+
+                    <AssessmentProvenance assessment={assessment} />
+
+                    <div style={{ marginTop: 8 }}>
+                      {/* Re-assess forces a fresh run. Without ``force`` the
+                          backend may serve the cached verdict, and the button
+                          would look broken to the one user who most wants a
+                          second opinion. */}
+                      <button
+                        className="ai-assess-btn"
+                        onClick={() => trigger({ force: true })}
+                        disabled={triggering}
+                      >
+                        {triggering ? 'Re-assessing...' : 'Re-assess'}
+                      </button>
+                    </div>
+                  </>
+                ) : assessment && (assessment.status === 'pending' || assessment.status === 'processing') ? (
+                  <div className="ai-assessment-empty">
+                    <span className="ai-chip ai-chip-pending">Assessing...</span>
+                    <span>AI assessment in progress</span>
+                  </div>
+                ) : requestError ? (
+                  // The fetch failed, so we do not know whether an assessment
+                  // exists. Saying "No AI assessment yet" here would be a claim
+                  // we cannot support; the error block above is the whole story.
+                  null
+                ) : (
+                  <div className="ai-assessment-empty">
+                    <span>No AI assessment yet</span>
+                    <button
+                      className="ai-assess-btn"
+                      onClick={() => trigger()}
+                      disabled={triggering}
+                    >
+                      {triggering ? 'Starting...' : 'Assess with AI'}
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
         </div>
 
         {/* Footer */}

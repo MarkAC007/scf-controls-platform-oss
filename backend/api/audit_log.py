@@ -102,7 +102,7 @@ async def list_audit_log(
     entries = result.scalars().all()
 
     # Enrich with user emails
-    user_ids = {e.changed_by_user_id for e in entries}
+    user_ids = {e.changed_by_user_id for e in entries if e.changed_by_user_id is not None}
     user_emails = {}
     if user_ids:
         user_result = await db.execute(

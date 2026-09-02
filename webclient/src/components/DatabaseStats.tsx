@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { apiClient, type VersionInfo, type VersionUpdateInfo } from '../data/apiClient'
+import { useModalDismiss } from '../hooks/useModalDismiss'
 
 // Injected at build time via vite.config.ts — used as a fallback when the
 // coarse (anonymous) /api/version response omits platform.version.
@@ -172,6 +173,10 @@ export default function DatabaseStats({ isOpen, onClose }: DatabaseStatsProps) {
   const [restorePreview, setRestorePreview] = useState<BackupMetadata | null>(null)
   const [pendingRestoreData, setPendingRestoreData] = useState<BackupData | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // Above the `if (!isOpen) return null` further down: hooks cannot sit after
+  // an early return.
+  useModalDismiss(isOpen, onClose)
 
   useEffect(() => {
     if (isOpen) {

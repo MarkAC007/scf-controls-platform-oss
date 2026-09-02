@@ -469,7 +469,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        height: '100vh',
+        height: '100dvh',
         flexDirection: 'column',
         gap: '20px',
         padding: '20px',

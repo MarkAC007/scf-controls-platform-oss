@@ -114,6 +114,72 @@ async def _resolve_evidence_access(
     return evidence
 
 
+async def _serialize_task_with_evidence(
+    task: EvidenceCollectionTask,
+    db: AsyncSession,
+) -> dict:
+    """Build the enriched task row the list and detail endpoints both return.
+
+    Shared rather than inlined per endpoint so the two cannot drift: the detail
+    page renders from the shape the list handed it, so a field present in one
+    has to be present in the other.
+    """
+    user = None
+    if task.assigned_user_id:
+        user_result = await db.execute(
+            select(DBUser).where(DBUser.id == task.assigned_user_id)
+        )
+        user = user_result.scalar_one_or_none()
+
+    # Get evidence details
+    evidence_result = await db.execute(
+        # owner_user is a relationship; a lazy load here raises
+        # MissingGreenlet under async SQLAlchemy (#781).
+        select(EvidenceTracking)
+        .options(selectinload(EvidenceTracking.owner_user))
+        .where(EvidenceTracking.id == task.evidence_tracking_id)
+    )
+    evidence = evidence_result.scalar_one_or_none()
+
+    return {
+        "id": task.id,
+        "evidence_tracking_id": task.evidence_tracking_id,
+        # Lets a caller reading the multi-org union (no organization_id
+        # param) tell which org each row belongs to.
+        "organization_id": task.organization_id,
+        "evidence_id": evidence.evidence_id if evidence else None,
+        "task_type": task.task_type,
+        "title": task.title,
+        "description": task.description,
+        "priority": task.priority,
+        "due_date": task.due_date,
+        "status": task.status,
+        "assigned_user_id": task.assigned_user_id,
+        # NULL means "inherit the evidence item's accountable team", which
+        # is not the same as "no team" -- the UI has to be able to tell
+        # them apart to render the inherited badge.
+        "owning_team_id": task.owning_team_id,
+        "completed_date": task.completed_date,
+        "completion_notes": task.completion_notes,
+        "dependencies": task.dependencies,
+        "attachments": task.attachments,
+        "auto_generated": task.auto_generated,
+        "created_at": task.created_at,
+        "frequency": evidence.frequency if evidence else None,
+        "collecting_system": evidence.collecting_system if evidence else None,
+        "method_of_collection": evidence.method_of_collection if evidence else None,
+        # Resolved accountable owner, not the old free-text label (#781).
+        # The key name is kept so TaskDashboard keeps rendering; what it
+        # carries is now a person, which is the point of the change.
+        "owner": _user_label(evidence.owner_user) if evidence else None,
+        "assigned_user": {
+            "id": user.id,
+            "email": user.email,
+            "display_name": user.display_name
+        } if user else None
+    }
+
+
 @router.get("/api/evidence-tasks", response_model=List[dict])
 async def list_evidence_tasks(
     status_filter: Optional[str] = Query(None, regex="^(not_started|in_progress|completed)$"),
@@ -261,63 +327,7 @@ async def list_evidence_tasks(
     tasks = result.scalars().all()
 
     # Eagerly load user data and evidence details
-    task_list = []
-    for task in tasks:
-        user = None
-        if task.assigned_user_id:
-            user_result = await db.execute(
-                select(DBUser).where(DBUser.id == task.assigned_user_id)
-            )
-            user = user_result.scalar_one_or_none()
-
-        # Get evidence details
-        evidence_result = await db.execute(
-            # owner_user is a relationship; a lazy load here raises
-            # MissingGreenlet under async SQLAlchemy (#781).
-            select(EvidenceTracking)
-            .options(selectinload(EvidenceTracking.owner_user))
-            .where(EvidenceTracking.id == task.evidence_tracking_id)
-        )
-        evidence = evidence_result.scalar_one_or_none()
-
-        task_dict = {
-            "id": task.id,
-            "evidence_tracking_id": task.evidence_tracking_id,
-            # Lets a caller reading the multi-org union (no organization_id
-            # param) tell which org each row belongs to.
-            "organization_id": task.organization_id,
-            "evidence_id": evidence.evidence_id if evidence else None,
-            "task_type": task.task_type,
-            "title": task.title,
-            "description": task.description,
-            "priority": task.priority,
-            "due_date": task.due_date,
-            "status": task.status,
-            "assigned_user_id": task.assigned_user_id,
-            # NULL means "inherit the evidence item's accountable team", which
-            # is not the same as "no team" -- the UI has to be able to tell
-            # them apart to render the inherited badge.
-            "owning_team_id": task.owning_team_id,
-            "completed_date": task.completed_date,
-            "completion_notes": task.completion_notes,
-            "dependencies": task.dependencies,
-            "attachments": task.attachments,
-            "auto_generated": task.auto_generated,
-            "created_at": task.created_at,
-            "frequency": evidence.frequency if evidence else None,
-            "collecting_system": evidence.collecting_system if evidence else None,
-            "method_of_collection": evidence.method_of_collection if evidence else None,
-            # Resolved accountable owner, not the old free-text label (#781).
-            # The key name is kept so TaskDashboard keeps rendering; what it
-            # carries is now a person, which is the point of the change.
-            "owner": _user_label(evidence.owner_user) if evidence else None,
-            "assigned_user": {
-                "id": user.id,
-                "email": user.email,
-                "display_name": user.display_name
-            } if user else None
-        }
-        task_list.append(task_dict)
+    task_list = [await _serialize_task_with_evidence(task, db) for task in tasks]
 
     return task_list
 
@@ -421,6 +431,28 @@ async def create_evidence_task(
             "display_name": user.display_name
         } if user else None
     }
+
+
+@router.get("/api/evidence-tasks/{task_id}", response_model=dict)
+async def get_evidence_task(
+    task_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_auth)
+):
+    """Fetch one evidence collection task, enriched exactly as the list rows are.
+
+    `TaskDetailPage` reads this. Without it the request matched the PATCH
+    route's path with the wrong method, and the detail view rendered the
+    literal string "Method Not Allowed" instead of a task.
+
+    Authorisation goes through `_resolve_task_access` at viewer, so a task in
+    an organisation the caller cannot reach is reported as not found rather
+    than as forbidden: an indistinguishable 404 is what stops task ids being
+    probed across tenants (#748).
+    """
+    task = await _resolve_task_access(task_id, current_user, db, "viewer")
+
+    return await _serialize_task_with_evidence(task, db)
 
 
 @router.patch("/api/evidence-tasks/{task_id}", response_model=EvidenceCollectionTaskResponse)

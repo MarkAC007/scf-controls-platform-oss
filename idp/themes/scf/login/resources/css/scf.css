@@ -1,0 +1,29 @@
+/*
+ * SCF login theme — touch-target minimums only.
+ *
+ * The stock login form renders its username/password fields and submit button
+ * about 36px tall, below the 44x44 CSS-px minimum tap target, on the first
+ * screen every mobile user of the platform meets.
+ *
+ * This file is deliberately minimal and raises exactly those three controls.
+ * It changes no colour, font, border, spacing or layout — it is not a re-skin.
+ * Loaded after the parent's css/styles.css (see `styles` in theme.properties).
+ */
+
+/* PatternFly's .pf-v5-c-form-control sets its own height and padding; a
+   min-height always clamps a smaller height, so no !important is needed.
+   border-box keeps the 44px a true rendered height instead of adding the
+   field's padding on top of it. */
+#username,
+#password {
+  min-height: 44px;
+  box-sizing: border-box;
+}
+
+/* #kc-login is the submit control — an <input> or <button> depending on the
+   flow, so this is matched by id rather than by element. .pf-v5-c-button is
+   padding-sized with no fixed height, so min-height governs directly. */
+#kc-login {
+  min-height: 44px;
+  box-sizing: border-box;
+}

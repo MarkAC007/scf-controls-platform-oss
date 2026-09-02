@@ -27,6 +27,14 @@ const FIELD_LABELS: Record<string, string> = {
   custom_fields: 'Custom Fields',
 }
 
+function friendlyError(message?: string): string {
+  if (!message) return 'Failed to load audit log'
+  if (/validation error|Internal Server Error|Traceback/i.test(message) || message.length > 160) {
+    return 'Failed to load audit log — the server returned an unexpected error.'
+  }
+  return message
+}
+
 function formatValue(field: string, value: string | undefined): string {
   if (!value || value === 'None') return '\u2014'
   if (field === 'selected') return value === 'True' ? 'Yes' : 'No'
@@ -168,7 +176,7 @@ export default function AuditLogPage({ organizationId }: AuditLogPageProps) {
       setTotal(result.total)
       setOffset(pageOffset)
     } catch (err: any) {
-      setError(err.message || 'Failed to load audit log')
+      setError(friendlyError(err.message))
       setEntries([])
       setTotal(0)
     } finally {

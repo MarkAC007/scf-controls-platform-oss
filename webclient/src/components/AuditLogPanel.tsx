@@ -27,6 +27,15 @@ const FIELD_LABELS: Record<string, string> = {
   custom_fields: 'Custom Fields',
 }
 
+/** Keep raw server internals (pydantic/traceback text) out of the UI */
+function friendlyError(message?: string): string {
+  if (!message) return 'Failed to load audit log'
+  if (/validation error|Internal Server Error|Traceback/i.test(message) || message.length > 160) {
+    return 'Failed to load audit log — the server returned an unexpected error.'
+  }
+  return message
+}
+
 /** Format a raw field value for display */
 function formatValue(field: string, value: string | undefined): string {
   if (!value || value === 'None') return '\u2014'
@@ -113,7 +122,7 @@ export function AuditLogPanel({ scfId, organizationId }: AuditLogPanelProps) {
         }
       })
       .catch(err => {
-        if (!cancelled) setError(err.message || 'Failed to load audit log')
+        if (!cancelled) setError(friendlyError(err.message))
       })
       .finally(() => {
         if (!cancelled) setLoading(false)

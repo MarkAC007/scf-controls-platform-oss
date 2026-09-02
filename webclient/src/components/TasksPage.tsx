@@ -9,6 +9,7 @@ import TaskDetailPage from './TaskDetailPage';
 import FilterSidebar, {
   FilterGroup,
   FilterSelect,
+  defaultFiltersCollapsed,
 } from './explorer/FilterSidebar'
 import FilterRadio from './explorer/FilterRadio';
 import ListToolbar from './explorer/ListToolbar';
@@ -153,7 +154,7 @@ export const TasksPage: React.FC<TasksPageProps> = ({
   const [taskTypeFilter, setTaskTypeFilter] = useState<string>('all');
   const [owningTeamFilter, setOwningTeamFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [filtersCollapsed, setFiltersCollapsed] = useState(false);
+  const [filtersCollapsed, setFiltersCollapsed] = useState(defaultFiltersCollapsed);
 
   // Expansion state: which row is expanded (null = none)
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -553,7 +554,7 @@ export const TasksPage: React.FC<TasksPageProps> = ({
                           type="button"
                           aria-label={task.title || 'Untitled Task'}
                         >
-                          {task.title || 'Untitled Task'}
+                          <span className="tasks-row-title-text">{task.title || 'Untitled Task'}</span>
                           {task.completion_notes && (
                             <span
                               className="tasks-notes-indicator"

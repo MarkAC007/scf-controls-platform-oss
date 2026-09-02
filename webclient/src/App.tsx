@@ -64,6 +64,8 @@ import {
   readTabFromUrl,
   replaceSearch,
   searchForTab,
+  withTab,
+  withEvidenceView,
   withLibraryItem,
   withRiskItem,
   withVendorItem,
@@ -813,6 +815,10 @@ function AppContent() {
           {activeTab === 'webhooks' && scopingData && (
             <WebhookManagement
               organizationId={scopingData.organizationId!}
+              onNavigateToEvidenceWorkspace={() => {
+                pushSearch(withEvidenceView(withTab(window.location.search, 'evidence'), 'workspace'))
+                setActiveTab('evidence')
+              }}
             />
           )}
           {activeTab === 'engagements' && scopingData && (
