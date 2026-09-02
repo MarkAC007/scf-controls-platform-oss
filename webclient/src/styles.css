@@ -20373,6 +20373,20 @@ textarea.form-control{
   margin: 0;
 }
 
+/* Second row for the AI assessment cards. A grid so each card's `height: 100%`
+   resolves against the row (the tallest card), not a stacked column. Hidden
+   when both cards render nothing so it leaves no phantom gap. */
+.edt-ai-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.edt-ai-row:empty {
+  display: none;
+}
+
 .edt-readiness-card {
   background: var(--card);
   border: 1px solid var(--border);
@@ -21494,6 +21508,10 @@ textarea.form-control{
 @media (max-width: 768px) {
   .edt-stats-row {
     flex-direction: column;
+  }
+
+  .edt-ai-row {
+    grid-template-columns: 1fr;
   }
 
   .ehd-summary-bar {
