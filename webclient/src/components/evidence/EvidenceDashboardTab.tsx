@@ -749,9 +749,15 @@ export default function EvidenceDashboardTab({
         </div>
         <div className="edt-stats-section">
           <AssessmentSummaryCard organizationId={organizationId} />
-          <FileAssessmentSummaryCard organizationId={organizationId} />
-          <AssessmentReviewQueueCard orgId={organizationId} />
         </div>
+      </div>
+
+      {/* The AI cards use `height: 100%` to match the readiness card, which only
+          works with one card per stats column: stacking three there made the
+          row as tall as all three combined and every card stretch to it. */}
+      <div className="edt-ai-row">
+        <FileAssessmentSummaryCard organizationId={organizationId} />
+        <AssessmentReviewQueueCard orgId={organizationId} />
       </div>
 
       <OwnerWorkloadSection
