@@ -4,6 +4,7 @@ import type { OrgInviteResponse } from '../data/apiClient'
 import { apiClient } from '../data/apiClient'
 import type { MemberType } from '../types'
 import { ContractorBadge } from './ContractorBadge'
+import { useModalDismiss } from '../hooks/useModalDismiss'
 
 interface InviteUserModalProps {
   organizationId: string
@@ -12,6 +13,8 @@ interface InviteUserModalProps {
 }
 
 export default function InviteUserModal({ organizationId, onClose, onInviteSent }: InviteUserModalProps) {
+  useModalDismiss(true, onClose)
+
   const [email, setEmail] = useState('')
   const [message, setMessage] = useState('')
   const [role, setRole] = useState<'admin' | 'editor' | 'viewer'>('viewer')

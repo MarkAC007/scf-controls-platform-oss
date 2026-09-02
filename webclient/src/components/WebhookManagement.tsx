@@ -21,12 +21,24 @@ import type {
   WebhookEndpointCreatedResponse,
   WebhookDelivery,
 } from '../data/apiClient'
+import { useModalDismiss } from '../hooks/useModalDismiss'
 
 interface WebhookManagementProps {
   organizationId: string
+  /**
+   * Take the user to the evidence workspace, where the Collection Wizard lives.
+   *
+   * A prop rather than a call to `pushSearch` here because only `App` owns
+   * `activeTab`, and writing the address bar without it leaves the URL naming
+   * a screen the app is not showing.
+   */
+  onNavigateToEvidenceWorkspace?: () => void
 }
 
-export default function WebhookManagement({ organizationId }: WebhookManagementProps) {
+export default function WebhookManagement({
+  organizationId,
+  onNavigateToEvidenceWorkspace,
+}: WebhookManagementProps) {
   const [endpoints, setEndpoints] = useState<WebhookEndpointResponse[]>([])
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
@@ -123,6 +135,12 @@ export default function WebhookManagement({ organizationId }: WebhookManagementP
     setSecretCopied(false)
   }
 
+  // Escape mirrors each dialog's ✕ exactly — none of these three is guarded
+  // while a rotate or revoke is in flight, so neither is the key.
+  useModalDismiss(rotateConfirm !== null, closeRotateModal)
+  useModalDismiss(revokeConfirm !== null, () => setRevokeConfirm(null))
+  useModalDismiss(deliveryEndpointId !== null, () => setDeliveryEndpointId(null))
+
   const formatDate = (iso: string | null | undefined) => {
     if (!iso) return '—'
     return new Date(iso).toLocaleDateString('en-GB', {
@@ -188,7 +206,12 @@ export default function WebhookManagement({ organizationId }: WebhookManagementP
         actions={
           <button
             className="btn btn-primary webhook-create-btn"
-            onClick={() => toast('To create a webhook endpoint, use the Collection Wizard when configuring an evidence item.', { icon: 'ℹ️', duration: 5000 })}
+            onClick={() => {
+              // The wizard is per-evidence-item, so the furthest we can take
+              // the user is the workspace that lists them (D-12).
+              onNavigateToEvidenceWorkspace?.()
+              toast('Open an evidence item and start the Collection Wizard to create a webhook endpoint.', { icon: 'ℹ️', duration: 5000 })
+            }}
           >
             + Create (via Wizard)
           </button>

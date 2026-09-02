@@ -19,7 +19,7 @@ import { enrichControl } from '../../data/loaders'
 import { getCatalogLifecycle } from '../DeprecatedBadge'
 import DeprecatedBadge from '../DeprecatedBadge'
 
-import FilterSidebar, { FilterGroup, FilterSelect } from '../explorer/FilterSidebar'
+import FilterSidebar, { FilterGroup, FilterSelect, defaultFiltersCollapsed } from '../explorer/FilterSidebar'
 import ListToolbar from '../explorer/ListToolbar'
 import ExplorerListRow, {
   RowChip,
@@ -106,7 +106,7 @@ export default function LibraryList({
   bulkById,
 }: LibraryListProps): JSX.Element {
   // FilterSidebar collapsed state is local — parent has no need to own it
-  const [filtersCollapsed, setFiltersCollapsed] = useState(false)
+  const [filtersCollapsed, setFiltersCollapsed] = useState(defaultFiltersCollapsed)
 
   // Measured container height for the virtualized list
   const [listHeight, setListHeight] = useState(DEFAULT_LIST_HEIGHT)

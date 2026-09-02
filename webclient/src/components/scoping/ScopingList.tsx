@@ -42,6 +42,7 @@ import type { Team, OrgFunction } from '../../types'
 import FilterSidebar, {
   FilterGroup,
   FilterSelect,
+  defaultFiltersCollapsed,
 } from '../explorer/FilterSidebar'
 import ListToolbar from '../explorer/ListToolbar'
 import ExplorerListRow, { RowMeta, RowTickCircle } from '../explorer/ListRow'
@@ -141,7 +142,7 @@ export default function ScopingList({
   ownerByControlId,
   bulkBar,
 }: ScopingListProps): JSX.Element {
-  const [filtersCollapsed, setFiltersCollapsed] = useState(false)
+  const [filtersCollapsed, setFiltersCollapsed] = useState(defaultFiltersCollapsed)
   const [listHeight, setListHeight] = useState(DEFAULT_LIST_HEIGHT)
   const listContainerRef = useRef<HTMLDivElement>(null)
 

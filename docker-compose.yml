@@ -522,6 +522,10 @@ services:
       - "${KEYCLOAK_PORT:-8081}:8080"
     volumes:
       - ./idp/scf-realm.json:/opt/keycloak/data/import/scf-realm.json:ro
+      # Custom login theme (44px touch targets). The realm selects it via
+      # loginTheme — set in scf-realm.json for fresh imports, and by idp-init.sh
+      # for realms that already exist.
+      - ./idp/themes/scf:/opt/keycloak/themes/scf:ro
     depends_on:
       postgres:
         condition: service_healthy

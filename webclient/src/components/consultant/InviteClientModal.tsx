@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { ConsultantInvite } from '../../types'
+import { useModalDismiss } from '../../hooks/useModalDismiss'
 
 type ModalStep = 'create_org' | 'invite_admin'
 
@@ -20,6 +21,8 @@ export default function InviteClientModal({
   onInviteAdmin,
   onCancelInvite
 }: InviteClientModalProps) {
+  useModalDismiss(true, onClose)
+
   const [email, setEmail] = useState('')
   const [orgName, setOrgName] = useState('')
   const [loading, setLoading] = useState(false)

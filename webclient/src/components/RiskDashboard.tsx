@@ -37,6 +37,7 @@ import {
   deleteCustomRisk,
 } from '../data/apiClient'
 import { useRiskProfile } from '../contexts/RiskProfileContext'
+import { useModalDismiss } from '../hooks/useModalDismiss'
 import riskCodesData from '../data/risk_codes.json'
 
 interface RiskDashboardProps {
@@ -67,6 +68,10 @@ export default function RiskDashboard({ organizationId, onNavigateToControl, ris
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [createForm, setCreateForm] = useState({ title: '', description: '', category_name: 'Custom', category_color: '#6b7280' })
   const [creating, setCreating] = useState(false)
+
+  // One call covers both renderings of the create-risk modal — the detail view
+  // and the list view each render it, but never at the same time.
+  useModalDismiss(showCreateModal, () => setShowCreateModal(false))
 
   // Cast the imported JSON to the correct type
   const scfRiskCodes = riskCodesData as RiskCodesFile

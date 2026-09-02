@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import type { Vendor, VendorInput, VendorStatus, VendorCriticality, DataClassification } from '../types'
 import { VENDOR_STATUS_LABELS, VENDOR_CRITICALITY_LABELS } from '../types'
 import { createVendor, updateVendor } from '../data/apiClient'
+import { useModalDismiss } from '../hooks/useModalDismiss'
 
 interface VendorModalProps {
   organizationId: string
@@ -29,6 +30,8 @@ export const VendorModal: React.FC<VendorModalProps> = ({
   onClose,
   onSuccess,
 }) => {
+  useModalDismiss(true, onClose)
+
   const isEditMode = !!editVendor
 
   const [formData, setFormData] = useState<VendorFormState>({

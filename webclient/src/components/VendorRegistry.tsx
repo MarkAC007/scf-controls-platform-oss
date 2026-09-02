@@ -9,7 +9,7 @@ import {
   vendorRiskLevelToRAG
 } from '../types'
 import { getVendors } from '../data/apiClient'
-import FilterSidebar, { FilterGroup, FilterSelect } from './explorer/FilterSidebar'
+import FilterSidebar, { FilterGroup, FilterSelect, defaultFiltersCollapsed } from './explorer/FilterSidebar'
 import ListToolbar from './explorer/ListToolbar'
 import ExplorerListRow, { RowMeta } from './explorer/ListRow'
 
@@ -67,7 +67,7 @@ export const VendorRegistry: React.FC<VendorRegistryProps> = ({
   const [statusFilter, setStatusFilter] = useState<VendorStatus | 'all'>('all')
   const [criticalityFilter, setCriticalityFilter] = useState<VendorCriticality | 'all'>('all')
   const [categoryFilter, setCategoryFilter] = useState<string>('all')
-  const [filtersCollapsed, setFiltersCollapsed] = useState(false)
+  const [filtersCollapsed, setFiltersCollapsed] = useState(defaultFiltersCollapsed)
 
   // Build API filter params from the current sidebar filter values.
   // Search is handled client-side only for immediate feedback — it is NOT

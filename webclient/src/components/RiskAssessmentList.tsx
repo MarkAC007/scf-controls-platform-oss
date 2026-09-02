@@ -28,7 +28,7 @@ import {
   IMPACT_LABELS,
   TREATMENT_STATUS_LABELS
 } from '../types'
-import FilterSidebar, { FilterGroup, FilterSelect } from './explorer/FilterSidebar'
+import FilterSidebar, { FilterGroup, FilterSelect, defaultFiltersCollapsed } from './explorer/FilterSidebar'
 import ListToolbar from './explorer/ListToolbar'
 import ExplorerListRow, { RowChip, RowMeta } from './explorer/ListRow'
 
@@ -63,7 +63,7 @@ export default function RiskAssessmentList({
   matrixType,
   onFilteredListChange,
 }: RiskAssessmentListProps) {
-  const [filtersCollapsed, setFiltersCollapsed] = useState(false)
+  const [filtersCollapsed, setFiltersCollapsed] = useState(defaultFiltersCollapsed)
   const [sortField, setSortField] = useState<SortField>('risk_code')
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc')
   const [filterStatus, setFilterStatus] = useState<TreatmentStatus | 'all'>('all')

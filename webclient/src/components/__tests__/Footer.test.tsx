@@ -16,6 +16,13 @@ import Footer from '../Footer'
 
 // ---- Mocks ----
 
+// ResizeObserver not available in jsdom (Footer publishes --app-footer-height)
+globalThis.ResizeObserver = vi.fn().mockImplementation(() => ({
+  observe: vi.fn(),
+  unobserve: vi.fn(),
+  disconnect: vi.fn(),
+}))
+
 // Suppress toast side-effects in tests
 vi.mock('react-hot-toast', () => ({
   default: Object.assign(vi.fn(), { success: vi.fn(), error: vi.fn() }),

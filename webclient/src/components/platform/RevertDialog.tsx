@@ -7,6 +7,7 @@
  */
 import { useState } from 'react'
 import { RevertBlockedError } from '../../data/catalogUpgradeApi'
+import { useModalDismiss } from '../../hooks/useModalDismiss'
 
 interface RevertDialogProps {
   toVersion: string
@@ -15,6 +16,8 @@ interface RevertDialogProps {
 }
 
 export default function RevertDialog({ toVersion, onConfirm, onClose }: RevertDialogProps) {
+  useModalDismiss(true, onClose)
+
   const [reverting, setReverting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [blockers, setBlockers] = useState<string[]>([])

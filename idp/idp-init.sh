@@ -45,6 +45,14 @@ fi
 "${KCADM}" update "clients/${CID}" -r "${REALM}" -s "secret=${OIDC_CLIENT_SECRET}"
 echo "idp-init: client '${CLIENT_ID}' secret set from OIDC_CLIENT_SECRET."
 
+# --- Select the SCF login theme (idempotent). --------------------------------
+# scf-realm.json also carries loginTheme, but --import-realm is a no-op once the
+# realm exists, so on every already-deployed stack the JSON alone would never
+# take effect. Setting the same value twice is harmless; set -e makes a genuine
+# failure abort loudly rather than leave the stock theme silently in place.
+"${KCADM}" update "realms/${REALM}" -s loginTheme=scf
+echo "idp-init: realm '${REALM}' login theme set to 'scf'."
+
 # --- Optionally create the bootstrap admin user (idempotent). ----------------
 if [ -n "${BOOTSTRAP_ADMIN_EMAIL:-}" ]; then
   EXISTING="$("${KCADM}" get users -r "${REALM}" -q email="${BOOTSTRAP_ADMIN_EMAIL}" --fields id --format csv --noquotes | head -n1)"

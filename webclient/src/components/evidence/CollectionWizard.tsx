@@ -6,6 +6,7 @@ import {
   ReviewExportStep,
 } from './CollectionWizardSteps'
 import { getSystems } from '../../data/apiClient'
+import { useModalDismiss } from '../../hooks/useModalDismiss'
 import type { System } from '../../types'
 
 // ---- Wizard state machine ----
@@ -85,6 +86,8 @@ export function CollectionWizard({
   onComplete,
   onNavigateToSystems,
 }: CollectionWizardProps) {
+  useModalDismiss(true, onClose)
+
   const [state, setState] = useState<WizardState>(initialState)
   const [systems, setSystems] = useState<System[]>([])
   const [loadingSystems, setLoadingSystems] = useState(true)

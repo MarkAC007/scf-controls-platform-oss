@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { createSystem, updateSystem } from '../data/apiClient'
 import { SystemTemplatePicker } from './SystemTemplatePicker'
 import { VendorPicker } from './VendorPicker'
+import { useModalDismiss } from '../hooks/useModalDismiss'
 import type { System, SystemInput, SystemType, SystemStatus, SystemCatalogTemplate, VendorSimple } from '../types'
 
 interface AddSystemModalProps {
@@ -44,6 +45,8 @@ export const AddSystemModal: React.FC<AddSystemModalProps> = ({
   onClose,
   onSuccess,
 }) => {
+  useModalDismiss(true, onClose)
+
   const isEditMode = !!editSystem
 
   // Add mode starts on the template picker; edit mode (and a pre-linked vendor)

@@ -6,6 +6,8 @@
  */
 import { useState } from 'react'
 
+import { useModalDismiss } from '../../hooks/useModalDismiss'
+
 interface ApplyConfirmDialogProps {
   toVersion: string
   applying: boolean
@@ -14,6 +16,8 @@ interface ApplyConfirmDialogProps {
 }
 
 export default function ApplyConfirmDialog({ toVersion, applying, onConfirm, onClose }: ApplyConfirmDialogProps) {
+  useModalDismiss(true, onClose)
+
   const [text, setText] = useState('')
   const matches = text.trim() === toVersion
 

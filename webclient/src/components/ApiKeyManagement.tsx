@@ -13,6 +13,7 @@ import {
   revokeOrgApiKey,
 } from '../data/apiClient'
 import type { OrgApiKey, OrgApiKeyCreated } from '../data/apiClient'
+import { useModalDismiss } from '../hooks/useModalDismiss'
 
 interface ApiKeyManagementProps {
   organizationId: string
@@ -93,6 +94,8 @@ export default function ApiKeyManagement({ organizationId }: ApiKeyManagementPro
     setCreatedKey(null)
     setCopied(false)
   }
+
+  useModalDismiss(showCreateModal, closeCreateModal)
 
   const roleBadgeClass = (role: string) => {
     switch (role) {

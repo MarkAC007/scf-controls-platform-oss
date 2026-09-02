@@ -24,6 +24,7 @@ import {
   type EngagementQueryStatus,
 } from '../data/apiClient'
 import { fetchFrameworks, type FrameworkInfo } from '../data/catalogApi'
+import { useModalDismiss } from '../hooks/useModalDismiss'
 import DeprecatedBadge, { getCatalogLifecycle } from './DeprecatedBadge'
 
 interface EngagementsPageProps {
@@ -96,11 +97,21 @@ function HelpNote({ children }: { children: React.ReactNode }) {
   )
 }
 
-/** Right-anchored slide-over shell shared by every engagement drawer. */
+/**
+ * Right-anchored slide-over shell shared by every engagement drawer.
+ *
+ * The z-index is not decorative. The app header is fixed at z-index 100, and
+ * the drawer's ✕ sits in the same band at the top of the screen — below that
+ * value the close button is covered by the header and cannot be clicked at all
+ * (D-10). 1000 is what `.modal-overlay` uses.
+ */
 function Drawer({ width = 560, onClose, children }: { width?: number; onClose: () => void; children: React.ReactNode }) {
+  // Mounted only while open, so the overlay is always the active one.
+  useModalDismiss(true, onClose)
+
   return (
     <div
-      style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', justifyContent: 'flex-end', background: 'rgba(0,0,0,0.35)' }}
+      style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', justifyContent: 'flex-end', background: 'rgba(0,0,0,0.35)' }}
       onClick={onClose}
     >
       <div

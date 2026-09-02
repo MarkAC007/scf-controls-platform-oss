@@ -1618,7 +1618,7 @@ export interface AuditLogEntry {
   field_name?: string
   old_value?: string
   new_value?: string
-  changed_by_user_id: string
+  changed_by_user_id: string | null
   changed_by_email?: string
   changed_at: string
   ip_address?: string

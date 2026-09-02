@@ -8,6 +8,8 @@
  */
 import { useState } from 'react'
 
+import { useModalDismiss } from '../../hooks/useModalDismiss'
+
 interface OrgRollbackDialogProps {
   organizationName: string
   toVersion: string
@@ -28,6 +30,8 @@ export default function OrgRollbackDialog({
   onConfirm,
   onClose,
 }: OrgRollbackDialogProps) {
+  useModalDismiss(true, onClose)
+
   const [text, setText] = useState('')
   const matches = text.trim() === toVersion
 

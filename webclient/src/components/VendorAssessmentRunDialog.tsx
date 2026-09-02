@@ -13,6 +13,7 @@ import type {
   VendorAIAssessmentTriggerResponse,
 } from '../types'
 import { triggerVendorAIAssessment } from '../data/apiClient'
+import { useModalDismiss } from '../hooks/useModalDismiss'
 
 interface VendorAssessmentRunDialogProps {
   organizationId: string
@@ -41,6 +42,12 @@ export default function VendorAssessmentRunDialog({
   const [additionalContext, setAdditionalContext] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Same guard the backdrop uses: a run already on its way must not be
+  // dismissed out from under the caller.
+  useModalDismiss(true, () => {
+    if (!submitting) onClose()
+  })
 
   const handleSubmit = async () => {
     if (!servicesUsed.trim()) {
