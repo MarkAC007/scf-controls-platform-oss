@@ -336,7 +336,7 @@ class TestLLMFailures:
     def test_call_llm_raises_on_api_error(self, monkeypatch):
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
         fake_anthropic = MagicMock()
-        fake_anthropic.Anthropic.return_value.messages.create.side_effect = RuntimeError("529 overloaded")
+        fake_anthropic.Anthropic.return_value.messages.stream.side_effect = RuntimeError("529 overloaded")
         with patch.dict(sys.modules, {"anthropic": fake_anthropic}):
             with pytest.raises(ta.LLMCallError) as excinfo:
                 ta._call_llm("sys", "user")

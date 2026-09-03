@@ -27,6 +27,7 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from catalog_models import SCFCatalogControl, SCFCatalogAssessmentObjective
+from services.anthropic_response import extract_text
 from services.model_registry import cost_cents as model_cost_cents, resolve as resolve_model
 
 logger = logging.getLogger(__name__)
@@ -180,7 +181,7 @@ def _call_llm(system_prompt: str, user_prompt: str) -> Optional[dict]:
             messages=[{"role": "user", "content": user_prompt}],
         )
         return {
-            "content": message.content[0].text,
+            "content": extract_text(message),
             "model": message.model,
             "input_tokens": message.usage.input_tokens,
             "output_tokens": message.usage.output_tokens,
