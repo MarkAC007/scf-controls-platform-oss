@@ -96,6 +96,13 @@ MODELS: Dict[str, ModelSpec] = {
         output_cost_per_mtok=15.0,
         notes="Sonnet tier. Already live for vendor assessment, recipe generation and doc-gen.",
     ),
+    "claude-opus-5": ModelSpec(
+        id="claude-opus-5",
+        provider="anthropic",
+        input_cost_per_mtok=5.0,
+        output_cost_per_mtok=25.0,
+        notes="Opus tier. Evidence assessment default — verdict quality over cost.",
+    ),
     "claude-fable-5": ModelSpec(
         id="claude-fable-5",
         provider="anthropic",
@@ -129,7 +136,7 @@ MODELS: Dict[str, ModelSpec] = {
 #: the ones already deployed and are kept exactly as they were — renaming them
 #: would silently drop whatever is configured in production today.
 ROLES: Dict[str, Tuple[str, str]] = {
-    "evidence_assessment": ("EVIDENCE_AI_MODEL", "claude-sonnet-4-6"),
+    "evidence_assessment": ("EVIDENCE_AI_MODEL", "claude-opus-5"),
     "artifact_type_extraction": ("ARTIFACT_TYPE_AI_MODEL", "claude-sonnet-4-6"),
     "vendor_assessment": ("VENDOR_AI_MODEL", "claude-sonnet-4-6"),
     "recipe_generation": ("SYSTEMS_AI_MODEL", "claude-sonnet-4-6"),
