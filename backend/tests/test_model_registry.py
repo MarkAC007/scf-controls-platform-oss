@@ -141,7 +141,7 @@ class TestResolve:
 
     def test_default_when_unset(self, monkeypatch):
         monkeypatch.delenv("EVIDENCE_AI_MODEL", raising=False)
-        assert resolve("evidence_assessment") == "claude-sonnet-4-6"
+        assert resolve("evidence_assessment") == "claude-opus-5"
 
     def test_env_override_wins(self, monkeypatch):
         monkeypatch.setenv("EVIDENCE_AI_MODEL", "claude-fable-5")
@@ -150,7 +150,7 @@ class TestResolve:
     def test_blank_env_falls_back(self, monkeypatch):
         """An empty variable is "unset", not "call the empty-string model"."""
         monkeypatch.setenv("EVIDENCE_AI_MODEL", "   ")
-        assert resolve("evidence_assessment") == "claude-sonnet-4-6"
+        assert resolve("evidence_assessment") == "claude-opus-5"
 
     def test_unregistered_override_is_honoured_but_warned(self, monkeypatch, caplog):
         """Production must be able to escape a bad default without a deploy."""
@@ -169,7 +169,7 @@ class TestResolve:
     @pytest.mark.parametrize("bad", ["mo del", "model/../x", "x" * 200, "-leading-dash"])
     def test_malformed_overrides_fall_back(self, monkeypatch, bad):
         monkeypatch.setenv("EVIDENCE_AI_MODEL", bad)
-        assert resolve("evidence_assessment") == "claude-sonnet-4-6"
+        assert resolve("evidence_assessment") == "claude-opus-5"
 
     def test_unknown_role_raises(self):
         with pytest.raises(KeyError, match="Unknown model role"):
@@ -250,6 +250,11 @@ class TestCost:
         """
         assert cost_cents("claude-sonnet-4-6", 1_000_000, 0) == pytest.approx(300.0)
         assert cost_cents("claude-sonnet-4-6", 0, 1_000_000) == pytest.approx(1500.0)
+
+    def test_opus_5_rate_card(self):
+        """$5/M in, $25/M out — the declared price for the evidence default."""
+        assert cost_cents("claude-opus-5", 1_000_000, 0) == pytest.approx(500.0)
+        assert cost_cents("claude-opus-5", 0, 1_000_000) == pytest.approx(2500.0)
 
     def test_dated_response_id_still_prices(self):
         """The API may answer with a dated id even when an alias was requested."""
