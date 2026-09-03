@@ -39,6 +39,7 @@ from services.text_extraction_service import (
     extract_text_from_bytes,
     download_evidence_bytes,
 )
+from services.anthropic_response import extract_text
 from services.model_registry import cost_cents as model_cost_cents, resolve as resolve_model
 
 logger = logging.getLogger(__name__)
@@ -58,7 +59,13 @@ MODEL_ROLE = "evidence_assessment"
 # file-level opinion and would truncate an AO-grounded answer partway through
 # the objective list — which the parser correctly refuses, turning every large
 # control set into an error instead of a verdict.
-MAX_OUTPUT_TOKENS = 8192
+# Opus 5 runs adaptive thinking by default and its thinking tokens are spent
+# INSIDE max_tokens. 8192 fit a non-thinking Sonnet verdict; a thinking model
+# burned most of it reasoning and hit the ceiling before the JSON verdict
+# (v0.26.0 follow-up incident, 2026-09-03). Billed per token used, not per
+# ceiling — the headroom is free on short runs. Ceilings this size require a
+# streaming request (the SDK refuses long non-streaming calls).
+MAX_OUTPUT_TOKENS = 32000
 
 # Kept as a module constant rather than read back off `self.max_retries`:
 # `retry_kwargs` is applied by the autoretry wrapper at retry time and does
@@ -198,7 +205,7 @@ def _call_llm(system_prompt: str, user_prompt: str) -> dict:
 
     try:
         client = anthropic.Anthropic(api_key=api_key)
-        message = client.messages.create(
+        with client.messages.stream(
             model=resolve_model(MODEL_ROLE),
             max_tokens=MAX_OUTPUT_TOKENS,
             system=[{
@@ -207,9 +214,10 @@ def _call_llm(system_prompt: str, user_prompt: str) -> dict:
                 "cache_control": {"type": "ephemeral"},
             }],
             messages=[{"role": "user", "content": user_prompt}],
-        )
+        ) as stream:
+            message = stream.get_final_message()
         return {
-            "content": message.content[0].text,
+            "content": extract_text(message),
             "model": message.model,
             "input_tokens": message.usage.input_tokens,
             "output_tokens": message.usage.output_tokens,
@@ -230,8 +238,11 @@ def _call_llm(system_prompt: str, user_prompt: str) -> dict:
 @shared_task(
     bind=True,
     name="tasks_assessment.assess_evidence_task",
-    time_limit=360,
-    soft_time_limit=300,
+    # 600/540 matches the platform's other model-calling tasks (recipe, vendor).
+    # 360/300 predates thinking models: an Opus 5 call that reasons over a dense
+    # document can legitimately run past 5 minutes without being stuck.
+    time_limit=600,
+    soft_time_limit=540,
     autoretry_for=(Exception,),
     retry_backoff=True,
     retry_kwargs={"max_retries": MAX_RETRIES},

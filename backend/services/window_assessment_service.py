@@ -43,11 +43,15 @@ from services.text_extraction_service import (
 )
 from services.validation_service import STALENESS_THRESHOLDS
 from services.frequency_vocabulary import UI_OPTIONS, normalize as normalize_frequency
+from services.anthropic_response import extract_text
 from services.model_registry import cost_cents as model_cost_cents, resolve as resolve_model
 
 logger = logging.getLogger(__name__)
 
-MAX_OUTPUT_TOKENS = 2048
+# Sized for Opus 5's default adaptive thinking, whose tokens are spent INSIDE
+# max_tokens — 2048 fit the non-thinking Sonnet answer and truncated the moment
+# the model thought first (2026-09-03 incident; see tasks_assessment.py).
+MAX_OUTPUT_TOKENS = 32000
 
 # Model id and price both come from services/model_registry (#782). This module
 # used to pin "claude-sonnet-4-20250514" here and carry its own copy of the
@@ -419,7 +423,7 @@ def _call_llm(system_prompt: str, user_prompt: str) -> Optional[dict]:
 
     try:
         client = anthropic.Anthropic(api_key=api_key)
-        message = client.messages.create(
+        with client.messages.stream(
             model=resolve_model(MODEL_ROLE),
             max_tokens=MAX_OUTPUT_TOKENS,
             system=[{
@@ -428,9 +432,10 @@ def _call_llm(system_prompt: str, user_prompt: str) -> Optional[dict]:
                 "cache_control": {"type": "ephemeral"},
             }],
             messages=[{"role": "user", "content": user_prompt}],
-        )
+        ) as stream:
+            message = stream.get_final_message()
         return {
-            "content": message.content[0].text,
+            "content": extract_text(message),
             "model": message.model,
             "input_tokens": message.usage.input_tokens,
             "output_tokens": message.usage.output_tokens,

@@ -313,7 +313,10 @@ async def list_evidence_files(
     """
     result = await db.execute(
         select(EvidenceFile)
-        .options(joinedload(EvidenceFile.uploaded_by))
+        .options(
+            joinedload(EvidenceFile.uploaded_by),
+            joinedload(EvidenceFile.reviewed_by),
+        )
         .where(
             and_(
                 EvidenceFile.organization_id == org_id,
@@ -357,7 +360,10 @@ async def get_evidence_file(
     """
     result = await db.execute(
         select(EvidenceFile)
-        .options(joinedload(EvidenceFile.uploaded_by))
+        .options(
+            joinedload(EvidenceFile.uploaded_by),
+            joinedload(EvidenceFile.reviewed_by),
+        )
         .where(
             and_(
                 EvidenceFile.organization_id == org_id,
@@ -517,7 +523,10 @@ async def delete_evidence_file(
     """
     result = await db.execute(
         select(EvidenceFile)
-        .options(joinedload(EvidenceFile.uploaded_by))
+        .options(
+            joinedload(EvidenceFile.uploaded_by),
+            joinedload(EvidenceFile.reviewed_by),
+        )
         .where(
             and_(
                 EvidenceFile.organization_id == org_id,

@@ -1398,3 +1398,30 @@ class TestReviewEvidenceFile410Gating:
             payload["pointer"]["path"]
             == f"/api/organizations/{org_id}/window-assessments/{ewa_id}/review"
         )
+
+
+class TestReviewedByEagerLoad:
+    """Regression pin for the v0.26.0 MissingGreenlet incident (2026-09-03).
+
+    _to_response reads evidence_file.reviewed_by; any query that materialises
+    an EvidenceFile for a response must eager-load it alongside uploaded_by,
+    or the attribute access lazy-loads inside the async session and asyncpg
+    raises sqlalchemy.exc.MissingGreenlet (500 on every Files-tab request).
+    The unit tests above mock ORM rows with reviewed_by preset, so they can
+    never catch a missing eager-load — this pairing check can.
+    """
+
+    def test_every_uploaded_by_eager_load_is_paired_with_reviewed_by(self):
+        from pathlib import Path
+
+        source = (
+            Path(__file__).resolve().parents[1] / "api" / "evidence_files.py"
+        ).read_text()
+        uploaded = source.count("joinedload(EvidenceFile.uploaded_by)")
+        reviewed = source.count("joinedload(EvidenceFile.reviewed_by)")
+        assert uploaded > 0, "expected eager-loading queries in evidence_files.py"
+        assert uploaded == reviewed, (
+            f"{uploaded} queries eager-load uploaded_by but only {reviewed} "
+            "eager-load reviewed_by — the unpaired ones will lazy-load in an "
+            "async session and 500 with MissingGreenlet in production"
+        )
