@@ -219,6 +219,14 @@ class OrganizationSettingsResponse(BaseModel):
     # settings form can round-trip both fields through one endpoint.
     name: Optional[str] = None
     industry: Optional[str] = None
+    # Whether the Control Documents Mapper is available to this organisation,
+    # resolved by `services.cdm_tenancy.get_tenant_cdm_enabled`: an explicit
+    # per-tenant value in the settings JSON wins, otherwise the deployment's
+    # ENABLE_CDM. Read-only — OrganizationSettingsUpdate deliberately does not
+    # accept it, so no settings form can turn the module on for a deployment
+    # that cannot run it. Defaults false: a client reading a response without
+    # the field must hide CDM rather than offer a surface that 404s.
+    cdm_enabled: bool = False
 
     model_config = ConfigDict(from_attributes=True)
 

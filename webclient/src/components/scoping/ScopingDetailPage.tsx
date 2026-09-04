@@ -29,6 +29,7 @@ import type {
   NistCsfFunction,
 } from '../../types'
 import { getEvidenceTracking } from '../../data/scopingService'
+import { useCdmEnabled } from '../../hooks/useCdmEnabled'
 
 import MaturityRoadmap from '../MaturityRoadmap'
 import BusinessSizeGuidance from '../BusinessSizeGuidance'
@@ -198,6 +199,14 @@ export default function ScopingDetailPage({
   canManageTeams = false,
 }: ScopingDetailPageProps): JSX.Element {
   const [activeTab, setActiveTab] = useState<ScopingTab>('details')
+  // The Knowledge Base tab is the Control Documents Mapper, which is being
+  // retired and does not run on a default install.
+  const cdmEnabled = useCdmEnabled(organizationId)
+  // Falling back rather than rendering nothing: `knowledge-base` can be the
+  // active tab from a click made before the flag resolved, and a tab strip
+  // whose selection names no panel shows an empty page with no way out.
+  const resolvedTab: ScopingTab =
+    activeTab === 'knowledge-base' && !cdmEnabled ? 'details' : activeTab
   const [frameworksCollapsed, setFrameworksCollapsed] = useState(true)
   // Local SOA counter value (reflects live typing; does NOT debounce)
   const [soaValue, setSoaValue] = useState(scopingEntry?.selection_reason ?? '')
@@ -317,7 +326,7 @@ export default function ScopingDetailPage({
     { id: 'notes', label: 'NOTES & HISTORY' },
     { id: 'assignments', label: 'ASSIGNMENTS' },
     { id: 'history', label: 'AUDIT ARTIFACTS' },
-    { id: 'knowledge-base', label: 'KNOWLEDGE BASE' },
+    ...(cdmEnabled ? [{ id: 'knowledge-base', label: 'KNOWLEDGE BASE' }] : []),
   ]
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -491,13 +500,13 @@ export default function ScopingDetailPage({
         {/* ── Tab navigation ──────────────────────────────────────────────────── */}
         <TabRow
           tabs={tabs}
-          activeId={activeTab}
+          activeId={resolvedTab}
           onSelect={(id) => setActiveTab(id as ScopingTab)}
           aria-label="Control implementation sections"
         />
 
         {/* ── Tab: DETAILS ────────────────────────────────────────────────────── */}
-        {activeTab === 'details' && (
+        {resolvedTab === 'details' && (
           <div className="detail-section-container surface-bench">
             <div className="container-header bench-header">
               <span className="container-title">Your Implementation Record</span>
@@ -656,7 +665,7 @@ export default function ScopingDetailPage({
         )}
 
         {/* ── Tab: NOTES & HISTORY ────────────────────────────────────────────── */}
-        {activeTab === 'notes' && (
+        {resolvedTab === 'notes' && (
           <>
             <div className="detail-section-container surface-bench">
               <div className="container-header bench-header">
@@ -710,7 +719,7 @@ export default function ScopingDetailPage({
         )}
 
         {/* ── Tab: ASSIGNMENTS ────────────────────────────────────────────────── */}
-        {activeTab === 'assignments' && (
+        {resolvedTab === 'assignments' && (
           <div className="detail-section-container surface-bench">
             <div className="container-header bench-header">
               <span className="container-title">Your Assignments</span>
@@ -742,7 +751,7 @@ export default function ScopingDetailPage({
         )}
 
         {/* ── Tab: AUDIT ARTIFACTS ────────────────────────────────────────────── */}
-        {activeTab === 'history' && (
+        {resolvedTab === 'history' && (
           <div className="detail-section-container">
             <div className="container-header">
               <span className="container-icon">📋</span>
@@ -794,7 +803,7 @@ export default function ScopingDetailPage({
         )}
 
         {/* ── Tab: KNOWLEDGE BASE ─────────────────────────────────────────────── */}
-        {activeTab === 'knowledge-base' && (
+        {resolvedTab === 'knowledge-base' && (
           <CDMControlPanel
             organizationId={organizationId}
             scopedControlId={controlDbId}

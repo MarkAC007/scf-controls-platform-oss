@@ -284,6 +284,12 @@ export interface OrganizationSettingsResponse {
    *  JSON — it is exposed here so one settings form round-trips both fields. */
   name: string | null
   industry: string | null
+  /** Whether the Control Documents Mapper is available to this organisation.
+   *  Resolved server-side from the tenant override, else the deployment's
+   *  ENABLE_CDM. Read-only: `updateOrganizationSettings` cannot set it, and a
+   *  backend too old to send it leaves the module hidden rather than offering
+   *  a surface whose every call 404s. */
+  cdm_enabled: boolean
 }
 
 export async function fetchOrganizationSettings(

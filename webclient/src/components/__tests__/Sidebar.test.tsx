@@ -78,7 +78,7 @@ describe('Sidebar platform gating', () => {
 
 describe('Sidebar section structure', () => {
   it('renders all 8 section headers in uppercase mono style', () => {
-    renderSidebar({ isPlatformAdmin: true })
+    renderSidebar({ isPlatformAdmin: true, cdmEnabled: true })
 
     expect(screen.getByText('OVERVIEW')).toBeInTheDocument()
     expect(screen.getByText('CONTROLS & FRAMEWORKS')).toBeInTheDocument()
@@ -91,7 +91,7 @@ describe('Sidebar section structure', () => {
   })
 
   it('renders all 22 nav items with mockup labels', () => {
-    renderSidebar({ isPlatformAdmin: true, showConsultantPortal: true })
+    renderSidebar({ isPlatformAdmin: true, showConsultantPortal: true, cdmEnabled: true })
 
     // OVERVIEW (2)
     expect(screen.getByRole('button', { name: 'Dashboard' })).toBeInTheDocument()
@@ -135,6 +135,64 @@ describe('Sidebar section structure', () => {
   it('hides Consultant Portal when showConsultantPortal is false', () => {
     renderSidebar({ showConsultantPortal: false })
     expect(screen.queryByRole('button', { name: 'Consultant Portal' })).not.toBeInTheDocument()
+  })
+})
+
+describe('Sidebar CDM gating', () => {
+  // The Control Documents Mapper is being retired. It never ran on the
+  // self-hosted target, so a default install must not be offered either of
+  // its entries — and the group they shared with Generated Documents stops
+  // being a "knowledge base" once they are gone.
+
+  it('drops both CDM entries and renames the group when cdmEnabled is false', () => {
+    renderSidebar({ cdmEnabled: false })
+
+    expect(screen.getByText('DOCUMENTS')).toBeInTheDocument()
+    expect(screen.queryByText('KNOWLEDGE BASE')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Control Documents' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Document Map' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Generated Documents' })).toBeInTheDocument()
+  })
+
+  it('defaults to hidden when the prop is not passed at all', () => {
+    // A caller that has not yet resolved the flag must not leak the module.
+    renderSidebar()
+
+    expect(screen.getByText('DOCUMENTS')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Control Documents' })).not.toBeInTheDocument()
+  })
+
+  it('keeps the group label and all three entries when cdmEnabled is true', () => {
+    renderSidebar({ cdmEnabled: true })
+
+    expect(screen.getByText('KNOWLEDGE BASE')).toBeInTheDocument()
+    expect(screen.queryByText('DOCUMENTS')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Control Documents' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Document Map' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Generated Documents' })).toBeInTheDocument()
+  })
+
+  it('routes to the CDM tabs when they are shown', () => {
+    const onTabChange = vi.fn()
+    renderSidebar({ onTabChange, cdmEnabled: true })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Control Documents' }))
+    expect(onTabChange).toHaveBeenCalledWith('cdm')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Document Map' }))
+    expect(onTabChange).toHaveBeenCalledWith('document-map')
+  })
+
+  it('leaves every other section untouched when CDM is hidden', () => {
+    renderSidebar({ cdmEnabled: false, isPlatformAdmin: true, showConsultantPortal: true })
+
+    expect(screen.getByText('OVERVIEW')).toBeInTheDocument()
+    expect(screen.getByText('CONTROLS & FRAMEWORKS')).toBeInTheDocument()
+    expect(screen.getByText('RISK & THIRD PARTY')).toBeInTheDocument()
+    expect(screen.getByText('EVIDENCE')).toBeInTheDocument()
+    expect(screen.getByText('OPERATIONS')).toBeInTheDocument()
+    expect(screen.getByText('ADMIN')).toBeInTheDocument()
+    expect(screen.getByText('PLATFORM')).toBeInTheDocument()
   })
 })
 

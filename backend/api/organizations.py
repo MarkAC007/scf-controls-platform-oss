@@ -36,6 +36,10 @@ from auth import (
 )
 from services.subscription import get_user_subscription, can_create_organisation
 from services.audit_service import log_entity_changes, detect_action_source, get_request_id, ORGANIZATION_TRACKED_FIELDS
+# The single source of truth for "is CDM available to this org" — tenant
+# override, else ENABLE_CDM. Reimplementing that rule inline would let the
+# settings response drift from the 404 the CDM routes themselves return.
+from services.cdm_tenancy import get_tenant_cdm_enabled
 
 logger = logging.getLogger(__name__)
 # Rate limiting temporarily disabled - see Phase 0 debugging
@@ -304,6 +308,7 @@ async def get_organization_settings(
         # name comes off the column, not the JSON blob (single source of truth)
         name=organization.name,
         industry=settings.get("industry"),
+        cdm_enabled=await get_tenant_cdm_enabled(db, org_id),
     )
 
 
@@ -374,6 +379,9 @@ async def update_organization_settings(
         trust_portal_description=current_settings.get("trust_portal_description"),
         name=organization.name,
         industry=current_settings.get("industry"),
+        # Also resolved on the write path: a PATCH response that omitted this
+        # would read as `false` to the client and hide CDM until the next GET.
+        cdm_enabled=await get_tenant_cdm_enabled(db, org_id),
     )
 
 
