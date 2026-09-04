@@ -39,8 +39,6 @@ import WebhookManagement from './components/WebhookManagement'
 import BackupRestore from './components/BackupRestore'
 import AuditLogPage from './components/AuditLogPage'
 import EngagementsPage from './components/EngagementsPage'
-import CDMWorkspace from './components/CDMWorkspace'
-import DocumentMap from './components/DocumentMap'
 import DocumentsPage from './components/documents/DocumentsPage'
 import DocGenSettingsCard from './components/documents/DocGenSettingsCard'
 import CatalogUpgradePage from './components/platform/CatalogUpgradePage'
@@ -56,9 +54,7 @@ import OidcSignIn from './components/OidcSignIn'
 import { OIDC_ENABLED } from './data/authToken'
 import CatalogOnboarding from './components/CatalogOnboarding'
 import { getCatalogStatus } from './data/apiClient'
-import { useCdmGate } from './hooks/useCdmEnabled'
 import {
-  DEFAULT_TAB,
   SYNCED_TABS,
   evidenceItemSearch,
   pushSearch,
@@ -78,7 +74,7 @@ import InviteAcceptance from './components/InviteAcceptance'
 import OrgSwitcher from './components/OrgSwitcher'
 import type { ClientSummary, ConsultantInvite } from './types'
 
-type Tab = 'dashboard' | 'capability-posture' | 'library' | 'scoping' | 'evidence' | 'mapping-matrix' | 'tasks' | 'systems' | 'users' | 'consultant-portal' | 'risk-register' | 'vendors' | 'settings' | 'webhooks' | 'audit-log' | 'engagements' | 'cdm' | 'document-map' | 'documents' | 'platform-catalog' | 'platform-tenants' | 'catalog-changelog'
+type Tab = 'dashboard' | 'capability-posture' | 'library' | 'scoping' | 'evidence' | 'mapping-matrix' | 'tasks' | 'systems' | 'users' | 'consultant-portal' | 'risk-register' | 'vendors' | 'settings' | 'webhooks' | 'audit-log' | 'engagements' | 'documents' | 'platform-catalog' | 'platform-tenants' | 'catalog-changelog'
 
 /**
  * Screen selection lives in `activeTab`; `data/appUrl.ts` owns the vocabulary
@@ -175,13 +171,6 @@ function AppContent() {
   // (#810). An unrecognised `?tab=` still resolves to the dashboard.
   const [activeTab, setActiveTab] = useState<Tab>(readTabFromUrl)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
-  // The Control Documents Mapper is being retired and does not run on a
-  // default install. The backend answers per organisation; until it has, the
-  // module stays hidden. `scopingData` carries the org the screens are already
-  // reading, and `currentOrg` covers the window before it lands.
-  const { enabled: cdmEnabled, resolved: cdmResolved } = useCdmGate(
-    scopingData?.organizationId ?? currentOrg?.id ?? null,
-  )
   // OSS onboarding: null = not yet checked, false = empty (show upload gate), true = seeded
   const [catalogSeeded, setCatalogSeeded] = useState<boolean | null>(null)
   // NOTE: isRefreshing state removed in #273 — React Query handles data freshness
@@ -490,27 +479,6 @@ function AppContent() {
     }
   }, [activeTab, isAuthenticated, isConsultant, loadConsultantDataInternal])
 
-  // A link to a retired screen must not mount it. `?tab=cdm` and
-  // `?tab=document-map` resolve to the dashboard whenever the Control
-  // Documents Mapper is not available to this organisation, so neither
-  // CDMWorkspace nor DocumentMap can be reached by pasting an address.
-  //
-  // The correction waits for `cdmResolved`. Acting on the safe default while
-  // the settings call is in flight would bounce these two links on every
-  // install where the module *is* on — the flag reads false until the answer
-  // arrives, and a redirect cannot be taken back once it has run.
-  //
-  // The address bar is corrected in place rather than pushed. A screen the
-  // user was refused is not somewhere to press Back to, and an entry that
-  // still named it would send them straight back onto it.
-  useEffect(() => {
-    if (cdmEnabled || !cdmResolved) return
-    if (activeTab !== 'cdm' && activeTab !== 'document-map') return
-    const corrected = searchForTab(window.location.search, DEFAULT_TAB)
-    if (corrected !== null) replaceSearch(corrected)
-    setActiveTab(DEFAULT_TAB)
-  }, [cdmEnabled, cdmResolved, activeTab])
-
   // Keep `?tab=` in step with the active screen. `searchForTab` returns null
   // whenever the URL already agrees, which is what keeps this from racing the
   // three components that own other parameters on the same URL — DocumentsPage
@@ -723,7 +691,6 @@ function AppContent() {
         onTabChange={setActiveTab}
         showConsultantPortal={isConsultant === true}
         isPlatformAdmin={isPlatformAdmin}
-        cdmEnabled={cdmEnabled}
         mobileOpen={mobileNavOpen}
         onMobileClose={() => setMobileNavOpen(false)}
       />
@@ -854,15 +821,6 @@ function AppContent() {
           )}
           {activeTab === 'engagements' && scopingData && (
             <EngagementsPage organizationId={scopingData.organizationId!} />
-          )}
-          {cdmEnabled && activeTab === 'cdm' && scopingData && (
-            <CDMWorkspace organizationId={scopingData.organizationId!} />
-          )}
-          {cdmEnabled && activeTab === 'document-map' && scopingData && (
-            <DocumentMap
-              organizationId={scopingData.organizationId!}
-              onOpenDocuments={() => setActiveTab('cdm')}
-            />
           )}
           {activeTab === 'documents' && scopingData && (
             <DocumentsPage

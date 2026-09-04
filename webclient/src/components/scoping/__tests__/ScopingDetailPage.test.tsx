@@ -83,27 +83,10 @@ vi.mock('../../OwningTeams', () => ({
   ),
 }))
 
-vi.mock('../../CDMControlPanel', () => ({
-  default: ({ organizationId }: { organizationId: string }) => (
-    <div data-testid="cdm-control-panel" data-org={organizationId} />
-  ),
-}))
-
-// The KNOWLEDGE BASE tab is gated on the Control Documents Mapper being
-// available to the org. Mocked at the hook so these tests need neither a
-// QueryClientProvider nor a settings call.
-vi.mock('../../../hooks/useCdmEnabled', () => ({
-  useCdmEnabled: vi.fn(() => false),
-}))
-
 // ─── SUT import ───────────────────────────────────────────────────────────────
 
 import ScopingDetailPage from '../ScopingDetailPage'
 import type { ScopingDetailPageProps } from '../ScopingDetailPage'
-import { useCdmEnabled } from '../../../hooks/useCdmEnabled'
-
-const mockUseCdmEnabled = vi.mocked(useCdmEnabled)
-
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
 const CONTROL = {
@@ -189,11 +172,6 @@ function clickTab(name: string) {
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 describe('ScopingDetailPage', () => {
-  beforeEach(() => {
-    // Most tests predate the kill switch and assume the full five-tab strip.
-    mockUseCdmEnabled.mockReturnValue(true)
-  })
-
   // ── Header ──────────────────────────────────────────────────────────────────
 
   describe('Header', () => {
@@ -717,48 +695,6 @@ describe('ScopingDetailPage', () => {
       clickTab('AUDIT ARTIFACTS')
       // 1 of 2 tracked = 50%
       expect(screen.getByText(/1\/2 tracked/)).toBeInTheDocument()
-    })
-  })
-
-  // ── Tab: KNOWLEDGE BASE ───────────────────────────────────────────────────────
-
-  describe('Tab: KNOWLEDGE BASE', () => {
-    it('renders CDMControlPanel on Knowledge Base tab', () => {
-      render(<ScopingDetailPage {...makeProps()} />)
-      clickTab('KNOWLEDGE BASE')
-      const panel = screen.getByTestId('cdm-control-panel')
-      expect(panel).toHaveAttribute('data-org', 'org-1')
-    })
-
-    it('omits the tab entirely when CDM is not enabled for the org', () => {
-      // The default install. The mapper never ran here, so the tab that fronts
-      // it is not offered at all — not offered and empty, but absent.
-      mockUseCdmEnabled.mockReturnValue(false)
-      render(<ScopingDetailPage {...makeProps()} />)
-
-      expect(screen.queryByRole('tab', { name: 'KNOWLEDGE BASE' })).not.toBeInTheDocument()
-      expect(screen.queryByTestId('cdm-control-panel')).not.toBeInTheDocument()
-      // The other four tabs are untouched.
-      for (const label of ['DETAILS', 'NOTES & HISTORY', 'ASSIGNMENTS', 'AUDIT ARTIFACTS']) {
-        expect(screen.getByRole('tab', { name: label })).toBeInTheDocument()
-      }
-    })
-
-    it('falls back to DETAILS when CDM is disabled while the tab is selected', () => {
-      // A click made before the flag resolved must not leave a tab strip whose
-      // selection names no panel — an empty page with no way back out.
-      const { rerender } = render(<ScopingDetailPage {...makeProps()} />)
-      clickTab('KNOWLEDGE BASE')
-      expect(screen.getByTestId('cdm-control-panel')).toBeInTheDocument()
-
-      mockUseCdmEnabled.mockReturnValue(false)
-      rerender(<ScopingDetailPage {...makeProps()} />)
-
-      expect(screen.queryByTestId('cdm-control-panel')).not.toBeInTheDocument()
-      expect(screen.getByRole('tab', { name: 'DETAILS' })).toHaveAttribute(
-        'aria-selected',
-        'true',
-      )
     })
   })
 

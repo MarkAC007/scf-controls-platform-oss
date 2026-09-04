@@ -52,7 +52,6 @@ describe('readAppLocation', () => {
     expect(SYNCED_TABS).toContain('tasks')
     expect(SYNCED_TABS).toContain('settings')
     expect(SYNCED_TABS).toContain('users')
-    expect(SYNCED_TABS).toContain('cdm')
     expect(SYNCED_TABS).not.toContain(DEFAULT_TAB)
   })
 

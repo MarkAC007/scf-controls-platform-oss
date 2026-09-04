@@ -138,8 +138,6 @@ describe('TAB_TITLES', () => {
     | 'webhooks'
     | 'audit-log'
     | 'engagements'
-    | 'cdm'
-    | 'document-map'
     | 'documents'
     | 'platform-catalog'
     | 'platform-tenants'
@@ -161,8 +159,6 @@ describe('TAB_TITLES', () => {
     'webhooks',
     'audit-log',
     'engagements',
-    'cdm',
-    'document-map',
     'documents',
     'platform-catalog',
     'platform-tenants',

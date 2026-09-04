@@ -19,11 +19,6 @@
  * #785 opened this list with two entries and left the rest of the app writing
  * nothing to the address bar: eleven screens that refresh back to the
  * dashboard, cannot be bookmarked and cannot be sent to a colleague (#810).
- * The reason given for holding the line there — that several screens read
- * one-shot navigation signals out of sessionStorage and would arrive without
- * them — no longer describes the code. #785 removed the last of those keys;
- * the only `sessionStorage` left in the client is `useCdmComputeRun`, which
- * resumes a poll rather than carrying a navigation.
  *
  * A `tab` naming anything not on this list is still ignored rather than
  * obeyed, so a mangled address bar lands on the dashboard rather than on a
@@ -45,9 +40,7 @@ export const SYNCED_TABS = [
   'vendors',
   // Evidence
   'evidence',
-  // Knowledge Base
-  'cdm',
-  'document-map',
+  // Documents
   'documents',
   // Operations
   'tasks',
@@ -108,8 +101,6 @@ export const TAB_TITLES = {
   'risk-register':      'Risk Register',
   'vendors':            'Vendor Inventory',
   'evidence':           'Evidence',
-  'cdm':                'Control Documents',
-  'document-map':       'Document Map',
   'documents':          'Generated Documents',
   'tasks':              'Task Management',
   'systems':            'Systems Registry',
