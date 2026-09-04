@@ -5,7 +5,7 @@ import { useOrganization } from '../contexts/OrganizationContext'
 import { getCatalogStatusExtended } from '../data/catalogUpgradeApi'
 import { DEFAULT_APP_TITLE, getAppLogo } from '../branding'
 
-type Tab = 'dashboard' | 'capability-posture' | 'library' | 'scoping' | 'evidence' | 'mapping-matrix' | 'tasks' | 'systems' | 'users' | 'consultant-portal' | 'risk-register' | 'vendors' | 'settings' | 'webhooks' | 'audit-log' | 'engagements' | 'cdm' | 'document-map' | 'documents' | 'platform-catalog' | 'platform-tenants' | 'catalog-changelog'
+type Tab = 'dashboard' | 'capability-posture' | 'library' | 'scoping' | 'evidence' | 'mapping-matrix' | 'tasks' | 'systems' | 'users' | 'consultant-portal' | 'risk-register' | 'vendors' | 'settings' | 'webhooks' | 'audit-log' | 'engagements' | 'documents' | 'platform-catalog' | 'platform-tenants' | 'catalog-changelog'
 
 interface SidebarProps {
   activeTab: Tab
@@ -14,10 +14,6 @@ interface SidebarProps {
   showConsultantPortal?: boolean
   /** Whether to show the Platform section (platform admins only) */
   isPlatformAdmin?: boolean
-  /** Whether the Control Documents Mapper is available to this organisation.
-   *  Off by default: the module is being retired and does not run on a default
-   *  install, so its two entries are absent unless the backend says otherwise. */
-  cdmEnabled?: boolean
   /** Mobile: drawer open state (hamburger in Header toggles this) */
   mobileOpen?: boolean
   /** Mobile: close the drawer (overlay tap / item select) */
@@ -145,14 +141,6 @@ const Icons = {
       <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" />
     </svg>
   ),
-  cdm: (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-      <polyline points="14 2 14 8 20 8" />
-      <path d="M8 13h8" />
-      <path d="M8 17h5" />
-    </svg>
-  ),
   documents: (
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M15 2H8a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7z" />
@@ -160,13 +148,6 @@ const Icons = {
       <path d="M4 6v14a2 2 0 0 0 2 2h9" />
       <path d="M10 12h5" />
       <path d="M10 16h3" />
-    </svg>
-  ),
-  documentMap: (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2z" />
-      <path d="M9 4v14" />
-      <path d="M15 6v14" />
     </svg>
   ),
   users: (
@@ -250,10 +231,8 @@ const navSections: NavSection[] = [
     ],
   },
   {
-    label: 'KNOWLEDGE BASE',
+    label: 'DOCUMENTS',
     items: [
-      { id: 'cdm', label: 'Control Documents', icon: Icons.cdm },
-      { id: 'document-map', label: 'Document Map', icon: Icons.documentMap },
       { id: 'documents', label: 'Generated Documents', icon: Icons.documents },
     ],
   },
@@ -291,16 +270,6 @@ const PLATFORM_TABS: Tab[] = ['platform-catalog', 'platform-tenants']
 
 // Role-gated item ids: shown only when the relevant flag is set.
 const ROLE_GATED_TABS: Tab[] = ['consultant-portal', 'platform-catalog', 'platform-tenants']
-
-// The two Control Documents Mapper entries, filtered out when the module is
-// not available to the organisation.
-const CDM_TABS: Tab[] = ['cdm', 'document-map']
-
-// The group holds the mapper and generated documents together. With the mapper
-// gone it holds generated documents alone, and "KNOWLEDGE BASE" over a single
-// Generated Documents entry names a capability the install does not have.
-const KNOWLEDGE_BASE_SECTION_LABEL = 'KNOWLEDGE BASE'
-const DOCUMENTS_SECTION_LABEL = 'DOCUMENTS'
 
 /** Brand block — needs QueryClient + OrganizationProvider */
 function SidebarBrandBlock() {
@@ -372,7 +341,7 @@ function SidebarFooter({ showRoleGateNote }: { showRoleGateNote: boolean }) {
 // Persisted collapse preference — '1' means the user pinned the rail closed.
 const NAV_COLLAPSED_KEY = 'scf-nav-collapsed'
 
-export default function Sidebar({ activeTab, onTabChange, showConsultantPortal = false, isPlatformAdmin = false, cdmEnabled = false, mobileOpen = false, onMobileClose }: SidebarProps) {
+export default function Sidebar({ activeTab, onTabChange, showConsultantPortal = false, isPlatformAdmin = false, mobileOpen = false, onMobileClose }: SidebarProps) {
   // Expanded (labels visible) by default; the toggle pins it either way.
   // Hover no longer drives expansion — 20+ icon-only entries were unlearnable.
   const [isExpanded, setIsExpanded] = useState(() => {
@@ -397,18 +366,13 @@ export default function Sidebar({ activeTab, onTabChange, showConsultantPortal =
   const visibleSections = useMemo(() => {
     return navSections.map(section => ({
       ...section,
-      label:
-        section.label === KNOWLEDGE_BASE_SECTION_LABEL && !cdmEnabled
-          ? DOCUMENTS_SECTION_LABEL
-          : section.label,
       items: section.items.filter(item => {
         if (item.id === 'consultant-portal' && !showConsultantPortal) return false
         if (PLATFORM_TABS.includes(item.id) && !isPlatformAdmin) return false
-        if (CDM_TABS.includes(item.id) && !cdmEnabled) return false
         return true
       }),
     })).filter(section => section.items.length > 0)
-  }, [showConsultantPortal, isPlatformAdmin, cdmEnabled])
+  }, [showConsultantPortal, isPlatformAdmin])
 
   // Show the role-gate note only when at least one gated entry is visible
   const showRoleGateNote = useMemo(() => {

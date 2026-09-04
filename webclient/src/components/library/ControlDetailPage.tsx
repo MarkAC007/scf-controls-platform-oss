@@ -13,14 +13,11 @@ import { useMemo, useState, useEffect, useCallback, type JSX } from 'react'
 import type { EnrichedControl, ScopedControlsFile } from '../../types'
 import { getEvidenceTracking } from '../../data/scopingService'
 import { getEvidenceHealth, type EvidenceHealthResponse } from '../../data/apiClient'
-import { useCdmEnabled } from '../../hooks/useCdmEnabled'
 
 import GraphView from '../GraphView'
 import SCRMFocusBadges from '../SCRMFocusBadges'
 import RiskThreatContext from '../RiskThreatContext'
 import AssessmentObjectivesList from '../AssessmentObjectivesList'
-import CDMControlPanel from '../CDMControlPanel'
-import { WorkspaceRecord } from '../provenance/WorkspaceRecord'
 import DeprecatedBadge, { getCatalogLifecycle } from '../DeprecatedBadge'
 import TabRow from '../explorer/TabRow'
 
@@ -44,7 +41,7 @@ export interface ControlDetailPageProps {
   frameworkNames?: Record<string, string>
 }
 
-type DetailTab = 'details' | 'assessment' | 'mappings' | 'knowledge-base'
+type DetailTab = 'details' | 'assessment' | 'mappings'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -98,14 +95,6 @@ export default function ControlDetailPage({
   const [showGraph, setShowGraph] = useState(false)
   const [activeTab, setActiveTab] = useState<DetailTab>('details')
   const [healthData, setHealthData] = useState<EvidenceHealthResponse | null>(null)
-  // The Knowledge Base tab is the Control Documents Mapper, which is being
-  // retired and does not run on a default install.
-  const cdmEnabled = useCdmEnabled(organizationId)
-  // Falling back rather than rendering nothing: `knowledge-base` can be the
-  // active tab from a click made before the flag resolved, and a tab strip
-  // whose selection names no panel shows an empty page with no way out.
-  const resolvedTab: DetailTab =
-    activeTab === 'knowledge-base' && !cdmEnabled ? 'details' : activeTab
 
   // ── Health data ─────────────────────────────────────────────────────────
 
@@ -216,7 +205,6 @@ export default function ControlDetailPage({
     { id: 'details', label: 'Details' },
     { id: 'assessment', label: 'Assessment' },
     { id: 'mappings', label: 'Mappings', count: totalFrameworks },
-    ...(cdmEnabled ? [{ id: 'knowledge-base', label: 'Knowledge Base' }] : []),
   ]
 
   const pptdfLabel = getPptdfLabel(control.pptdf_applicability)
@@ -465,13 +453,13 @@ export default function ControlDetailPage({
             {/* ── Tabs ───────────────────────────────────────────────────────── */}
             <TabRow
               tabs={tabs}
-              activeId={resolvedTab}
+              activeId={activeTab}
               onSelect={(id) => setActiveTab(id as DetailTab)}
               aria-label="Control detail sections"
             />
 
             {/* ── Details Tab ─────────────────────────────────────────────────── */}
-            {resolvedTab === 'details' && (
+            {activeTab === 'details' && (
               <>
                 {/* Additional Guidance */}
                 {(control.policy_standard ||
@@ -587,12 +575,12 @@ export default function ControlDetailPage({
             )}
 
             {/* ── Assessment Tab ──────────────────────────────────────────────── */}
-            {resolvedTab === 'assessment' && (
+            {activeTab === 'assessment' && (
               <AssessmentObjectivesList scfId={control.scf_id} />
             )}
 
             {/* ── Mappings Tab ────────────────────────────────────────────────── */}
-            {resolvedTab === 'mappings' && (
+            {activeTab === 'mappings' && (
               <div className="detail-section-container surface-bedrock">
                 <div className="container-header">
                   <span className="container-icon">🔗</span>
@@ -620,20 +608,6 @@ export default function ControlDetailPage({
                   )}
                 </div>
               </div>
-            )}
-
-            {/* ── Knowledge Base Tab ─────────────────────────────────────────── */}
-            {resolvedTab === 'knowledge-base' && organizationId && (
-              <WorkspaceRecord title="Your Knowledge Base">
-                <CDMControlPanel
-                  organizationId={organizationId}
-                  scopedControlId={scopingData?.scoped_controls.find(
-                    (sc) => sc.scf_id === control.scf_id,
-                  )?.id}
-                  controlName={control.control_name}
-                  controlDescription={control.control_description}
-                />
-              </WorkspaceRecord>
             )}
           </>
         )}
