@@ -38,6 +38,7 @@ from auth import require_org_role, OrgMembership
 from catalog_models import SCFCatalogDomain
 from database import get_db
 from services import cdm_intent
+from services.cdm_tenancy import require_tenant_cdm_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -150,6 +151,7 @@ def derive_domain_state(
 async def get_document_map(
     org_id: UUID,
     membership: OrgMembership = Depends(require_org_role("viewer")),
+    _: None = Depends(require_tenant_cdm_enabled),
     db: AsyncSession = Depends(get_db),
 ):
     """Per-domain CDM coverage for the organization.

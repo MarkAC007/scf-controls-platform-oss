@@ -79,6 +79,13 @@ vi.mock('../../../data/apiClient', () => ({
   getEvidenceHealth: vi.fn().mockResolvedValue({ items: [] }),
 }))
 
+// The Knowledge Base tab is gated on the Control Documents Mapper being
+// available to the org. Mocked at the hook so these tests need neither a
+// QueryClientProvider nor a settings call.
+vi.mock('../../../hooks/useCdmEnabled', () => ({
+  useCdmEnabled: vi.fn(() => false),
+}))
+
 vi.mock('../../../data/scopingService', () => ({
   getEvidenceTracking: vi.fn().mockReturnValue(null),
 }))
@@ -87,6 +94,9 @@ vi.mock('../../../data/scopingService', () => ({
 
 import ControlDetailPage, { type ControlDetailPageProps } from '../ControlDetailPage'
 import type { EnrichedControl } from '../../../types'
+import { useCdmEnabled } from '../../../hooks/useCdmEnabled'
+
+const mockUseCdmEnabled = vi.mocked(useCdmEnabled)
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -130,6 +140,11 @@ function makeProps(overrides: Partial<ControlDetailPageProps> = {}): ControlDeta
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('ControlDetailPage', () => {
+  beforeEach(() => {
+    // Most tests predate the kill switch and assume the full four-tab strip.
+    mockUseCdmEnabled.mockReturnValue(true)
+  })
+
   afterEach(() => {
     vi.restoreAllMocks()
   })
@@ -490,6 +505,44 @@ describe('ControlDetailPage', () => {
   })
 
   // ── Knowledge Base tab ────────────────────────────────────────────────────
+
+  it('omits the Knowledge Base tab when CDM is not enabled for the org', async () => {
+    // The default install. The mapper never ran here, so the tab that fronts
+    // it is not offered at all — not offered and empty, but absent.
+    mockUseCdmEnabled.mockReturnValue(false)
+    await act(async () => {
+      render(<ControlDetailPage {...makeProps({ organizationId: 'org-123' })} />)
+    })
+    expect(screen.queryByRole('tab', { name: /Knowledge Base/i })).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cdm-control-panel')).not.toBeInTheDocument()
+    // The other three tabs are untouched.
+    expect(screen.getByRole('tab', { name: /Details/i })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /Assessment/i })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /Mappings/i })).toBeInTheDocument()
+  })
+
+  it('falls back to Details when CDM is disabled while Knowledge Base is selected', async () => {
+    // A click made before the flag resolved must not leave a tab strip whose
+    // selection names no panel — an empty page with no way back out.
+    mockUseCdmEnabled.mockReturnValue(true)
+    const { rerender } = render(
+      <ControlDetailPage {...makeProps({ organizationId: 'org-123' })} />,
+    )
+    await act(async () => {
+      fireEvent.click(screen.getByRole('tab', { name: /Knowledge Base/i }))
+    })
+    expect(screen.getByTestId('cdm-control-panel')).toBeInTheDocument()
+
+    mockUseCdmEnabled.mockReturnValue(false)
+    await act(async () => {
+      rerender(<ControlDetailPage {...makeProps({ organizationId: 'org-123' })} />)
+    })
+    expect(screen.queryByTestId('cdm-control-panel')).not.toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /Details/i })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    )
+  })
 
   it('Knowledge Base tab renders CDMControlPanel when organizationId is provided', async () => {
     await act(async () => {

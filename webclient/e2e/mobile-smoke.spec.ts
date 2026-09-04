@@ -13,8 +13,9 @@ const TABS: { id: string; label: string; optional?: boolean }[] = [
   { id: 'risk-register', label: 'Risk Register' },
   { id: 'vendors', label: 'Vendor Inventory' },
   { id: 'evidence', label: 'Evidence' },
-  { id: 'cdm', label: 'Control Documents' },
-  { id: 'document-map', label: 'Document Map' },
+  // Control Documents / Document Map are absent: the dev-demo stack leaves
+  // ENABLE_CDM unset, and the sidebar drops both entries when the Control
+  // Documents Mapper is not available to the organisation.
   { id: 'tasks', label: 'Task Management' },
   { id: 'systems', label: 'Systems Registry' },
   { id: 'users', label: 'User Management' },

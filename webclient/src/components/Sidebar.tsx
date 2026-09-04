@@ -14,6 +14,10 @@ interface SidebarProps {
   showConsultantPortal?: boolean
   /** Whether to show the Platform section (platform admins only) */
   isPlatformAdmin?: boolean
+  /** Whether the Control Documents Mapper is available to this organisation.
+   *  Off by default: the module is being retired and does not run on a default
+   *  install, so its two entries are absent unless the backend says otherwise. */
+  cdmEnabled?: boolean
   /** Mobile: drawer open state (hamburger in Header toggles this) */
   mobileOpen?: boolean
   /** Mobile: close the drawer (overlay tap / item select) */
@@ -288,6 +292,16 @@ const PLATFORM_TABS: Tab[] = ['platform-catalog', 'platform-tenants']
 // Role-gated item ids: shown only when the relevant flag is set.
 const ROLE_GATED_TABS: Tab[] = ['consultant-portal', 'platform-catalog', 'platform-tenants']
 
+// The two Control Documents Mapper entries, filtered out when the module is
+// not available to the organisation.
+const CDM_TABS: Tab[] = ['cdm', 'document-map']
+
+// The group holds the mapper and generated documents together. With the mapper
+// gone it holds generated documents alone, and "KNOWLEDGE BASE" over a single
+// Generated Documents entry names a capability the install does not have.
+const KNOWLEDGE_BASE_SECTION_LABEL = 'KNOWLEDGE BASE'
+const DOCUMENTS_SECTION_LABEL = 'DOCUMENTS'
+
 /** Brand block — needs QueryClient + OrganizationProvider */
 function SidebarBrandBlock() {
   const { currentOrg } = useOrganization()
@@ -358,7 +372,7 @@ function SidebarFooter({ showRoleGateNote }: { showRoleGateNote: boolean }) {
 // Persisted collapse preference — '1' means the user pinned the rail closed.
 const NAV_COLLAPSED_KEY = 'scf-nav-collapsed'
 
-export default function Sidebar({ activeTab, onTabChange, showConsultantPortal = false, isPlatformAdmin = false, mobileOpen = false, onMobileClose }: SidebarProps) {
+export default function Sidebar({ activeTab, onTabChange, showConsultantPortal = false, isPlatformAdmin = false, cdmEnabled = false, mobileOpen = false, onMobileClose }: SidebarProps) {
   // Expanded (labels visible) by default; the toggle pins it either way.
   // Hover no longer drives expansion — 20+ icon-only entries were unlearnable.
   const [isExpanded, setIsExpanded] = useState(() => {
@@ -383,13 +397,18 @@ export default function Sidebar({ activeTab, onTabChange, showConsultantPortal =
   const visibleSections = useMemo(() => {
     return navSections.map(section => ({
       ...section,
+      label:
+        section.label === KNOWLEDGE_BASE_SECTION_LABEL && !cdmEnabled
+          ? DOCUMENTS_SECTION_LABEL
+          : section.label,
       items: section.items.filter(item => {
         if (item.id === 'consultant-portal' && !showConsultantPortal) return false
         if (PLATFORM_TABS.includes(item.id) && !isPlatformAdmin) return false
+        if (CDM_TABS.includes(item.id) && !cdmEnabled) return false
         return true
       }),
     })).filter(section => section.items.length > 0)
-  }, [showConsultantPortal, isPlatformAdmin])
+  }, [showConsultantPortal, isPlatformAdmin, cdmEnabled])
 
   // Show the role-gate note only when at least one gated entry is visible
   const showRoleGateNote = useMemo(() => {

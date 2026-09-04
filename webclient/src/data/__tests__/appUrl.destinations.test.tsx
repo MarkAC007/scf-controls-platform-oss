@@ -42,14 +42,17 @@ vi.mock('../catalogUpgradeApi', () => ({
 /**
  * The destinations the sidebar offers, in the order it offers them, obtained by
  * clicking every one of them. Both role-gated sections are switched on so the
- * walk covers the platform tabs and the consultant portal too.
+ * walk covers the platform tabs and the consultant portal too, and so is the
+ * Control Documents Mapper — it is hidden by default now, and a walk that took
+ * the default would quietly stop pinning the URL contract for `cdm` and
+ * `document-map` while both are still in `SYNCED_TABS`.
  */
 function sidebarDestinations(): string[] {
   const onTabChange = vi.fn()
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   const { unmount } = render(
     <QueryClientProvider client={client}>
-      <Sidebar activeTab="dashboard" onTabChange={onTabChange} isPlatformAdmin showConsultantPortal />
+      <Sidebar activeTab="dashboard" onTabChange={onTabChange} isPlatformAdmin showConsultantPortal cdmEnabled />
     </QueryClientProvider>,
   )
   for (const button of screen.getAllByRole('button')) fireEvent.click(button)
