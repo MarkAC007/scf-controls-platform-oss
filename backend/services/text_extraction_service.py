@@ -49,9 +49,8 @@ def extract_text_from_bytes(
     Never raises — returns error details in ExtractedContent.
 
     ``max_length`` caps the returned text to control LLM token spend on
-    assessment paths. Pass ``None`` for ingest paths (CDM/LightRAG) where
-    the downstream consumer chunks the text itself and truncation would
-    silently drop document content.
+    assessment paths. Pass ``None`` when the caller chunks the text itself
+    and truncation would silently drop document content.
     """
     try:
         ct = content_type.lower()
@@ -94,7 +93,7 @@ def extract_text_from_bytes(
 def _truncate(text: str, max_length: Optional[int]) -> tuple[str, bool]:
     """Truncate ``text`` to ``max_length`` chars, return (text, was_truncated).
 
-    ``max_length=None`` disables truncation (CDM ingest path).
+    ``max_length=None`` disables truncation.
     """
     if max_length is None or len(text) <= max_length:
         return text, False

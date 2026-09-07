@@ -104,12 +104,6 @@ TENANT_SCOPED_EXCLUDED_TABLES: Dict[str, str] = {
     "organization_risk_profiles": "derived risk posture; recomputable",
     "risk_assessments": "derived risk output; recomputable",
     "recipe_feedback": "telemetry; not required for a tenant move",
-    # CDM corpus — large, derived from source documents by a separate pipeline.
-    "cdm_documents": "CDM corpus; rebuilt by the CDM ingest pipeline",
-    "cdm_document_chunks": "CDM corpus; rebuilt by the CDM ingest pipeline",
-    "cdm_document_intents": "CDM corpus; rebuilt by the CDM ingest pipeline",
-    "cdm_mappings": "CDM corpus; rebuilt by the CDM ingest pipeline",
-    "cdm_control_proposals": "CDM corpus; rebuilt by the CDM ingest pipeline",
     # Deployment-local configuration / settings.
     "doc_gen_settings": "deployment-local configuration",
     "evidence_health_config": "deployment-local configuration",
@@ -1209,9 +1203,8 @@ async def restore_database(
 
     Strategy. Upsert first, then delete what the backup does not carry, in one
     transaction. Delete-then-insert cannot work here: deleting a scoped_control
-    cascades into cdm_mappings, cdm_control_proposals and
-    engagement_control_scope, all of which hold human-reviewed work product that
-    a backup does not contain. Upserting first means restoring a backup whose id
+    cascades into engagement_control_scope, which holds human-reviewed work
+    product that a backup does not contain. Upserting first means restoring a backup whose id
     set matches the database performs zero deletes and destroys nothing.
 
     Users and organisations are never deleted. Users are cross-organisation

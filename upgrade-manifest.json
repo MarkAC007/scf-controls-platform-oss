@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "version": "0.27.1",
-  "released": "2026-09-04T10:49:25Z",
+  "version": "0.28.0",
+  "released": "2026-09-07T05:47:44Z",
   "min_upgradable_version": "0.0.0",
-  "breaking": false,
+  "breaking": true,
   "required_stops": [],
-  "release_url": "https://github.com/MarkAC007/scf-controls-platform-oss/releases/tag/v0.27.1",
-  "summary": "Adds SCF document generation to the platform \u2014 generated documents with versions, sections and review transitions. Migration docgen001 creates five new tables and changes no existing schema.",
+  "release_url": "https://github.com/MarkAC007/scf-controls-platform-oss/releases/tag/v0.28.0",
+  "summary": "Retires the Control Documents Mapper (CDM). The `/organizations/{org_id}/cdm/*` routes are removed; migration cdmdrop001 drops the five `cdm_*` tables (one-way; refuses while rows exist unless SCF_CDM_DROP_ACK=1) and a post-upgrade script purges uploaded CDM files. Document generation is unchanged.",
   "migration_range": [
     "20260119_000000_62bdef86f249_initial_schema",
     "20260120_075300_add_implementation_status_values",
@@ -88,7 +88,8 @@
     "20260824_160000_evidence_task_org_and_owning_team",
     "20260824_170000_team_functions_many_to_many",
     "20260830_090000_notification_org_boundary",
-    "20260901_150000_evidence_assessment_versions"
+    "20260901_150000_evidence_assessment_versions",
+    "20260910_120000_drop_cdm_tables"
   ],
   "env_added": [],
   "min_compose_action": "rebuild"

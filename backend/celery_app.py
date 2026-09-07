@@ -69,7 +69,6 @@ celery_app = Celery(
         "tasks_research",
         "tasks_vendor_assessment",
         "tasks_recipe_generation",
-        "tasks_cdm",
         "tasks_assessment",
         "tasks_window_assessment",
         "tasks_catalog",
@@ -153,11 +152,6 @@ celery_app.conf.update(
         Queue("low_priority", Exchange("low_priority"), routing_key="low_priority"),
         Queue("tprm_research", Exchange("tprm_research"), routing_key="tprm_research"),
         Queue("dpsia", Exchange("dpsia"), routing_key="dpsia"),
-        Queue("cdm", Exchange("cdm"), routing_key="cdm"),
-        # Separate from "cdm" on purpose: a hosted classification call of tens
-        # of seconds sitting on the cdm queue head-of-line-blocks every ingest
-        # queued behind it.
-        Queue("cdm_intent", Exchange("cdm_intent"), routing_key="cdm_intent"),
         Queue("evidence_assessment", Exchange("evidence_assessment"), routing_key="evidence_assessment"),
         Queue("evidence_window", Exchange("evidence_window"), routing_key="evidence_window"),
         Queue("evidence_composite", Exchange("evidence_composite"), routing_key="evidence_composite"),
@@ -205,7 +199,6 @@ celery_app.conf.update(
         # dashboard while nothing was ever scanned.
         "tasks_evidence_integrity.verify_evidence_file_task": {"queue": "default"},
         "tasks_evidence_integrity.sweep_unverified_evidence_task": {"queue": "default"},
-        "cdm.classify_intent": {"queue": "cdm_intent"},
         # Catalog upgrade flow (WP1b). catalog.import routes itself via its
         # task decorator (queue="catalog"); the upgrade tasks route here.
         "catalog.upgrade_stage": {"queue": "catalog"},

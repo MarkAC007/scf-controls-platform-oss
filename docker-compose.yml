@@ -120,6 +120,8 @@ services:
       # acknowledgement escape hatch for the backend migration guard.
       SCF_UPDATE_CHECK: ${SCF_UPDATE_CHECK:-true}
       SCF_MIGRATE_ACK: ${SCF_MIGRATE_ACK:-}
+      # One-off ack for the CDM table drop (migration cdmdrop001, see .env.example).
+      SCF_CDM_DROP_ACK: ${SCF_CDM_DROP_ACK:-}
       # Authentication (set these in .env file - REQUIRED)
       API_KEY: ${API_KEY}
       # Signing secret for evidence download links and upload tickets (#57).
@@ -170,9 +172,6 @@ services:
       MALWARE_SCAN_ENABLED: ${MALWARE_SCAN_ENABLED:-true}
       CLAMD_HOST: ${CLAMD_HOST:-localhost}
       CLAMD_PORT: ${CLAMD_PORT:-3310}
-      # CDM document placement (optional — see .env.example). The API needs the
-      # provider setting to report classification state; the keys are used by
-      # the consolidation recompute path. Off by default.
       # Assurance/KSI feature flags (#787). Absent from this list until now,
       # which meant setting them in .env did nothing: compose has no
       # `env_file` here, so a variable that is not forwarded explicitly never
@@ -183,14 +182,7 @@ services:
       ENABLE_PER_WINDOW_REVIEW: ${ENABLE_PER_WINDOW_REVIEW:-false}
       ENABLE_WINDOW_ASSESSMENT_KSI: ${ENABLE_WINDOW_ASSESSMENT_KSI:-false}
       ENABLE_COMPOSITE_KSI: ${ENABLE_COMPOSITE_KSI:-false}
-      # ENABLE_CDM is the module master switch read by cdm_tenancy/cdm APIs.
-      ENABLE_CDM: ${ENABLE_CDM:-false}
-      CDM_INTENT_PROVIDER: ${CDM_INTENT_PROVIDER:-disabled}
-      CDM_INTENT_TIMEOUT_S: ${CDM_INTENT_TIMEOUT_S:-}
-      CDM_INTENT_MAX_DOMAINS: ${CDM_INTENT_MAX_DOMAINS:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       # Model ids for every AI path live in backend/services/model_registry.py
       # (#782). These override that registry's defaults without a rebuild —
       # forwarded here because a variable documented in .env.example that never
@@ -202,9 +194,6 @@ services:
       VENDOR_AI_MODEL: ${VENDOR_AI_MODEL:-}
       SYSTEMS_AI_MODEL: ${SYSTEMS_AI_MODEL:-}
       DOC_GEN_AI_MODEL: ${DOC_GEN_AI_MODEL:-}
-      CDM_INTENT_CLAUDE_MODEL: ${CDM_INTENT_CLAUDE_MODEL:-}
-      CDM_INTENT_GPT_MODEL: ${CDM_INTENT_GPT_MODEL:-}
-      CDM_INTENT_GEMINI_MODEL: ${CDM_INTENT_GEMINI_MODEL:-}
     ports:
       # Host side is remappable (BACKEND_PORT) — 8000 is a popular default and
       # may already be taken on your host.
@@ -213,7 +202,7 @@ services:
       - ./backend:/app
       # Extractor script lives at repo-root scripts/; prod bakes exactly this file
       # into /app/scripts (Dockerfile.backend). Mount the single file — a whole-dir
-      # mount would shadow backend/scripts (cdm_eval etc.)
+      # mount would shadow backend/scripts
       - ./scripts/extract_scf_data.py:/app/scripts/extract_scf_data.py:ro
       - ./webclient/public/data:/app/data/json:ro
       # Platform version read dynamically from package.json (mounted outside /app
@@ -242,7 +231,7 @@ services:
         BUILD_STAMP: "${BUILD_STAMP:-dev}"
         MIN_UPGRADABLE_VERSION: "${MIN_UPGRADABLE_VERSION:-0.0.0}"
     container_name: cg-scf-celery-worker
-    command: celery -A celery_app worker --loglevel=info --concurrency=2 -Q default,high_priority,low_priority,tprm_research,dpsia,evidence_assessment,evidence_window,evidence_composite,cdm,cdm_intent,catalog
+    command: celery -A celery_app worker --loglevel=info --concurrency=2 -Q default,high_priority,low_priority,tprm_research,dpsia,evidence_assessment,evidence_window,evidence_composite,catalog
     environment:
       DATABASE_URL: postgresql+asyncpg://cg:${DB_PASSWORD}@postgres:5432/cg_scf
       REDIS_URL: redis://redis:6379/0
@@ -256,6 +245,9 @@ services:
       # Update poller opt-out (default ON) — the worker runs the beat-scheduled
       # tasks_updates.check_latest_release task.
       SCF_UPDATE_CHECK: ${SCF_UPDATE_CHECK:-true}
+      # One-off ack for the CDM table drop (migration cdmdrop001) — mirrors the
+      # backend service so `compose run celery-worker alembic ...` behaves the same.
+      SCF_CDM_DROP_ACK: ${SCF_CDM_DROP_ACK:-}
       # OIDC / bundled identity provider (optional — mirrors the backend service).
       OIDC_ISSUER: ${OIDC_ISSUER:-}
       OIDC_DISCOVERY_URL: ${OIDC_DISCOVERY_URL:-}
@@ -293,9 +285,6 @@ services:
       EVIDENCE_INTEGRITY_SWEEP_BATCH: ${EVIDENCE_INTEGRITY_SWEEP_BATCH:-}
       # AI Assessment (Anthropic Claude)
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      # CDM document placement (optional — see .env.example). The worker runs
-      # the classify/backfill tasks, so it needs the provider setting and the
-      # selected provider's key. Off by default.
       # Assurance/KSI feature flags (#787) — same three as the backend. The
       # worker imports the same api modules through the doc-gen and
       # assessment task paths, so a flag set on one service and not the other
@@ -303,13 +292,6 @@ services:
       ENABLE_PER_WINDOW_REVIEW: ${ENABLE_PER_WINDOW_REVIEW:-false}
       ENABLE_WINDOW_ASSESSMENT_KSI: ${ENABLE_WINDOW_ASSESSMENT_KSI:-false}
       ENABLE_COMPOSITE_KSI: ${ENABLE_COMPOSITE_KSI:-false}
-      # ENABLE_CDM is the module master switch read by the tenancy resolver.
-      ENABLE_CDM: ${ENABLE_CDM:-false}
-      CDM_INTENT_PROVIDER: ${CDM_INTENT_PROVIDER:-disabled}
-      CDM_INTENT_TIMEOUT_S: ${CDM_INTENT_TIMEOUT_S:-}
-      CDM_INTENT_MAX_DOMAINS: ${CDM_INTENT_MAX_DOMAINS:-}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       # Model ids for every AI path live in backend/services/model_registry.py
       # (#782). These override that registry's defaults without a rebuild —
       # forwarded here because a variable documented in .env.example that never
@@ -321,9 +303,6 @@ services:
       VENDOR_AI_MODEL: ${VENDOR_AI_MODEL:-}
       SYSTEMS_AI_MODEL: ${SYSTEMS_AI_MODEL:-}
       DOC_GEN_AI_MODEL: ${DOC_GEN_AI_MODEL:-}
-      CDM_INTENT_CLAUDE_MODEL: ${CDM_INTENT_CLAUDE_MODEL:-}
-      CDM_INTENT_GPT_MODEL: ${CDM_INTENT_GPT_MODEL:-}
-      CDM_INTENT_GEMINI_MODEL: ${CDM_INTENT_GEMINI_MODEL:-}
       # Application Insights (telemetry)
       APPLICATIONINSIGHTS_CONNECTION_STRING: ${APPLICATIONINSIGHTS_CONNECTION_STRING:-}
     volumes:

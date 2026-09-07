@@ -601,6 +601,9 @@ do_upgrade() {
 
   # Migrate ALONE (workers still stopped) so no new-code worker races the schema.
   # SCF_MIGRATE_ACK acks the backend migration guard for this target version.
+  # SCF_CDM_DROP_ACK (CDM retirement, migration cdmdrop001) is NOT passed here on
+  # purpose: it reaches the run through the service's environment: allow-list
+  # from .env, so the operator sets it deliberately (see UPGRADING.md).
   info "Running database migrations (one-shot: alembic upgrade head)..."
   if ! compose run --rm -e SCF_MIGRATE_ACK="${TARGET}" backend alembic upgrade head; then
     rollback_after_failure "$ROLLBACK_TS" "alembic migration failed."
