@@ -103,30 +103,6 @@ MODELS: Dict[str, ModelSpec] = {
         output_cost_per_mtok=25.0,
         notes="Opus tier. Evidence assessment default — verdict quality over cost.",
     ),
-    "claude-fable-5": ModelSpec(
-        id="claude-fable-5",
-        provider="anthropic",
-        input_cost_per_mtok=None,
-        output_cost_per_mtok=None,
-        notes="CDM intent extraction. That path records no cost, so no price is declared.",
-    ),
-    "gpt-5.5": ModelSpec(
-        id="gpt-5.5",
-        provider="openai",
-        input_cost_per_mtok=None,
-        output_cost_per_mtok=None,
-        notes="CDM intent extraction, alternate provider. Not covered by the Anthropic liveness check.",
-    ),
-    "gemini-3.7-flash": ModelSpec(
-        id="gemini-3.7-flash",
-        provider="google",
-        input_cost_per_mtok=None,
-        output_cost_per_mtok=None,
-        notes=(
-            "CDM intent extraction, alternate provider. Newest non-preview Gemini in the live "
-            "ListModels response (2026-08-17); the pro line stops at 3.1-preview."
-        ),
-    ),
 }
 
 
@@ -141,14 +117,11 @@ ROLES: Dict[str, Tuple[str, str]] = {
     "vendor_assessment": ("VENDOR_AI_MODEL", "claude-sonnet-4-6"),
     "recipe_generation": ("SYSTEMS_AI_MODEL", "claude-sonnet-4-6"),
     "doc_gen": ("DOC_GEN_AI_MODEL", "claude-sonnet-4-6"),
-    "cdm_intent_claude": ("CDM_INTENT_CLAUDE_MODEL", "claude-fable-5"),
-    "cdm_intent_gpt": ("CDM_INTENT_GPT_MODEL", "gpt-5.5"),
-    "cdm_intent_gemini": ("CDM_INTENT_GEMINI_MODEL", "gemini-3.7-flash"),
 }
 
 #: The one variable that repoints the platform's model.
 #:
-#: Models change; the operator should not have to know which five services call
+#: Models change; the operator should not have to know which services call
 #: one to move them all. Set ``SCF_AI_MODEL`` and every role in
 #: :data:`GLOBAL_DEFAULT_ROLES` follows it. A per-role variable still wins over
 #: it, so a single service can be held back or pushed forward without unsetting
@@ -157,18 +130,12 @@ GLOBAL_MODEL_ENV = "SCF_AI_MODEL"
 
 #: Roles that follow :data:`GLOBAL_MODEL_ENV`.
 #:
-#: Everything that asks "the platform's model" for a compliance task. The three
-#: ``cdm_intent_*`` roles are deliberately absent: they are one job run against
-#: three *different providers* on purpose, and a single id cannot be right for
-#: all three — pointing the Gemini role at a Claude id would simply 404. Those
-#: keep their own variables.
-GLOBAL_DEFAULT_ROLES: Tuple[str, ...] = (
-    "evidence_assessment",
-    "artifact_type_extraction",
-    "vendor_assessment",
-    "recipe_generation",
-    "doc_gen",
-)
+#: Everything that asks "the platform's model" for a compliance task. Today
+#: that is every registered role, so the tuple is derived from :data:`ROLES`
+#: rather than copied by hand (a role added to ROLES and forgotten here would
+#: silently ignore the global). A role that must stay pinned to a different
+#: provider is excluded here explicitly and keeps its own variable.
+GLOBAL_DEFAULT_ROLES: Tuple[str, ...] = tuple(ROLES)
 
 #: Roles whose call sites write a cost figure to the database. A model without a
 #: declared price may not serve one of these — enforced by
@@ -180,13 +147,14 @@ COST_TRACKED_ROLES: Tuple[str, ...] = (
 )
 
 
-#: A model id is interpolated into a request path by the Gemini provider, and
-#: into request bodies elsewhere. Overrides come from the environment, which is
-#: operator-controlled but not the same as trusted — an id containing ``/`` or
-#: ``..`` would redirect the Gemini call to a different endpoint entirely. Every
-#: resolved id must match this or it is refused, so the semgrep suppressions at
-#: those call sites rest on something real rather than on "it is a module
-#: constant", which stopped being true when the constant became configurable.
+#: A resolved id is sent verbatim to a third-party API, echoed into logs and
+#: written into cost rows. Overrides come from the environment, which is
+#: operator-controlled but not the same as trusted: a value with whitespace, a
+#: path separator or ``..`` in it is a typo or a copy-paste of something that
+#: was never a model id, and it is better refused here, at resolve time, than
+#: surfaced later as a provider 4xx or a garbage cost row. The shape is also
+#: safe to interpolate into a request path should a path-addressed client
+#: return — the Gemini one that motivated the guard is gone.
 _SAFE_MODEL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
 #: Trailing ``-YYYYMMDD`` snapshot suffix. The API may answer with a dated id
@@ -210,8 +178,9 @@ def _env_override(env_var: str, role: str, fallback: str) -> Optional[str]:
     if not _SAFE_MODEL_ID.match(value):
         logger.error(
             "%s is set to %r, which is not a syntactically valid model id. "
-            "Ignoring it and using %r. A model id reaches a request URL, so an "
-            "id with a path separator in it is refused rather than sent.",
+            "Ignoring it and using %r. A model id is sent verbatim to the "
+            "provider, so one with whitespace or a path separator in it is "
+            "refused rather than sent.",
             env_var, value, fallback,
         )
         return None

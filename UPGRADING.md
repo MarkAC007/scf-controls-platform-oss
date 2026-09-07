@@ -70,6 +70,71 @@ Add `--yes` to skip the confirmation prompt (for unattended runs).
 
 ### Version-specific notes
 
+- **The Control Documents Mapper (CDM) is retired; migration `cdmdrop001`
+  drops its five tables (`cdm_documents`, `cdm_document_chunks`,
+  `cdm_document_intents`, `cdm_control_proposals`, `cdm_mappings`) and removes
+  the per-tenant `cdm_enabled` setting.** The routes and UI left in the same
+  release window, so nothing reads these tables any more. The drop is one-way:
+  the next release cannot restore the rows, only the pre-upgrade backup can.
+  Uploaded CDM files are not touched by the migration — a script removes them
+  afterwards.
+
+  1. **Before upgrading**, see what will go. The probe is read-only. It is in
+     neither the old image nor your current checkout (`upgrade.sh` checks the
+     new tag out later), so take it from the release tag, copy it into the
+     running backend and paste the output into your change record:
+
+     ```bash
+     git fetch --tags
+     git show tags/vX.Y.Z:backend/scripts/cdm_retirement_probe.py > /tmp/cdm_retirement_probe.py
+     docker compose cp /tmp/cdm_retirement_probe.py backend:/tmp/
+     docker compose exec backend python /tmp/cdm_retirement_probe.py
+     ```
+
+     If every count is 0, the migration runs without step 2.
+  2. **If any `cdm_*` table holds rows, add `SCF_CDM_DROP_ACK=1` to `.env`
+     before you run `upgrade.sh`.** Without it the migration refuses and lists
+     the counts — and inside `upgrade.sh` a refused migration is a failed
+     upgrade, so the script **rolls the whole upgrade back automatically**
+     (database swap + object-store restore + rebuild of the old version). Safe,
+     but slow, and you end up where you started. With the ack set, the upgrade
+     runs through; `upgrade.sh` has taken its backup (`./backups/<ts>_*`) before
+     the migration. **Copy that backup set somewhere `backup.sh` will not prune
+     it** — it is the only copy of the rows — then remove the variable. It is
+     honoured by this one migration only.
+  3. **After the upgrade**, remove the uploaded files. Dry run first, then
+     apply, then confirm nothing is left (the script is idempotent):
+
+     ```bash
+     docker compose exec backend python scripts/cdm_retirement_purge.py            # report only
+     docker compose exec backend python scripts/cdm_retirement_purge.py --apply    # delete
+     docker compose exec backend python scripts/cdm_retirement_purge.py            # expect 0 objects
+     ```
+
+     The purge deletes every object under the `cdm/` prefix of the evidence
+     store and nothing else (evidence lives under `evidence/`). On a versioned
+     S3 bucket the deleted keys survive as non-current versions; the script
+     reports the versioning state and leaves that decision to you. The Azure
+     Blob path is untested against a live account — run the dry run first.
+  4. **Rollback** is `scripts/upgrade.sh --rollback <ts>` with the backup from
+     step 2, which restores both the rows and the files. An Alembic downgrade
+     of `cdmdrop001` recreates the five tables empty and is for development
+     databases only. If you only want to *read* the old rows again, restore the
+     five tables from the copied `pg_dump -Fc` file into a scratch database
+     instead of rolling back (table definitions and rows only, no constraints):
+
+     ```bash
+     docker compose exec -T postgres createdb -U "$DB_USER" cdm_scratch
+     docker compose exec -T postgres pg_restore -U "$DB_USER" -d cdm_scratch \
+       -t cdm_documents -t cdm_document_chunks -t cdm_document_intents \
+       -t cdm_control_proposals -t cdm_mappings < ./backups/<ts>_v<version>.dump
+     ```
+  5. Remove the dead configuration. In `.env`: `ENABLE_CDM`, every `CDM_*`
+     variable, `ENABLE_CDM_LIGHTRAG` and `LIGHTRAG_BASE_URL` — nothing reads
+     them any more. If you run the Celery worker with a custom `-Q` list, drop
+     `cdm` and `cdm_intent` from it; those queues no longer exist. The
+     per-tenant `settings.cdm_enabled` is removed by the migration itself.
+
 - **Evidence collection tasks gain a tenant and an optional owning team
   (migration `evtaskteam1`).** This release lets a single evidence item's tasks
   be owned by different teams — engineering wires up the log export, the

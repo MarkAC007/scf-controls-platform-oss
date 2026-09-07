@@ -24,6 +24,7 @@ from services.model_registry import (
     GLOBAL_MODEL_ENV,
     MODELS,
     ROLES,
+    ModelSpec,
     anthropic_model_ids,
     cost_cents,
     resolve,
@@ -31,6 +32,19 @@ from services.model_registry import (
 )
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
+
+#: A registered, unpriced id that is not any role's default. Injected per test
+#: with ``monkeypatch.setitem(MODELS, ...)`` rather than kept in the registry,
+#: so the registry holds only ids something calls and the liveness check never
+#: has to vouch for a test fixture.
+UNPRICED_ID = "claude-test-unpriced"
+UNPRICED_SPEC = ModelSpec(
+    id=UNPRICED_ID,
+    provider="anthropic",
+    input_cost_per_mtok=None,
+    output_cost_per_mtok=None,
+    notes="Test fixture; never in MODELS on disk.",
+)
 
 
 def _load_liveness_script():
@@ -78,7 +92,6 @@ ALLOWED_FILES = {
 }
 ALLOWED_DIRS = (
     "tests/",
-    "scripts/cdm_eval/fixtures/",
     "alembic/",
 )
 
@@ -144,8 +157,8 @@ class TestResolve:
         assert resolve("evidence_assessment") == "claude-opus-5"
 
     def test_env_override_wins(self, monkeypatch):
-        monkeypatch.setenv("EVIDENCE_AI_MODEL", "claude-fable-5")
-        assert resolve("evidence_assessment") == "claude-fable-5"
+        monkeypatch.setenv("EVIDENCE_AI_MODEL", "claude-sonnet-4-6")
+        assert resolve("evidence_assessment") == "claude-sonnet-4-6"
 
     def test_blank_env_falls_back(self, monkeypatch):
         """An empty variable is "unset", not "call the empty-string model"."""
@@ -160,10 +173,10 @@ class TestResolve:
         assert "not in the model registry" in caplog.text
 
     def test_override_with_a_path_separator_is_refused(self, monkeypatch, caplog):
-        """A model id reaches a request URL. `../` must not survive to get there."""
-        monkeypatch.setenv("CDM_INTENT_GEMINI_MODEL", "../../v1beta/models/other")
+        """A model id is sent verbatim to the provider. `../` is never one."""
+        monkeypatch.setenv("DOC_GEN_AI_MODEL", "../../v1beta/models/other")
         with caplog.at_level("ERROR"):
-            assert resolve("cdm_intent_gemini") == "gemini-3.7-flash"
+            assert resolve("doc_gen") == "claude-sonnet-4-6"
         assert "not a syntactically valid model id" in caplog.text
 
     @pytest.mark.parametrize("bad", ["mo del", "model/../x", "x" * 200, "-leading-dash"])
@@ -180,18 +193,19 @@ class TestOneVariableMovesThePlatform:
     """SCF_AI_MODEL — the one place to set the model.
 
     Asked for on the PR: "Models change, one place to set model name please."
-    Eight per-role variables answer "hold this one service back"; nobody wants
-    to answer "move to the new model" eight times, and doing it seven times is
-    how half the platform ends up on a retired id.
+    The per-role variables answer "hold this one service back"; nobody wants
+    to answer "move to the new model" once per role, and missing one is how
+    half the platform ends up on a retired id.
     """
 
-    OTHER = "claude-fable-5"  # in the registry, and not any role's default
+    OTHER = UNPRICED_ID  # registered by the fixture below; not any role's default
 
     @pytest.fixture(autouse=True)
     def _clean_env(self, monkeypatch):
         for env_var, _default in ROLES.values():
             monkeypatch.delenv(env_var, raising=False)
         monkeypatch.delenv(GLOBAL_MODEL_ENV, raising=False)
+        monkeypatch.setitem(MODELS, UNPRICED_ID, UNPRICED_SPEC)
 
     def test_it_names_roles_that_exist(self):
         assert set(GLOBAL_DEFAULT_ROLES) <= set(ROLES)
@@ -200,14 +214,6 @@ class TestOneVariableMovesThePlatform:
     def test_it_moves_every_platform_role(self, role, monkeypatch):
         monkeypatch.setenv(GLOBAL_MODEL_ENV, self.OTHER)
         assert resolve(role) == self.OTHER
-
-    @pytest.mark.parametrize(
-        "role", [r for r in ROLES if r not in GLOBAL_DEFAULT_ROLES]
-    )
-    def test_provider_pinned_roles_ignore_it(self, role, monkeypatch):
-        """A Claude id sent to the Gemini endpoint is a 404, not a repoint."""
-        monkeypatch.setenv(GLOBAL_MODEL_ENV, self.OTHER)
-        assert resolve(role) == ROLES[role][1]
 
     def test_a_role_variable_beats_it(self, monkeypatch):
         """'Everything on the new model except doc-gen, which regressed.'"""
@@ -260,10 +266,11 @@ class TestCost:
         """The API may answer with a dated id even when an alias was requested."""
         assert cost_cents("claude-sonnet-4-6-20260101", 1_000_000, 0) == pytest.approx(300.0)
 
-    def test_unpriced_model_returns_none_not_zero(self, caplog):
+    def test_unpriced_model_returns_none_not_zero(self, monkeypatch, caplog):
         """NULL reads as "unknown". 0.0 reads as "free", and would be a lie."""
+        monkeypatch.setitem(MODELS, UNPRICED_ID, UNPRICED_SPEC)
         with caplog.at_level("WARNING"):
-            assert cost_cents("claude-fable-5", 1000, 1000) is None
+            assert cost_cents(UNPRICED_ID, 1000, 1000) is None
         assert "No declared price" in caplog.text
 
     def test_unknown_model_returns_none(self):
@@ -384,7 +391,7 @@ class TestLivenessScript:
 class TestOverridesReachTheContainers:
     """Every role's override variable must be forwarded by docker-compose.
 
-    Found in review: none of the eight were. `docker-compose.yml` uses an
+    Found in review (#782, when there were eight roles): none were. `docker-compose.yml` uses an
     explicit allow-list with no `env_file:`, so a variable documented in
     `.env.example` and read by the code still never reaches the process. An
     operator doing exactly what the docs say — set the variable, restart —

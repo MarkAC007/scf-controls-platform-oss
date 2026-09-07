@@ -49,7 +49,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from catalog_models import SCFCatalogControl, SCFCatalogEvidence
 from models import (
     CatalogImportRun,
-    CDMMapping,
     ControlAssessmentComposite,
     EngagementControlScope,
     EvidenceCollectionTask,
@@ -1693,9 +1692,9 @@ async def rollback_reconciliation_run(
     """Snapshot-restore rollback of the org's latest applied run.
 
     Pre-imaged rows are restored verbatim (updated_at excepted); run-created
-    rows are deleted only when unreferenced by engagement_control_scope or
-    cdm_mappings (scoped controls) / evidence_collection_tasks (evidence),
-    otherwise demoted (plan §4.3, §4.8: the absolute delete-vs-CASCADE rule).
+    rows are deleted only when unreferenced by engagement_control_scope
+    (scoped controls) / evidence_collection_tasks (evidence), otherwise
+    demoted (plan §4.3, §4.8: the absolute delete-vs-CASCADE rule).
     Org state reverts to the pre-apply image. Same dual-lock, single
     transaction discipline as apply.
     """
@@ -1762,15 +1761,7 @@ async def rollback_reconciliation_run(
                     EngagementControlScope.scoped_control_id.in_(scoped_ids)
                 )
             )
-            referenced_scoped_ids |= {
-                r.scoped_control_id
-                for r in result.scalars().all()
-                if r.scoped_control_id in scoped_ids
-            }
-            result = await session.execute(
-                select(CDMMapping).where(CDMMapping.scoped_control_id.in_(scoped_ids))
-            )
-            referenced_scoped_ids |= {
+            referenced_scoped_ids = {
                 r.scoped_control_id
                 for r in result.scalars().all()
                 if r.scoped_control_id in scoped_ids
@@ -1795,7 +1786,7 @@ async def rollback_reconciliation_run(
                 row.selected = False
                 row.out_of_scope_justification = (
                     f"Catalog {run.to_version} reconciliation rolled back; row "
-                    f"retained (referenced by an engagement or mapping)"
+                    f"retained (referenced by an engagement)"
                 )
                 row.updated_at = now
                 report.demoted += 1

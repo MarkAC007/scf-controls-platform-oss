@@ -289,11 +289,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          if [ -f backend/requirements.txt ]; then
-            pip install -r backend/requirements.txt
-          elif [ -f requirements.txt ]; then
-            pip install -r requirements.txt
-          fi
+          pip install -r backend/requirements.txt
           pip install pytest pytest-cov flake8 black
 
       - name: Lint with flake8
@@ -306,6 +302,17 @@ jobs:
       - name: Format check with black
         run: black --check .
         continue-on-error: true
+
+      # A second Alembic head — two branches each adding a migration off the
+      # same parent — fails here, in CI, rather than at an operator's
+      # `alembic upgrade head` during scripts/upgrade.sh. `alembic heads` reads
+      # the script directory only; no database is needed (#902, FM-7).
+      - name: Assert a single Alembic head
+        working-directory: backend
+        run: |
+          heads="$(alembic heads)"
+          echo "$heads"
+          test "$(printf '%s\n' "$heads" | grep -c '(head)')" -eq 1
 
       - name: Run tests with pytest
         run: |
@@ -395,11 +402,10 @@ jobs:
           token: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
 
       - name: Free disk space
-        # Slice 13 (Docling): backend image grew ~3GB with Docling's
-        # PyTorch/easyocr deps. The runner's default ~14GB writable disk
-        # overflows when `docker compose build` builds backend, celery-worker,
-        # celery-beat in parallel (all share Dockerfile.backend → 3× ~5GB).
-        # Aggressive cleanup of preinstalled toolchains reclaims ~30GB.
+        # The runner's default ~14GB writable disk has overflowed on this job
+        # before. The build step below already builds one service per unique
+        # Dockerfile; this cleanup of preinstalled toolchains reclaims ~30GB on
+        # top of that so the backend + frontend builds have headroom.
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
             /opt/hostedtoolcache/CodeQL /opt/hostedtoolcache/PyPy \
@@ -418,11 +424,11 @@ jobs:
 
       - name: Build with Docker Compose
         if: hashFiles('docker-compose.yml') != ''
-        # Slice 13: build only one service per unique Dockerfile, not all
-        # services. backend/celery-worker/celery-beat all use Dockerfile.backend
-        # — building them in parallel triples the disk footprint of the
-        # Docling-laden image with no extra coverage. We build backend
-        # (covers all three) + frontend (Dockerfile.frontend.dev).
+        # Build only one service per unique Dockerfile, not all services.
+        # backend/celery-worker/celery-beat all use Dockerfile.backend, and
+        # building them in parallel triples the disk footprint with no extra
+        # coverage. We build backend (covers all three) + frontend
+        # (Dockerfile.frontend.dev).
         run: |
           docker compose build --no-cache backend frontend
           echo "✓ Built backend (also covers celery-worker, celery-beat via shared Dockerfile.backend)"

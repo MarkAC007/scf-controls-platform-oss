@@ -41,8 +41,6 @@ from api import (
     system_catalog,
     capabilities,
     catalog,
-    cdm,
-    cdm_document_map,
     documents,
     tasks_api,
     consultant,
@@ -374,8 +372,6 @@ app.include_router(catalog.router, prefix="/api")  # SCF catalog reference data
 app.include_router(catalog_admin.router, prefix="/api")  # OSS live SCF Excel upload + reseed
 app.include_router(catalog_upgrade_admin.router, prefix="/api")  # Catalog upgrade platform admin (WP-C contract stubs)
 app.include_router(catalog_reconciliation.router, prefix="/api")  # Per-org catalog reconciliation (WP-C contract stubs)
-app.include_router(cdm.router, prefix="/api")
-app.include_router(cdm_document_map.router, prefix="/api")  # Per-domain CDM coverage aggregate
 app.include_router(documents.router, prefix="/api")  # ISMS document generation (three-layer merge + lifecycle)
 app.include_router(tasks_api.router, prefix="/api")  # Background tasks and cache management
 app.include_router(users.router)

@@ -10,8 +10,6 @@ One test class per consumer:
 6.  Engagement views — frozen scope always resolves, deprecated included,
     and responses expose the engagement's own catalog_version.
 7.  Trust portal — public aggregates are active-only, no badges.
-8.  CDM — new suggestions are active-only; historical mappings resolve,
-    badged.
 9.  Risk pickers — new links refuse deprecated controls (with successor
     hint); existing mappings resolve, badged.
 10. Evidence tracking — NEW tracking of a deprecated ERL entry is refused;
@@ -269,73 +267,6 @@ class TestConsumer7TrustPortal:
         from api.trust_portal import _FRAMEWORK_QUERY
 
         assert "cat.status = 'active'" in str(_FRAMEWORK_QUERY)
-
-
-# ---------------------------------------------------------------------------
-# Consumer 8 — CDM
-# ---------------------------------------------------------------------------
-
-class TestConsumer8CDM:
-
-    def test_suggestions_query_is_active_catalog_only(self, org_id):
-        from services.cdm_mapping import compute_mappings_v2
-
-        session = _RecordingSyncSession()
-        backend = SimpleNamespace(can_produce_mappings=True, name="stub")
-
-        summary = compute_mappings_v2(
-            session, org_id,
-            extracted_text_loader=lambda doc: None,
-            backend=backend,
-        )
-
-        assert summary.controls_processed == 0
-        assert len(session.statements) == 1
-        sql = str(session.statements[0][0])
-        assert "scf_catalog_controls.status IS NULL" in sql
-        assert "scf_catalog_controls.status =" in sql
-
-    @pytest.mark.asyncio
-    async def test_historical_mappings_resolve_badged(self, membership, org_id):
-        from api.cdm import list_cdm_mappings
-
-        mapping = SimpleNamespace(
-            id=uuid4(), organization_id=org_id, scoped_control_id=uuid4(),
-            cdm_document_id=uuid4(), section=None,
-            byte_offset_start=0, byte_offset_end=42, relevance_score=0.9,
-            status="accepted", kb_revision="rev1",
-            accepted_by_user_id=None, accepted_at=None,
-            dismiss_reason=None, dismissed_by_user_id=None, dismissed_at=None,
-            excerpt="policy text", review_notes=None,
-            last_reviewed_at=None, last_reviewed_by_user_id=None,
-            created_at=datetime(2026, 6, 1),
-            scf_id=None, original_filename=None,
-            ts_rank_component=None, objective_coverage_component=None,
-            term_overlap_component=None, score_weights=None,
-            match_type=None, matched_objective_text=None,
-            cdm_document_chunk_id=None, retrieval_tier=None,
-        )
-
-        db = AsyncMock()
-        db.execute = AsyncMock(side_effect=[
-            _result(scalar=1),
-            _result(all_rows=[
-                (mapping, "TESTCTL5", "policy.pdf",
-                 "deprecated", "2026.2", "TESTCTL6"),
-            ]),
-        ])
-
-        resp = await list_cdm_mappings(
-            org_id=org_id, _=None, membership=membership, db=db,
-            control_id=None, status=None, limit=50, offset=0,
-        )
-
-        assert resp.total == 1
-        row = resp.mappings[0]
-        assert row.scf_id == "TESTCTL5"
-        assert row.catalog_status == "deprecated"
-        assert row.retired_in_version == "2026.2"
-        assert row.superseded_by == "TESTCTL6"
 
 
 # ---------------------------------------------------------------------------

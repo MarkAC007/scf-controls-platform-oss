@@ -17,7 +17,7 @@ Covered (WP2c acceptance list):
   controls, evidence migrate is copy-and-demote, org state + snapshot + run
   ledger updates;
 - never-DELETE during apply;
-- CASCADE guard: engagement- or CDM-referenced run-created scoped rows (and
+- CASCADE guard: engagement-referenced run-created scoped rows (and
   task-referenced evidence rows) are demoted on rollback, never deleted;
 - stale-preview refusal; frameworks-not-confirmed refusal on the first run;
 - concurrency: second-active-run conflict (the service mirror of the
@@ -52,7 +52,6 @@ if str(BACKEND_DIR) not in sys.path:
 from catalog_models import SCFCatalogControl, SCFCatalogEvidence  # noqa: E402
 from models import (  # noqa: E402
     CatalogImportRun,
-    CDMMapping,
     EngagementControlScope,
     EvidenceCollectionTask,
     EvidenceTracking,
@@ -79,7 +78,6 @@ TABLES = (
     ScopedControl,
     EvidenceTracking,
     EngagementControlScope,
-    CDMMapping,
     EvidenceCollectionTask,
 )
 
@@ -633,22 +631,6 @@ async def test_rollback_demotes_engagement_referenced_created_rows():
     assert report.demoted == 2
     # Everything pre-imaged still restored.
     assert scoped["GOV-C1"].selected is True
-
-
-@pytest.mark.asyncio
-async def test_rollback_demotes_cdm_referenced_created_rows():
-    session, run, _ = _world()
-    await rs.apply_reconciliation_run(session, ORG, run.id)
-
-    successor = _scoped_by_id(session)["GOV-B1"]
-    session.tables[CDMMapping].append(
-        SimpleNamespace(
-            id=uuid.uuid4(), organization_id=ORG, scoped_control_id=successor.id
-        )
-    )
-    await rs.rollback_reconciliation_run(session, ORG, run.id)
-    scoped = _scoped_by_id(session)
-    assert "GOV-B1" in scoped and scoped["GOV-B1"].selected is False
 
 
 # ---------------------------------------------------------------------------

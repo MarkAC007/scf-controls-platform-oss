@@ -60,7 +60,6 @@ from catalog_models import (  # noqa: E402
 )
 from models import (  # noqa: E402
     CatalogImportRun,
-    CDMMapping,
     ControlAssessmentComposite,
     EngagementControlScope,
     EvidenceCollectionTask,
@@ -108,7 +107,6 @@ TABLES = (
     ScopedControl,
     EvidenceTracking,
     EngagementControlScope,
-    CDMMapping,
     EvidenceCollectionTask,
     ControlAssessmentComposite,
     OrganizationMember,
