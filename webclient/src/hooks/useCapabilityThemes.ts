@@ -11,7 +11,6 @@ export function useCapabilityThemes(orgId?: string) {
     queryKey: ['capability-themes', orgId],
     queryFn: () => getCapabilityThemes(orgId),
     staleTime: 5 * 60 * 1000,
-    refetchOnWindowFocus: false,
   })
 }
 
@@ -24,7 +23,6 @@ export function useCapabilityThemeEvidencePosture(orgId?: string) {
     queryKey: ['capability-themes-evidence-posture', orgId],
     queryFn: () => getCapabilityThemeEvidencePosture(orgId),
     staleTime: 5 * 60 * 1000,
-    refetchOnWindowFocus: false,
   })
 }
 
@@ -42,6 +40,5 @@ export function useCapabilityThemeControls(
     queryFn: () => getCapabilityThemeControls(themeCode!, params, orgId),
     enabled: !!themeCode,
     staleTime: 5 * 60 * 1000,
-    refetchOnWindowFocus: false,
   })
 }

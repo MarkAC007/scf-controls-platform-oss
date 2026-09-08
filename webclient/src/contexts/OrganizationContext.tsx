@@ -49,6 +49,8 @@ interface OrganizationContextType {
   clearOrgContext: () => void
 }
 
+import { clearCurrentOrganizationCache } from '../data/apiClient'
+
 const OrganizationContext = createContext<OrganizationContextType | undefined>(undefined)
 
 // API base URL from environment
@@ -239,6 +241,12 @@ export function OrganizationProvider({ children }: { children: ReactNode }) {
         throw new Error('You do not have access to this organization')
       }
     }
+
+    // Drop apiClient's module-scope current-org record (60s TTL) before the
+    // new org becomes current. Without this the next read can still answer
+    // from the previous organisation's cached record — the invalidator existed
+    // but had no callers (#923).
+    clearCurrentOrganizationCache()
 
     // Update state and storage
     setCurrentOrg(org)

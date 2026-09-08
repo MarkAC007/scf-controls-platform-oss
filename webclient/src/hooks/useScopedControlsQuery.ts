@@ -70,7 +70,6 @@ export function useScopedControlsQuery(filters: ScopedControlFilters = {}, orgId
       return loaded < lastPage.total ? loaded : undefined
     },
     staleTime: 5 * 60 * 1000, // 5 minutes
-    refetchOnWindowFocus: false,
   })
 }
 
@@ -83,7 +82,6 @@ export function useScopedControlsStats(orgId?: string) {
     queryKey: ['scoped-controls-stats', orgId],
     queryFn: () => fetchScopedControlStats(orgId),
     staleTime: 30 * 1000, // 30 seconds - stats should be fresher than paginated data
-    refetchOnWindowFocus: false,
   })
 }
 

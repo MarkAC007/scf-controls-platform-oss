@@ -26,6 +26,5 @@ export function useOrgLogo(orgId?: string) {
     },
     enabled: !!orgId,
     staleTime: 5 * 60 * 1000,
-    refetchOnWindowFocus: false,
   })
 }

@@ -12,7 +12,7 @@ from uuid import UUID
 
 from database import get_db
 from models import AuditLog, User
-from schemas import AuditLogResponse, AuditLogListResponse
+from schemas import AuditLogResponse, AuditLogListResponse, ChangeCursorResponse
 from auth import require_org_role, OrgMembership
 
 logger = logging.getLogger(__name__)
@@ -122,3 +122,35 @@ async def list_audit_log(
         offset=offset,
         limit=limit,
     )
+
+
+@router.get(
+    "/organizations/{org_id}/changes/cursor",
+    response_model=ChangeCursorResponse,
+)
+async def get_change_cursor(
+    org_id: UUID,
+    membership: OrgMembership = Depends(require_org_role("viewer")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Cheap "has anything changed?" probe for the web client (epic #921).
+
+    Returns the newest ``audit_log.changed_at`` for the organisation and the
+    row count. The client polls this while the tab is visible and compares the
+    pair with the one it last acknowledged; any difference means data on
+    screen may be stale. It deliberately says nothing about *what* changed —
+    that is the audit-log endpoint's job — so the response stays two fields
+    and one index-only scan (``idx_audit_log_org_changed_at``).
+
+    ``count`` is the tiebreaker for same-timestamp writes and for restores
+    that replay history with old timestamps. ``cursor`` is ``None`` for an
+    organisation that has never been audited.
+
+    Requires: viewer role or higher.
+    """
+    result = await db.execute(
+        select(func.max(AuditLog.changed_at), func.count(AuditLog.id))
+        .where(AuditLog.organization_id == org_id)
+    )
+    newest, count = result.one()
+    return ChangeCursorResponse(cursor=newest, count=count or 0)

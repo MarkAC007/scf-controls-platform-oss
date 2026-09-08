@@ -13,6 +13,5 @@ export function useOrganizationSettings(orgId?: string) {
     queryKey: ['organization-settings', orgId],
     queryFn: () => fetchOrganizationSettings(orgId),
     staleTime: 5 * 60 * 1000, // 5 minutes
-    refetchOnWindowFocus: false,
   })
 }

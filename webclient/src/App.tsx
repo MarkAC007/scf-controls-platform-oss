@@ -49,6 +49,7 @@ import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { ThemeProvider } from './contexts/ThemeContext'
 import { OrganizationProvider, useOrganization } from './contexts/OrganizationContext'
 import { RiskProfileProvider } from './contexts/RiskProfileContext'
+import { DataRefreshProvider, useDataRefresh } from './contexts/DataRefreshContext'
 import GoogleSignIn from './components/GoogleSignIn'
 import OidcSignIn from './components/OidcSignIn'
 import { OIDC_ENABLED } from './data/authToken'
@@ -101,6 +102,11 @@ function AppContent() {
   const [evidenceTemplates, setEvidenceTemplates] = useState<EvidenceTemplatesFile>({})
   const [frameworkNames, setFrameworkNames] = useState<FrameworkNameMap>({})
   const queryClient = useQueryClient()
+  // Bumped by the header refresh control. It joins the query key below and the
+  // load effect's dependencies, so one click reaches BOTH data layers: the
+  // query cache and the eighty screens that still hold data in component
+  // state. It reuses the cascade org-switching already relies on.
+  const { epoch: dataEpoch } = useDataRefresh()
 
   // Scoping data — single source of truth for the whole app.
   // React Query owns it, so any writer that invalidates ['scoping-data']
@@ -108,7 +114,7 @@ function AppContent() {
   // via onScopingDataChange) propagates to every consumer by construction —
   // no full page reload, no per-tab refetch hack.
   const { data: scopingDataRaw, isError: scopingFailed } = useQuery({
-    queryKey: ['scoping-data', currentOrg?.id],
+    queryKey: ['scoping-data', currentOrg?.id, dataEpoch],
     queryFn: async (): Promise<ScopedControlsFile> => {
       const scoping = await loadScopedControls()
       if (scoping) return scoping
@@ -135,8 +141,8 @@ function AppContent() {
   // Keeps the same call shape as the old setScopingData(value) so prop sites
   // are unchanged; writes straight into the shared query cache.
   const setScopingData = useCallback((data: ScopedControlsFile) => {
-    queryClient.setQueryData(['scoping-data', currentOrg?.id], data)
-  }, [queryClient, currentOrg?.id])
+    queryClient.setQueryData(['scoping-data', currentOrg?.id, dataEpoch], data)
+  }, [queryClient, currentOrg?.id, dataEpoch])
 
   const [selectedId, setSelectedId] = useState<string | undefined>(undefined)
   // Library tab: the ?item= param from the URL (scf_id of the control to show, or null).
@@ -576,7 +582,9 @@ function AppContent() {
       console.log(`🔐 Auth + org ready (${currentOrg.name}), loading data...`)
       loadData(true)
     }
-  }, [authReady, isAuthenticated, currentOrg, orgLoading])
+    // dataEpoch: the refresh control bumps it, which re-runs this load for the
+    // catalogue and everything else this effect pulls into component state.
+  }, [authReady, isAuthenticated, currentOrg, orgLoading, dataEpoch])
 
   // OSS onboarding: once authenticated, check whether the SCF catalogue is
   // seeded. If empty (fresh self-hosted install), the upload gate is shown
@@ -981,6 +989,9 @@ export default function App() {
     <ThemeProvider>
       <AuthProvider>
         <OrganizationProvider>
+          {/* Inside OrganizationProvider: the change cursor it polls is
+              per-organisation, and a refresh clears that org's caches. */}
+          <DataRefreshProvider>
           <RiskProfileProvider>
             <Toaster
               position="top-right"
@@ -1008,6 +1019,7 @@ export default function App() {
             />
             <AppContent />
           </RiskProfileProvider>
+          </DataRefreshProvider>
         </OrganizationProvider>
       </AuthProvider>
     </ThemeProvider>

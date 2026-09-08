@@ -184,8 +184,13 @@ def client_factory(monkeypatch):
             user.email = "test@example.com"
             return user
 
-        async def _fake_require_auth(credentials, db):
-            return _fake_user()
+        async def _fake_require_auth(request, credentials, db):
+            # Mirrors the real dependency since #922: it takes the request and
+            # publishes the caller on request.state so AuditMiddleware and
+            # detect_action_source can attribute the write.
+            user = _fake_user()
+            request.state.user = user
+            return user
 
         async def _fake_verify_org_membership(org_id, user, db, min_role="viewer"):
             return OrgMembership(

@@ -317,7 +317,6 @@ function SidebarFooter({ showRoleGateNote }: { showRoleGateNote: boolean }) {
     queryKey: ['catalog-status-sidebar'],
     queryFn: getCatalogStatusExtended,
     staleTime: 10 * 60 * 1000, // 10 min
-    refetchOnWindowFocus: false,
     retry: false,
   })
   const catalogVersion = catalogStatus?.catalog_version ?? null

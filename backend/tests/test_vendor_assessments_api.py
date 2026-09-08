@@ -175,10 +175,14 @@ def client_factory(monkeypatch):
         async def _override_db():
             yield session
 
-        async def _fake_require_auth(credentials, db):
+        async def _fake_require_auth(request, credentials, db):
+            # Mirrors the real dependency since #922: it takes the request and
+            # publishes the caller on request.state so AuditMiddleware and
+            # detect_action_source can attribute the write.
             user = MagicMock()
             user.db_id = str(uuid4())
             user.email = "test@example.com"
+            request.state.user = user
             return user
 
         async def _fake_verify_org_membership(org_id, user, db, min_role="viewer"):

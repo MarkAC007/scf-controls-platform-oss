@@ -1,4 +1,5 @@
 import { NotificationBell } from './NotificationBell'
+import RefreshControl from './RefreshControl'
 import UserProfileDropdown from './UserProfileDropdown'
 import ThemeMenu from './ThemeMenu'
 import OrgSwitcher from './OrgSwitcher'
@@ -79,6 +80,7 @@ export default function Header({
 
         {user && (
           <div className="header-user-section">
+            <RefreshControl />
             <NotificationBell
               onNavigateToEvidence={onNavigateToEvidence}
               onNavigateToControl={(controlId) => {

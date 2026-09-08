@@ -2855,6 +2855,19 @@ class AuditLogListResponse(BaseModel):
     limit: int
 
 
+class ChangeCursorResponse(BaseModel):
+    """Per-organisation change cursor for cheap staleness polling.
+
+    ``cursor`` is the newest ``audit_log.changed_at`` for the organisation
+    (``None`` when nothing has ever been audited) and ``count`` the number of
+    audit rows. A client keeps the pair it last saw; when either differs, data
+    it is displaying may be stale. Both values are opaque to the client — the
+    contract is "changed or not", never "how much".
+    """
+    cursor: Optional[datetime] = None
+    count: int
+
+
 # Resolve forward references
 # ========================
 # Capability Themes Schemas

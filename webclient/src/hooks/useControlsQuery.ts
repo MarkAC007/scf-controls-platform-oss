@@ -38,7 +38,6 @@ export function useControlsQuery(filters: ControlFilters = {}) {
       return loaded < lastPage.total ? loaded : undefined
     },
     staleTime: 5 * 60 * 1000, // 5 minutes
-    refetchOnWindowFocus: false,
   })
 }
 
