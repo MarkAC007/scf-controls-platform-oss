@@ -648,11 +648,31 @@ async def validate_user_api_key(token: str, db: AsyncSession) -> User:
 
 
 async def require_auth(
+    request: Request,
     credentials: HTTPAuthorizationCredentials = Security(security),
     db: AsyncSession = Depends(get_db)
 ) -> User:
     """
     Authentication dependency that requires a valid Bearer token.
+
+    Resolves the user via :func:`_authenticate` and records it on
+    ``request.state.user`` so request-scoped machinery that runs *outside*
+    dependency injection — the audit middleware and
+    ``services.audit_service.detect_action_source`` — can see who acted and
+    how they authenticated. Before #922 nothing set this attribute, so the
+    middleware skipped every request and every audit row read ``system``.
+    """
+    user = await _authenticate(credentials, db)
+    request.state.user = user
+    return user
+
+
+async def _authenticate(
+    credentials: HTTPAuthorizationCredentials,
+    db: AsyncSession,
+) -> User:
+    """
+    Resolve a Bearer token to a User (the body of ``require_auth``).
 
     Supports two authentication modes based on GOOGLE_AUTH_ENABLED:
 
@@ -816,6 +836,7 @@ async def load_user_subscription(user: User, db: AsyncSession) -> User:
 
 
 async def require_auth_with_subscription(
+    request: Request,
     credentials: HTTPAuthorizationCredentials = Security(security),
     db: AsyncSession = Depends(get_db)
 ) -> User:
@@ -835,11 +856,12 @@ async def require_auth_with_subscription(
     Raises:
         HTTPException: If authentication fails
     """
-    user = await require_auth(credentials, db)
+    user = await require_auth(request, credentials, db)
     return await load_user_subscription(user, db)
 
 
 async def require_admin(
+    request: Request,
     credentials: HTTPAuthorizationCredentials = Security(security),
     db: AsyncSession = Depends(get_db)
 ) -> User:
@@ -862,7 +884,7 @@ async def require_admin(
         HTTPException: If authentication fails or user is not an admin
     """
     # First, authenticate the user
-    user = await require_auth(credentials, db)
+    user = await require_auth(request, credentials, db)
 
     # Static API key users are considered admins (for automation/CI purposes)
     if user.auth_method == "api_key":
@@ -910,6 +932,7 @@ async def require_admin(
 
 
 async def require_platform_admin(
+    request: Request,
     credentials: HTTPAuthorizationCredentials = Security(security),
     db: AsyncSession = Depends(get_db)
 ) -> User:
@@ -935,7 +958,7 @@ async def require_platform_admin(
         HTTPException: If authentication fails or user is not a platform admin
     """
     # First, authenticate the user
-    user = await require_auth(credentials, db)
+    user = await require_auth(request, credentials, db)
 
     # Static API key users are considered platform admins (for automation/CI purposes)
     if user.auth_method == "api_key":
@@ -1070,7 +1093,7 @@ async def optional_auth(
         # Pass the resolved db session through — calling require_auth(creds)
         # bare would leave its `db` parameter as the unresolved Depends sentinel
         # and crash Google-token validation on the first db.execute.
-        return await require_auth(creds, db)
+        return await require_auth(request, creds, db)
     except (ValueError, HTTPException):
         return None
 
@@ -1453,11 +1476,12 @@ def require_org_role(min_role: Literal["viewer", "editor", "admin"] = "viewer"):
         A FastAPI dependency function
     """
     async def dependency(
+        request: Request,
         org_id: UUID,
         credentials: HTTPAuthorizationCredentials = Security(security),
         db: AsyncSession = Depends(get_db)
     ) -> OrgMembership:
-        user = await require_auth(credentials, db)
+        user = await require_auth(request, credentials, db)
         return await verify_org_membership(org_id, user, db, min_role)
 
     return dependency
@@ -1470,6 +1494,7 @@ require_org_admin = require_org_role("admin")
 
 
 async def require_org_admin_or_platform_admin(
+    request: Request,
     org_id: UUID,
     credentials: HTTPAuthorizationCredentials = Security(security),
     db: AsyncSession = Depends(get_db),
@@ -1486,7 +1511,7 @@ async def require_org_admin_or_platform_admin(
     convenience, and letting it through here would reopen the multi-tenant
     IDOR that ``verify_org_membership`` explicitly closes.
     """
-    user = await require_auth(credentials, db)
+    user = await require_auth(request, credentials, db)
     try:
         return await verify_org_membership(org_id, user, db, "admin")
     except HTTPException as exc:

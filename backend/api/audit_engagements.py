@@ -135,12 +135,13 @@ async def resolve_engagement_access(
 def require_engagement_read():
     """Dependency: read access to an engagement (org member OR active auditor)."""
     async def dependency(
+        request: Request,
         org_id: UUID,
         engagement_id: UUID,
         credentials: HTTPAuthorizationCredentials = Security(security),
         db: AsyncSession = Depends(get_db),
     ) -> EngagementAccess:
-        user = await require_auth(credentials, db)
+        user = await require_auth(request, credentials, db)
         return await resolve_engagement_access(user, org_id, engagement_id, db)
 
     return dependency
@@ -964,6 +965,7 @@ async def revoke_engagement_auditor(
 
 @router.get("/my-engagements", response_model=List[AuditEngagementVersionedResponse])
 async def list_my_auditor_engagements(
+    request: Request,
     credentials: HTTPAuthorizationCredentials = Security(security),
     db: AsyncSession = Depends(get_db),
 ):
@@ -972,7 +974,7 @@ async def list_my_auditor_engagements(
     The auditor's entry point: it is org-agnostic and returns only engagements
     for which the user holds an ACTIVE grant.
     """
-    user = await require_auth(credentials, db)
+    user = await require_auth(request, credentials, db)
     if not user.db_id:
         return []
 

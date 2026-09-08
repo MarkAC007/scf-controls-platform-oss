@@ -28,6 +28,12 @@ vi.mock('../../contexts/OrganizationContext', () => ({
 vi.mock('../NotificationBell', () => ({
   NotificationBell: () => <div data-testid="notification-bell" />,
 }))
+// RefreshControl reads DataRefreshContext, which this suite deliberately does
+// not mount — the utility bar's job here is composition, not refresh behaviour.
+// RefreshControl has its own suite.
+vi.mock('../RefreshControl', () => ({
+  default: () => <div data-testid="refresh-control" />,
+}))
 vi.mock('../UserProfileDropdown', () => ({
   default: () => <div data-testid="user-profile-dropdown" />,
 }))
