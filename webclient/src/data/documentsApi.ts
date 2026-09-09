@@ -117,7 +117,19 @@ export interface GenerationRequestItem {
 }
 
 export interface GenerationStatus {
-  status: 'idle' | 'queued' | 'running' | 'completed' | 'completed_with_errors' | 'failed'
+  /**
+   * `partial` means the run stopped at its time limit part-way through. It is
+   * a terminal state like `completed`, not a failure: the documents already
+   * produced are committed, and re-running finishes the rest.
+   */
+  status:
+    | 'idle'
+    | 'queued'
+    | 'running'
+    | 'completed'
+    | 'completed_with_errors'
+    | 'partial'
+    | 'failed'
   stage?: string
   message?: string
   total?: number
@@ -125,6 +137,7 @@ export interface GenerationStatus {
   generated?: number
   skipped?: number
   failed?: number
+  interrupted?: boolean
   error?: string
   results?: Array<{
     generator: string

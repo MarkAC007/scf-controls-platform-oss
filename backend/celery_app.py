@@ -104,6 +104,27 @@ _REDIS_TRANSPORT_OPTS = {
     "socket_keepalive": True,
     "retry_on_timeout": True,
     "health_check_interval": 30,
+    # How long the broker waits before deciding a delivered task was never
+    # handled and giving it to someone else. kombu's Redis default is 3600s,
+    # which is shorter than this application's longest task
+    # (``doc_gen.generate``, 10800s). With ``task_acks_late`` below, that
+    # default means a healthy three-hour batch is redelivered at the one-hour
+    # mark and runs a second time alongside the first.
+    #
+    # This MUST stay greater than the largest ``time_limit`` declared on any
+    # task. Raising a task's limit past this value silently reintroduces
+    # duplicate execution, and the symptom (a duplicate that appears exactly
+    # one hour in) looks nothing like its cause.
+    #
+    # It is deliberately only a little above that largest limit rather than
+    # comfortably above it, because the setting is global and the cost runs the
+    # other way too: when a worker dies HARD (OOM kill, host reboot) nothing
+    # unwinds, so ``task_reject_on_worker_lost`` cannot help and every unacked
+    # message of every type waits out this timeout before another worker can
+    # take it. A generous value would leave a queued notification stranded for
+    # hours. 11400s covers the longest task (doc_gen.generate at 10800s) with
+    # ten minutes to spare and no more.
+    "visibility_timeout": 11400,
 }
 
 celery_app.conf.update(

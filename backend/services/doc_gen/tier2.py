@@ -21,6 +21,8 @@ import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
+from celery.exceptions import SoftTimeLimitExceeded
+
 from .context import DomainWithControls, OrganisationContext
 from .registry import GeneratorSpec
 from .tier1 import status_label
@@ -32,6 +34,20 @@ logger = logging.getLogger(__name__)
 # Model id from services/model_registry (#782); DOC_GEN_AI_MODEL still overrides.
 MODEL_ROLE = "doc_gen"
 MAX_OUTPUT_TOKENS = 16384
+
+# Ceiling on one HTTP attempt, matching recipe_generation_engine and
+# vendor_assessment_engine, which both pin the same value. The SDK default is
+# 600s per attempt; against a median call of 67s this is ~8x headroom, so it
+# only ever fires on a genuinely stuck connection.
+#
+# Note what this does NOT bound: the SDK retries twice by default and the
+# timeout is per attempt, so a persistently-hanging endpoint still costs
+# ~3x this before the call gives up. Retries are left alone deliberately —
+# they are what carries a document through a transient 529. The real ceiling
+# on a runaway document is the task's soft time limit, which interrupts the
+# blocking read wherever it is; this constant just stops one document
+# monopolising the batch budget on its own.
+MODEL_CALL_TIMEOUT_SECONDS = 540.0
 
 SYSTEM_PROMPT = (
     "You are an expert Information Security Management System (ISMS) "
@@ -358,7 +374,10 @@ def generate_document(
     # worker, and only when a key is present.
     from anthropic import Anthropic
 
-    client = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+    client = Anthropic(
+        api_key=os.environ["ANTHROPIC_API_KEY"],
+        timeout=MODEL_CALL_TIMEOUT_SECONDS,
+    )
     try:
         response = client.messages.create(
             model=model_id,
@@ -366,6 +385,18 @@ def generate_document(
             system=SYSTEM_PROMPT,
             messages=[{"role": "user", "content": user_prompt}],
         )
+    except SoftTimeLimitExceeded:
+        # Not a generation failure — Celery interrupting the worker. It has to
+        # pass through untouched.
+        #
+        # This is where a batch actually spends its time: essentially all of a
+        # document's 46-81s is this one call, so a soft time limit is far more
+        # likely to be delivered here than anywhere else. Relabelling it as a
+        # GenerationError below would hide it from the batch task's soft-limit
+        # handler, which would then record it as one failed document and start
+        # the next one — burning the whole grace window and guaranteeing the
+        # uncatchable SIGKILL that handler exists to avoid.
+        raise
     except Exception as exc:  # noqa: BLE001 — surfaced to the task's status key
         logger.exception("doc_gen tier2 model call failed for generator=%s", spec.name)
         raise GenerationError(f"Document generation failed: {exc}") from exc
