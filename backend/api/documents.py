@@ -712,7 +712,7 @@ def _operative_markdown(document: GeneratedDocument) -> str:
     nothing can drift.
 
     Every path that hands document text to a person goes through here -- detail,
-    preview, and all three exports -- so they cannot disagree with each other
+    preview, and all four exports -- so they cannot disagree with each other
     either.
     """
     return lifecycle.apply_lifecycle_status(
@@ -1315,14 +1315,18 @@ async def document_history(
 async def export_document(
     org_id: UUID,
     document_id: UUID,
-    format: str = Query("md", pattern="^(md|pdf|html)$"),
+    format: str = Query("md", pattern="^(md|pdf|html|docx)$"),
     membership: OrgMembership = Depends(require_org_role("viewer")),
     db: AsyncSession = Depends(get_db),
 ):
-    """Export a document as Markdown, HTML, or PDF.
+    """Export a document as Markdown, HTML, Word, or PDF.
 
     Merge markers are stripped in every format. They are review scaffolding;
     an exported document is the thing an auditor reads.
+
+    The PDF is the branded export and the Word file deliberately is not: .docx
+    is handed over to be edited, and a masthead the recipient cannot regenerate
+    is worse than no masthead. See ``render_docx``.
     """
     document = await _load_document(db, document_id, membership.organization_id,
                                     with_sections=False)
@@ -1343,6 +1347,25 @@ async def export_document(
         return Response(
             content=markdown_to_html(_operative_markdown(document), title=document.title),
             media_type="text/html; charset=utf-8",
+        )
+
+    # Deliberately ahead of the organisation lookup below. That ordering is the
+    # no-branding guarantee: the Word export cannot leak a logo or an org name
+    # into the document because it returns before either is ever read. Moving
+    # this branch below the lookup would still produce the same file today and
+    # would quietly remove that guarantee.
+    if format == "docx":
+        from services.doc_gen.renderer import render_docx
+        return Response(
+            content=render_docx(_operative_markdown(document), title=document.title),
+            media_type=(
+                "application/vnd.openxmlformats-officedocument"
+                ".wordprocessingml.document"
+            ),
+            headers={
+                "Content-Disposition":
+                    f'attachment; filename="{safe_filename(document.title, "docx", document.domain_id)}"'
+            },
         )
 
     # The masthead and footer name the organisation the document belongs to.

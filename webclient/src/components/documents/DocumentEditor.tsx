@@ -263,6 +263,17 @@ export default function DocumentEditor({
           <button
             type="button"
             className="btn-secondary"
+            onClick={() =>
+              downloadDocument(organizationId, documentId, 'docx', doc.title).catch(
+                (e: Error) => toast.error(e.message)
+              )
+            }
+          >
+            Word
+          </button>
+          <button
+            type="button"
+            className="btn-secondary"
             onClick={() => setShowHistory((v) => !v)}
           >
             History

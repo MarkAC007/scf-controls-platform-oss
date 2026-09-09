@@ -15,10 +15,12 @@
  *   - Keyboard suppressed in input/textarea/contentEditable targets
  *   - Position null: no position text, both buttons disabled
  *   - Position index null: "— of N" with both buttons disabled
+ *   - Export action row: PDF / Word / Markdown each call downloadDocument
+ *     with their own format token
  */
 import { fireEvent, render, screen, act } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { describe, expect, it, vi, afterEach } from 'vitest'
+import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest'
 
 // ─── Mock heavy sub-components ────────────────────────────────────────────────
 
@@ -43,23 +45,31 @@ vi.mock('dompurify', () => ({
   default: { sanitize: (html: string) => html },
 }))
 
+// Hoisted so the vi.mock factory below and the tests can share one document.
+// The suites here call vi.restoreAllMocks(), which strips the factory's
+// resolved values, so any test that needs a *loaded* document (rather than the
+// breadcrumb, which renders during loading) re-arms getDocument itself.
+const { documentFixture } = vi.hoisted(() => ({
+  documentFixture: {
+    id: 'doc-1',
+    title: 'Information Security Policy',
+    lifecycle_status: 'draft',
+    generation_version: 2,
+    catalog_version: '2025.4',
+    section_count: 12,
+    pending_retirement_count: 0,
+    is_stale: false,
+    stale_reason: null,
+    sections: [],
+  },
+}))
+
 // documentsApi — return minimal doc + no preview/history
 vi.mock('../../../data/documentsApi', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../data/documentsApi')>()
   return {
     ...actual,
-    getDocument: vi.fn().mockResolvedValue({
-      id: 'doc-1',
-      title: 'Information Security Policy',
-      lifecycle_status: 'draft',
-      generation_version: 2,
-      catalog_version: '2025.4',
-      section_count: 12,
-      pending_retirement_count: 0,
-      is_stale: false,
-      stale_reason: null,
-      sections: [],
-    }),
+    getDocument: vi.fn().mockResolvedValue(documentFixture),
     previewDocument: vi.fn().mockResolvedValue({ html: '<p>body</p>' }),
     getDocumentHistory: vi.fn().mockResolvedValue({ transitions: [], versions: [] }),
     downloadDocument: vi.fn(),
@@ -69,6 +79,11 @@ vi.mock('../../../data/documentsApi', async (importOriginal) => {
 // ─── Import after mocks ───────────────────────────────────────────────────────
 
 import DocumentReader, { type DocumentReaderProps } from '../DocumentReader'
+import {
+  downloadDocument,
+  getDocument,
+  type DocumentDetail,
+} from '../../../data/documentsApi'
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -233,5 +248,56 @@ describe('DocumentReader keyboard navigation', () => {
     act(() => { fireEvent.keyDown(ta, { key: 'ArrowRight' }) })
     expect(onNext).not.toHaveBeenCalled()
     ta.remove()
+  })
+})
+
+describe('DocumentReader export buttons', () => {
+  beforeEach(() => {
+    // The action row only exists once the document query resolves, and the
+    // fixture is a partial DocumentDetail — the masthead reads title and
+    // version, not the merged content.
+    vi.mocked(getDocument).mockResolvedValue(documentFixture as unknown as DocumentDetail)
+    // The component chains .catch() onto the returned promise, so the mock has
+    // to resolve — a bare vi.fn() returns undefined and the click throws.
+    vi.mocked(downloadDocument).mockReset().mockResolvedValue(undefined)
+  })
+  afterEach(() => vi.restoreAllMocks())
+
+  it('renders a Word button in the action row', async () => {
+    renderReader()
+    expect(await screen.findByRole('button', { name: 'Word' })).toBeInTheDocument()
+  })
+
+  it('requests the docx format when Word is clicked', async () => {
+    renderReader()
+    fireEvent.click(await screen.findByRole('button', { name: 'Word' }))
+    expect(downloadDocument).toHaveBeenCalledWith(
+      'org-1',
+      'doc-1',
+      'docx',
+      'Information Security Policy',
+    )
+  })
+
+  it('requests the pdf format when PDF is clicked', async () => {
+    renderReader()
+    fireEvent.click(await screen.findByRole('button', { name: 'PDF' }))
+    expect(downloadDocument).toHaveBeenCalledWith(
+      'org-1',
+      'doc-1',
+      'pdf',
+      'Information Security Policy',
+    )
+  })
+
+  it('requests the md format when Markdown is clicked', async () => {
+    renderReader()
+    fireEvent.click(await screen.findByRole('button', { name: 'Markdown' }))
+    expect(downloadDocument).toHaveBeenCalledWith(
+      'org-1',
+      'doc-1',
+      'md',
+      'Information Security Policy',
+    )
   })
 })

@@ -19,6 +19,11 @@ const API_BASE_URL = '/api'
 
 export type LifecycleStatus = 'draft' | 'in_review' | 'approved' | 'published'
 
+// Named rather than inlined at each call site: the union used to be repeated
+// in the API function and in the reader, so adding a format could leave one of
+// them half-wired.
+export type ExportFormat = 'md' | 'pdf' | 'docx'
+
 export type SectionStatus =
   | 'unchanged'
   | 'updated'
@@ -420,7 +425,7 @@ export async function previewDocument(
 export async function downloadDocument(
   orgId: string,
   documentId: string,
-  format: 'md' | 'pdf',
+  format: ExportFormat,
   fallbackName: string
 ): Promise<void> {
   const response = await fetchWithAuthRetry((bearer) =>

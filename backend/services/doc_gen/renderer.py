@@ -1,5 +1,5 @@
 """
-Export rendering — Markdown to HTML, and HTML to PDF.
+Export rendering — Markdown to HTML, and HTML to PDF or Word.
 
 WeasyPrint is imported inside the function rather than at module scope. It
 binds to Pango and Cairo through shared libraries that exist in the container
@@ -19,6 +19,13 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from .three_layer import strip_markers
+
+# The Word walker lives in its own module -- this file already carries the
+# print stylesheet, the masthead and the WeasyPrint path -- but it is re-exported
+# here so every exporter is reachable from the one place callers already import.
+# docx_renderer keeps its own docx and lxml imports inside its functions, so this
+# line costs a module object and nothing else.
+from .docx_renderer import render_docx  # noqa: F401  (re-export)
 
 logger = logging.getLogger(__name__)
 
