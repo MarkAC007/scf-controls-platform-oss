@@ -73,7 +73,7 @@ pyclamd>=0.4.0
 # AI Evidence Assessment
 anthropic>=0.39.0
 pymupdf>=1.24.0  # PDF text extraction (imported as fitz) — evidence/window/AI paths only (50k cap)
-python-docx>=1.1.0  # DOCX text extraction — evidence/window/AI paths only (50k cap)
+python-docx>=1.1.0  # DOCX read (evidence/window/AI text extraction, 50k cap) and write (Word export of generated documents)
 
 # Azure Application Insights (prompt monitoring & telemetry)
 azure-monitor-opentelemetry>=1.6.0

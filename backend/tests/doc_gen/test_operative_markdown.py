@@ -50,6 +50,7 @@ RENDERERS = (
     "export_markdown",
     "markdown_to_html",
     "render_pdf",
+    "render_docx",
     "markdown_to_reader_fragment",
 )
 
@@ -100,7 +101,21 @@ class TestEveryReadPathUsesIt:
             if not isinstance(node, ast.Call):
                 continue
             name = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
-            if name not in RENDERERS or not node.args:
+            if name not in RENDERERS:
+                continue
+            # A renderer called with no positional argument is an offence in
+            # itself, not a case to skip. This used to read `or not node.args:
+            # continue`, which meant `render_pdf(content=stored, ...)` -- the
+            # exact stale-status bug this test exists to catch -- passed
+            # vacuously, because there was no args[0] to inspect. The check
+            # cannot enforce its own precondition if the precondition's absence
+            # is what makes it skip, so a refactor to keyword arguments would
+            # have silently disarmed it for every renderer at once.
+            if not node.args:
+                offenders.append(
+                    f"{name} at line {node.lineno} (called without a positional "
+                    "argument, so the operative-markdown check cannot see it)"
+                )
                 continue
             if not self._is_helper_call(node.args[0]):
                 offenders.append(f"{name} at line {node.lineno}")

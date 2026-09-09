@@ -39,6 +39,7 @@ import {
   getDocumentHistory,
   previewDocument,
   type DocumentSection,
+  type ExportFormat,
   type LifecycleStatus,
 } from '../../data/documentsApi'
 import OutlineCount from './OutlineCount'
@@ -343,7 +344,7 @@ export default function DocumentReader({
     setActiveSection(section.section_id)
   }
 
-  function download(format: 'md' | 'pdf') {
+  function download(format: ExportFormat) {
     downloadDocument(organizationId, documentId, format, doc?.title ?? 'document').catch(
       (e: Error) => toast.error(e.message)
     )
@@ -514,6 +515,9 @@ export default function DocumentReader({
             </button>
             <button type="button" className="btn-secondary" onClick={() => download('pdf')}>
               PDF
+            </button>
+            <button type="button" className="btn-secondary" onClick={() => download('docx')}>
+              Word
             </button>
             <button type="button" className="btn-secondary" onClick={() => download('md')}>
               Markdown
