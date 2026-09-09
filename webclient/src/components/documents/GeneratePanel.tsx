@@ -149,11 +149,22 @@ export default function GeneratePanel({ organizationId, onClose }: Props) {
         </div>
       )}
 
-      {status?.status === 'completed' || status?.status === 'completed_with_errors' ? (
+      {status?.status === 'completed' ||
+      status?.status === 'completed_with_errors' ||
+      status?.status === 'partial' ? (
         <div className="doc-run-summary">
           <strong>Last run:</strong> {status.generated || 0} generated,{' '}
           {status.skipped || 0} unchanged
           {status.failed ? `, ${status.failed} refused` : ''}
+          {status.status === 'partial' && (
+            <span className="doc-conflict-note">
+              {' '}— stopped at the time limit after {status.completed || 0} of{' '}
+              {status.total || 0}
+              {status.failed
+                ? '. The rest were not attempted; run it again to finish them.'
+                : '. Nothing failed; run it again to finish the rest.'}
+            </span>
+          )}
           {status.results?.some((r) => r.conflict_count) && (
             <span className="doc-conflict-note">
               {' '}— some sections need your decision.
