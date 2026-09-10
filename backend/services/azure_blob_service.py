@@ -11,11 +11,19 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+from services.secrets import get_secret
+
 logger = logging.getLogger(__name__)
 
 # Configuration from environment
 AZURE_STORAGE_ACCOUNT_NAME = os.getenv("AZURE_STORAGE_ACCOUNT_NAME", "")
-AZURE_STORAGE_ACCOUNT_KEY = os.getenv("AZURE_STORAGE_ACCOUNT_KEY", "")
+
+
+def _account_key() -> str:
+    """The storage account key, resolved on every call so a rotation in the
+    Integrations screen reaches the next signed URL without a restart."""
+    return get_secret("AZURE_STORAGE_ACCOUNT_KEY", "") or ""
+
 EVIDENCE_CONTAINER = os.getenv("EVIDENCE_CONTAINER", "evidence")
 EVIDENCE_URL_EXPIRY = int(os.getenv("EVIDENCE_URL_EXPIRY", "900"))  # 15 minutes
 EVIDENCE_MAX_FILE_SIZE = int(os.getenv("EVIDENCE_MAX_FILE_SIZE", str(50 * 1024 * 1024)))  # 50MB
@@ -33,7 +41,7 @@ def _get_blob_service_client():
         connection_string = (
             f"DefaultEndpointsProtocol=https;"
             f"AccountName={AZURE_STORAGE_ACCOUNT_NAME};"
-            f"AccountKey={AZURE_STORAGE_ACCOUNT_KEY};"
+            f"AccountKey={_account_key()};"
             f"EndpointSuffix=core.windows.net"
         )
         _blob_service_client = BlobServiceClient.from_connection_string(connection_string)
@@ -88,7 +96,7 @@ def _generate_object_key(org_id: str, filename: str) -> str:
 
 def is_configured() -> bool:
     """Check if Azure Blob Storage is configured."""
-    return bool(AZURE_STORAGE_ACCOUNT_NAME and AZURE_STORAGE_ACCOUNT_KEY)
+    return bool(AZURE_STORAGE_ACCOUNT_NAME and _account_key())
 
 
 def generate_upload_presigned_post(
@@ -120,7 +128,7 @@ def generate_upload_presigned_post(
         account_name=AZURE_STORAGE_ACCOUNT_NAME,
         container_name=EVIDENCE_CONTAINER,
         blob_name=object_key,
-        account_key=AZURE_STORAGE_ACCOUNT_KEY,
+        account_key=_account_key(),
         permission=BlobSasPermissions(write=True, create=True),
         expiry=datetime.now(timezone.utc) + timedelta(seconds=EVIDENCE_URL_EXPIRY),
         content_type=content_type,
@@ -168,7 +176,7 @@ def generate_download_url(
         account_name=AZURE_STORAGE_ACCOUNT_NAME,
         container_name=EVIDENCE_CONTAINER,
         blob_name=file_key,
-        account_key=AZURE_STORAGE_ACCOUNT_KEY,
+        account_key=_account_key(),
         permission=BlobSasPermissions(read=True),
         expiry=datetime.now(timezone.utc) + timedelta(seconds=EVIDENCE_URL_EXPIRY),
         content_disposition=content_disposition,

@@ -8,6 +8,8 @@ from celery import Celery
 from celery.schedules import crontab
 from kombu import Queue, Exchange
 
+from services.secrets import get_secret
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -26,7 +28,7 @@ logger = logging.getLogger(__name__)
 #: malformed — exactly the moments when you most need the logs to explain why.
 _OTEL_LOGGING_ACTIVE = False
 
-_appinsights_conn = os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING", "")
+_appinsights_conn = get_secret("APPLICATIONINSIGHTS_CONNECTION_STRING", "")
 if _appinsights_conn:
     try:
         from azure.monitor.opentelemetry import configure_azure_monitor
@@ -401,6 +403,24 @@ celery_app.Task = BaseTask
 # strictly better than a hand-rolled StreamHandler: it installs Celery's own
 # task-aware formatter, so lines carry the task name and id.
 # ---------------------------------------------------------------------------
+from celery.signals import worker_process_init  # noqa: E402
+
+
+@worker_process_init.connect
+def _bootstrap_worker_secrets(**_kwargs):
+    """Validate credentials and register the database tier in each worker child.
+
+    Per CHILD, not per worker: prefork forks after the parent has imported
+    everything, and a cache warmed in the parent would be inherited stale by
+    every child.
+    """
+    from services import secrets
+
+    # Workers never authenticate an API request, and a pre-#947 .env install
+    # only hands API_KEY to the backend service (docker-compose.yml).
+    secrets.bootstrap_process(require_api_key=False)
+
+
 from celery.signals import setup_logging  # noqa: E402
 from log_sanitizer import attach_to_handlers as _attach_log_sanitizer  # noqa: E402
 

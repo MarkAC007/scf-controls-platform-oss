@@ -34042,3 +34042,264 @@ button.risk-list-header-cell:hover {
     min-width: 1120px;
   }
 }
+
+/* ── Settings → Integrations (issue #947) ────────────────────────────────────
+   Tier-3 credential rows on the settings page. Everything here is token-driven
+   so the section follows the active theme like its neighbouring cards. */
+
+.integrations-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.integration-banner {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--info-bg);
+  color: var(--text);
+  padding: 12px 14px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.integration-banner-warning {
+  background: var(--warning-bg);
+  border-color: var(--warning);
+}
+
+.integration-banner code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.integration-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.integration-row {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.integration-row:last-child {
+  border-bottom: none;
+}
+
+.integration-row-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.integration-row-identity {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
+.integration-label {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.integration-feature {
+  margin: 2px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.integration-row-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Fixed-width stand-in for a stored value. Monospaced so every configured row
+   shows the same glyph run — the mask must never hint at length. */
+.integration-mask {
+  font-family: var(--font-mono);
+  letter-spacing: 2px;
+  color: var(--muted);
+}
+
+.integration-row-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.integration-row-meta {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.integration-editor {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--muted-bg);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 520px;
+}
+
+.integration-editor label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.integration-editor-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.integration-editor-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.integration-confirm {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--danger);
+  border-radius: 8px;
+  background: var(--danger-bg);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 13px;
+}
+
+.integration-row-error {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: var(--danger);
+}
+
+.integration-health,
+.integration-audit {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+}
+
+.integration-health h3,
+.integration-audit h3 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.integration-health-count {
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.integration-health-lead {
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.integration-health-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.integration-health-list li {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+
+.integration-health-name {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.integration-health-feature {
+  color: var(--muted);
+}
+
+.integration-audit-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.integration-audit-list li {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: baseline;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.integration-audit-action {
+  font-weight: 600;
+  color: var(--text);
+  min-width: 68px;
+}
+
+.integration-audit-name {
+  color: var(--text);
+}
+
+.integration-audit-actor {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.integration-audit-when {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.integration-audit-empty {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+@media (max-width: 768px) {
+  .integration-row-actions {
+    margin-left: 0;
+    width: 100%;
+  }
+
+  .integration-audit-when {
+    margin-left: 0;
+  }
+}

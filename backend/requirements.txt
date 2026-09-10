@@ -83,3 +83,9 @@ azure-monitor-opentelemetry>=1.6.0
 # Pinned to match scripts/requirements-importer.txt (the one-shot importer image).
 pandas==2.2.3
 openpyxl==3.1.5
+
+# Fernet, for encrypting tier-3 integration secrets at rest (services/crypto.py).
+# Transitive until now (via pyjwt/authlib), which meant a dependency bump could
+# silently change the encryption primitives the platform stores data with.
+# Upper bound tracks the version in the published image (50.0.1).
+cryptography>=42,<51

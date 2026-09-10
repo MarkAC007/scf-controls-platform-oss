@@ -37,6 +37,7 @@ import AppearanceSettings from './components/AppearanceSettings'
 import ApiKeyManagement from './components/ApiKeyManagement'
 import WebhookManagement from './components/WebhookManagement'
 import BackupRestore from './components/BackupRestore'
+import IntegrationsSettings from './components/IntegrationsSettings'
 import AuditLogPage from './components/AuditLogPage'
 import EngagementsPage from './components/EngagementsPage'
 import DocumentsPage from './components/documents/DocumentsPage'
@@ -92,7 +93,7 @@ type Tab = 'dashboard' | 'capability-posture' | 'library' | 'scoping' | 'evidenc
  */
 
 function AppContent() {
-  const { isAuthenticated, authReady, user, isPlatformAdmin } = useAuth()
+  const { isAuthenticated, authReady, user, isPlatformAdmin, canManageIntegrations } = useAuth()
   const { currentOrg, isLoading: orgLoading, switchOrganization } = useOrganization()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -878,8 +879,13 @@ function AppContent() {
                 <a className="settings-section-nav-item" href="#settings-risk">RISK &amp; GOVERNANCE</a>
                 <a className="settings-section-nav-item" href="#settings-docgen">DOCUMENT GENERATION</a>
                 <a className="settings-section-nav-item" href="#settings-backups">BACKUPS</a>
+                {canManageIntegrations && (
+                  <a className="settings-section-nav-item" href="#settings-integrations">INTEGRATIONS</a>
+                )}
                 <p className="settings-section-nav-note">
-                  Settings apply to this organisation only. Platform-wide catalog administration lives under Platform → Catalog.
+                  {canManageIntegrations
+                    ? 'Settings apply to this organisation only, except Integrations, which is platform-wide. Platform-wide catalog administration lives under Platform → Catalog.'
+                    : 'Settings apply to this organisation only. Platform-wide catalog administration lives under Platform → Catalog.'}
                 </p>
               </nav>
               <div className="settings-page-content">
@@ -908,6 +914,14 @@ function AppContent() {
                     organizationId={scopingData.organizationId!}
                   />
                 </div>
+                {/* Platform-wide credential storage — platform admins (and the
+                    static API key in no-IdP installs), not org-scoped, so it
+                    takes no organizationId. */}
+                {canManageIntegrations && (
+                  <div id="settings-integrations">
+                    <IntegrationsSettings />
+                  </div>
+                )}
               </div>
             </div>
           )}

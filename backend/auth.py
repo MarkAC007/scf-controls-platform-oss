@@ -9,6 +9,7 @@ from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from datetime import datetime
+import hmac
 import os
 import logging
 
@@ -32,6 +33,8 @@ from models import (
 
 # Initialize HTTP Bearer security scheme
 security = HTTPBearer()
+from services.secrets import get_secret
+
 logger = logging.getLogger(__name__)
 
 
@@ -52,7 +55,8 @@ def _mask_email(email: Optional[str]) -> str:
 # Configuration
 GOOGLE_AUTH_ENABLED = os.getenv("GOOGLE_AUTH_ENABLED", "false").lower() == "true"
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
-API_KEY = os.getenv("API_KEY")
+# API_KEY is resolved per call via services.secrets.get_secret so a rotated
+# key takes effect without restarting the API.
 
 # Log authentication configuration on startup
 if GOOGLE_AUTH_ENABLED:
@@ -552,7 +556,11 @@ async def validate_api_key(token: str) -> User:
     Raises:
         HTTPException: If API key is invalid
     """
-    if token != API_KEY:
+    expected = get_secret("API_KEY")
+    if not expected or not hmac.compare_digest(token, expected):
+        # compare_digest, not `!=`: a short-circuiting comparison leaks the
+        # length of the matching prefix through its timing, which is enough to
+        # recover the key one byte at a time.
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid API key",

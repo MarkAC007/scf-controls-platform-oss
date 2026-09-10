@@ -27,15 +27,11 @@ def signing_secret(monkeypatch):
 
     Download tokens and upload tickets both refuse to sign or verify without
     one — an unsigned HMAC is forgeable from public knowledge, so the services
-    fail closed rather than pretend. The module-level cache is cleared on the
-    way in and out so this leaks into nothing else.
+    fail closed rather than pretend. The secret is resolved per call, so setting
+    the environment variable is the whole fixture.
     """
-    import services.download_token as dt
-
     monkeypatch.setenv("DOWNLOAD_TOKEN_SECRET", "test-signing-secret")
-    monkeypatch.setattr(dt, "_SECRET", None)
     yield
-    monkeypatch.setattr(dt, "_SECRET", None)
 
 
 def make_ticket(org_id, evidence_id, membership, s3_key):
@@ -990,7 +986,6 @@ class TestDownloadTokenService:
 
         monkeypatch.delenv("DOWNLOAD_TOKEN_SECRET", raising=False)
         monkeypatch.delenv("API_KEY", raising=False)
-        monkeypatch.setattr(dt, "_SECRET", None)
         monkeypatch.setattr(dt, "_WARNED_NO_SECRET", False)
 
         assert dt.generate_download_token("file-1", "org-1", "user-1") is None
@@ -1043,7 +1038,7 @@ class TestUploadTicket:
 
         monkeypatch.delenv("DOWNLOAD_TOKEN_SECRET", raising=False)
         monkeypatch.delenv("API_KEY", raising=False)
-        monkeypatch.setattr(dt, "_SECRET", None)
+        assert dt.signing_secret() is None
         assert mint_upload_ticket(*self.ARGS) is None
         assert verify_upload_ticket("1.abc", *self.ARGS) is False
 

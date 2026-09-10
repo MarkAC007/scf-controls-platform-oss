@@ -38,12 +38,8 @@ from evidence_mocks import unasserted  # noqa: E402
 @pytest.fixture(autouse=True)
 def signing_secret(monkeypatch):
     """Upload tickets refuse to sign without one — see download_token."""
-    import services.download_token as dt
-
     monkeypatch.setenv("DOWNLOAD_TOKEN_SECRET", "test-signing-secret")
-    monkeypatch.setattr(dt, "_SECRET", None)
     yield
-    monkeypatch.setattr(dt, "_SECRET", None)
 
 
 @pytest.fixture

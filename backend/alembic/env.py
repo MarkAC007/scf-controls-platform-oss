@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from alembic import context
 
 # Import the Base and all models to ensure metadata is populated
+from db_url import get_database_url  # noqa: E402
 from database import Base
 import models  # noqa: F401 - User data models
 import catalog_models  # noqa: F401 - SCF catalog models
@@ -29,8 +30,7 @@ if config.config_file_name is not None:
 
 # Set the SQLAlchemy URL from environment variable
 # This overrides the placeholder in alembic.ini
-database_url = os.getenv(
-    "DATABASE_URL",
+database_url = get_database_url(
     "postgresql+asyncpg://odin:changeme@localhost:5432/odin_scf"
 )
 config.set_main_option("sqlalchemy.url", database_url)

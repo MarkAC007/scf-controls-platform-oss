@@ -24,6 +24,8 @@ from rate_limiting import rate_limit_stripe_webhook
 from schemas import StripeWebhookResponse
 from services.subscription import get_tier_limits
 
+from services.secrets import get_secret
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
@@ -32,7 +34,7 @@ router = APIRouter(
 )
 
 # Stripe configuration
-STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
+# STRIPE_WEBHOOK_SECRET is resolved per call (see services.secrets).
 
 # Price ID to tier mapping
 # These should match your Stripe product price IDs
@@ -294,7 +296,8 @@ async def stripe_webhook(
 
     # Parse event (with mandatory signature verification)
     try:
-        if not STRIPE_WEBHOOK_SECRET:
+        stripe_webhook_secret = get_secret("STRIPE_WEBHOOK_SECRET")
+        if not stripe_webhook_secret:
             logger.error("STRIPE_WEBHOOK_SECRET not configured — rejecting webhook")
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -310,7 +313,7 @@ async def stripe_webhook(
         # Council Review: tightened from default 300s (5 min) to 180s (3 min)
         # to reduce replay attack window per security checklist requirement.
         event = stripe.Webhook.construct_event(
-            payload, sig_header, STRIPE_WEBHOOK_SECRET,
+            payload, sig_header, stripe_webhook_secret,
             tolerance=180  # 3 minutes (Council Review: tightened from 5 min default)
         )
     except ValueError as e:

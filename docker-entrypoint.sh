@@ -38,22 +38,30 @@ echo "Substituting MAX_UPLOAD_SIZE=$MAX_UPLOAD_SIZE"
 # Substitute BACKEND_URL, EXTRA_CONNECT_SRC and MAX_UPLOAD_SIZE in the nginx
 # config template. envsubst is given an explicit variable list so nginx's own
 # $-variables ($host, $csp_policy, $remote_addr, ...) survive untouched.
-envsubst '$BACKEND_URL $EXTRA_CONNECT_SRC $MAX_UPLOAD_SIZE' < /etc/nginx/nginx.conf.template > /etc/nginx/nginx.conf
+# Render to /tmp, not /etc/nginx (#947). The container runs with
+# `read_only: true`, so the image layer that holds /etc/nginx is not writable —
+# the old in-place write to /etc/nginx/nginx.conf died at boot. /tmp is a tmpfs.
+#
+# /etc/nginx itself is deliberately NOT a tmpfs: mounting one there would mask
+# the mime.types the image ships, and nginx would then serve every asset as
+# application/octet-stream. That presents as a broken UI, not as a config error.
+NGINX_CONF=/tmp/nginx.conf
+envsubst '$BACKEND_URL $EXTRA_CONNECT_SRC $MAX_UPLOAD_SIZE' < /etc/nginx/nginx.conf.template > "$NGINX_CONF"
 
 # Validate that substitution worked (proxy_pass should contain http:// or https://)
-if ! grep "proxy_pass" /etc/nginx/nginx.conf | grep -qE "https?://"; then
+if ! grep "proxy_pass" "$NGINX_CONF" | grep -qE "https?://"; then
   echo "ERROR: proxy_pass substitution failed!"
   echo "Generated config around proxy_pass:"
-  grep -A 2 -B 2 "proxy_pass" /etc/nginx/nginx.conf || true
+  grep -A 2 -B 2 "proxy_pass" "$NGINX_CONF" || true
   exit 1
 fi
 
 echo "Nginx config validated, testing configuration..."
 
-# Test nginx configuration
-nginx -t
+# Test nginx configuration (against the rendered file, not the image default)
+nginx -t -c "$NGINX_CONF"
 
 echo "Starting nginx..."
 
 # Start nginx
-exec nginx -g "daemon off;"
+exec nginx -c "$NGINX_CONF" -g "daemon off;"

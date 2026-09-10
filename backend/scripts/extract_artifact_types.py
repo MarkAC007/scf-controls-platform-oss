@@ -44,6 +44,8 @@ from catalog_models import SCFCatalogControl, SCFCatalogEvidence  # noqa: E402
 from services.artifact_type_extraction_service import extract_batch  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+from services.secrets import get_secret
+
 logger = logging.getLogger(__name__)
 
 
@@ -112,7 +114,7 @@ def main() -> int:
                 logger.info("  %s  (%s)", scf_id, status)
             return 0
 
-        if not os.getenv("ANTHROPIC_API_KEY"):
+        if not get_secret("ANTHROPIC_API_KEY"):
             logger.error("ANTHROPIC_API_KEY is required to run extraction")
             return 3
 

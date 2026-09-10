@@ -2,10 +2,32 @@ services:
   postgres:
     image: postgres:15-alpine
     container_name: cg-scf-postgres
+    # Container hardening (#947). Every cap_add line below is the MINIMUM the
+    # image's own entrypoint needs: it starts as root, fixes ownership on
+    # PGDATA, then drops to the postgres user with gosu.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN          # entrypoint chowns PGDATA + the socket dir to postgres
+      - FOWNER         # chmod 00700 $PGDATA and 03775 /var/run/postgresql
+      - DAC_OVERRIDE   # the entrypoint's find sweeps traverse dirs it does not own
+      - SETUID         # gosu drop root -> postgres
+      - SETGID         # gosu drop root -> postgres
+    read_only: true
+    tmpfs:
+      # Unix socket dir. pg_isready in the healthcheck below connects over the
+      # local socket, so the server must be able to create it.
+      - /var/run/postgresql
+      # Temp sort/hash spill files when a query exceeds work_mem.
+      - /tmp
+    mem_limit: 1g
+    pids_limit: 256
     environment:
       POSTGRES_DB: cg_scf
       POSTGRES_USER: cg
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-}
     volumes:
       - postgres_data:/var/lib/postgresql/data
       # init-db.sql disabled - using Alembic migrations instead
@@ -29,6 +51,24 @@ services:
   redis:
     image: redis:7-alpine
     container_name: cg-scf-redis
+    # Container hardening (#947). Same root->gosu drop shape as postgres.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN          # entrypoint chowns /data to the redis user
+      - FOWNER         # ownership fixups on pre-existing volume contents
+      - DAC_OVERRIDE   # the entrypoint's find sweep traverses /data as root
+      - SETUID         # gosu drop root -> redis
+      - SETGID         # gosu drop root -> redis
+    read_only: true
+    tmpfs:
+      # AOF/RDB rewrites stage in /data (the named volume); /tmp is here so a
+      # read-only root cannot surprise redis-cli or a future temp write.
+      - /tmp
+    mem_limit: 256m
+    pids_limit: 128
     # No port mapping - only accessible within Docker network (more secure)
     volumes:
       - redis_data:/data
@@ -45,12 +85,52 @@ services:
   # default so the platform needs no AWS/Azure account. API on :9000, web
   # console on :9001 (login with MINIO_ROOT_USER / MINIO_ROOT_PASSWORD).
   minio:
-    image: minio/minio:latest
+    # Digest-pinned to a named RELEASE tag (#947). Resolved 2026-09-10 with
+    #   docker buildx imagetools inspect minio/minio:RELEASE.2025-09-07T16-13-09Z
+    # `:latest` on an object store that holds every evidence file is a silent
+    # auto-upgrade of the storage tier on every `docker compose pull`.
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
     container_name: cg-scf-minio
     command: server /data --console-address ":9001"
+    # Credential guard (#947). MinIO's server binary reads MINIO_ROOT_*_FILE
+    # itself, but a MISSING file fails OPEN and silently boots the object store
+    # on the built-in minioadmin:minioadmin. That produces a working stack with
+    # default credentials and no error line, so assert here instead: a non-empty
+    # env value OR a non-empty file, else refuse to start.
+    # $$ escapes to a literal $ so this is evaluated by the shell at runtime,
+    # not interpolated by compose. "$$0" "$$@" re-passes the compose `command`
+    # to the image's own entrypoint, which prepends `minio`.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        _need() {
+          _v=$$(eval echo \"\$$$$1\")
+          _f=$$(eval echo \"\$$$${1}_FILE\")
+          if [ -n "$$_v" ]; then return 0; fi
+          if [ -n "$$_f" ] && [ -s "$$_f" ]; then return 0; fi
+          echo "FATAL: minio refuses to start: $$1 is empty and $${1}_FILE ($${_f:-unset}) is missing or empty." >&2
+          echo "       Refusing to fall back to the built-in minioadmin credentials." >&2
+          echo "       Run scripts/install.sh, or set $$1 in .env." >&2
+          return 1
+        }
+        _need MINIO_ROOT_USER || exit 1
+        _need MINIO_ROOT_PASSWORD || exit 1
+        exec /usr/bin/docker-entrypoint.sh "$$0" "$$@"
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      # No working default: an empty value trips the entrypoint guard above.
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-}
+    # Container hardening (#947). The minio entrypoint only execs, so no caps.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    mem_limit: 1g
+    pids_limit: 256
     ports:
       # Host side is remappable: another service may already own 9000/9001 on
       # your host. If you remap MINIO_PORT, EVIDENCE_PUBLIC_ENDPOINT follows
@@ -66,23 +146,56 @@ services:
   # One-shot: wait for MinIO, then create the evidence bucket if absent.
   # Exits 0 once done; `docker compose up` runs it automatically.
   minio-init:
-    image: minio/mc:latest
+    # Digest-pinned to a named RELEASE tag (#947). Resolved 2026-09-10 with
+    #   docker buildx imagetools inspect minio/mc:RELEASE.2025-08-13T08-35-41Z
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727
     container_name: cg-scf-minio-init
     depends_on:
       minio:
         condition: service_started
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      # No working default (see the minio service): empty trips the guard below.
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-}
       EVIDENCE_BUCKET: ${EVIDENCE_BUCKET:-evidence}
-    entrypoint: >
-      /bin/sh -c "
-      until mc alias set local http://minio:9000 \"$$MINIO_ROOT_USER\" \"$$MINIO_ROOT_PASSWORD\" >/dev/null 2>&1; do
-        echo 'waiting for minio...'; sleep 2;
-      done;
-      mc mb --ignore-existing local/\"$$EVIDENCE_BUCKET\";
-      echo \"bucket ready: $$EVIDENCE_BUCKET\";
-      "
+      # `mc alias set` persists to $HOME/.mc, which a read-only root forbids.
+      # Point it at the tmpfs instead. Without this the `until` loop below
+      # never succeeds and the container spins forever: the bucket is never
+      # created and the first evidence upload fails days later with NoSuchBucket.
+      MC_CONFIG_DIR: /tmp/.mc
+    # Container hardening (#947). mc needs no capabilities.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    mem_limit: 128m
+    pids_limit: 64
+    # Bounded retry: 30 attempts x 2s. The old `until ...; do sleep 2; done`
+    # had no bound, so an unreachable or mis-credentialled MinIO spun silently
+    # instead of failing the deploy.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        if [ -z "$$MINIO_ROOT_USER" ] || [ -z "$$MINIO_ROOT_PASSWORD" ]; then
+          echo "FATAL: minio-init refuses to start: MINIO_ROOT_USER/MINIO_ROOT_PASSWORD are empty." >&2
+          echo "       Run scripts/install.sh, or set them in .env." >&2
+          exit 1
+        fi
+        i=0
+        until mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" >/dev/null 2>&1; do
+          i=$$((i+1))
+          if [ "$$i" -ge 30 ]; then
+            echo "FATAL: minio-init gave up after $$i attempts: cannot reach or authenticate to http://minio:9000" >&2
+            exit 1
+          fi
+          echo "waiting for minio... ($$i/30)"; sleep 2
+        done
+        mc mb --ignore-existing local/"$$EVIDENCE_BUCKET"
+        echo "bucket ready: $$EVIDENCE_BUCKET"
     networks:
       - cg-network
 
@@ -101,8 +214,42 @@ services:
         BUILD_STAMP: "${BUILD_STAMP:-dev}"
         MIN_UPGRADABLE_VERSION: "${MIN_UPGRADABLE_VERSION:-0.0.0}"
     container_name: cg-scf-backend
+    # Container hardening (#947). The backend image already runs as apiuser
+    # (uid 1001) and needs no capabilities. read_only applies to the IMAGE
+    # layers only — the ./backend bind mount and the named volumes stay
+    # writable, so the app is unaffected.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      # Spooled uploads (Starlette UploadFile rolls over at 1 MB), the
+      # catalog-upgrade extract dir, and celery beat's schedule shelve.
+      - /tmp
+      # WeasyPrint pulls in fontconfig, which builds its cache on first render.
+      - /home/apiuser/.cache
+    mem_limit: 2g
+    pids_limit: 512
     environment:
-      DATABASE_URL: postgresql+asyncpg://cg:${DB_PASSWORD}@postgres:5432/cg_scf
+      # Never write .pyc into the bind-mounted ./backend under a read-only root.
+      PYTHONDONTWRITEBYTECODE: "1"
+      # Legacy pre-composed DSN, kept so a plain `.env` install is unchanged.
+      # db_url.get_database_url() returns it verbatim when non-empty; the
+      # secrets overlay blanks it so the DSN is built in-process from
+      # DB_* + DB_PASSWORD_FILE instead (a compose-interpolated password would
+      # otherwise show up in `docker inspect`).
+      DATABASE_URL: postgresql+asyncpg://cg:${DB_PASSWORD:-}@postgres:5432/cg_scf
+      # DSN components used when DATABASE_URL is empty (secrets overlay).
+      DB_HOST: ${DB_HOST:-postgres}
+      DB_PORT: ${DB_PORT:-5432}
+      DB_NAME: ${DB_NAME:-cg_scf}
+      DB_USER: ${DB_USER:-cg}
+      DB_SSLMODE: ${DB_SSLMODE:-}
+      # Fernet key for at-rest encryption of operator-set integration secrets.
+      # Compose has no env_file here, so a key present in .env reaches the
+      # container ONLY because it is listed on this allow-list.
+      SCF_SECRET_KEY: ${SCF_SECRET_KEY:-}
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/1
       CELERY_RESULT_BACKEND: redis://redis:6379/1
@@ -110,7 +257,7 @@ services:
       # remote-host deploys where the browser origin isn't localhost.
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://localhost:${FRONTEND_PORT:-5173}}
       RATE_LIMITING_ENABLED: "false"  # Temporarily disabled - needs debugging
-      LOG_LEVEL: ${LOG_LEVEL}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
       ENVIRONMENT: ${ENVIRONMENT:-production}
       # Version info (fallbacks - actual versions read from package.json and git)
       PLATFORM_VERSION: ${PLATFORM_VERSION:-0.0.0}
@@ -123,7 +270,7 @@ services:
       # One-off ack for the CDM table drop (migration cdmdrop001, see .env.example).
       SCF_CDM_DROP_ACK: ${SCF_CDM_DROP_ACK:-}
       # Authentication (set these in .env file - REQUIRED)
-      API_KEY: ${API_KEY}
+      API_KEY: ${API_KEY:-}
       # Signing secret for evidence download links and upload tickets (#57).
       # Falls back to API_KEY when unset. With neither, the backend refuses to
       # mint or accept either — browser download links disappear and confirm
@@ -132,8 +279,8 @@ services:
       # Self-hosted single-tenant mode: when truthy (see .env.example), grants the
       # master API_KEY admin on the single org. Leave UNSET for multi-tenant/SaaS. (#662)
       OSS_SINGLE_TENANT: ${OSS_SINGLE_TENANT:-}
-      GOOGLE_AUTH_ENABLED: ${GOOGLE_AUTH_ENABLED}
-      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_AUTH_ENABLED: ${GOOGLE_AUTH_ENABLED:-false}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       # OIDC / bundled identity provider (optional — see the "idp" compose profile
       # and .env.example). Empty by default so the no-profile stack is unchanged;
       # set OIDC_* to point at the bundled Keycloak or any external OIDC provider.
@@ -144,9 +291,9 @@ services:
       OIDC_REDIRECT_URI: ${OIDC_REDIRECT_URI:-}
       BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-}
       # Email notifications (optional - set in .env file)
-      RESEND_API_KEY: ${RESEND_API_KEY}
-      RESEND_FROM_EMAIL: ${RESEND_FROM_EMAIL}
-      APP_URL: ${APP_URL}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      RESEND_FROM_EMAIL: ${RESEND_FROM_EMAIL:-}
+      APP_URL: ${APP_URL:-http://localhost:5173}
       # Evidence storage — defaults to the bundled MinIO (S3-compatible) so the
       # stack is self-contained with no cloud account. Point AWS_* at real S3
       # (and clear AWS_ENDPOINT_URL), or set AZURE_STORAGE_* instead, to use a
@@ -154,8 +301,10 @@ services:
       # presigned upload/download (AWS_ENDPOINT_URL is the internal one).
       EVIDENCE_BUCKET: ${EVIDENCE_BUCKET:-evidence}
       AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-eu-west-1}
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-minioadmin}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-minioadmin}
+      # No working default (#947): a shipped credential that also happens to be
+      # MinIO's built-in root account is a default password, not a convenience.
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
       AWS_ENDPOINT_URL: ${AWS_ENDPOINT_URL-http://minio:9000}
       EVIDENCE_PUBLIC_ENDPOINT: ${EVIDENCE_PUBLIC_ENDPOINT-http://localhost:${MINIO_PORT:-9000}}
       # Azure Blob Storage (set these to store evidence in Azure Blob instead of MinIO/S3)
@@ -231,13 +380,38 @@ services:
         BUILD_STAMP: "${BUILD_STAMP:-dev}"
         MIN_UPGRADABLE_VERSION: "${MIN_UPGRADABLE_VERSION:-0.0.0}"
     container_name: cg-scf-celery-worker
+    # Container hardening (#947). The backend image already runs as apiuser
+    # (uid 1001) and needs no capabilities. read_only applies to the IMAGE
+    # layers only — the ./backend bind mount and the named volumes stay
+    # writable, so the app is unaffected.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      # Spooled uploads (Starlette UploadFile rolls over at 1 MB), the
+      # catalog-upgrade extract dir, and celery beat's schedule shelve.
+      - /tmp
+      # WeasyPrint pulls in fontconfig, which builds its cache on first render.
+      - /home/apiuser/.cache
+    mem_limit: 3g
+    pids_limit: 512
     command: celery -A celery_app worker --loglevel=info --concurrency=2 -Q default,high_priority,low_priority,tprm_research,dpsia,evidence_assessment,evidence_window,evidence_composite,catalog
     environment:
-      DATABASE_URL: postgresql+asyncpg://cg:${DB_PASSWORD}@postgres:5432/cg_scf
+      # See the backend service for why each of these five is here.
+      PYTHONDONTWRITEBYTECODE: "1"
+      DATABASE_URL: postgresql+asyncpg://cg:${DB_PASSWORD:-}@postgres:5432/cg_scf
+      DB_HOST: ${DB_HOST:-postgres}
+      DB_PORT: ${DB_PORT:-5432}
+      DB_NAME: ${DB_NAME:-cg_scf}
+      DB_USER: ${DB_USER:-cg}
+      DB_SSLMODE: ${DB_SSLMODE:-}
+      SCF_SECRET_KEY: ${SCF_SECRET_KEY:-}
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/1
       CELERY_RESULT_BACKEND: redis://redis:6379/1
-      LOG_LEVEL: ${LOG_LEVEL}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
       ENVIRONMENT: ${ENVIRONMENT:-production}
       # Self-hosted single-tenant guard for the live catalogue-import task (#660).
       # The catalog.import task refuses to reseed unless this is truthy.
@@ -258,8 +432,10 @@ services:
       # Vendor research API keys (Issue #59)
       HIBP_API_KEY: ${HIBP_API_KEY:-}
       NVD_API_KEY: ${NVD_API_KEY:-}
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-minioadmin}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-minioadmin}
+      # No working default (#947): a shipped credential that also happens to be
+      # MinIO's built-in root account is a default password, not a convenience.
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
       AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-eu-west-1}
       # Evidence storage — defaults to the bundled MinIO (see backend service)
       EVIDENCE_BUCKET: ${EVIDENCE_BUCKET:-evidence}
@@ -340,6 +516,23 @@ services:
         BUILD_STAMP: "${BUILD_STAMP:-dev}"
         MIN_UPGRADABLE_VERSION: "${MIN_UPGRADABLE_VERSION:-0.0.0}"
     container_name: cg-scf-celery-beat
+    # Container hardening (#947). The backend image already runs as apiuser
+    # (uid 1001) and needs no capabilities. read_only applies to the IMAGE
+    # layers only — the ./backend bind mount and the named volumes stay
+    # writable, so the app is unaffected.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      # Spooled uploads (Starlette UploadFile rolls over at 1 MB), the
+      # catalog-upgrade extract dir, and celery beat's schedule shelve.
+      - /tmp
+      # WeasyPrint pulls in fontconfig, which builds its cache on first render.
+      - /home/apiuser/.cache
+    mem_limit: 512m
+    pids_limit: 128
     # Explicit --schedule path: without it, beat writes its schedule shelve into
     # the working dir /app — but /app is the bind-mounted ./backend, owned by
     # whoever cloned the repo on the host, while the image runs as apiuser
@@ -349,11 +542,19 @@ services:
     # that beat rebuilds safely from celery_app config if lost on recreate.
     command: celery -A celery_app beat --loglevel=info --schedule /tmp/celerybeat-schedule
     environment:
-      DATABASE_URL: postgresql+asyncpg://cg:${DB_PASSWORD}@postgres:5432/cg_scf
+      # See the backend service for why each of these five is here.
+      PYTHONDONTWRITEBYTECODE: "1"
+      DATABASE_URL: postgresql+asyncpg://cg:${DB_PASSWORD:-}@postgres:5432/cg_scf
+      DB_HOST: ${DB_HOST:-postgres}
+      DB_PORT: ${DB_PORT:-5432}
+      DB_NAME: ${DB_NAME:-cg_scf}
+      DB_USER: ${DB_USER:-cg}
+      DB_SSLMODE: ${DB_SSLMODE:-}
+      SCF_SECRET_KEY: ${SCF_SECRET_KEY:-}
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/1
       CELERY_RESULT_BACKEND: redis://redis:6379/1
-      LOG_LEVEL: ${LOG_LEVEL}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
       ENVIRONMENT: ${ENVIRONMENT:-production}
       # Update poller opt-out (default ON). Beat reads this at import time to
       # decide whether to schedule the daily update-check-daily entry.
@@ -412,6 +613,16 @@ services:
       context: .
       dockerfile: Dockerfile.importer
     container_name: cg-scf-catalog-importer
+    # Container hardening (#947). Pure python one-shot; no caps needed.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    mem_limit: 2g
+    pids_limit: 256
     profiles:
       - init
     volumes:
@@ -435,6 +646,24 @@ services:
   keycloak-schema-init:
     image: postgres:15-alpine
     container_name: cg-scf-keycloak-schema-init
+    # Container hardening (#947). Same postgres image, same root->gosu shape as
+    # the postgres service, even though this one only runs psql.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN          # postgres image entrypoint ownership fixups
+      - FOWNER         # chmod on the socket dir before dropping privileges
+      - DAC_OVERRIDE   # entrypoint traverses dirs it does not own
+      - SETUID         # gosu drop root -> postgres
+      - SETGID         # gosu drop root -> postgres
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/run/postgresql
+    mem_limit: 128m
+    pids_limit: 64
     profiles:
       - idp
     depends_on:
@@ -442,7 +671,7 @@ services:
         condition: service_healthy
     environment:
       # PGPASSWORD keeps the secret out of the process argv (vs. embedding it in a URL).
-      PGPASSWORD: ${DB_PASSWORD}
+      PGPASSWORD: ${DB_PASSWORD:-}
     entrypoint: >
       /bin/sh -c "
       psql -h postgres -U cg -d cg_scf -c 'CREATE SCHEMA IF NOT EXISTS keycloak';
@@ -454,6 +683,30 @@ services:
   keycloak:
     image: quay.io/keycloak/keycloak:26.3
     container_name: cg-scf-keycloak
+    # Container hardening (#947). The KC 26 image is already USER 1000 with
+    # group 0 write on /opt/keycloak, so it needs no capabilities at all.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # read_only is DELIBERATELY ABSENT for this service, and only this service.
+    # `kc.sh start` re-runs Quarkus augmentation on every boot because our KC_*
+    # options differ from the ones baked into the published image — the log says
+    # "Changes detected in configuration. Updating the server image." — and that
+    # rewrites /opt/keycloak/lib/quarkus. Two attempts, both dead ends:
+    #   1. tmpfs /opt/keycloak/lib/quarkus  ->  the tmpfs MASKS the augmentation
+    #      output the image already ships, and the JVM dies before logging
+    #      anything useful: NoSuchFileException /opt/keycloak/lib/quarkus/
+    #      quarkus-application.dat. Same masking trap as a tmpfs over /etc/nginx.
+    #   2. read_only with no tmpfs there  ->  ERROR: Failed to run 'build'
+    #      command ... JarResultBuildStep#buildRunnerJar threw
+    #      java.nio.file.ReadOnlyFileSystemException.
+    # Fixing this properly means running `kc.sh build` in a derived image and
+    # switching to `start --optimized`, which is a separate change to the IdP
+    # image, not to this file. Everything else on this service is hardened:
+    # no-new-privileges, all capabilities dropped, memory and pid limits.
+    mem_limit: 1536m
+    pids_limit: 512
     profiles:
       - idp
     # Production mode (`start`, not `start-dev`) with HTTP enabled for the internal
@@ -482,7 +735,7 @@ services:
       KC_DB: postgres
       KC_DB_URL: jdbc:postgresql://postgres:5432/cg_scf
       KC_DB_USERNAME: cg
-      KC_DB_PASSWORD: ${DB_PASSWORD}
+      KC_DB_PASSWORD: ${DB_PASSWORD:-}
       KC_DB_SCHEMA: keycloak
       KC_HTTP_ENABLED: "true"
       # Hostname v2 config. For MVP we pin a hostname URL + relax strict checks so
@@ -528,6 +781,18 @@ services:
   idp-init:
     image: quay.io/keycloak/keycloak:26.3
     container_name: cg-scf-idp-init
+    # Container hardening (#947). This one-shot only runs kcadm.sh, so unlike
+    # the keycloak service it never re-augments and CAN run read-only.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /opt/keycloak/data
+    mem_limit: 512m
+    pids_limit: 128
     profiles:
       - idp
     depends_on:
@@ -536,6 +801,8 @@ services:
     environment:
       # Empty defaults keep the default (no-profile) stack parseable; idp-init.sh
       # asserts these are non-empty at runtime and exits loudly if not.
+      # No tmpfs at /opt/keycloak/.keycloak any more: idp-init.sh keeps the kcadm
+      # session on /tmp (see the KCADM_CONFIG note there) so restarts re-run cleanly.
       KC_ADMIN_USER: ${KC_ADMIN_USER:-}
       KC_ADMIN_PASSWORD: ${KC_ADMIN_PASSWORD:-}
       OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
@@ -572,12 +839,35 @@ services:
         # No VITE_API_URL needed - uses relative URLs (nginx proxies /api/).
         # NOTE: these are BAKED INTO THE BUNDLE at build time. Changing any of
         # them requires `docker compose up -d --build frontend`, not a restart.
-        VITE_GOOGLE_AUTH_ENABLED: ${VITE_GOOGLE_AUTH_ENABLED}
+        VITE_GOOGLE_AUTH_ENABLED: ${VITE_GOOGLE_AUTH_ENABLED:-false}
         # Issue #699: redirect-based OIDC sign-in (bundled Keycloak or BYO IdP)
         VITE_OIDC_ENABLED: ${VITE_OIDC_ENABLED:-false}
-        VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID}
-        VITE_API_KEY: ${VITE_API_KEY}
+        VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID:-}
+        VITE_API_KEY: ${VITE_API_KEY:-}
     container_name: cg-scf-frontend
+    # Container hardening (#947). nginx's master process binds :80 and forks
+    # workers as the nginx user, which is what the four capabilities are for.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE  # listen 80 (nginx.conf:176)
+      - CHOWN             # master chowns the worker's temp dirs
+      - SETUID            # master forks workers as the nginx user
+      - SETGID            # ditto
+    read_only: true
+    tmpfs:
+      # client_body_temp / proxy_temp — a 64m upload guarantees a spill.
+      - /var/cache/nginx
+      # pid /var/run/nginx.pid (nginx.conf:6)
+      - /var/run
+      # docker-entrypoint.sh renders the envsubst'd config to /tmp/nginx.conf;
+      # /etc/nginx stays the image's own read-only copy so mime.types and the
+      # rest of the shipped config are NOT masked by a tmpfs.
+      - /tmp
+    mem_limit: 256m
+    pids_limit: 128
     environment:
       # Runtime (envsubst'd into nginx.conf by docker-entrypoint.sh): where
       # nginx forwards /api/*. The backend is on the internal docker network.

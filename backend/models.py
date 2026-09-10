@@ -16,6 +16,7 @@ from sqlalchemy.orm import relationship
 import uuid
 
 from database import Base
+from services.crypto import EncryptedString
 
 
 # =============================================================================
@@ -1156,7 +1157,10 @@ class ConsultantInvite(InviteMixin, Base):
     email = Column(String(255), nullable=False)  # Invitee email address
     organization_name = Column(String(255), nullable=False)  # Proposed organisation name
     organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="SET NULL"), nullable=True)  # Pre-created org
-    invite_token = Column(String(64), nullable=False, unique=True)  # Secure random token
+    #: Encrypted at rest (#947). Lookups go through invite_token_hash, because
+    #: Fernet ciphertext is non-deterministic and cannot be matched by equality.
+    invite_token = Column(EncryptedString, nullable=False)  # Secure random token
+    invite_token_hash = Column(String(64), nullable=False, unique=True, index=True)
     status = Column(String(20), nullable=False, default='pending')
     expires_at = Column(DateTime(timezone=False), nullable=False)
     created_at = Column(DateTime(timezone=False), server_default=func.now())
@@ -1202,7 +1206,9 @@ class OrganizationInvite(InviteMixin, Base):
     #: ck_organization_members_member_type, and they must stay in step. A label,
     #: not a grant — authorisation stays on `role`.
     member_type = Column(String(30), nullable=False, server_default='internal')
-    invite_token = Column(String(64), nullable=False, unique=True)
+    #: Encrypted at rest (#947); matched via invite_token_hash, never by value.
+    invite_token = Column(EncryptedString, nullable=False)
+    invite_token_hash = Column(String(64), nullable=False, unique=True, index=True)
     status = Column(String(20), nullable=False, default='pending')
     custom_message = Column(Text, nullable=True)
     expires_at = Column(DateTime(timezone=False), nullable=False)
@@ -2279,7 +2285,9 @@ class WebhookEndpoint(Base):
     organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
     name = Column(String(200), nullable=False)
     description = Column(Text, nullable=True)
-    secret = Column(String(70), nullable=False)  # plaintext "whsec_..." for HMAC verification
+    #: Encrypted at rest (#947). HMAC verification needs the value back, so this
+    #: is reversible encryption, not a hash. secret_prefix stays cleartext for display.
+    secret = Column(EncryptedString, nullable=False)  # "whsec_..." for HMAC verification
     secret_prefix = Column(String(12), nullable=False)  # first 12 chars for display
     is_active = Column(Boolean, default=True, server_default="true", nullable=False)
     allowed_evidence_ids = Column(JSON, nullable=True)  # null = allow any evidence_id
@@ -3603,4 +3611,68 @@ class EvidenceTeamAssignment(Base):
         return (
             f"<EvidenceTeamAssignment(evidence={self.evidence_tracking_id}, "
             f"team={self.team_id}, accountable={self.is_accountable})>"
+        )
+
+
+# =============================================================================
+# Zero-touch credential provisioning (Issue #947)
+# =============================================================================
+
+class IntegrationSecret(Base):
+    """Operator-settable tier-3 credential, encrypted at rest.
+
+    Only the six names in `services.integration_secrets.LABELS` may appear
+    here. Tier-1 and tier-2 credentials are structurally unreachable from this
+    table: `services.secrets.get_secret` consults the database provider only
+    for names in `TIER3_NAMES`.
+
+    The row holds ciphertext, never plaintext, and no endpoint ever returns
+    the value back out.
+    """
+    __tablename__ = "integration_secrets"
+
+    name = Column(String(64), primary_key=True)
+    value_ciphertext = Column(Text, nullable=False)
+    #: Which key in the SCF_SECRET_KEY list the row was last encrypted under.
+    #: Bumped by `cli.admin rotate-secret-key`.
+    key_version = Column(SmallInteger, nullable=False, server_default="1", default=1)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    updated_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    #: Free-text actor label, kept when there is no user row (master API key).
+    updated_by_label = Column(String(200), nullable=True)
+
+    def __repr__(self):
+        return f"<IntegrationSecret(name={self.name}, updated_at={self.updated_at})>"
+
+
+class PlatformAuditLog(Base):
+    """Audit trail for platform-level actions that belong to no organisation.
+
+    `audit_log` requires a non-null organization_id, which credential changes
+    do not have. This table deliberately carries no old_value/new_value
+    columns, so it cannot record a credential even by mistake.
+    """
+    __tablename__ = "platform_audit_log"
+    __table_args__ = (
+        Index("ix_platform_audit_log_entity_created", "entity_type", "created_at"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    entity_type = Column(String(50), nullable=False)
+    entity_id = Column(String(200), nullable=False)
+    action = Column(String(40), nullable=False)
+    #: User email, or "api_key:master" for master-API-key authentication.
+    actor = Column(String(200), nullable=False)
+    actor_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    ip_address = Column(String(45), nullable=True)
+    user_agent = Column(Text, nullable=True)
+    action_source = Column(String(20), nullable=True)  # ui, api_key, mcp, system
+    request_id = Column(UUID(as_uuid=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    def __repr__(self):
+        return (
+            f"<PlatformAuditLog(action={self.action}, entity={self.entity_type}:"
+            f"{self.entity_id}, actor={self.actor})>"
         )

@@ -11,6 +11,36 @@
 # =============================================================================
 set -euo pipefail
 
+# File-backed credentials (#947). Under docker-compose.secrets.yml every
+# credential arrives as a 0600 file under /run/secrets and the matching env var
+# is blanked, so `docker inspect` on this container cannot print it. Load
+# {NAME}_FILE into NAME before the guards below.
+#
+# An EMPTY file means "unset" (contract section 1) and falls through to the env
+# value, so a legacy .env install behaves byte-for-byte as before.
+# $1 = target variable name, $2 = the file path (the caller expands ${NAME_FILE}
+# itself, so no indirect expansion is needed here).
+load_file_secret() {
+  local name="$1" file="$2" value
+  [[ -n "${file}" ]] || return 0
+  if [[ ! -r "${file}" ]]; then
+    echo "idp-init: FATAL: ${name}_FILE points at ${file}, which is missing or unreadable." >&2
+    echo "idp-init: on Linux the secrets dir must be readable by the keycloak uid (1000);" >&2
+    echo "idp-init: scripts/install.sh arranges this for you (see UPGRADING.md)." >&2
+    exit 1
+  fi
+  # Trailing newlines stripped: a stray \n inside a client secret makes the
+  # Keycloak token exchange fail with a signature error that names nothing.
+  value="$(tr -d '\n\r' < "${file}")"
+  [[ -n "${value}" ]] || return 0
+  printf -v "${name}" '%s' "${value}"
+  export "${name?}"
+}
+
+load_file_secret KC_ADMIN_USER "${KC_ADMIN_USER_FILE:-}"
+load_file_secret KC_ADMIN_PASSWORD "${KC_ADMIN_PASSWORD_FILE:-}"
+load_file_secret OIDC_CLIENT_SECRET "${OIDC_CLIENT_SECRET_FILE:-}"
+
 # Fail loudly if the required secrets/creds are empty (the compose service passes
 # them through with empty defaults so the no-profile stack stays parseable — the
 # real enforcement is here, at runtime, only when the idp profile is started).
@@ -18,7 +48,17 @@ set -euo pipefail
 : "${KC_ADMIN_PASSWORD:?KC_ADMIN_PASSWORD is required when using --profile idp}"
 : "${OIDC_CLIENT_SECRET:?OIDC_CLIENT_SECRET is required when using --profile idp}"
 
-KCADM=/opt/keycloak/bin/kcadm.sh
+# kcadm.sh keeps its session in ~/.keycloak/kcadm.config, where "~" is Java's
+# user.home — the passwd entry for uid 1000 (/opt/keycloak), NOT $HOME — which is
+# read-only in this container, and a tmpfs mounted there comes up root-owned on
+# every container RESTART. Every `docker compose up` re-runs this one-shot, and
+# without a writable session file it spun forever on "keycloak not ready yet"
+# (the real error, `Failed to create config file`, is swallowed by the loop).
+# Keep the session on /tmp, which is a writable tmpfs on first start and restart.
+KCADM_CONFIG=/tmp/kcadm.config
+# --config is a per-subcommand option, so it goes after the caller's arguments.
+kcadm() { /opt/keycloak/bin/kcadm.sh "$@" --config "${KCADM_CONFIG}"; }
+KCADM=kcadm
 KC_URL="http://keycloak:8080"
 REALM="scf"
 CLIENT_ID="scf-platform"

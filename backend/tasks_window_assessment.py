@@ -19,6 +19,8 @@ from sqlalchemy.orm import sessionmaker
 
 from services.window_assessment_service import assess_window
 
+from db_url import get_sync_database_url
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -26,9 +28,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _SYNC_DATABASE_URL = (
-    os.getenv("DATABASE_URL", "postgresql+asyncpg://cg:cg@localhost:5432/cg_scf")
-    .replace("+asyncpg", "+psycopg2")
-    .replace("?ssl=require", "?sslmode=require")
+    get_sync_database_url("postgresql+asyncpg://cg:cg@localhost:5432/cg_scf")
 )
 
 _sync_engine = None

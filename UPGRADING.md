@@ -26,6 +26,150 @@ safely, without losing data.
    (backend + workers) while it backs up and migrates. Postgres and MinIO stay
    up for the backup.
 
+### Credentials during an upgrade
+
+Nothing about your credentials is forced to change. The platform resolves every
+credential in the order **database, then `NAME_FILE`, then the plain environment
+variable**, and the environment tier is unchanged — so an install whose values
+are still in `.env` keeps working exactly as it did, with no migration.
+
+Three things `scripts/upgrade.sh` now does for you:
+
+- **`COMPOSE_FILE` is honoured** from the environment, then from a
+  `COMPOSE_FILE=` line in `.env`, then falling back to `docker-compose.yml`. A
+  colon-separated list becomes multiple `-f` flags, so an install using the
+  file-backed credential overlay
+  (`docker-compose.yml:docker-compose.secrets.yml`) is validated, scanned and
+  rebuilt as that overlay rather than as the base file alone. When nothing is
+  configured, no `-f` is passed at all and compose keeps its own discovery, so
+  `docker-compose.override.yml` still loads automatically. Note that setting
+  `COMPOSE_FILE` yourself **disables** that auto-discovery — add the override
+  file to the list if you use one.
+- **`SCF_SECRET_KEY` is generated if absent, before migrations run.** It
+  encrypts tier-3 integration credentials. An install with a secrets directory
+  gets a `0600` file at `$SCF_SECRETS_DIR/SCF_SECRET_KEY`; a legacy install gets
+  an `SCF_SECRET_KEY=` line appended to `.env`. An existing key is **never**
+  overwritten — doing so would make every already-encrypted value permanently
+  unreadable. The ordering matters: no migration is allowed to require a secret
+  that did not exist before the upgrade, so the key is minted before the
+  migration one-shot rather than during it.
+  **Back the key up.** Encrypted values are unrecoverable without it.
+- **A missing key is a hard stop only when it matters.** If `SCF_SECRET_KEY` is
+  absent while the `integration_secrets` table already holds rows, the upgrade
+  refuses to start and tells you to restore the key first. If the table is empty
+  or does not exist yet, it warns and continues.
+
+Backups now include the credential directory. `scripts/backup.sh` adds
+`backups/secrets-<TS>.tar.gz` (mode `0600`, excluding the provisioning token) to
+each set and covers it in the checksum file, and `--rollback` restores it into
+`SCF_SECRETS_DIR` — setting the current credentials aside first — so a rolled-back
+database and the key that encrypted it move together. On a legacy install with
+no `SCF_SECRETS_DIR`, backup.sh says so plainly: your credentials are in `.env`
+and you must back that file up separately.
+
+After upgrading, convert any legacy plaintext webhook secrets and invite tokens
+at your convenience:
+
+```bash
+docker compose exec backend python -m cli.admin backfill-encrypt
+docker compose exec backend python -m cli.admin secrets-status
+```
+
+Both are idempotent, and `secrets-status` never prints a value. To rotate the
+key itself, see the rotation procedure in the
+[Credentials and secrets](https://markac007.github.io/scf-controls-platform/admin-guide/secrets/)
+guide — in short, prepend the new key to the comma-separated list, restart, run
+`rotate-secret-key`, and remove the old key only once it reports zero rows
+remaining.
+
+### Upgrade path from a `.env` install
+
+**This release is not a breaking change.** `scripts/upgrade.sh` on an existing
+install works with the credentials left in `.env`. One additive migration runs
+(`intsec947a1`: a new `integration_secrets` table, a new `platform_audit_log`
+table, two widened columns and a lookup hash on the invite tables — see
+[docs/MIGRATIONS.md](docs/MIGRATIONS.md)). It needs no `SCF_SECRET_KEY` and
+encrypts nothing; legacy plaintext values stay readable afterwards. Nothing is
+forced: no credential moves, no format changes, no re-entry. You then have
+three routes.
+
+- **Stay on `.env`.** Nothing to do. The upgrade generates an `SCF_SECRET_KEY`
+  and appends it to `.env` (or fills in an empty `SCF_SECRET_KEY=` line copied
+  from an old `.env.example`). Every integration credential you store from then
+  on is encrypted with it, so **back `.env` up** — `scripts/backup.sh` writes no
+  credential tarball on a legacy install and warns you to copy the file
+  yourself. Placeholder credentials are no longer accepted outside
+  `ENVIRONMENT=development` or `test`: the backend refuses to boot on a
+  shipped-placeholder `API_KEY`, `DB_PASSWORD` or, with `AWS_ENDPOINT_URL`
+  set, AWS key pair, and says which one.
+- **Move to file-backed credentials.** Run `scripts/install.sh --import-env`
+  (add `--secrets-dir /abs/path` to choose the directory; the default is
+  `$HOME/.scf/secrets`). It reads `.env`, writes one `0600` file per
+  credential (`DB_PASSWORD`, `SCF_SECRET_KEY`, `API_KEY`,
+  `DOWNLOAD_TOKEN_SECRET`, the MinIO root pair, the AWS pair,
+  `KC_ADMIN_PASSWORD`, `OIDC_CLIENT_SECRET`) into a `0700` directory, never
+  overwriting a file that already exists, leaving a placeholder as an empty
+  file and minting `SCF_SECRET_KEY` only if it is absent. It copies the old
+  file aside as `.env.bak.<timestamp>` (mode `0600`), then rewrites `.env`
+  without the credential lines and with `SCF_SECRETS_DIR=` and
+  `COMPOSE_FILE=docker-compose.yml:docker-compose.secrets.yml` appended. On
+  Linux it grants group `1001` read access so the service containers can read
+  the files. Then `docker compose up -d`; compose reads `COMPOSE_FILE` from
+  `.env` and recreates the services whose configuration changed. **Why
+  `--import-env` and not a fresh run:** `POSTGRES_PASSWORD_FILE` is read by
+  `initdb` only, so on an existing `postgres_data` volume the database keeps
+  its old password no matter what the file says. `--import-env` copies your
+  *current* `DB_PASSWORD` into the file verbatim, so the role and the file
+  agree. A bare `scripts/install.sh` on a checkout that has a `.env` refuses to
+  run for exactly this reason, and a second `--import-env` refuses once the
+  directory is marked `.provisioned`. Delete `.env.bak.<timestamp>` once the
+  stack is confirmed up; it still holds every credential in clear.
+- **Clean re-install.** Fresh checkout, then `scripts/install.sh --up` (no
+  `.env` present, so the wizard runs and generates everything). Bring the data
+  across from a `scripts/backup.sh` set taken on the old install, or from the
+  in-app backup (`GET /api/database/backup`, restored with
+  `POST /api/database/restore`). Two things do not carry over on their own:
+  the new install has a **new `SCF_SECRET_KEY`**, so integration credentials
+  encrypted under the old key must be re-entered unless you copy the old key
+  across first (the old `SCF_SECRET_KEY` file, or the `SCF_SECRET_KEY=` line
+  from the old `.env`, into `$SCF_SECRETS_DIR/SCF_SECRET_KEY`); and the new
+  `DB_PASSWORD` applies only to a **fresh Postgres volume** — if you reuse the
+  old `postgres_data` volume, the role still has the old password and the
+  stack will not authenticate until you `ALTER ROLE` it or put the old value
+  in the `DB_PASSWORD` file. Note that `scripts/upgrade.sh --rollback <TS>`
+  restores the *whole* set — including the credential tarball and the git ref
+  recorded at backup time — so on a fresh checkout prefer restoring the dump
+  into the new, empty database by hand (the fresh-database shape in
+  [docs/runbooks/backup-restore.md](docs/runbooks/backup-restore.md)) plus the
+  MinIO tar, and copy only the key.
+
+**What still needs a hand** after any of the three:
+
+- **Rotating the Postgres role password** is a manual, three-step procedure
+  (`ALTER ROLE` first, then the file, then recreate the services). Nothing
+  automates it, because `POSTGRES_PASSWORD_FILE` has no effect on an existing
+  database. See the
+  [Credentials and secrets](https://markac007.github.io/scf-controls-platform/admin-guide/secrets/)
+  guide.
+- **`VITE_API_KEY` moves with `--import-env` in effect, but not by copying.**
+  The frontend bundle still carries the API key at image build time. On an
+  install that uses the secrets overlay the build reads it from
+  `$SCF_SECRETS_DIR/API_KEY` (only when `VITE_OIDC_ENABLED` is not `true`),
+  so `.env` no longer needs a `VITE_API_KEY` line; a stale one left behind is
+  harmless because the file takes precedence. Rotating the key still needs
+  `docker compose up -d --build frontend`, which picks up the new value. The trust-boundary consequence in
+  `SECURITY.md` (anyone who can load the UI holds the master key in
+  single-tenant mode without an identity provider) is not changed by this
+  release.
+- **MinIO console and S3 ports are unchanged.** The secrets overlay adds no
+  port mappings; `MINIO_PORT` and `MINIO_CONSOLE_PORT` behave as before.
+- **`COMPOSE_PROFILES` is not written by `--import-env`.** An existing
+  `COMPOSE_PROFILES=idp` line in `.env` is kept, because only credential lines
+  are stripped, but no line is added. If you enable the bundled identity
+  provider by passing `--profile idp` on the command line, keep passing it
+  (`scripts/upgrade.sh` inherits it from the environment or `.env` the same
+  way it does today).
+
 ---
 
 ## 2. Run the upgrade
@@ -66,7 +210,12 @@ Add `--yes` to skip the confirmation prompt (for unattended runs).
 - **Refresh your browser** to load the new UI. The footer badge clears once the
   installed version matches the latest release.
 - Your backups remain under `./backups/` (write-protected). Keep them until you
-  are confident in the new version.
+  are confident in the new version. The credential tarball in each set,
+  `secrets-<TS>.tar.gz`, is left at mode `0600` rather than write-protected.
+- **If the upgrade generated an `SCF_SECRET_KEY`, back it up now.** It is at
+  `$SCF_SECRETS_DIR/SCF_SECRET_KEY`, or on the last line of `.env` on a legacy
+  install. Every integration credential you store from here on is encrypted with
+  it and unrecoverable without it.
 
 ### Version-specific notes
 

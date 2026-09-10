@@ -24,6 +24,9 @@ from sqlalchemy import create_engine, update
 from sqlalchemy.orm import sessionmaker
 
 from services.outbound_rate_limiter import rate_limiter
+from services.secrets import get_secret  # noqa: E402
+
+from db_url import get_sync_database_url
 
 logger = logging.getLogger(__name__)
 
@@ -32,9 +35,9 @@ logger = logging.getLogger(__name__)
 # Lazy initialisation avoids import-time failure if psycopg2 is absent
 # (the web process should never import this module directly).
 # ---------------------------------------------------------------------------
-_SYNC_DATABASE_URL = os.getenv(
-    "DATABASE_URL", "postgresql+asyncpg://odin:changeme@localhost:5432/odin_scf"
-).replace("+asyncpg", "+psycopg2").replace("?ssl=require", "?sslmode=require")
+_SYNC_DATABASE_URL = get_sync_database_url(
+    "postgresql+asyncpg://odin:changeme@localhost:5432/odin_scf"
+)
 
 _sync_engine = None
 SyncSession = None
@@ -149,7 +152,7 @@ def research_hibp(self, domain: str, vendor_name: str) -> Dict[str, Any]:
     source = "hibp"
     logger.info(f"research_hibp starting for domain={domain}")
 
-    api_key = os.getenv("HIBP_API_KEY", "")
+    api_key = get_secret("HIBP_API_KEY", "") or ""
     if not api_key:
         return _source_error(source, "HIBP_API_KEY not configured")
 
@@ -307,7 +310,7 @@ def research_cve_nvd(self, vendor_name: str) -> Dict[str, Any]:
         rate_limiter.wait("nvd")
 
         headers = {"User-Agent": "SCF-Controls-Platform-Research"}
-        nvd_api_key = os.getenv("NVD_API_KEY", "")
+        nvd_api_key = get_secret("NVD_API_KEY", "") or ""
         if nvd_api_key:
             headers["apiKey"] = nvd_api_key
 
