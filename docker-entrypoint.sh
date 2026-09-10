@@ -23,13 +23,22 @@ fi
 : "${EXTRA_CONNECT_SRC:=}"
 export EXTRA_CONNECT_SRC
 
+# Largest request body this nginx will proxy (client_max_body_size). Must never
+# be empty: envsubst would render `client_max_body_size ;` and nginx -t would
+# fail the container at boot. 64m clears the backend's own 50 MB workbook cap
+# with headroom for multipart overhead, so an oversized workbook is refused by
+# the application (which says why) rather than by nginx (which cannot).
+: "${MAX_UPLOAD_SIZE:=64m}"
+export MAX_UPLOAD_SIZE
+
 echo "Substituting BACKEND_URL=$BACKEND_URL"
 echo "Substituting EXTRA_CONNECT_SRC=${EXTRA_CONNECT_SRC:-<empty>}"
+echo "Substituting MAX_UPLOAD_SIZE=$MAX_UPLOAD_SIZE"
 
-# Substitute BACKEND_URL and EXTRA_CONNECT_SRC in nginx config template.
-# envsubst is given an explicit variable list so nginx's own $-variables
-# ($host, $csp_policy, $remote_addr, ...) survive untouched.
-envsubst '$BACKEND_URL $EXTRA_CONNECT_SRC' < /etc/nginx/nginx.conf.template > /etc/nginx/nginx.conf
+# Substitute BACKEND_URL, EXTRA_CONNECT_SRC and MAX_UPLOAD_SIZE in the nginx
+# config template. envsubst is given an explicit variable list so nginx's own
+# $-variables ($host, $csp_policy, $remote_addr, ...) survive untouched.
+envsubst '$BACKEND_URL $EXTRA_CONNECT_SRC $MAX_UPLOAD_SIZE' < /etc/nginx/nginx.conf.template > /etc/nginx/nginx.conf
 
 # Validate that substitution worked (proxy_pass should contain http:// or https://)
 if ! grep "proxy_pass" /etc/nginx/nginx.conf | grep -qE "https?://"; then
