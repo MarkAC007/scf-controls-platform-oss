@@ -589,6 +589,13 @@ services:
       # Azure / S3-compatible origin if you replaced MinIO, or set it empty to
       # allow nothing beyond the shipped CSP.
       EXTRA_CONNECT_SRC: ${EXTRA_CONNECT_SRC-http://localhost:${MINIO_PORT:-9000}}
+      # Runtime: largest request body nginx will proxy to the backend
+      # (client_max_body_size). The default clears the backend's 50 MB SCF
+      # workbook cap; nginx's own built-in default is 1m, which is smaller than
+      # the SCF workbook and used to reject the catalogue import outright.
+      # Raise it only if you also raise the backend cap. Evidence files bypass
+      # this entirely — they go browser-to-S3/MinIO via a presigned URL.
+      MAX_UPLOAD_SIZE: ${MAX_UPLOAD_SIZE:-64m}
       # Only consumed by the Vite DEV server (docker-compose.dev.yml overlay),
       # where vite.config.ts is evaluated by Node at container start. Set it
       # when the dev UI is reached under a hostname Vite would otherwise reject

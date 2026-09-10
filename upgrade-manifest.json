@@ -1,11 +1,11 @@
 {
   "schema": 1,
-  "version": "0.31.0",
-  "released": "2026-09-09T14:31:13Z",
+  "version": "0.31.1",
+  "released": "2026-09-10T11:47:56Z",
   "min_upgradable_version": "0.0.0",
   "breaking": true,
   "required_stops": [],
-  "release_url": "https://github.com/MarkAC007/scf-controls-platform-oss/releases/tag/v0.31.0",
+  "release_url": "https://github.com/MarkAC007/scf-controls-platform-oss/releases/tag/v0.31.1",
   "summary": "Retires the Control Documents Mapper (CDM). The `/organizations/{org_id}/cdm/*` routes are removed; migration cdmdrop001 drops the five `cdm_*` tables (one-way; refuses while rows exist unless SCF_CDM_DROP_ACK=1) and a post-upgrade script purges uploaded CDM files. Document generation is unchanged.",
   "migration_range": [
     "20260119_000000_62bdef86f249_initial_schema",

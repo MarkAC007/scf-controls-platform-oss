@@ -274,7 +274,7 @@ All of these are off by default; enable only what you need in `.env`.
 | Component        | Role                                                                    |
 | ---------------- | ----------------------------------------------------------------------- |
 | **backend**      | FastAPI REST API (port 8000), runs migrations and seeds on startup.     |
-| **frontend**     | React web app (port 5173). A production `vite build`, served by nginx with security headers and an `/api/` proxy to the backend. Still put a reverse proxy with TLS in front before exposing it to the internet. Frontend developers swap in the Vite dev server with `docker compose -f docker-compose.yml -f docker-compose.dev.yml up` — **never** on a host reachable from outside your machine. |
+| **frontend**     | React web app (port 5173). A production `vite build`, served by nginx with security headers and an `/api/` proxy to the backend. Still put a reverse proxy with TLS in front before exposing it to the internet — and raise its request body limit to at least 64 MB, or the SCF catalogue workbook upload fails with `413 Request Entity Too Large` (nginx's own default is 1 MB, smaller than the workbook; see `MAX_UPLOAD_SIZE` in `.env.example`). Frontend developers swap in the Vite dev server with `docker compose -f docker-compose.yml -f docker-compose.dev.yml up` — **never** on a host reachable from outside your machine. |
 | **postgres**     | PostgreSQL 15 — the system of record.                                   |
 | **redis**        | Cache and Celery broker (internal network only).                        |
 | **celery-worker / celery-beat** | Async tasks: catalogue import, evidence assessment, scheduling. |
