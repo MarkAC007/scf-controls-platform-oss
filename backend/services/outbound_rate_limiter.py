@@ -12,6 +12,8 @@ import time
 import threading
 from typing import Dict
 
+from services.secrets import get_secret
+
 
 class OutboundRateLimiter:
     """Thread-safe per-source rate limiter using simple time-based gating."""
@@ -47,7 +49,7 @@ class OutboundRateLimiter:
         """
         # Resolve NVD interval based on API key presence
         interval_key = source
-        if source == "nvd" and os.getenv("NVD_API_KEY"):
+        if source == "nvd" and get_secret("NVD_API_KEY"):
             interval_key = "nvd_keyed"
 
         interval = self.DEFAULT_INTERVALS.get(interval_key, 2.0)

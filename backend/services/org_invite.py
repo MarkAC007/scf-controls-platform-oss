@@ -27,6 +27,7 @@ from models import (
 )
 from services.domain_validation import validate_invite_domain, is_public_domain
 from services.org_utils import MEMBER_TYPES
+from services.invite_tokens import hash_invite_token
 from services.audit_service import log_entity_changes, ORG_MEMBER_TRACKED_FIELDS
 from services.subscription import get_user_subscription, can_invite_member
 
@@ -173,14 +174,17 @@ async def create_invite(
                 "Upgrade your subscription to invite more members."
             )
 
-    # Generate secure token and create invite
+    # Generate secure token and create invite. The hash is the lookup key —
+    # invite_token itself is encrypted at rest and cannot be matched by value.
+    token = secrets.token_urlsafe(32)
     invite = OrganizationInvite(
         organization_id=org_id,
         invited_by_user_id=inviter_user_id,
         email=email.strip().lower(),
         role=role,
         member_type=member_type,
-        invite_token=secrets.token_urlsafe(32),
+        invite_token=token,
+        invite_token_hash=hash_invite_token(token),
         status=OrgInviteStatus.PENDING.value,
         custom_message=message,
         expires_at=datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=INVITE_EXPIRY_DAYS),
@@ -227,7 +231,9 @@ async def accept_invite(
     """
     # Find invite by token
     result = await db.execute(
-        select(OrganizationInvite).where(OrganizationInvite.invite_token == token)
+        select(OrganizationInvite).where(
+            OrganizationInvite.invite_token_hash == hash_invite_token(token)
+        )
     )
     invite = result.scalar_one_or_none()
     if not invite:
@@ -341,7 +347,9 @@ async def get_invite_preview(token: str, db: AsyncSession) -> dict:
         ValueError: If token is invalid
     """
     result = await db.execute(
-        select(OrganizationInvite).where(OrganizationInvite.invite_token == token)
+        select(OrganizationInvite).where(
+            OrganizationInvite.invite_token_hash == hash_invite_token(token)
+        )
     )
     invite = result.scalar_one_or_none()
     if not invite:

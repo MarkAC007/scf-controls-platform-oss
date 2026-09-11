@@ -27,6 +27,8 @@ from services.system_catalog_validation import validate_recipes_map, RECIPE_LEVE
 
 from services.model_registry import resolve as resolve_model
 
+from services.secrets import get_secret
+
 logger = logging.getLogger(__name__)
 
 # Model id from services/model_registry (#782); SYSTEMS_AI_MODEL still overrides.
@@ -50,7 +52,7 @@ def is_mock_mode() -> bool:
     """Mock mode: explicit flag, or no API key configured."""
     if os.getenv("SYSTEMS_AI_MOCK", "").strip() == "1":
         return True
-    return not os.getenv("ANTHROPIC_API_KEY", "").strip()
+    return not (get_secret("ANTHROPIC_API_KEY", "") or "").strip()
 
 
 # ---------------------------------------------------------------------------

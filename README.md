@@ -58,9 +58,8 @@ storage. No cloud account required.
 git clone https://github.com/MarkAC007/scf-controls-platform-oss.git
 cd scf-controls-platform-oss
 
-# 2. Configure (see "Configuration" below — set DB_PASSWORD, API_KEY, OSS_SINGLE_TENANT=1)
-cp .env.example .env
-# edit .env
+# 2. Provision credentials — generated for you, none typed (see "Configuration" below)
+scripts/install.sh
 
 # 3. Load the SCF catalogue from your workbook (one-time)
 mkdir -p catalog-source
@@ -83,11 +82,21 @@ Each step is explained below.
 
 ## Configuration
 
-Copy the example file and edit it. **Never commit your `.env`** — it holds secrets.
+Run the installer. It generates every credential the platform needs, asks only for a database and
+an identity provider, and writes the values as `0600` files outside the checkout. The `.env` it
+writes holds **non-secret settings only**, plus `SCF_SECRETS_DIR` and `COMPOSE_FILE`.
 
 ```bash
-cp .env.example .env
+scripts/install.sh              # interactive wizard on 127.0.0.1:8765, one-time token
+scripts/install.sh --unattended ./install.json   # scripted / CI, identical validation
+scripts/install.sh --import-env                  # move an existing .env onto files
 ```
+
+**Never commit your `.env`**, and back up the secrets directory — see
+[Credentials and secrets](https://markac007.github.io/scf-controls-platform/admin-guide/secrets/).
+
+The table below documents the environment tier, which still works and is still last in the
+resolution order (database, then file, then environment). Existing installs are unaffected.
 
 ### Required — change before you start
 

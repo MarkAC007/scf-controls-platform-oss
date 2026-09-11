@@ -132,7 +132,7 @@ async def seeded(client_raw, db_engine):
 
 
 @pytest.fixture(scope="function")
-def client_raw(db_engine):
+def client_raw(db_engine, monkeypatch):
     """Starts the app so its lifespan builds the schema via Alembic.
 
     ``require_platform_admin`` is overridden rather than faked at the HTTP
@@ -161,6 +161,13 @@ def client_raw(db_engine):
             auth_method="oidc",
         )
 
+    # The lifespan runs services.secrets.bootstrap_process(), which refuses to
+    # start a non-development process without a real API_KEY (#947). This
+    # module is run with DATABASE_URL / TEST_RESTORE_DATABASE_URL and nothing
+    # else -- CI's Postgres step sets no other variable -- so declare the
+    # process a test one. Authentication is overridden below; the key would
+    # never be consulted anyway. Scoped to this fixture, not the session.
+    monkeypatch.setenv("ENVIRONMENT", "test")
     main.app.dependency_overrides[get_db] = _get_db
     main.app.dependency_overrides[require_platform_admin] = _admin
     # backup + restore are auth-tier rate limited (10/min, #858). These tests

@@ -38,6 +38,8 @@ from typing import Any, Optional
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
+
+from services.secrets import get_secret
 from fastapi import HTTPException, status
 
 from redis_client import get_redis_client
@@ -53,7 +55,6 @@ OIDC_ISSUER = os.getenv("OIDC_ISSUER")
 # Internal URL the backend fetches (discovery/JWKS/token). Defaults to issuer.
 OIDC_DISCOVERY_URL = os.getenv("OIDC_DISCOVERY_URL") or OIDC_ISSUER
 OIDC_CLIENT_ID = os.getenv("OIDC_CLIENT_ID")
-OIDC_CLIENT_SECRET = os.getenv("OIDC_CLIENT_SECRET")
 OIDC_REDIRECT_URI = os.getenv("OIDC_REDIRECT_URI")
 OIDC_SCOPES = os.getenv("OIDC_SCOPES", "openid email profile")
 
@@ -416,11 +417,20 @@ def generate_nonce() -> str:
     return secrets.token_urlsafe(32)
 
 
+def get_client_secret() -> Optional[str]:
+    """The OIDC client secret, resolved on every call.
+
+    A module constant would freeze the value at import, so rotating the secret
+    in Keycloak would need an API restart to take effect here.
+    """
+    return get_secret("OIDC_CLIENT_SECRET")
+
+
 __all__ = [
     "OIDC_ISSUER",
     "OIDC_DISCOVERY_URL",
     "OIDC_CLIENT_ID",
-    "OIDC_CLIENT_SECRET",
+    "get_client_secret",
     "OIDC_REDIRECT_URI",
     "OIDC_SCOPES",
     "oidc_enabled",

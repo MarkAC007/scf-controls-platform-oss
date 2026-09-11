@@ -706,11 +706,12 @@ async def preview_invite(
     from sqlalchemy import select
     from sqlalchemy.orm import joinedload
     from models import ConsultantInvite, User as DBUser
+    from services.invite_tokens import hash_invite_token
 
     # Find the invite with consultant profile
     result = await db.execute(
         select(ConsultantInvite)
-        .where(ConsultantInvite.invite_token == token)
+        .where(ConsultantInvite.invite_token_hash == hash_invite_token(token))
         .options(joinedload(ConsultantInvite.consultant))
     )
     invite = result.unique().scalar_one_or_none()

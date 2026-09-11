@@ -72,11 +72,12 @@ from api import (
     oidc_auth,
     teams,
     team_assignments,
+    integrations,
 )
 
 # Configure logging
 logging.basicConfig(
-    level=getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper()),
+    level=getattr(logging, (os.getenv("LOG_LEVEL") or "INFO").upper()),
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 
@@ -91,6 +92,8 @@ logging.basicConfig(
 from log_sanitizer import attach_to_handlers as _attach_log_sanitizer  # noqa: E402
 
 _attach_log_sanitizer()
+
+from services import secrets
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +117,8 @@ async def lifespan(app: FastAPI):
     log_rate_limit_config()
 
     # Log database connection info without credentials
-    db_url = os.getenv('DATABASE_URL', 'Not set')
+    from db_url import get_database_url as _effective_dsn
+    db_url = _effective_dsn('Not set')
     if db_url != 'Not set':
         try:
             parsed = urlparse(db_url)
@@ -136,6 +140,12 @@ async def lifespan(app: FastAPI):
         logger.error(f"Failed to initialize database: {e}")
         raise
 
+    # Validate credentials and wire up the database secret tier. Deliberately
+    # AFTER the schema is in place: the tier-3 provider reads a table that the
+    # migrations create. Placeholder credentials outside development stop the
+    # process here with exit code 3 rather than serving traffic on `changeme`.
+    secrets.bootstrap_process()
+
     # Seed SCF catalog data if tables are empty
     # Catalog data is READ-ONLY reference data from SCF 2025.4
     try:
@@ -156,7 +166,7 @@ async def lifespan(app: FastAPI):
     # evaluate whether single-tenant master-key admin is safe to enable. Gated on the
     # explicit OSS_SINGLE_TENANT flag, NOT on ENVIRONMENT (issue #662).
     from services.single_tenant import single_tenant_flag_set, evaluate_single_tenant
-    if os.getenv("API_KEY") and single_tenant_flag_set():
+    if secrets.get_secret("API_KEY") and single_tenant_flag_set():
         try:
             from services.service_account import seed_service_account
             await seed_service_account()
@@ -386,6 +396,7 @@ app.include_router(team_assignments.router, prefix="/api")  # Team assignment of
 app.include_router(risk_profiles.router, prefix="/api")  # Risk Profile Config
 app.include_router(custom_risks.router, prefix="/api")  # Custom Risk Definitions
 app.include_router(admin.router, prefix="/api")  # Platform Admin Toolkit
+app.include_router(integrations.router, prefix="/api")  # Platform integration credentials (#947)
 app.include_router(provisioning.router, prefix="/api")  # Subscription Provisioning
 app.include_router(webhooks.router, prefix="/api")  # External Webhooks (Stripe)
 app.include_router(vendors.router, prefix="/api")  # Vendor Management (TPRM)
@@ -419,5 +430,5 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=int(os.getenv("PORT", 8000)),
         reload=os.getenv("ENVIRONMENT") == "development",
-        log_level=os.getenv("LOG_LEVEL", "info").lower()
+        log_level=(os.getenv("LOG_LEVEL") or "info").lower()
     )

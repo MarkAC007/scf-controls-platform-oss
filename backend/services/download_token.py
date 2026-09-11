@@ -29,18 +29,20 @@ import os
 import time
 from typing import Optional
 
+from services.secrets import get_secret
+
 logger = logging.getLogger(__name__)
 
-# Secret for signing tokens — dedicated env var with API_KEY fallback
-_SECRET: Optional[str] = None
+# Secret for signing tokens — dedicated credential with API_KEY fallback.
+# Resolved on EVERY call: the previous implementation memoised into a module
+# global that nothing ever cleared, so rotating the signing key needed a restart
+# of the API and every Celery worker. Both names are NEVER_DB, so this reads the
+# file and environment tiers only.
 _WARNED_NO_SECRET = False
 
 
 def _get_secret() -> str:
-    global _SECRET
-    if _SECRET is None:
-        _SECRET = os.getenv("DOWNLOAD_TOKEN_SECRET") or os.getenv("API_KEY") or ""
-    return _SECRET
+    return get_secret("DOWNLOAD_TOKEN_SECRET") or get_secret("API_KEY") or ""
 
 
 def _secret_or_none() -> Optional[str]:

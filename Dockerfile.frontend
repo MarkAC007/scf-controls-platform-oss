@@ -1,6 +1,12 @@
 # Dockerfile for CG CCF Frontend (React SPA)
 # Multi-stage build: Node.js for building, nginx for serving
 
+# Placeholder for the operator's secrets directory. docker-compose.secrets.yml
+# replaces it with a named build context (`additional_contexts: scf_secrets:`);
+# a plain build leaves it empty and the build step below falls back to the
+# VITE_API_KEY build arg.
+FROM scratch AS scf_secrets
+
 # Stage 1: Build
 FROM node:20-alpine AS builder
 
@@ -29,8 +35,26 @@ ENV VITE_GOOGLE_CLIENT_ID=$VITE_GOOGLE_CLIENT_ID
 ENV VITE_API_KEY=$VITE_API_KEY
 ENV VITE_DEBUG_API=$VITE_DEBUG_API
 
-# Build the application
-RUN npm run build
+
+# Build the bundle. When the platform is running on API-key auth (OIDC off),
+# the key the bundle sends has to match the backend's API_KEY. Installs made
+# by the first-run wizard (#947) keep that key in a 0600 secrets file and never
+# in .env, so docker-compose.secrets.yml points the `scf_secrets` build context
+# at that directory and this step bind-mounts the API_KEY file for the duration
+# of `npm run build` only. Nothing is copied into a layer, so the value is not
+# in `docker history` or `docker inspect`; and because a bind mount is content
+# addressed, rotating the key invalidates the cached build step (a BuildKit
+# `--mount=type=secret` would not: secrets are excluded from the cache key, so
+# a rotated key would silently reuse the layer built with the old one).
+# Without the overlay the `scf_secrets` stage below is empty and the legacy
+# VITE_API_KEY build arg applies unchanged; the mounted file wins when both
+# are present. Ignored when VITE_OIDC_ENABLED=true.
+RUN --mount=type=bind,from=scf_secrets,target=/run/scf_secrets \
+    if [ "$VITE_OIDC_ENABLED" != "true" ] && [ -s /run/scf_secrets/API_KEY ]; then \
+      VITE_API_KEY="$(cat /run/scf_secrets/API_KEY)" npm run build; \
+    else \
+      npm run build; \
+    fi
 
 # Stage 2: Production with nginx
 FROM nginx:alpine

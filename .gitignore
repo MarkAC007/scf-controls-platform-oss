@@ -102,3 +102,8 @@ assessment.md
 commits.tsv
 commits.raw
 labels.txt
+
+# Zero-touch credential provisioning (#947). scripts/install.sh writes one file
+# per credential into SCF_SECRETS_DIR; the in-checkout default is ./secrets.
+# Never let a provisioned install commit its own credentials.
+secrets/
