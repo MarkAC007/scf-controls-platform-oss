@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "version": "0.32.0",
-  "released": "2026-09-11T06:04:11Z",
+  "version": "0.32.1",
+  "released": "2026-09-11T07:11:29Z",
   "min_upgradable_version": "0.0.0",
   "breaking": false,
   "required_stops": [],
-  "release_url": "https://github.com/MarkAC007/scf-controls-platform-oss/releases/tag/v0.32.0",
-  "summary": "Zero-touch credential provisioning. The installer and setup wizard generate every credential, the backend resolves each secret per call from the mounted secrets directory rather than reading it once at import, and integration credentials are stored encrypted. Migration intsec947a1 adds the integration-secret, platform audit-log and encrypted credential columns; it is additive and runs automatically on upgrade.",
+  "release_url": "https://github.com/MarkAC007/scf-controls-platform-oss/releases/tag/v0.32.1",
+  "summary": "",
   "migration_range": [
     "20260119_000000_62bdef86f249_initial_schema",
     "20260120_075300_add_implementation_status_values",

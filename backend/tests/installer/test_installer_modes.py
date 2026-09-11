@@ -394,9 +394,13 @@ class TestFrontendBuildSecret:
         ]
         assert not any("type=secret" in line for line in run_lines)
 
-    def test_the_dockerfile_ignores_the_file_when_oidc_is_enabled(self):
+    def test_the_dockerfile_reads_the_file_only_on_the_api_key_sign_in_path(self):
+        """With OIDC or Google auth the browser holds a user token; a deployment
+        that deliberately built with a blank VITE_API_KEY must not start
+        shipping the master key the day it adopts the overlay."""
         text = self.dockerfile()
         assert '[ "$VITE_OIDC_ENABLED" != "true" ]' in text
+        assert '[ "$VITE_GOOGLE_AUTH_ENABLED" != "true" ]' in text
         assert "-s /run/scf_secrets/API_KEY" in text
 
     def test_the_legacy_build_arg_still_exists_for_env_installs(self):

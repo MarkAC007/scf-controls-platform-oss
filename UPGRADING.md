@@ -154,13 +154,16 @@ three routes.
 - **`VITE_API_KEY` moves with `--import-env` in effect, but not by copying.**
   The frontend bundle still carries the API key at image build time. On an
   install that uses the secrets overlay the build reads it from
-  `$SCF_SECRETS_DIR/API_KEY` (only when `VITE_OIDC_ENABLED` is not `true`),
-  so `.env` no longer needs a `VITE_API_KEY` line; a stale one left behind is
-  harmless because the file takes precedence. Rotating the key still needs
-  `docker compose up -d --build frontend`, which picks up the new value. The trust-boundary consequence in
+  `$SCF_SECRETS_DIR/API_KEY`, but only on the API-key sign-in path: when
+  `VITE_OIDC_ENABLED` or `VITE_GOOGLE_AUTH_ENABLED` is `true` the file is
+  ignored and the bundle carries whatever `VITE_API_KEY` says (blank, if you
+  built it blank). So `.env` no longer needs a `VITE_API_KEY` line on the
+  API-key path; a stale one left behind is harmless because the file takes
+  precedence. Rotating the key still needs `docker compose up -d --build
+  frontend`, which picks up the new value. The trust-boundary consequence in
   `SECURITY.md` (anyone who can load the UI holds the master key in
   single-tenant mode without an identity provider) is not changed by this
-  release.
+  release for any sign-in mode.
 - **MinIO console and S3 ports are unchanged.** The secrets overlay adds no
   port mappings; `MINIO_PORT` and `MINIO_CONSOLE_PORT` behave as before.
 - **`COMPOSE_PROFILES` is not written by `--import-env`.** An existing

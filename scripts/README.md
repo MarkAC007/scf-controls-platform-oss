@@ -1,7 +1,25 @@
 # Scripts
 
-This directory ships two tools for the open-source release: the **SCF catalogue
-importer** and the **in-place upgrade tool**.
+This directory ships the operator tools for the open-source release: the
+**first-run installer**, the **in-place upgrade tool**, the **backup tool**, the
+**SCF catalogue importer**, and a post-deploy smoke test.
+
+## First-run install and file-backed credentials (`install.sh`)
+
+`install.sh` runs the first-run wizard, which generates every credential the
+stack needs into a `0600`-per-file secrets directory and writes a `.env` that
+holds no secrets. On an existing `.env` install, `scripts/install.sh --import-env`
+moves the credentials already in `.env` into that directory and switches the
+checkout to the `docker-compose.secrets.yml` overlay. `docker/with-file-secrets.sh`
+is the overlay's entrypoint for the backend and Celery services: it exports each
+`*_FILE` secret into the environment before handing over to the image's own
+command. See `UPGRADING.md` ("Upgrade path from a `.env` install").
+
+## Backups (`backup.sh`)
+
+`backup.sh` takes a validated backup set (Postgres dump, MinIO evidence volume,
+and the credentials tarball when the secrets overlay is in use). `upgrade.sh`
+runs it before every upgrade; run it yourself before any manual change.
 
 ## In-place upgrade (`upgrade.sh`)
 
@@ -37,3 +55,9 @@ Mount your SCF `.xlsx` as described in the project README ("Bring your own SCF E
 The importer is version-agnostic (auto-detects the SCF release and resolves sheets dynamically).
 
 `requirements-importer.txt` pins the importer's Python dependencies (pandas, openpyxl).
+
+## Post-deploy smoke test (`verify-prod-build.sh`)
+
+`scripts/verify-prod-build.sh http://localhost:5173` confirms the frontend is
+serving a production build with its security headers rather than a dev server.
+Read-only; safe against a live host.
