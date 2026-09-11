@@ -1,0 +1,29 @@
+{
+  "_comment": [
+    "Template for: scripts/install.sh --unattended ./install.json",
+    "Copy this file, edit it, and delete the _comment key (it is ignored either way).",
+    "",
+    "db.type                  'bundled' (the Postgres in docker-compose.yml) or 'external'.",
+    "                         'external' additionally needs host, port, dbname, user and a",
+    "                         password — supply the password via the SCF_DB_PASSWORD",
+    "                         environment variable or --db-password-stdin, never in this",
+    "                         file. An external database is connected and validated BEFORE",
+    "                         anything is written.",
+    "",
+    "idp.type                 'bundled_keycloak', 'external_oidc' or 'none'.",
+    "idp.bootstrap_admin_email  REQUIRED for 'bundled_keycloak'. The account install.sh --up",
+    "                         promotes to platform administrator. Omit it and the stack comes",
+    "                         up healthy with no organisation membership and an unusable UI.",
+    "idp.oidc_client_secret   only for 'external_oidc' — a secret owned by a system that is",
+    "                         not ours, so it is the one credential you may supply."
+  ],
+
+  "db": {
+    "type": "bundled"
+  },
+
+  "idp": {
+    "type": "bundled_keycloak",
+    "bootstrap_admin_email": "you@example.com"
+  }
+}

@@ -6,6 +6,7 @@ Nothing is cached at import; the DB tier alone is cached, with a 60s TTL and a
 best-effort Redis version key that lets a process see another process's
 rotation without waiting the TTL out.
 """
+import logging
 import os
 import sys
 
@@ -585,3 +586,43 @@ def test_bootstrap_process_propagates_a_startup_failure(monkeypatch):
 
     with pytest.raises(SystemExit):
         secrets.bootstrap_process()
+
+
+# --------------------------------------------------------------------------
+# an ABSENT SCF_SECRET_KEY warns but never blocks (#956)
+# --------------------------------------------------------------------------
+
+def test_absent_secret_key_warns_in_development_but_does_not_raise(monkeypatch, caplog):
+    """A fresh `docker compose up` that never ran the installer used to say
+    nothing at all; the first signal was a 409 in the UI weeks later."""
+    _clean_startup_env(monkeypatch)
+    monkeypatch.setenv("ENVIRONMENT", "development")
+    with caplog.at_level(logging.WARNING):
+        secrets.check_startup_secrets()  # must not raise
+    assert any("SCF_SECRET_KEY is not configured" in r.message for r in caplog.records)
+
+
+def test_absent_secret_key_warns_in_production_but_is_not_a_startup_problem(monkeypatch, caplog):
+    _clean_startup_env(monkeypatch)
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("API_KEY", "a-real-api-key")
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://cg:s3cr3t-real@postgres:5432/cg_scf")
+
+    with caplog.at_level(logging.WARNING):
+        secrets.check_startup_secrets()  # legacy .env installs must keep booting
+
+    assert any("SCF_SECRET_KEY is not configured" in r.message for r in caplog.records)
+
+
+def test_a_configured_secret_key_produces_no_warning(monkeypatch, caplog):
+    fernet = pytest.importorskip("cryptography.fernet")
+    _clean_startup_env(monkeypatch)
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("API_KEY", "a-real-api-key")
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://cg:s3cr3t-real@postgres:5432/cg_scf")
+    monkeypatch.setenv("SCF_SECRET_KEY", fernet.Fernet.generate_key().decode())
+
+    with caplog.at_level(logging.WARNING):
+        secrets.check_startup_secrets()
+
+    assert not any("SCF_SECRET_KEY is not configured" in r.message for r in caplog.records)

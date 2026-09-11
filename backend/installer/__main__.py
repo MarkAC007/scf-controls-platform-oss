@@ -120,6 +120,9 @@ def cmd_unattended(args: argparse.Namespace) -> int:
         )
     except writer.AlreadyProvisioned:
         return EXIT_ALREADY_PROVISIONED
+    except ValidationRejected as exc:
+        logger.error("bad configuration: %s", exc.detail)
+        return EXIT_BAD_CONFIG
     except ValueError as exc:
         logger.error("bad configuration: %s", exc)
         return EXIT_BAD_CONFIG

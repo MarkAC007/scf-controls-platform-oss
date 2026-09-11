@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "version": "0.32.1",
-  "released": "2026-09-11T07:11:29Z",
+  "version": "0.32.2",
+  "released": "2026-09-11T10:21:55Z",
   "min_upgradable_version": "0.0.0",
   "breaking": false,
   "required_stops": [],
-  "release_url": "https://github.com/MarkAC007/scf-controls-platform-oss/releases/tag/v0.32.1",
-  "summary": "",
+  "release_url": "https://github.com/MarkAC007/scf-controls-platform-oss/releases/tag/v0.32.2",
+  "summary": "Fixes a fresh install that could come up healthy but unable to store credentials in the app: scripts/install.sh is now stated as a prerequisite for first run, the backend warns at startup when SCF_SECRET_KEY is missing, and an unattended install without a bootstrap admin email is rejected rather than producing an unusable stack. No migration; no configuration change.",
   "migration_range": [
     "20260119_000000_62bdef86f249_initial_schema",
     "20260120_075300_add_implementation_status_values",
