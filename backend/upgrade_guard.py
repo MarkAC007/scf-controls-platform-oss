@@ -1,9 +1,14 @@
 """Backend-side migration guard (upgrade design Part E, §2.5).
 
-The canonical operator workflow is ``git pull && docker compose up --build``,
-which lets the FastAPI lifespan auto-migrate the database to Alembic head with
-no backup and no version-jump check. This module runs INSIDE that lifespan
-path (called from ``database.run_alembic_migrations`` before ``command.upgrade``)
+The canonical operator workflow *for an upgrade* is
+``git pull && docker compose up --build``, which lets the FastAPI lifespan
+auto-migrate the database to Alembic head with no backup and no version-jump
+check. It is not a first-run workflow: a fresh install must run
+``scripts/install.sh`` first, which is the only thing that provisions
+``SCF_SECRET_KEY`` and the other credentials (#956).
+
+This module runs INSIDE that lifespan path (called from
+``database.run_alembic_migrations`` before ``command.upgrade``)
 so the safety guarantees hold regardless of how the stack is started — a bare
 ``compose up`` fails CLOSED rather than silently migrating.
 

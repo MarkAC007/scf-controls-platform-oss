@@ -408,3 +408,94 @@ class TestFrontendBuildSecret:
         assert "ARG VITE_API_KEY" in text
         assert "ENV VITE_API_KEY=$VITE_API_KEY" in text
         assert "VITE_API_KEY: ${VITE_API_KEY:-}" in BASE_COMPOSE.read_text()
+
+
+# --------------------------------------------- bootstrap_admin_email is required (#956)
+def _no_email_config():
+    cfg = json.loads(json.dumps(BUNDLED_KEYCLOAK))
+    cfg["idp"].pop("bootstrap_admin_email")
+    return cfg
+
+
+def test_unattended_refuses_bundled_keycloak_without_a_bootstrap_admin_email(tmp_path):
+    """The wizard makes the field mandatory; unattended used to accept an empty
+    one and write BOOTSTRAP_ADMIN_EMAIL=, which made install.sh --up skip the
+    admin bootstrap and leave an unusable UI."""
+    secrets_dir = tmp_path / "secrets"
+    out_dir = tmp_path / "out"
+    secrets_dir.mkdir()
+    out_dir.mkdir()
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps(_no_email_config()))
+
+    code = main(
+        ["unattended", "--config", str(config), "--secrets-dir", str(secrets_dir), "--out-dir", str(out_dir)]
+    )
+
+    assert code == EXIT_BAD_CONFIG
+    # Rejected before the sentinel: the operator can fix the file and re-run.
+    assert not (secrets_dir / SENTINEL_NAME).exists()
+    assert list(secrets_dir.iterdir()) == []
+    assert not (out_dir / ".env").exists()
+
+
+def test_unattended_refuses_a_whitespace_only_bootstrap_admin_email(tmp_path):
+    secrets_dir = tmp_path / "secrets"
+    out_dir = tmp_path / "out"
+    secrets_dir.mkdir()
+    out_dir.mkdir()
+    cfg = _no_email_config()
+    cfg["idp"]["bootstrap_admin_email"] = "   "
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps(cfg))
+
+    assert main(
+        ["unattended", "--config", str(config), "--secrets-dir", str(secrets_dir), "--out-dir", str(out_dir)]
+    ) == EXIT_BAD_CONFIG
+    assert not (secrets_dir / SENTINEL_NAME).exists()
+
+
+def test_the_wizard_route_also_refuses_a_missing_bootstrap_admin_email(tmp_path):
+    client, secrets_dir, out_dir = make_client(tmp_path)
+    response = client.post(
+        "/api/provision", headers={TOKEN_HEADER: TOKEN}, json=_no_email_config()
+    )
+    assert response.status_code == 400
+    assert "bootstrap_admin_email" in response.json()["detail"]
+    assert not (secrets_dir / SENTINEL_NAME).exists()
+    assert not (out_dir / ".env").exists()
+
+
+def test_an_idp_type_that_is_not_bundled_keycloak_needs_no_admin_email(tmp_path):
+    """'none' and 'external_oidc' have no account for us to promote."""
+    secrets_dir = tmp_path / "secrets"
+    out_dir = tmp_path / "out"
+    secrets_dir.mkdir()
+    out_dir.mkdir()
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps({"db": {"type": "bundled"}, "idp": {"type": "none"}}))
+
+    assert main(
+        ["unattended", "--config", str(config), "--secrets-dir", str(secrets_dir), "--out-dir", str(out_dir)]
+    ) == EXIT_OK
+
+
+def test_the_shipped_install_example_json_still_provisions(tmp_path):
+    """install.example.json is what README points operators at: it must stay
+    loadable and accepted, comment key and all."""
+    example = REPO_ROOT / "install.example.json"
+    assert example.exists(), f"{example} is missing"
+    payload = json.loads(example.read_text())
+    assert payload["idp"]["bootstrap_admin_email"], "the example must model the required field"
+
+    secrets_dir = tmp_path / "secrets"
+    out_dir = tmp_path / "out"
+    secrets_dir.mkdir()
+    out_dir.mkdir()
+    config = tmp_path / "config.json"
+    config.write_text(example.read_text())
+
+    assert main(
+        ["unattended", "--config", str(config), "--secrets-dir", str(secrets_dir), "--out-dir", str(out_dir)]
+    ) == EXIT_OK
+    assert (secrets_dir / "SCF_SECRET_KEY").read_text().strip()

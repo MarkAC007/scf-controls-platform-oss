@@ -341,6 +341,21 @@ def check_startup_secrets(*, require_api_key: bool = True) -> None:
     Messages name the variable and never print its value.
     """
     environment = (os.getenv("ENVIRONMENT") or "").strip().lower()
+
+    # An ABSENT key is not a hard stop — a legacy `.env` install that never
+    # adopted in-app credential storage is a supported configuration, and
+    # refusing to boot would break it. But it must not be silent either: until
+    # #956 the only signal was a 409 the first time someone tried to save a
+    # credential in the UI, which can be weeks after the install. Warn in every
+    # environment, including development, because the symptom is identical there.
+    if not (get_secret("SCF_SECRET_KEY") or "").strip():
+        logger.warning(
+            "SCF_SECRET_KEY is not configured: the platform cannot encrypt "
+            "credentials, so storing one in the application will be refused. "
+            "Credentials supplied through a secrets file or an environment "
+            "variable are unaffected. Run scripts/install.sh to provision one."
+        )
+
     if environment in ("development", "test"):
         return
 

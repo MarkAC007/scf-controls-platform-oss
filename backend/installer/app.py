@@ -219,6 +219,18 @@ def _provision(
     db_type = str(db.get("type") or "bundled")
     idp_type = str(idp.get("type") or "none")
 
+    # Validate BEFORE the sentinel: a rejected config must leave the secrets dir
+    # untouched, so the operator can fix the file and re-run. The browser wizard
+    # makes this field mandatory client-side; unattended mode used to accept an
+    # empty one silently, which produced a healthy stack with no organisation
+    # membership and an unusable UI (#956).
+    if idp_type == "bundled_keycloak" and not str(idp.get("bootstrap_admin_email") or "").strip():
+        raise ValidationRejected(
+            ERR_INVALID_REQUEST,
+            "idp.bootstrap_admin_email is required when idp.type is 'bundled_keycloak': "
+            "it is the account promoted to platform administrator",
+        )
+
     writer.ensure_secrets_dir(secrets_path)
     # Sentinel FIRST: atomic, symlink-proof, race-proof.
     writer.create_sentinel(secrets_path, db=db_type, idp=idp_type)
