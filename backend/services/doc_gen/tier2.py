@@ -29,6 +29,18 @@ from .tier1 import status_label
 
 from services.model_registry import resolve as registry_resolve
 
+from services.secrets import get_secret
+
+
+def _anthropic_key() -> str:
+    """The Anthropic key, resolved per call. Raises the same KeyError-shaped
+    failure as before when nothing is configured; `is_mock_mode` guards it."""
+    key = get_secret("ANTHROPIC_API_KEY")
+    if not key:
+        raise KeyError("ANTHROPIC_API_KEY")
+    return key
+
+
 logger = logging.getLogger(__name__)
 
 # Model id from services/model_registry (#782); DOC_GEN_AI_MODEL still overrides.
@@ -82,7 +94,7 @@ def is_mock_mode() -> bool:
     """
     if os.getenv("DOC_GEN_AI_MOCK", "").strip() == "1":
         return True
-    return not os.getenv("ANTHROPIC_API_KEY", "").strip()
+    return not (get_secret("ANTHROPIC_API_KEY", "") or "").strip()
 
 
 def resolve_model() -> str:
@@ -375,7 +387,7 @@ def generate_document(
     from anthropic import Anthropic
 
     client = Anthropic(
-        api_key=os.environ["ANTHROPIC_API_KEY"],
+        api_key=_anthropic_key(),
         timeout=MODEL_CALL_TIMEOUT_SECONDS,
     )
     try:

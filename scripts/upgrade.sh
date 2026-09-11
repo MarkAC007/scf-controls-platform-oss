@@ -31,7 +31,16 @@
 #                     from the GitHub Release (air-gapped installs)
 #   --yes             assume "yes" to the pre-upgrade confirmation (unattended)
 #   --rollback <ts>   restore both data stores from the backup set with the
-#                     given timestamp (see ./backups/<ts>_*), then rebuild
+#                     given timestamp (see ./backups/<ts>_*), then rebuild.
+#                     Also restores backups/secrets-<ts>.tar.gz into
+#                     SCF_SECRETS_DIR when both are present, after setting the
+#                     current credentials aside.
+#
+# COMPOSE_FILE is honoured from the environment, then from .env (a colon-
+# separated list becomes multiple -f flags), so an install using the file-backed
+# credential overlay is upgraded as the overlay, not as the base file alone.
+# SCF_SECRET_KEY is generated if absent, before migrations run, and never
+# overwritten.
 # =============================================================================
 set -euo pipefail
 
@@ -40,7 +49,21 @@ OSS_REPO="MarkAC007/scf-controls-platform-oss"
 HEALTH_URL="${HEALTH_URL:-http://localhost:8000/health}"
 HEALTH_TIMEOUT=120            # seconds to wait for /health after start
 BACKUPS_DIR="./backups"
-COMPOSE_FILE="docker-compose.yml"
+
+# Compose file set. Resolved in main() by resolve_compose_files(): environment
+# first, then a COMPOSE_FILE= line in .env (which is where scripts/install.sh
+# records `docker-compose.yml:docker-compose.secrets.yml` when the file-backed
+# credential overlay is in use), then the plain base file.
+#
+# This matters because docker compose reads COMPOSE_FILE from .env for itself,
+# so the RUNNING stack is base+overlay while a hardcoded COMPOSE_FILE here would
+# have upgrade.sh validate, grep and rebuild the BASE file alone. backup.sh has
+# always honoured ${COMPOSE_FILE:-...}; this brings upgrade.sh into line.
+# Capture the caller's environment value BEFORE the default below shadows it.
+COMPOSE_FILE_ENV="${COMPOSE_FILE:-}"
+COMPOSE_FILE="docker-compose.yml"   # colon-joined, for messages and file greps
+COMPOSE_FILE_LIST=("docker-compose.yml")   # one element per file
+COMPOSE_FILE_ARGS=()                        # `-f a -f b`, EMPTY when unconfigured
 
 # Logical compose volume names (compose maps these to real docker volume names,
 # which we DERIVE at runtime rather than hardcoding — see derive_volume_name).
@@ -80,7 +103,193 @@ _selfguard() {
 # --- Small helpers -----------------------------------------------------------
 have() { command -v "$1" >/dev/null 2>&1; }
 
-compose() { docker compose "$@"; }
+# Pass the resolved file set explicitly so the `:latest` scan, the `config -q`
+# gate, the migration one-shot and every other call see the same files the
+# running stack was brought up from. COMPOSE_FILE_ARGS is deliberately EMPTY
+# when nothing was configured, so compose keeps its own default discovery and
+# still auto-loads docker-compose.override.yml (UPGRADING.md recommends putting
+# local hardening there — passing an explicit -f would silently drop it).
+compose() { docker compose ${COMPOSE_FILE_ARGS[@]+"${COMPOSE_FILE_ARGS[@]}"} "$@"; }
+
+# Read KEY=value out of a .env WITHOUT sourcing it — a .env legitimately holds
+# values that are not valid shell, and sourcing one to read a path would execute
+# them. Last definition wins, matching compose.
+env_file_value() {
+  local key="$1" file="${2:-.env}" val=""
+  [[ -f "$file" ]] || return 0
+  val="$(grep -E "^[[:space:]]*${key}=" "$file" 2>/dev/null | tail -1 | cut -d= -f2- || true)"
+  val="${val%$'\r'}"
+  [[ "$val" == \"*\" ]] && val="${val:1:${#val}-2}"
+  [[ "$val" == \'*\' ]] && val="${val:1:${#val}-2}"
+  printf '%s' "$val"
+}
+
+# Absolute host path of the credential directory, or empty on a legacy install.
+resolve_secrets_dir() {
+  local d="${SCF_SECRETS_DIR:-}"
+  [[ -n "$d" ]] || d="$(env_file_value SCF_SECRETS_DIR)"
+  printf '%s' "$d"
+}
+
+# Populate COMPOSE_FILE / COMPOSE_FILE_LIST / COMPOSE_FILE_ARGS. Call once,
+# from main(), before require_prereqs.
+resolve_compose_files() {
+  local configured="${COMPOSE_FILE_ENV:-}" f
+  [[ -n "$configured" ]] || configured="$(env_file_value COMPOSE_FILE)"
+  if [[ -z "$configured" ]]; then
+    COMPOSE_FILE="docker-compose.yml"
+    COMPOSE_FILE_LIST=("docker-compose.yml")
+    COMPOSE_FILE_ARGS=()
+    return 0
+  fi
+  COMPOSE_FILE="$configured"
+  COMPOSE_FILE_LIST=()
+  COMPOSE_FILE_ARGS=()
+  local -a parts=()
+  IFS=':' read -r -a parts <<< "$configured"
+  for f in "${parts[@]}"; do
+    [[ -n "$f" ]] || continue
+    COMPOSE_FILE_LIST+=("$f")
+    COMPOSE_FILE_ARGS+=(-f "$f")
+  done
+  if (( ${#COMPOSE_FILE_LIST[@]} == 0 )); then
+    COMPOSE_FILE="docker-compose.yml"
+    COMPOSE_FILE_LIST=("docker-compose.yml")
+    COMPOSE_FILE_ARGS=()
+  fi
+}
+
+# --- SCF_SECRET_KEY -----------------------------------------------------------
+# The key that encrypts tier-3 integration credentials. It must exist BEFORE the
+# migration one-shot runs: a migration that needed a key nobody has yet would
+# hard-fail every operator upgrading from a version that had none.
+#
+# NOTHING here ever prints the key's value.
+
+# True when a key is resolvable from any tier (env, secrets dir file, .env).
+secret_key_present() {
+  [[ -n "${SCF_SECRET_KEY:-}" ]] && return 0
+  local dir; dir="$(resolve_secrets_dir)"
+  if [[ -n "$dir" && -s "${dir}/SCF_SECRET_KEY" ]]; then
+    [[ -n "$(tr -d '[:space:]' < "${dir}/SCF_SECRET_KEY" 2>/dev/null || true)" ]] && return 0
+  fi
+  [[ -n "$(env_file_value SCF_SECRET_KEY)" ]] && return 0
+  return 1
+}
+
+# The backend image reference compose would run, for the key-generation one-shot.
+backend_image_ref() {
+  compose config --format json 2>/dev/null \
+    | python3 -c 'import json, sys
+try:
+    cfg = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+print(((cfg.get("services", {}) or {}).get("backend", {}) or {}).get("image", "") or "")
+' 2>/dev/null || true
+}
+
+# Print a fresh Fernet key (44 chars). Prefers the backend image so the key is
+# minted by the same cryptography build that will consume it; falls back to the
+# host python3 with the identical construction (32 random bytes, urlsafe base64
+# — which is literally what Fernet.generate_key() does) when docker cannot run
+# it. NEVER token_urlsafe: a Fernet key is a fixed 32-byte value, not a nonce.
+generate_fernet_key() {
+  local image key=""
+  image="$(backend_image_ref)"
+  if [[ -n "$image" ]]; then
+    key="$(docker run --rm --entrypoint python "$image" \
+             -c 'from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())' \
+             2>/dev/null | tr -d '\r\n' || true)"
+  fi
+  if (( ${#key} != 44 )); then
+    key="$(python3 -c 'import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())' 2>/dev/null | tr -d '\r\n' || true)"
+  fi
+  (( ${#key} == 44 )) || return 1
+  printf '%s' "$key"
+}
+
+# Generate-if-absent. Existing keys are NEVER overwritten — doing so would make
+# every already-encrypted row permanently unreadable.
+ensure_secret_key() {
+  if secret_key_present; then
+    success "SCF_SECRET_KEY is already configured (left untouched)."
+    return 0
+  fi
+  local key dir
+  key="$(generate_fernet_key || true)"
+  if [[ -z "$key" ]]; then
+    warn "could not generate an SCF_SECRET_KEY (neither the backend image nor host python3 would run). The migration does not need one, so the upgrade continues — but tier-3 integration credentials cannot be stored until you set one. Generate it later with:"
+    warn "    docker compose run --rm --no-deps --entrypoint python backend -c 'from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())'"
+    return 0
+  fi
+  dir="$(resolve_secrets_dir)"
+  if [[ -n "$dir" && -d "$dir" ]]; then
+    if [[ -e "${dir}/SCF_SECRET_KEY" ]]; then
+      info "SCF_SECRET_KEY file already exists at ${dir}/SCF_SECRET_KEY; leaving it alone."
+      return 0
+    fi
+    if ! ( umask 077 && printf '%s\n' "$key" > "${dir}/SCF_SECRET_KEY" ); then
+      warn "could not write ${dir}/SCF_SECRET_KEY. Continuing; tier-3 integration credentials will be unavailable until you create it."
+      return 0
+    fi
+    chmod 0600 "${dir}/SCF_SECRET_KEY" 2>/dev/null || true
+    success "Generated SCF_SECRET_KEY at ${dir}/SCF_SECRET_KEY (0600)."
+    warn "BACK THIS FILE UP. Integration credentials encrypted with it are unrecoverable if it is lost — scripts/backup.sh includes it from now on."
+  else
+    if grep -qE '^[[:space:]]*SCF_SECRET_KEY=[[:space:]]*[^[:space:]]' .env 2>/dev/null; then
+      info "SCF_SECRET_KEY line already present in .env; leaving it alone."
+      return 0
+    fi
+    if grep -qE '^[[:space:]]*SCF_SECRET_KEY=[[:space:]]*$' .env 2>/dev/null; then
+      # A bare `SCF_SECRET_KEY=` (an old .env.example copied verbatim) is "absent":
+      # fill it in place rather than appending a second, shadowed line.
+      if sed -i.upgrade-bak -E "s|^[[:space:]]*SCF_SECRET_KEY=[[:space:]]*$|SCF_SECRET_KEY=${key}|" .env 2>/dev/null; then
+        rm -f .env.upgrade-bak
+        success "Filled the empty SCF_SECRET_KEY= line in .env (legacy install — no SCF_SECRETS_DIR configured)."
+        warn "BACK UP YOUR .env. Integration credentials encrypted with this key are unrecoverable if it is lost."
+        return 0
+      fi
+      warn "could not fill the empty SCF_SECRET_KEY= line in .env. Continuing; tier-3 integration credentials will be unavailable until you set it."
+      return 0
+    fi
+    if ! printf '\n# Added by scripts/upgrade.sh on %s. Encrypts tier-3 integration\n# credentials. Back it up: encrypted values are unrecoverable without it.\nSCF_SECRET_KEY=%s\n' \
+           "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$key" >> .env; then
+      warn "could not append SCF_SECRET_KEY to .env. Continuing; tier-3 integration credentials will be unavailable until you add it."
+      return 0
+    fi
+    success "Appended SCF_SECRET_KEY to .env (legacy install — no SCF_SECRETS_DIR configured)."
+    warn "BACK UP YOUR .env. Integration credentials encrypted with this key are unrecoverable if it is lost."
+  fi
+}
+
+# Number of encrypted tier-3 rows, or "unknown" when the table or the server is
+# not reachable (which is the normal case on the first upgrade to this version).
+integration_secrets_rowcount() {
+  local pg_user pg_db out
+  pg_user="$(derive_pg user)"; pg_db="$(derive_pg db)"
+  out="$(compose exec -T postgres psql -U "$pg_user" -d "$pg_db" -tAc \
+          'SELECT count(*) FROM integration_secrets;' 2>/dev/null | tr -d '[:space:]' || true)"
+  if [[ "$out" =~ ^[0-9]+$ ]]; then printf '%s' "$out"; else printf 'unknown'; fi
+}
+
+# Pre-flight gate. A missing key is only fatal once encrypted rows exist —
+# before that there is nothing to lose and upgrade.sh mints one in Phase 4.
+check_secret_key() {
+  if secret_key_present; then
+    success "SCF_SECRET_KEY is configured."
+    return 0
+  fi
+  local n; n="$(integration_secrets_rowcount)"
+  if [[ "$n" == "unknown" ]]; then
+    warn "SCF_SECRET_KEY is not configured and integration_secrets could not be read (the table does not exist on this version yet, or postgres is not up). One will be generated before migrations run."
+    return 0
+  fi
+  if (( n > 0 )); then
+    die "SCF_SECRET_KEY is not configured, but integration_secrets holds ${n} encrypted row(s). Those values decrypt only with the key that wrote them — upgrading without it would leave them permanently unreadable and silently switch off the integrations they configure. Restore the key first (the SCF_SECRET_KEY file in your secrets directory, or the SCF_SECRET_KEY line in .env) from your backup, then retry."
+  fi
+  warn "SCF_SECRET_KEY is not configured; no encrypted integration rows exist yet, so nothing is at risk. One will be generated before migrations run."
+}
 
 require_prereqs() {
   have docker || die "docker not found on PATH. Install Docker and retry."
@@ -88,8 +297,12 @@ require_prereqs() {
     || die "'docker compose' (v2) not available. Install the compose plugin."
   have curl || warn "curl not found — manifest fetch will require --manifest FILE."
   have python3 || die "python3 not found — needed to parse the upgrade manifest."
-  [[ -f "$COMPOSE_FILE" ]] \
-    || die "no $COMPOSE_FILE here. Run this from the repository root."
+  local f
+  for f in "${COMPOSE_FILE_LIST[@]}"; do
+    [[ -f "$f" ]] \
+      || die "compose file '$f' not found here (COMPOSE_FILE=${COMPOSE_FILE}). Run this from the repository root, and check the COMPOSE_FILE line in .env."
+  done
+  (( ${#COMPOSE_FILE_ARGS[@]} > 0 )) && info "Compose files: ${COMPOSE_FILE}"
   [[ -d .git ]] \
     || die "not a git checkout. This deployment must be a 'git clone' of the repo."
 }
@@ -152,11 +365,15 @@ print(v.get("name", ""))
 ' "$logical" 2>/dev/null || true)"
   if [[ -z "$name" ]]; then
     # Fallback: explicit `name:` under the volume block in the compose file.
-    name="$(awk -v key="  $logical:" '
-      $0 ~ "^"key"$" {found=1; next}
-      found && /name:/ {gsub(/.*name: */,""); gsub(/[[:space:]]/,""); print; exit}
-      found && /^  [a-zA-Z]/ {exit}
-    ' "$COMPOSE_FILE" 2>/dev/null || true)"
+    local cf
+    for cf in "${COMPOSE_FILE_LIST[@]}"; do
+      name="$(awk -v key="  $logical:" '
+        $0 ~ "^"key"$" {found=1; next}
+        found && /name:/ {gsub(/.*name: */,""); gsub(/[[:space:]]/,""); print; exit}
+        found && /^  [a-zA-Z]/ {exit}
+      ' "$cf" 2>/dev/null || true)"
+      [[ -n "$name" ]] && break
+    done
   fi
   if [[ -z "$name" ]]; then
     # Last resort: <project>_<logical>, the compose default naming.
@@ -304,6 +521,41 @@ do_rollback() {
     success "MinIO evidence volume restored."
   else
     warn "No MinIO backup tar for ${ts}; evidence volume left as-is."
+  fi
+
+  # 4b. Restore the credential files. The restored database holds tier-3 rows
+  #     encrypted under the SCF_SECRET_KEY of that moment, so rolling the DB back
+  #     without rolling the key back leaves them undecryptable.
+  local secrets_file="${BACKUPS_DIR}/secrets-${ts}.tar.gz"
+  local sdir; sdir="$(resolve_secrets_dir)"
+  if [[ -f "$secrets_file" && -n "$sdir" ]]; then
+    step "R4b. Restoring credential files from ${secrets_file}"
+    tar tzf "$secrets_file" >/dev/null 2>&1 \
+      || die "the credential tarball ${secrets_file} failed structural validation (tar tzf) — refusing to extract it over ${sdir}. The database and evidence volume are already restored."
+    mkdir -p "$sdir"
+    # Set the CURRENT credentials aside first. Extraction overwrites any file
+    # the tarball carries, and a credential rotated since the backup (a DB
+    # password the live postgres volume still uses, say) must stay recoverable.
+    local pre="${BACKUPS_DIR}/secrets-prerollback-$(date +%Y%m%d_%H%M%S).tar.gz"
+    if ( umask 077 && tar --exclude='./.provision-token' --exclude='.provision-token' \
+            -czf "$pre" -C "$sdir" . ) 2>/dev/null; then
+      chmod 0600 "$pre" 2>/dev/null || true
+      info "Current credentials set aside first: ${pre}"
+    else
+      rm -f "$pre"
+      warn "could not snapshot the current credential directory before restoring; continuing."
+    fi
+    # -p keeps the modes recorded in the archive (0600 files, and the 0640/group
+    # 1001 form scripts/install.sh applies on Linux), rather than re-imposing a
+    # mode that would make the files unreadable to the service containers.
+    if ! tar xzpf "$secrets_file" -C "$sdir"; then
+      die "credential restore into ${sdir} failed. The database and evidence volume ARE restored; fix ${sdir} before starting the stack."
+    fi
+    success "Credential files restored into ${sdir}. Files added since the backup were left in place."
+  elif [[ -f "$secrets_file" ]]; then
+    warn "backup set ${ts} contains ${secrets_file}, but no SCF_SECRETS_DIR is configured in the environment or .env — skipping the credential restore. If the restored database holds encrypted integration credentials, extract that tarball into your credential directory by hand before starting."
+  elif [[ -n "$sdir" ]]; then
+    warn "no credential tarball in backup set ${ts}; ${sdir} left as-is. If the key has changed since that backup, encrypted integration credentials in the restored database will not decrypt."
   fi
 
   # 5. Return code to the pre-upgrade ref and rebuild.
@@ -459,10 +711,13 @@ do_upgrade() {
   # 1d. .env drift vs .env.example (+ manifest.env_added). WARN, non-fatal.
   check_env_drift "$m_range"  # passes range unused; env_added read inside
 
+  # 1d-bis. SCF_SECRET_KEY. Fatal ONLY when encrypted rows already exist.
+  check_secret_key
+
   # 1e. Floating :latest base images. WARN (air-gap / reproducibility risk).
-  if grep -Eq ':latest' "$COMPOSE_FILE"; then
+  if grep -Eq ':latest' "${COMPOSE_FILE_LIST[@]}"; then
     warn "compose uses floating ':latest' image tag(s):"
-    grep -nE 'image:.*:latest' "$COMPOSE_FILE" | sed 's/^/    /' >&2 || true
+    grep -nE 'image:.*:latest' "${COMPOSE_FILE_LIST[@]}" | sed 's/^/    /' >&2 || true
     warn "A 'compose up --build' re-resolves these; an upstream bump can land mid-upgrade or fail to pull when air-gapped. Consider pinning to a digest."
   fi
 
@@ -604,6 +859,12 @@ do_upgrade() {
   # SCF_CDM_DROP_ACK (CDM retirement, migration cdmdrop001) is NOT passed here on
   # purpose: it reaches the run through the service's environment: allow-list
   # from .env, so the operator sets it deliberately (see UPGRADING.md).
+  # Mint SCF_SECRET_KEY BEFORE the migration one-shot. Ordering is the whole
+  # point: a migration is not allowed to require a secret that did not exist
+  # before the upgrade, and the one-shot below is the first process that could
+  # need it. The image is built by now, so the generator container is available.
+  ensure_secret_key
+
   info "Running database migrations (one-shot: alembic upgrade head)..."
   if ! compose run --rm -e SCF_MIGRATE_ACK="${TARGET}" backend alembic upgrade head; then
     rollback_after_failure "$ROLLBACK_TS" "alembic migration failed."
@@ -814,6 +1075,9 @@ print_help() {
 
 main() {
   _selfguard
+  # Resolve the compose file set (env > .env > docker-compose.yml) before any
+  # compose call or file grep.
+  resolve_compose_files
   ASSUME_YES=0
   MANIFEST_OPT=""
   local target="" rollback_ts="" mode="upgrade"

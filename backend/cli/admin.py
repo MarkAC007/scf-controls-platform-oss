@@ -23,6 +23,9 @@ Commands:
     delete-user         Delete a user and all their data
     delete-org          Delete an organisation and all its data
     stats               Show platform-wide statistics
+    rotate-secret-key   Re-encrypt stored credentials under the primary SCF_SECRET_KEY
+    backfill-encrypt    Encrypt legacy plaintext credential values in place
+    secrets-status      Show integration credential health (no values)
 
 Examples:
     # Initial setup (run this first on a fresh deployment!)
@@ -850,6 +853,210 @@ async def cmd_stats(args: argparse.Namespace) -> int:
 # Main Entry Point
 # =============================================================================
 
+
+# =============================================================================
+# Credential encryption commands (Issue #947)
+# =============================================================================
+
+#: (table, column) pairs holding application-encrypted values. Every one of
+#: these is read and written with raw SQL below, deliberately bypassing the
+#: EncryptedString type decorator — these commands must see the stored bytes,
+#: not the decrypted view of them.
+ENCRYPTED_COLUMNS = (
+    ("integration_secrets", "value_ciphertext", "name"),
+    ("webhook_endpoints", "secret", "id"),
+    ("organization_invites", "invite_token", "id"),
+    ("consultant_invites", "invite_token", "id"),
+)
+
+
+def _primary_fernet():
+    """A Fernet over the FIRST key only, for proving rotation finished."""
+    from cryptography.fernet import Fernet
+    from services import secrets as _secrets
+
+    raw = (_secrets.get_secret("SCF_SECRET_KEY") or "").strip()
+    if not raw:
+        return None
+    primary = raw.split(",")[0].strip()
+    if not primary:
+        return None
+    return Fernet(primary.encode("utf-8"))
+
+
+async def cmd_rotate_secret_key(args: argparse.Namespace) -> int:
+    """Re-encrypt every stored value under the primary SCF_SECRET_KEY.
+
+    Rotation is two steps by design: put the new key FIRST in the
+    comma-separated list with the old key still present, restart, then run this.
+    Only once it reports every row rotated is it safe to drop the old key.
+    """
+    from sqlalchemy import text as _text
+
+    from services import crypto
+
+    try:
+        multi = crypto.get_fernet()
+    except crypto.SecretKeyInvalid as exc:
+        print(f"❌ {exc}")
+        return 1
+    if multi is None:
+        print("❌ SCF_SECRET_KEY is not configured — nothing to rotate.")
+        return 1
+
+    primary = _primary_fernet()
+    total_rotated = 0
+    total_legacy = 0
+    unrotated = 0
+
+    async with AsyncSessionLocal() as db:
+        for table, column, key_col in ENCRYPTED_COLUMNS:
+            rotated = 0
+            legacy = 0
+            try:
+                rows = (
+                    # Table/column/key names are the ENCRYPTED_COLUMNS constant; values are
+                    # bound parameters. Identifiers cannot be bound, hence text().
+                    # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+                    await db.execute(_text(f"SELECT {key_col}, {column} FROM {table}"))
+                ).fetchall()
+            except Exception as exc:  # noqa: BLE001
+                await db.rollback()
+                print(f"   {table}.{column}: skipped ({type(exc).__name__})")
+                continue
+
+            for key, value in rows:
+                if value is None:
+                    continue
+                if not crypto.is_encrypted(value):
+                    legacy += 1
+                    continue
+                try:
+                    plaintext = crypto.decrypt(value)
+                except crypto.DecryptError:
+                    unrotated += 1
+                    print(f"   ⚠️  {table}.{column} {key}: no configured key decrypts this row")
+                    continue
+                new_value = crypto.encrypt(plaintext)
+                await db.execute(
+                    # Table/column/key names are the ENCRYPTED_COLUMNS constant; values are
+                    # bound parameters. Identifiers cannot be bound, hence text().
+                    # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+                    _text(f"UPDATE {table} SET {column} = :v WHERE {key_col} = :k"),
+                    {"v": new_value, "k": key},
+                )
+                rotated += 1
+
+            await db.commit()
+            total_rotated += rotated
+            total_legacy += legacy
+            print(f"   {table}.{column}: {rotated} re-encrypted, {legacy} still plaintext")
+
+        # Proof: every encrypted row must now open with the primary key ALONE.
+        if primary is not None:
+            for table, column, key_col in ENCRYPTED_COLUMNS:
+                try:
+                    rows = (
+                        # Table/column/key names are the ENCRYPTED_COLUMNS constant; values are
+                        # bound parameters. Identifiers cannot be bound, hence text().
+                        # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+                        await db.execute(_text(f"SELECT {key_col}, {column} FROM {table}"))
+                    ).fetchall()
+                except Exception:  # noqa: BLE001
+                    await db.rollback()
+                    continue
+                for key, value in rows:
+                    if value is None or not crypto.is_encrypted(value):
+                        continue
+                    token = value[len(crypto.PREFIX):].encode("utf-8")
+                    try:
+                        primary.decrypt(token)
+                    except Exception:  # noqa: BLE001
+                        unrotated += 1
+                        print(f"   ❌ {table}.{column} {key}: does not open under the primary key")
+
+    print(f"\n✅ Rotated {total_rotated} value(s) under the primary key.")
+    if total_legacy:
+        print(f"⚠️  {total_legacy} row(s) are still plaintext — run `backfill-encrypt` first.")
+    if unrotated:
+        print(f"❌ {unrotated} row(s) do not open under the primary key. Keep the old key configured.")
+        return 1
+    return 0
+
+
+async def cmd_backfill_encrypt(args: argparse.Namespace) -> int:
+    """Encrypt legacy plaintext values in place. Idempotent."""
+    from sqlalchemy import text as _text
+
+    from services import crypto
+
+    try:
+        if crypto.get_fernet() is None:
+            print("❌ SCF_SECRET_KEY is not configured — cannot encrypt.")
+            return 1
+    except crypto.SecretKeyInvalid as exc:
+        print(f"❌ {exc}")
+        return 1
+
+    total = 0
+    async with AsyncSessionLocal() as db:
+        for table, column, key_col in ENCRYPTED_COLUMNS:
+            encrypted = 0
+            try:
+                rows = (
+                    # Table/column/key names are the ENCRYPTED_COLUMNS constant; values are
+                    # bound parameters. Identifiers cannot be bound, hence text().
+                    # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+                    await db.execute(_text(f"SELECT {key_col}, {column} FROM {table}"))
+                ).fetchall()
+            except Exception as exc:  # noqa: BLE001
+                await db.rollback()
+                print(f"   {table}.{column}: skipped ({type(exc).__name__})")
+                continue
+
+            for key, value in rows:
+                if value is None or crypto.is_encrypted(value):
+                    continue
+                await db.execute(
+                    # Table/column/key names are the ENCRYPTED_COLUMNS constant; values are
+                    # bound parameters. Identifiers cannot be bound, hence text().
+                    # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+                    _text(f"UPDATE {table} SET {column} = :v WHERE {key_col} = :k"),
+                    {"v": crypto.encrypt(value), "k": key},
+                )
+                encrypted += 1
+
+            await db.commit()
+            total += encrypted
+            print(f"   {table}.{column}: {encrypted} encrypted")
+
+    print(f"\n✅ Encrypted {total} legacy plaintext value(s).")
+    return 0
+
+
+async def cmd_secrets_status(args: argparse.Namespace) -> int:
+    """Print the integration credential health view. Never prints a value."""
+    from services import integration_secrets
+
+    async with AsyncSessionLocal() as db:
+        health = await integration_secrets.health(db)
+        legacy = await integration_secrets.legacy_plaintext_rows(db)
+
+    key_state = "configured" if health["encryption_key_configured"] else "NOT CONFIGURED"
+    print(f"Encryption key (SCF_SECRET_KEY): {key_state}")
+    print(f"Legacy plaintext rows:           {legacy}")
+    print(f"Management mode:                 {health['secrets_dir_mode']}")
+    print("")
+    for item in health["items"]:
+        state = "configured" if item["configured"] else "not configured"
+        source = item["source"] or "-"
+        managed = " (operator-managed)" if item["managed_by_operator"] else ""
+        print(f"  {item['name']:<28} {state:<15} source={source}{managed}")
+    if not health["encryption_key_configured"]:
+        print("\n⚠️  Set SCF_SECRET_KEY to store credentials in the application.")
+    return 0
+
+
 def create_parser() -> argparse.ArgumentParser:
     """Create the argument parser."""
     parser = argparse.ArgumentParser(
@@ -927,6 +1134,11 @@ def create_parser() -> argparse.ArgumentParser:
     # stats command
     subparsers.add_parser("stats", help="Show platform-wide statistics")
 
+    # credential encryption commands (#947)
+    subparsers.add_parser("rotate-secret-key", help="Re-encrypt every stored credential under the primary SCF_SECRET_KEY")
+    subparsers.add_parser("backfill-encrypt", help="Encrypt legacy plaintext credential values in place (idempotent)")
+    subparsers.add_parser("secrets-status", help="Show integration credential health (never prints values)")
+
     # setup command
     setup = subparsers.add_parser("setup", help="Initial platform setup - create Default Organization")
     setup.add_argument("--name", default="Default Organization", help="Name for the default organization")
@@ -966,6 +1178,9 @@ def main():
         "stats": cmd_stats,
         "setup": cmd_setup,
         "seed-catalog": cmd_seed_catalog,
+        "rotate-secret-key": cmd_rotate_secret_key,
+        "backfill-encrypt": cmd_backfill_encrypt,
+        "secrets-status": cmd_secrets_status,
     }
 
     handler = commands.get(args.command)

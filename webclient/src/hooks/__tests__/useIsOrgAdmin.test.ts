@@ -34,6 +34,7 @@ describe('useIsOrgAdmin', () => {
     mockUseAuth.mockReturnValue({
       user: null,
       isPlatformAdmin: false,
+      canManageIntegrations: false,
       isAuthenticated: true,
       authReady: true,
     })
@@ -48,6 +49,7 @@ describe('useIsOrgAdmin', () => {
     mockUseAuth.mockReturnValue({
       user: null,
       isPlatformAdmin: false,
+      canManageIntegrations: false,
       isAuthenticated: true,
       authReady: false,
     })
@@ -59,6 +61,7 @@ describe('useIsOrgAdmin', () => {
     mockUseAuth.mockReturnValue({
       user: { db_id: 'u-1' },
       isPlatformAdmin: false,
+      canManageIntegrations: false,
       isAuthenticated: true,
       authReady: true,
     })
@@ -71,6 +74,7 @@ describe('useIsOrgAdmin', () => {
     mockUseAuth.mockReturnValue({
       user: { db_id: 'u-1' },
       isPlatformAdmin: false,
+      canManageIntegrations: false,
       isAuthenticated: true,
       authReady: true,
     })

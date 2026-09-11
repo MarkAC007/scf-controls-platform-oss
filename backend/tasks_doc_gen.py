@@ -54,6 +54,8 @@ from celery.exceptions import SoftTimeLimitExceeded
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+from db_url import get_sync_database_url
+
 logger = logging.getLogger(__name__)
 
 DOCGEN_STATUS_PREFIX = "scf:cache:v1:docgen"
@@ -94,9 +96,7 @@ DOCGEN_LOCK_TTL = DOCGEN_TIME_LIMIT + 600
 # Sync database session (Celery runs outside the async event loop)
 # ---------------------------------------------------------------------------
 _SYNC_DATABASE_URL = (
-    os.getenv("DATABASE_URL", "postgresql+asyncpg://odin:changeme@localhost:5432/odin_scf")
-    .replace("+asyncpg", "+psycopg2")
-    .replace("?ssl=require", "?sslmode=require")
+    get_sync_database_url("postgresql+asyncpg://odin:changeme@localhost:5432/odin_scf")
 )
 
 _sync_engine = None

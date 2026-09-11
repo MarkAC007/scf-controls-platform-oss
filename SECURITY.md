@@ -49,3 +49,23 @@ To help us triage quickly, please include:
 Because releases are produced from an upstream source repository, fixes are applied upstream and shipped in a subsequent release snapshot to this public repository.
 
 There is currently **no paid bug-bounty programme** for this project. We are grateful nonetheless for responsible disclosure.
+
+## Deployment trust boundary (OSS single-tenant mode)
+
+With `OSS_SINGLE_TENANT=1` — the default for a self-hosted install — and no identity provider
+enabled, the platform has **no user authentication**. The master API key is compiled into the
+frontend JavaScript bundle at image build time and is used as the bearer token by the browser, so
+**anyone who can load the UI is a platform administrator**: they can read the whole workspace and
+replace every stored integration credential.
+
+This is a property of the single-tenant deployment model, not a bug in a particular release, and
+it is not fixed by generating a strong API key — a generated key is published in the bundle just
+the same. Treat it as a boundary condition:
+
+- Do not expose such a deployment beyond a trusted network.
+- Do not store third-party credentials in it (Settings, then Integrations) unless you have enabled
+  the bundled identity provider (`--profile idp`) or an external OIDC provider, which puts real
+  user authentication in front of the platform.
+
+Credential storage hardening — encryption at rest, write-only fields, an audit trail — reduces what
+a database dump discloses. It does not change who can reach the UI.

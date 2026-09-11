@@ -65,6 +65,8 @@ from services.frequency_vocabulary import STALENESS_DAYS, staleness_days
 # copy is satisfied without the drift risk the copy carried.
 STALENESS_THRESHOLDS: Dict[str, int] = dict(STALENESS_DAYS)
 
+from db_url import get_sync_database_url
+
 logger = logging.getLogger(__name__)
 
 
@@ -119,9 +121,7 @@ _STATUS_SEVERITY: List[str] = [
 # ---------------------------------------------------------------------------
 
 _SYNC_DATABASE_URL = (
-    os.getenv("DATABASE_URL", "postgresql+asyncpg://cg:cg@localhost:5432/cg_scf")
-    .replace("+asyncpg", "+psycopg2")
-    .replace("?ssl=require", "?sslmode=require")
+    get_sync_database_url("postgresql+asyncpg://cg:cg@localhost:5432/cg_scf")
 )
 
 _sync_engine = None

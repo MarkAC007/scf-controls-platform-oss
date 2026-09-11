@@ -23,6 +23,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, or_
 from sqlalchemy.orm import joinedload
 
+from services.invite_tokens import hash_invite_token
+
 from models import (
     User,
     Organization,
@@ -390,6 +392,7 @@ class ConsultantService:
             email=email,
             organization_name=organization_name,
             invite_token=token,
+            invite_token_hash=hash_invite_token(token),
             status=ConsultantInviteStatus.PENDING.value,
             expires_at=expires_at,
         )
@@ -620,6 +623,7 @@ class ConsultantService:
             organization_name=org.name,
             organization_id=org_id,
             invite_token=token,
+            invite_token_hash=hash_invite_token(token),
             status=ConsultantInviteStatus.PENDING.value,
             expires_at=expires_at,
         )
@@ -657,7 +661,7 @@ class ConsultantService:
         # Find the invite WITH lock to prevent race conditions (TD-02)
         result = await self.db.execute(
             select(ConsultantInvite)
-            .where(ConsultantInvite.invite_token == token)
+            .where(ConsultantInvite.invite_token_hash == hash_invite_token(token))
             .with_for_update()
             .options(joinedload(ConsultantInvite.consultant))
         )

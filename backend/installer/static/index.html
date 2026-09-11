@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>SCF Controls Platform — first-run setup</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<header>
+  <h1>SCF Controls Platform</h1>
+  <p class="lede">First-run setup. Every credential this platform needs is generated here and written to files only the operator account can read. You will not be asked to invent a password.</p>
+</header>
+
+<main>
+  <ol class="steps" id="steps">
+    <li data-step="token" class="current">Token</li>
+    <li data-step="database">Database</li>
+    <li data-step="identity">Sign-in</li>
+    <li data-step="review">Review</li>
+    <li data-step="done">Done</li>
+  </ol>
+
+  <section class="panel" data-panel="token">
+    <h2>Paste the setup token</h2>
+    <p>The launcher printed a token in your terminal. It is stored in a file next to your secrets, never in a link.</p>
+    <label for="token">Setup token</label>
+    <input type="password" id="token" autocomplete="off" spellcheck="false">
+    <p class="error" id="token-error" hidden></p>
+    <button id="token-next" type="button">Continue</button>
+  </section>
+
+  <section class="panel" data-panel="database" hidden>
+    <h2>Where should the platform store its data?</h2>
+    <fieldset>
+      <label><input type="radio" name="dbtype" value="bundled" checked> <strong>Bundled PostgreSQL</strong> — runs in this stack. Recommended.</label>
+      <label><input type="radio" name="dbtype" value="external"> <strong>External PostgreSQL</strong> — a server you already run.</label>
+    </fieldset>
+
+    <p class="note" id="db-bundled-note">Validation is not applicable to the bundled database: the stack initialises PostgreSQL with the generated password the first time it starts.</p>
+
+    <div id="db-external" hidden>
+      <div class="toggle">
+        <label><input type="radio" name="dbform" value="fields" checked> Discrete fields</label>
+        <label><input type="radio" name="dbform" value="dsn"> Connection string</label>
+      </div>
+
+      <div id="db-fields">
+        <div class="grid">
+          <div><label for="db-host">Host</label><input id="db-host" autocomplete="off"></div>
+          <div><label for="db-port">Port</label><input id="db-port" value="5432" autocomplete="off"></div>
+          <div><label for="db-name">Database</label><input id="db-name" value="cg_scf" autocomplete="off"></div>
+          <div><label for="db-user">User</label><input id="db-user" value="cg" autocomplete="off"></div>
+          <div><label for="db-password">Password</label><input id="db-password" type="password" autocomplete="off"></div>
+          <div><label for="db-sslmode">TLS mode</label>
+            <select id="db-sslmode">
+              <option value="require" selected>require</option>
+              <option value="verify-ca">verify-ca</option>
+              <option value="verify-full">verify-full</option>
+              <option value="disable">disable</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div id="db-dsn-box" hidden>
+        <label for="db-dsn">Connection string</label>
+        <input id="db-dsn" placeholder="postgresql://user@host:5432/cg_scf" autocomplete="off" spellcheck="false">
+        <label for="db-dsn-password">Password</label>
+        <input id="db-dsn-password" type="password" autocomplete="off">
+        <p class="note">The string is parsed into parts and rebuilt. Extra libpq parameters are refused.</p>
+      </div>
+
+      <label class="inline" hidden id="plaintext-wrap"><input type="checkbox" id="allow-plaintext"> I accept that <code>disable</code> sends the database password in cleartext on every boot.</label>
+
+      <button id="db-validate" type="button">Test this connection</button>
+      <ul class="checks" id="db-checks"></ul>
+      <p class="hint" id="db-hint" hidden></p>
+    </div>
+
+    <p class="error" id="db-error" hidden></p>
+    <button id="db-next" type="button">Continue</button>
+  </section>
+
+  <section class="panel" data-panel="identity" hidden>
+    <h2>How will people sign in?</h2>
+    <fieldset>
+      <label><input type="radio" name="idptype" value="external_oidc" checked> <strong>Your existing identity provider</strong> — Okta, Entra, Auth0, Google.</label>
+      <label><input type="radio" name="idptype" value="bundled_keycloak"> <strong>Bundled Keycloak</strong> — started as part of this stack.</label>
+      <label><input type="radio" name="idptype" value="none"> <strong>Neither for now</strong> — configure sign-in later.</label>
+    </fieldset>
+
+    <div id="idp-external">
+      <div><label for="oidc-issuer">Issuer URL</label><input id="oidc-issuer" placeholder="https://example.okta.com/oauth2/default" autocomplete="off"></div>
+      <div><label for="oidc-client-id">Client ID</label><input id="oidc-client-id" autocomplete="off"></div>
+      <div><label for="oidc-client-secret">Client secret (optional)</label><input id="oidc-client-secret" type="password" autocomplete="off"></div>
+      <p class="note">The secret is written to a file, never to <code>.env</code>. Leave it blank for a public client.</p>
+    </div>
+
+    <div id="idp-bundled" hidden>
+      <div><label for="kc-admin-user">Keycloak administrator username</label><input id="kc-admin-user" value="admin" autocomplete="off"></div>
+      <p class="note">This is Keycloak's own infrastructure account. Its password is generated and never shown; you will not use it to sign in to the platform.</p>
+      <div><label for="bootstrap-email">Your email address</label><input id="bootstrap-email" type="email" autocomplete="off"></div>
+      <p class="note">Keycloak creates this user with a one-time temporary password printed to the <code>idp-init</code> container log. You set your own password at first sign-in.</p>
+    </div>
+
+    <p class="error" id="idp-error" hidden></p>
+    <button id="idp-next" type="button">Continue</button>
+  </section>
+
+  <section class="panel" data-panel="review" hidden>
+    <h2>Review</h2>
+    <dl id="review-list"></dl>
+    <p class="note">Ten credential files will be created in your secrets directory with mode <code>0600</code>. None of them is displayed here or anywhere else. Existing files are never overwritten.</p>
+    <p class="error" id="provision-error" hidden></p>
+    <button id="provision" type="button">Generate credentials and write .env</button>
+  </section>
+
+  <section class="panel" data-panel="done" hidden>
+    <h2>Setup complete</h2>
+    <p>Credentials were written to <code id="done-dir"></code> and configuration to <code id="done-env"></code>. The installer has stopped and the setup token has been deleted.</p>
+    <h3>Next steps</h3>
+    <ol id="next-steps"></ol>
+  </section>
+</main>
+
+<script src="/app.js"></script>
+</body>
+</html>

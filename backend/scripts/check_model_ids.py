@@ -44,6 +44,7 @@ if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from services.model_registry import MODELS, ROLES, anthropic_model_ids  # noqa: E402
+from services.secrets import get_secret  # noqa: E402
 
 MODELS_URL = "https://api.anthropic.com/v1/models?limit=1000"
 API_VERSION = "2023-06-01"
@@ -95,7 +96,7 @@ def main() -> int:
     print(f"Registry declares {len(MODELS)} model(s) across {len(ROLES)} role(s).")
     print(f"Anthropic ids to check: {', '.join(registry_ids)}")
 
-    api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
+    api_key = (get_secret("ANTHROPIC_API_KEY", "") or "").strip()
     if not api_key:
         # A green tick nobody is notified about is not disclosure. On the
         # scheduled run — the one that exists to catch a retirement between pull

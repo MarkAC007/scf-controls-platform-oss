@@ -13,6 +13,8 @@ import logging
 from typing import List, Optional
 from datetime import date
 
+from services.secrets import get_secret, is_placeholder
+
 logger = logging.getLogger(__name__)
 
 
@@ -33,37 +35,46 @@ def _mask_email(email: Optional[str]) -> str:
 
 
 # Resend configuration
-RESEND_API_KEY = os.getenv("RESEND_API_KEY")
 RESEND_FROM_EMAIL = os.getenv("RESEND_FROM_EMAIL", "notifications@odin-scf.app")
 APP_URL = os.getenv("APP_URL", "http://localhost:5173")
 
-# Check if Resend is configured
-RESEND_ENABLED = bool(RESEND_API_KEY)
+try:
+    import resend
+    _RESEND_INSTALLED = True
+except ImportError:  # pragma: no cover - the package is in requirements.txt
+    _RESEND_INSTALLED = False
+    logger.error("❌ Resend package not installed. Run: pip install resend")
+
+
+def resend_enabled() -> bool:
+    """True when a usable Resend key is configured *right now*.
+
+    This replaces the old `RESEND_ENABLED` module constant. That constant was
+    computed at import, so an operator who added a key had to restart the API
+    and every worker before a single email would send. Resolving per call also
+    means the key can arrive from the database tier at runtime.
+
+    Setting `resend.api_key` here, immediately before every send path, is what
+    makes a rotated key take effect: the library holds it in module state.
+    """
+    if not _RESEND_INSTALLED:
+        return False
+    key = get_secret("RESEND_API_KEY")
+    if not key or is_placeholder(key):
+        return False
+    resend.api_key = key
+    return True
+
 
 # Log email service configuration on startup
 print("=" * 60)
 print("📧 EMAIL SERVICE CONFIGURATION")
 print("=" * 60)
-print(f"   RESEND_API_KEY: {'SET' if RESEND_API_KEY else 'NOT SET'}")
+print(f"   RESEND_API_KEY: {'SET' if get_secret('RESEND_API_KEY') else 'NOT SET'}")
 print(f"   RESEND_FROM_EMAIL: {RESEND_FROM_EMAIL}")
 print(f"   APP_URL: {APP_URL}")
-print(f"   RESEND_ENABLED: {RESEND_ENABLED}")
+print(f"   RESEND_ENABLED: {resend_enabled()}")
 print("=" * 60)
-
-if RESEND_ENABLED:
-    try:
-        import resend
-        resend.api_key = RESEND_API_KEY
-        logger.info("✅ Resend email service initialized successfully")
-        print("✅ Email service is ENABLED and ready to send emails")
-    except ImportError:
-        logger.error("❌ Resend package not installed. Run: pip install resend")
-        print("❌ Resend package not installed!")
-        RESEND_ENABLED = False
-else:
-    logger.warning("⚠️  RESEND_API_KEY not set - email notifications disabled")
-    print("⚠️  Email service is DISABLED (RESEND_API_KEY not set)")
-    print("   To enable: Add RESEND_API_KEY to your .env file")
 
 
 async def send_assignment_notification_email(
@@ -74,7 +85,7 @@ async def send_assignment_notification_email(
     assigned_by_name: str
 ):
     """Send email when user is assigned to a control or evidence."""
-    if not RESEND_ENABLED:
+    if not resend_enabled():
         logger.debug("Email notifications disabled - skipping assignment email")
         return None
 
@@ -129,7 +140,7 @@ async def send_task_due_notification_email(
     days_until_due: int
 ):
     """Send email when evidence collection task is due soon."""
-    if not RESEND_ENABLED:
+    if not resend_enabled():
         logger.debug("Email notifications disabled - skipping task due email")
         return None
 
@@ -198,7 +209,7 @@ async def send_task_overdue_notification_email(
     days_overdue: int
 ):
     """Send email when evidence collection task is overdue."""
-    if not RESEND_ENABLED:
+    if not resend_enabled():
         logger.debug("Email notifications disabled - skipping overdue email")
         return None
 
@@ -264,7 +275,7 @@ async def send_mention_notification_email(
     comment_preview: str
 ):
     """Send email when user is @mentioned in a comment."""
-    if not RESEND_ENABLED:
+    if not resend_enabled():
         logger.debug("Email notifications disabled - skipping mention email")
         return None
 
@@ -329,7 +340,7 @@ def send_event_notification_email_sync(
 
     Sync variant for Celery task contexts where awaiting is not possible.
     """
-    if not RESEND_ENABLED:
+    if not resend_enabled():
         logger.debug(f"Email notifications disabled - skipping {event_type} email")
         return None
 
@@ -392,7 +403,7 @@ async def send_daily_digest_email(
     notifications: List[dict]
 ):
     """Send daily digest of notifications."""
-    if not RESEND_ENABLED:
+    if not resend_enabled():
         logger.debug("Email notifications disabled - skipping digest email")
         return None
 
@@ -458,7 +469,7 @@ async def send_daily_digest_email(
 
 async def send_batch_emails(emails: List[dict]):
     """Send multiple emails in a single batch (up to 100)."""
-    if not RESEND_ENABLED:
+    if not resend_enabled():
         logger.debug("Email notifications disabled - skipping batch emails")
         return None
 
@@ -506,12 +517,12 @@ async def send_invitation_email(
     logger.info(f"   Invited by: {inviter_name}")
     logger.info(f"   Invite token: {invite_token[:8]}...")
     logger.info(f"   Custom message: {'Yes' if custom_message else 'No'}")
-    logger.info(f"   RESEND_ENABLED: {RESEND_ENABLED}")
-    logger.info(f"   RESEND_API_KEY set: {'Yes' if RESEND_API_KEY else 'No'}")
+    logger.info(f"   RESEND_ENABLED: {resend_enabled()}")
+    logger.info(f"   RESEND_API_KEY set: {'Yes' if get_secret('RESEND_API_KEY') else 'No'}")
     logger.info(f"   RESEND_FROM_EMAIL: {RESEND_FROM_EMAIL}")
     logger.info(f"   APP_URL: {APP_URL}")
 
-    if not RESEND_ENABLED:
+    if not resend_enabled():
         logger.warning(f"⚠️  EMAIL SERVICE DISABLED - Invitation to {_mask_email(to_email)} will NOT be sent")
         logger.warning(f"   To enable: Set RESEND_API_KEY environment variable")
         return None
@@ -620,7 +631,7 @@ async def send_invitation_email(
 # Test function
 async def test_email_service():
     """Test the email service configuration."""
-    if not RESEND_ENABLED:
+    if not resend_enabled():
         print("❌ Email service not configured")
         print("   Set RESEND_API_KEY environment variable")
         return False

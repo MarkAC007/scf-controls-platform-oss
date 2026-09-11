@@ -42,6 +42,10 @@ from services.text_extraction_service import (
 from services.anthropic_response import extract_text
 from services.model_registry import cost_cents as model_cost_cents, resolve as resolve_model
 
+from services.secrets import get_secret
+
+from db_url import get_sync_database_url
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -156,9 +160,7 @@ def is_cache_hit(
 # ---------------------------------------------------------------------------
 
 _SYNC_DATABASE_URL = (
-    os.getenv("DATABASE_URL", "postgresql+asyncpg://cg:cg@localhost:5432/cg_scf")
-    .replace("+asyncpg", "+psycopg2")
-    .replace("?ssl=require", "?sslmode=require")
+    get_sync_database_url("postgresql+asyncpg://cg:cg@localhost:5432/cg_scf")
 )
 
 _sync_engine = None
@@ -197,7 +199,7 @@ def _call_llm(system_prompt: str, user_prompt: str) -> dict:
             "anthropic package not installed — AI assessment cannot run in this worker"
         )
 
-    api_key = os.getenv("ANTHROPIC_API_KEY")
+    api_key = get_secret("ANTHROPIC_API_KEY")
     if not api_key:
         raise LLMUnavailableError(
             "ANTHROPIC_API_KEY not set — AI assessment cannot run in this worker"

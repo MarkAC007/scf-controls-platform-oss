@@ -319,7 +319,7 @@ async def callback(
             "code": code,
             "redirect_uri": oidc.OIDC_REDIRECT_URI,
             "client_id": oidc.OIDC_CLIENT_ID,
-            "client_secret": oidc.OIDC_CLIENT_SECRET,
+            "client_secret": oidc.get_client_secret(),
             "code_verifier": code_verifier,
         }
     )
@@ -413,7 +413,7 @@ async def refresh(body: RefreshRequest, db: AsyncSession = Depends(get_db)) -> R
             "grant_type": "refresh_token",
             "refresh_token": stored_refresh_token,
             "client_id": oidc.OIDC_CLIENT_ID,
-            "client_secret": oidc.OIDC_CLIENT_SECRET,
+            "client_secret": oidc.get_client_secret(),
         }
     )
 

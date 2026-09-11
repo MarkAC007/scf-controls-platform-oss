@@ -8,10 +8,12 @@ from sqlalchemy.orm import declarative_base
 import os
 import logging
 
+from db_url import get_database_url
+
 logger = logging.getLogger(__name__)
 
 # Get database URL from environment
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://odin:changeme@localhost:5432/odin_scf")
+DATABASE_URL = get_database_url("postgresql+asyncpg://odin:changeme@localhost:5432/odin_scf")
 
 # Database initialisation mode:
 # - "alembic" (default): Use Alembic migrations (recommended for production)
@@ -21,7 +23,7 @@ DB_INIT_MODE = os.getenv("DB_INIT_MODE", "alembic")
 # Create async engine
 engine = create_async_engine(
     DATABASE_URL,
-    echo=os.getenv("LOG_LEVEL", "info") == "debug",  # Log SQL in debug mode
+    echo=(os.getenv("LOG_LEVEL") or "info").lower() == "debug",  # Log SQL in debug mode
     pool_pre_ping=True,  # Verify connections before using
     pool_size=5,  # Connection pool size
     max_overflow=10,  # Max connections beyond pool_size

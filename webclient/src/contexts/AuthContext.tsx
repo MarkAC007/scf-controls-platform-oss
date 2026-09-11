@@ -27,6 +27,16 @@ interface AuthContextType {
   authReady: boolean
   /** True when the backend profile carries is_platform_admin — gates the Platform nav/pages */
   isPlatformAdmin: boolean
+  /**
+   * Gates Settings → Integrations (platform-wide tier-3 credentials, #947).
+   * Same as isPlatformAdmin for signed-in principals. API-key mode differs:
+   * the static key is auto-granted platform admin by the backend and the
+   * Integrations UI is the only credential write path a no-IdP install has,
+   * so it stays reachable there while the Platform pages (whose destructive
+   * catalog ops refuse the static key) stay hidden. The backend remains the
+   * authority: /api/admin/integrations answers 403 for anything less.
+   */
+  canManageIntegrations: boolean
   login: (credential: string) => void
   logout: () => void
   refreshUserProfile: () => Promise<void>
@@ -256,6 +266,7 @@ function OidcAuthProvider({ children }: { children: ReactNode }) {
     isAuthenticated: !!token,
     authReady,
     isPlatformAdmin: user?.is_platform_admin === true,
+    canManageIntegrations: user?.is_platform_admin === true,
     login,
     logout,
     refreshUserProfile,
@@ -281,6 +292,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // No user profile in API-key mode; destructive catalog ops require a real
       // session anyway, so the platform UI stays hidden here.
       isPlatformAdmin: false,
+      // The static key is platform admin server-side; see AuthContextType.
+      canManageIntegrations: true,
       login: () => {},
       logout: () => {},
       refreshUserProfile: async () => {}
@@ -456,6 +469,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     isAuthenticated: !!token,
     authReady,
     isPlatformAdmin: user?.is_platform_admin === true,
+    canManageIntegrations: user?.is_platform_admin === true,
     login,
     logout,
     refreshUserProfile
