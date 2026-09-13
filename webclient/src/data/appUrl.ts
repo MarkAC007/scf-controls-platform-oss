@@ -1,10 +1,11 @@
 /**
  * The app's URL vocabulary — every query parameter that names a location.
  *
- * This app selects screens from `activeTab` state; `react-router-dom` is a
- * dependency that drives nothing. Rather than give it the wheel, the address
- * bar mirrors that state: `?tab=` names the screen, and each screen that has
- * sub-state of its own adds parameters it alone owns.
+ * This app selects screens from `activeTab` state and deliberately uses no
+ * router library (`react-router-dom` was removed in 2026-09 — it drove
+ * nothing). Rather than give one the wheel, the address bar mirrors that
+ * state: `?tab=` names the screen, and each screen that has sub-state of its
+ * own adds parameters it alone owns.
  *
  * Everything here is pure except the three helpers at the bottom: takes a
  * search string, returns data or a new search string. No React. The components

@@ -23,12 +23,6 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
 // ─── Stubs ────────────────────────────────────────────────────────────────────
 
-globalThis.ResizeObserver = vi.fn().mockImplementation(() => ({
-  observe: vi.fn(),
-  unobserve: vi.fn(),
-  disconnect: vi.fn(),
-}))
-
 // ── Child components stubbed so tests focus on container behavior ──────────────
 
 vi.mock('../ScopingList', () => ({

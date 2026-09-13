@@ -46,7 +46,7 @@ vi.mock('dompurify', () => ({
 }))
 
 // Hoisted so the vi.mock factory below and the tests can share one document.
-// The suites here call vi.restoreAllMocks(), which strips the factory's
+// The suites here call vi.resetAllMocks(), which strips the factory's
 // resolved values, so any test that needs a *loaded* document (rather than the
 // breadcrumb, which renders during loading) re-arms getDocument itself.
 const { documentFixture } = vi.hoisted(() => ({
@@ -115,7 +115,7 @@ function renderReader(props?: Partial<DocumentReaderProps>) {
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 describe('DocumentReader breadcrumb', () => {
-  afterEach(() => vi.restoreAllMocks())
+  afterEach(() => vi.resetAllMocks())
 
   it('renders a "Generated Documents" back link', () => {
     renderReader()
@@ -141,7 +141,7 @@ describe('DocumentReader breadcrumb', () => {
 })
 
 describe('DocumentReader pager', () => {
-  afterEach(() => vi.restoreAllMocks())
+  afterEach(() => vi.resetAllMocks())
 
   it('shows "2 of 9 documents" position text (1-based)', () => {
     renderReader({ position: { index: 1, total: 9 } })
@@ -203,7 +203,7 @@ describe('DocumentReader pager', () => {
 })
 
 describe('DocumentReader keyboard navigation', () => {
-  afterEach(() => vi.restoreAllMocks())
+  afterEach(() => vi.resetAllMocks())
 
   it('ArrowLeft fires onPrev', () => {
     const onPrev = vi.fn()
@@ -261,7 +261,7 @@ describe('DocumentReader export buttons', () => {
     // to resolve — a bare vi.fn() returns undefined and the click throws.
     vi.mocked(downloadDocument).mockReset().mockResolvedValue(undefined)
   })
-  afterEach(() => vi.restoreAllMocks())
+  afterEach(() => vi.resetAllMocks())
 
   it('renders a Word button in the action row', async () => {
     renderReader()

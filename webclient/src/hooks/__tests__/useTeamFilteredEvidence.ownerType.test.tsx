@@ -35,7 +35,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  vi.restoreAllMocks()
+  vi.resetAllMocks()
 })
 
 describe('when nothing is filtered', () => {

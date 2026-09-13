@@ -16,13 +16,6 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 
 // ─── Stubs ────────────────────────────────────────────────────────────────────
 
-// ResizeObserver not available in jsdom
-globalThis.ResizeObserver = vi.fn().mockImplementation(() => ({
-  observe: vi.fn(),
-  unobserve: vi.fn(),
-  disconnect: vi.fn(),
-}))
-
 // react-window: render all items in a flat div
 vi.mock('react-window', () => ({
   FixedSizeList: ({

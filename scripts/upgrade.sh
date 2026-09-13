@@ -24,6 +24,7 @@
 # Usage:
 #   scripts/upgrade.sh vX.Y.Z [--manifest FILE] [--yes]
 #   scripts/upgrade.sh --rollback <backup-timestamp>
+#   scripts/upgrade.sh --resume-post-checkout [<backup-timestamp>]
 #   scripts/upgrade.sh --help
 #
 #   vX.Y.Z            target release tag (the "v" is optional; 0.9.0 == v0.9.0)
@@ -35,6 +36,15 @@
 #                     Also restores backups/secrets-<ts>.tar.gz into
 #                     SCF_SECRETS_DIR when both are present, after setting the
 #                     current credentials aside.
+#   --resume-post-checkout [<ts>]
+#                     Run ONLY the post-checkout half of an upgrade (build,
+#                     migrate, start, verify, plus this release's own .env
+#                     fixups) against the code ALREADY checked out here.
+#                     upgrade.sh re-execs itself with this flag straight after
+#                     it checks the target tag out, so the steps that the
+#                     TARGET release adds to this script actually run on the hop
+#                     that introduces them. Pass a backup timestamp to finish a
+#                     run by hand after the re-exec was skipped.
 #
 # COMPOSE_FILE is honoured from the environment, then from .env (a colon-
 # separated list becomes multiple -f flags), so an install using the file-backed
@@ -70,6 +80,26 @@ COMPOSE_FILE_ARGS=()                        # `-f a -f b`, EMPTY when unconfigur
 PG_VOL_LOGICAL="postgres_data"
 MINIO_VOL_LOGICAL="minio_data"
 
+# --- Upgrade state shared by Phases 0-3 and Phases 4-6 -----------------------
+# Phases 4-6 live in their own function (do_upgrade_post_checkout) because a
+# separate PROCESS may run them after the Phase 3 re-exec (#979). These are the
+# only values that cross that boundary; declared here so `set -u` cannot turn a
+# path that never sets one into an obscure unbound-variable failure mid-upgrade.
+SELF_SHA256=""          # sha256 of the RUNNING script, taken before any checkout
+TARGET=""               # target version, 'v' stripped
+TAG=""                  # "v${TARGET}"
+INSTALLED=""            # version this install was on BEFORE the checkout
+M_MIN="0.0.0"           # manifest.min_upgradable_version
+M_RANGE=""              # manifest.migration_range (JSON array, as a string)
+MANIFEST_FILE=""        # path to the validated release manifest
+MANIFEST_IS_TMP=0       # 1 when MANIFEST_FILE is ours to delete
+ROLLBACK_TS=""          # timestamp of the Phase 2 backup set
+PRE_REF=""              # pre-upgrade git ref (also backups/<ts>_ref.txt)
+PRE_IMAGE_ID=""         # backend image id before the upgrade
+PG_DUMP_FILE=""         # backup set members, for the Phase 6 summary
+MINIO_TAR_FILE=""
+SUM_FILE=""
+
 # --- Colour / logging --------------------------------------------------------
 if [[ -t 1 ]]; then
   C_RESET=$'\033[0m'; C_RED=$'\033[31m'; C_GREEN=$'\033[32m'
@@ -102,6 +132,20 @@ _selfguard() {
 
 # --- Small helpers -----------------------------------------------------------
 have() { command -v "$1" >/dev/null 2>&1; }
+
+# sha256 of a file, or "" when neither tool is available. Used to decide whether
+# the target release actually changed this script (see maybe_reexec_post_checkout).
+# An empty answer is NOT treated as "identical" anywhere — absence of a hash
+# means "cannot prove they match", which makes the re-exec happen.
+file_sha256() {
+  local f="$1"
+  [[ -f "$f" ]] || return 0
+  if have sha256sum; then
+    sha256sum "$f" 2>/dev/null | awk '{print $1}'
+  elif have shasum; then
+    shasum -a 256 "$f" 2>/dev/null | awk '{print $1}'
+  fi
+}
 
 # Pass the resolved file set explicitly so the `:latest` scan, the `config -q`
 # gate, the migration one-shot and every other call see the same files the
@@ -743,31 +787,294 @@ _wait_health() {
 }
 
 # =============================================================================
+# POST-CHECKOUT RE-EXEC  (#979)
+# =============================================================================
+# THE PROBLEM. bash reads and parses this whole file before it runs a line of
+# it. Phase 3 then checks out the target tag — which REPLACES this file on disk
+# — but the interpreter carries on executing the copy it already parsed: the
+# PRE-upgrade release's. So any step a release ADDS to upgrade.sh is skipped on
+# the one hop that introduces it, which is the only hop where it matters.
+# v0.33.0's ensure_storage_profile() is the worked example: the upgrade to
+# v0.33.0 reported success with zero occurrences of COMPOSE_PROFILES in its log,
+# because the function did not exist in the process that ran.
+#
+# THE FIX. After Phase 3 succeeds, exec the freshly checked-out script and let
+# the TARGET release run its own Phases 4-6.
+#
+# ---------------------------------------------------------------------------
+# THE HANDOFF CONTRACT  (stable; an OLD script hands these to a NEW one)
+# ---------------------------------------------------------------------------
+# The exec'ing script is always the OLDER of the two, so it cannot know the new
+# script's internals. The contract is therefore deliberately small, entirely
+# environment-based, and every field is OPTIONAL to consume: a future release
+# that needs something not listed here must be able to re-derive it (from the
+# backup set, the checkout, or .env) rather than expect an old runner to supply
+# it. Nothing here is secret; none of it is ever logged as a value that matters.
+#
+#   SCF_UPGRADE_REEXECED=1      Loop guard. Set by the exec'ing process. When
+#                               it is already set, NEVER exec again — continue
+#                               in-process. This is the only MANDATORY field.
+#   SCF_UPGRADE_TARGET          Target version, 'v' stripped (e.g. 0.33.0).
+#                               Falls back to webclient/package.json.
+#   SCF_UPGRADE_FROM_VERSION    Version this install was on BEFORE the checkout.
+#                               Cannot be re-read after Phase 3 (package.json is
+#                               the target's by then); falls back to the backup
+#                               set's ${TS}_v<version>.dump filename.
+#   SCF_UPGRADE_BACKUP_TS       Timestamp of the Phase 2 backup set. This is
+#                               what rollback-on-failure restores from, so the
+#                               resumed process REFUSES to start Phase 4 until
+#                               it has found the matching dump on disk.
+#   SCF_UPGRADE_PRE_REF         Pre-upgrade git ref. Also on disk as
+#                               backups/${TS}_ref.txt, which is authoritative.
+#   SCF_UPGRADE_PRE_IMAGE_ID    Backend image id before the upgrade, for the
+#                               Phase 5d "the rebuild took effect" check. Empty
+#                               when the backend was not running.
+#   SCF_UPGRADE_MANIFEST        Path to the validated release manifest. The
+#                               resumed process RE-READS and RE-VALIDATES it
+#                               under its own (possibly stricter) rules — the
+#                               old script's verdict is not inherited.
+#   SCF_UPGRADE_MANIFEST_TMP    1 when the manifest is a tempfile the resumed
+#                               process should delete when it finishes.
+#   SCF_UPGRADE_ASSUME_YES      1 when --yes was given (unattended runs).
+#   SCF_UPGRADE_COMPOSE_FILE    The RESOLVED colon-joined compose file set, so
+#                               the resumed process rebuilds and migrates the
+#                               same overlay the running stack came up from.
+#   SCF_UPGRADE_SECRETS_DIR     The RESOLVED credential directory, so the
+#                               resumed process does not have to re-derive it
+#                               from an environment the exec did not inherit.
+#
+# WHY ENV AND NOT FLAGS: an old script passing a flag a new script does not know
+# would be a hard `unknown option` failure mid-upgrade. An unknown SCF_UPGRADE_*
+# variable is simply ignored, which is the failure mode we want between releases.
+#
+# ---------------------------------------------------------------------------
+# TRAPS AND exec
+# ---------------------------------------------------------------------------
+# exec REPLACES the process, so nothing is carried across it — no traps, no
+# open cleanup, no shell state. This script installs NO ERR/EXIT traps at all
+# (deliberately: failure handling is explicit, via rollback_after_failure at
+# each fallible step), so there is nothing to clear before the exec and nothing
+# that could double-fire after it. The rollback guarantee travels instead as
+# SCF_UPGRADE_BACKUP_TS, and resume_post_checkout proves the backup set is on
+# disk BEFORE it enters Phase 4 — so the resumed process can always roll back.
+# If a future edit adds a trap, it must be cleared with `trap - ERR EXIT`
+# immediately before the exec below.
+#
+# `shopt -s execfail` is set so that a FAILED exec (unreadable script, no
+# interpreter) returns here instead of killing the shell: we then continue
+# in-process, which is exactly today's behaviour and no worse, but say so.
+
+# Set by the exec'ing process when it decides NOT to re-exec, so Phase 6 can
+# warn that the target release's own upgrade steps did not run.
+REEXEC_SKIPPED_REASON=""
+
+# Re-exec the checked-out script for Phases 4-6. Returns (without exec'ing) when
+# the re-exec is unnecessary or impossible; never returns when it execs.
+maybe_reexec_post_checkout() {
+  local new_script="scripts/upgrade.sh" new_sha=""
+
+  if [[ "${SCF_UPGRADE_REEXECED:-}" == "1" ]]; then
+    info "Re-exec guard is set (SCF_UPGRADE_REEXECED=1) — continuing in this process. This IS the ${TAG} copy of upgrade.sh."
+    return 0
+  fi
+
+  if [[ ! -f "$new_script" ]]; then
+    REEXEC_SKIPPED_REASON="${TAG} has no ${new_script}"
+    warn "${TAG} does not contain ${new_script}; continuing in the pre-upgrade copy of this script."
+    return 0
+  fi
+
+  new_sha="$(file_sha256 "$new_script")"
+  if [[ -n "$SELF_SHA256" && -n "$new_sha" && "$SELF_SHA256" == "$new_sha" ]]; then
+    info "${TAG} ships a byte-identical ${new_script} (sha256 ${new_sha:0:12}…) — no re-exec needed."
+    return 0
+  fi
+  if [[ -z "$SELF_SHA256" || -z "$new_sha" ]]; then
+    info "Could not hash this script or the checked-out one (no sha256sum/shasum) — re-exec'ing anyway, which is the safe default."
+  else
+    info "${TAG} changed ${new_script} (sha256 ${SELF_SHA256:0:12}… -> ${new_sha:0:12}…) — re-exec'ing it so ${TAG}'s own upgrade steps run."
+  fi
+
+  # Build the handoff. Exported explicitly rather than inherited, so what
+  # crosses the exec is exactly the documented contract.
+  export SCF_UPGRADE_REEXECED=1
+  export SCF_UPGRADE_TARGET="$TARGET"
+  export SCF_UPGRADE_FROM_VERSION="$INSTALLED"
+  export SCF_UPGRADE_BACKUP_TS="$ROLLBACK_TS"
+  export SCF_UPGRADE_PRE_REF="$PRE_REF"
+  export SCF_UPGRADE_PRE_IMAGE_ID="${PRE_IMAGE_ID:-}"
+  export SCF_UPGRADE_MANIFEST="${MANIFEST_FILE:-}"
+  export SCF_UPGRADE_MANIFEST_TMP="${MANIFEST_IS_TMP:-0}"
+  export SCF_UPGRADE_ASSUME_YES="${ASSUME_YES:-0}"
+  export SCF_UPGRADE_COMPOSE_FILE="$COMPOSE_FILE"
+  SCF_UPGRADE_SECRETS_DIR="$(resolve_secrets_dir)"; export SCF_UPGRADE_SECRETS_DIR
+
+  info "exec bash ${new_script} --resume-post-checkout  (backup ${ROLLBACK_TS}, target ${TARGET})"
+  # `bash "$f"` rather than `"$f"`: the checked-out file's mode bit is whatever
+  # git recorded, and an upgrade must not fail on a lost +x.
+  shopt -s execfail
+  exec bash "$new_script" --resume-post-checkout
+  # Only reached when exec itself failed.
+  shopt -u execfail
+  REEXEC_SKIPPED_REASON="exec of ${new_script} failed"
+  warn "could not exec ${new_script}; continuing in the pre-upgrade copy of this script. ${TAG}'s own upgrade steps will NOT run — see the notice at the end of this run."
+  return 0
+}
+
+# Entry point for --resume-post-checkout. We are ALREADY on the target tag and
+# this file is the target release's copy: rebuild the state Phases 4-6 need,
+# re-validate the manifest under THIS script's rules, then run them.
+resume_post_checkout() {
+  local ts_arg="${1:-}"
+
+  step "Resuming the upgrade in the checked-out release's own scripts/upgrade.sh (post-checkout)"
+
+  ROLLBACK_TS="${SCF_UPGRADE_BACKUP_TS:-$ts_arg}"
+  [[ -n "$ROLLBACK_TS" ]] \
+    || die "--resume-post-checkout needs the backup timestamp of the run it is finishing. Pass it: scripts/upgrade.sh --resume-post-checkout <backup-timestamp> (see ./backups/)."
+
+  # The backup set is the rollback guarantee. Prove it is on disk BEFORE any of
+  # Phase 4 runs — a resumed process that cannot find its backup must not be the
+  # one to discover that after a failed migration.
+  # These names are generated by Phase 2 from a date stamp and a semver, so they
+  # hold no whitespace or shell metacharacters; this is the same lookup
+  # do_rollback performs over the same set.
+  # shellcheck disable=SC2012
+  PG_DUMP_FILE="$(ls "${BACKUPS_DIR}/${ROLLBACK_TS}"_v*.dump 2>/dev/null | head -1 || true)"
+  [[ -n "$PG_DUMP_FILE" && -f "$PG_DUMP_FILE" ]] \
+    || die "no Postgres dump for backup timestamp '${ROLLBACK_TS}' in ${BACKUPS_DIR} (expected ${ROLLBACK_TS}_v*.dump). Refusing to build or migrate without a backup to roll back to."
+  # shellcheck disable=SC2012
+  MINIO_TAR_FILE="$(ls "${BACKUPS_DIR}/${ROLLBACK_TS}"_v*_minio.tgz 2>/dev/null | head -1 || true)"
+  SUM_FILE="${BACKUPS_DIR}/${ROLLBACK_TS}_checksums.sha256"
+
+  # INSTALLED cannot be read from webclient/package.json any more: the checkout
+  # already replaced it with the target's. Take it from the handoff, else from
+  # the dump filename the Phase 2 backup encoded it into.
+  INSTALLED="${SCF_UPGRADE_FROM_VERSION:-}"
+  if [[ -z "$INSTALLED" ]]; then
+    INSTALLED="$(basename "$PG_DUMP_FILE")"
+    INSTALLED="${INSTALLED#"${ROLLBACK_TS}"_v}"
+    INSTALLED="${INSTALLED%.dump}"
+  fi
+  [[ -n "$INSTALLED" ]] || die "could not determine the pre-upgrade version. Pass it as SCF_UPGRADE_FROM_VERSION."
+
+  TARGET="$(strip_v "${SCF_UPGRADE_TARGET:-}")"
+  [[ -n "$TARGET" ]] || TARGET="$(strip_v "$(jq_pkg_version)")"
+  [[ -n "$TARGET" ]] \
+    || die "could not determine the target version (no SCF_UPGRADE_TARGET and webclient/package.json is unreadable)."
+  TAG="v${TARGET}"
+
+  PRE_REF="${SCF_UPGRADE_PRE_REF:-}"
+  local ref_file="${BACKUPS_DIR}/${ROLLBACK_TS}_ref.txt"
+  # The file on disk is authoritative: do_rollback reads it, not our variable.
+  [[ -f "$ref_file" ]] && PRE_REF="$(tr -d '[:space:]' < "$ref_file")"
+  [[ -n "$PRE_REF" ]] \
+    || die "no pre-upgrade git ref for backup ${ROLLBACK_TS} (expected ${ref_file}); a rollback could not know which code to return to."
+
+  PRE_IMAGE_ID="${SCF_UPGRADE_PRE_IMAGE_ID:-}"
+  MANIFEST_IS_TMP="${SCF_UPGRADE_MANIFEST_TMP:-0}"
+
+  info "Resumed:  ${INSTALLED} -> ${TARGET}   backup=${ROLLBACK_TS}   pre-upgrade ref=${PRE_REF}"
+
+  # The checkout really did land on the target. A mismatch here means the
+  # working tree is not what the handoff says it is; stop before building.
+  local checked_out; checked_out="$(strip_v "$(jq_pkg_version)")"
+  if [[ -n "$checked_out" && "$checked_out" != "$TARGET" ]]; then
+    warn "webclient/package.json reports ${checked_out} but the target is ${TARGET}. Continuing (a release can lag its own version bump), but verify the checkout if the upgrade misbehaves."
+  fi
+
+  # --- Requirement: re-validate the manifest under THIS release's rules ------
+  # The manifest gate is otherwise applied by the OLD script alone, so a release
+  # that tightens validation could never rely on it for the hop that ships the
+  # tightening. Re-read the file rather than trust values passed through.
+  MANIFEST_FILE="${SCF_UPGRADE_MANIFEST:-${MANIFEST_OPT:-}}"
+  M_MIN=""; M_RANGE=""
+  if [[ -n "$MANIFEST_FILE" && -f "$MANIFEST_FILE" ]]; then
+    step "Re-validating the release manifest under ${TAG}'s own rules"
+    revalidate_manifest
+  else
+    MANIFEST_FILE=""
+    warn "no release manifest available to re-validate (none handed over, and no --manifest given). Continuing: the pre-checkout run validated one, and the remaining phases gate on the RUNNING code, not on the manifest."
+  fi
+  [[ -n "$M_MIN" ]] || M_MIN="0.0.0"
+
+  do_upgrade_post_checkout
+}
+
+# Parse + re-gate the manifest from MANIFEST_FILE, filling M_MIN / M_RANGE.
+# Any failure here happens BEFORE the build and migration, so the correct
+# recovery is to put the code back — not to restore the database, which has not
+# been touched. revert_checkout_and_fail does exactly that.
+revalidate_manifest() {
+  python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$MANIFEST_FILE" \
+    || revert_checkout_and_fail "the release manifest is not valid JSON under ${TAG}'s parser: ${MANIFEST_FILE}"
+
+  local m_version m_breaking
+  m_version="$(manifest_field version)"
+  M_MIN="$(manifest_field min_upgradable_version)"
+  M_RANGE="$(manifest_field migration_range)"
+  m_breaking="$(manifest_field breaking)"
+
+  [[ -z "$m_version" || "$(strip_v "$m_version")" == "$TARGET" ]] \
+    || revert_checkout_and_fail "manifest version (${m_version}) does not match the checked-out target (${TARGET})."
+
+  [[ -n "$M_MIN" ]] || M_MIN="0.0.0"
+  if ! semver_ge "$INSTALLED" "$M_MIN"; then
+    revert_checkout_and_fail "${TAG} requires upgrading FROM >= ${M_MIN}, but this install was on ${INSTALLED}. (${TAG}'s own manifest rules reject this hop; the pre-upgrade script's did not.)"
+  fi
+  success "Manifest re-validated by ${TAG}: version=${m_version:-$TARGET} min_upgradable=${M_MIN} breaking=${m_breaking:-false}."
+}
+
+# Abort a resumed run BEFORE anything destructive: put the code back on the
+# pre-upgrade ref, restart the stack, and point at the backup that is still
+# there. Deliberately NOT a full do_rollback — no build and no migration has
+# run at this point, so the database is untouched and restoring it would be an
+# outage in service of nothing.
+revert_checkout_and_fail() {
+  local reason="$1"
+  warn "UPGRADE STOPPED before any build or migration: ${reason}"
+  warn "Returning the working tree to ${PRE_REF} and restarting services. The database and evidence store were never touched."
+  if ! git checkout "$PRE_REF"; then
+    die "could not check out ${PRE_REF}. Reason for stopping: ${reason}. Your data is unchanged and backup ${ROLLBACK_TS} is intact; restore the code by hand ('git checkout ${PRE_REF}') then 'docker compose up -d --build'."
+  fi
+  # No SCF_MIGRATE_ACK: nothing migrated, so the DB is still at this ref's head
+  # and the guard permits — and compose bakes env into containers at CREATE
+  # time, so a temporary ack would persist and pre-acknowledge future migrations.
+  compose up -d >/dev/null 2>&1 || true
+  die "Upgrade stopped and the code was returned to ${PRE_REF}. Reason: ${reason}. Backup ${ROLLBACK_TS} is retained under ${BACKUPS_DIR}/."
+}
+
+# =============================================================================
 # MAIN UPGRADE FLOW
 # =============================================================================
+# Phases 0-3. TARGET / TAG / INSTALLED / M_MIN / M_RANGE / ROLLBACK_TS /
+# PRE_REF / PRE_IMAGE_ID / PG_DUMP_FILE / MINIO_TAR_FILE / SUM_FILE /
+# MANIFEST_FILE / MANIFEST_IS_TMP are GLOBAL on purpose: do_upgrade_post_checkout
+# reads them, and a resumed process (--resume-post-checkout, after the re-exec)
+# populates the same names from the handoff contract instead. Keeping one set of
+# names means Phases 4-6 cannot tell which way they were entered.
 do_upgrade() {
   local target_raw="$1"
-  local TARGET TAG
   TARGET="$(strip_v "$target_raw")"
   TAG="v${TARGET}"
   [[ "$TARGET" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+].*)?$ ]] \
     || die "target '$target_raw' is not a semantic version like v0.9.0."
 
-  local INSTALLED
   INSTALLED="$(jq_pkg_version)"
   [[ -n "$INSTALLED" ]] || die "could not read installed version from webclient/package.json."
 
   # -------------------------------------------------------------------------
   step "Phase 0 — Load and validate the release manifest for ${TAG}"
   # -------------------------------------------------------------------------
-  local tmp_manifest="" cleanup_manifest=0
+  local tmp_manifest=""
+  MANIFEST_IS_TMP=0
   if [[ -n "${MANIFEST_OPT:-}" ]]; then
     [[ -f "$MANIFEST_OPT" ]] || die "--manifest file not found: $MANIFEST_OPT"
     MANIFEST_FILE="$MANIFEST_OPT"
     info "Using local manifest (air-gap): $MANIFEST_FILE"
   else
     have curl || die "curl unavailable and no --manifest given. Provide --manifest FILE for offline installs."
-    tmp_manifest="$(mktemp)"; cleanup_manifest=1
+    tmp_manifest="$(mktemp)"; MANIFEST_IS_TMP=1
     local url="https://github.com/${OSS_REPO}/releases/download/${TAG}/upgrade-manifest.json"
     info "Fetching manifest: $url"
     if ! curl -fsSL "$url" -o "$tmp_manifest"; then
@@ -782,17 +1089,17 @@ do_upgrade() {
   # Validate the manifest parses and is for the expected version.
   python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$MANIFEST_FILE" \
     || die "manifest is not valid JSON: $MANIFEST_FILE"
-  local m_version m_min m_breaking m_summary m_range m_stops
+  local m_version m_breaking m_summary m_stops
   m_version="$(manifest_field version)"
-  m_min="$(manifest_field min_upgradable_version)"
+  M_MIN="$(manifest_field min_upgradable_version)"
   m_breaking="$(manifest_field breaking)"
   m_summary="$(manifest_field summary)"
-  m_range="$(manifest_field migration_range)"
+  M_RANGE="$(manifest_field migration_range)"
   m_stops="$(manifest_field required_stops)"
   [[ -z "$m_version" || "$(strip_v "$m_version")" == "$TARGET" ]] \
     || die "manifest version ($m_version) does not match target ($TARGET). Wrong manifest supplied."
-  [[ -n "$m_min" ]] || m_min="0.0.0"
-  info "Manifest OK: version=${m_version:-$TARGET} min_upgradable=${m_min} breaking=${m_breaking:-false}"
+  [[ -n "$M_MIN" ]] || M_MIN="0.0.0"
+  info "Manifest OK: version=${m_version:-$TARGET} min_upgradable=${M_MIN} breaking=${m_breaking:-false}"
   [[ -n "$m_summary" ]] && info "Summary: $m_summary"
 
   # Confirm the tag actually exists (yanked-release guard). Remote first; for
@@ -821,12 +1128,12 @@ do_upgrade() {
   success "Working tree clean (tracked files)."
 
   # 1b. Forward-only floor: installed >= manifest.min_upgradable_version.
-  if ! semver_ge "$INSTALLED" "$m_min"; then
+  if ! semver_ge "$INSTALLED" "$M_MIN"; then
     local stops_hint=""
     [[ -n "$m_stops" && "$m_stops" != "[]" ]] && stops_hint=" Required intermediate stop(s): ${m_stops}."
-    die "this release requires upgrading FROM >= ${m_min}, but you are on ${INSTALLED}. Upgrade to ${m_min} first, then to ${TARGET}.${stops_hint}"
+    die "this release requires upgrading FROM >= ${M_MIN}, but you are on ${INSTALLED}. Upgrade to ${M_MIN} first, then to ${TARGET}.${stops_hint}"
   fi
-  success "Version floor satisfied (installed ${INSTALLED} >= min ${m_min})."
+  success "Version floor satisfied (installed ${INSTALLED} >= min ${M_MIN})."
 
   # 1c. No downgrade.
   if ! semver_gt "$TARGET" "$INSTALLED"; then
@@ -835,7 +1142,7 @@ do_upgrade() {
   success "Target ${TARGET} is a forward upgrade from ${INSTALLED}."
 
   # 1d. .env drift vs .env.example (+ manifest.env_added). WARN, non-fatal.
-  check_env_drift "$m_range"  # passes range unused; env_added read inside
+  check_env_drift "$M_RANGE"  # passes range unused; env_added read inside
 
   # 1d-bis. SCF_SECRET_KEY. Fatal ONLY when encrypted rows already exist.
   check_secret_key
@@ -995,7 +1302,12 @@ do_upgrade() {
   info "  Sums:     ${sum_file}"
 
   # From here on, a failure triggers automatic ATOMIC rollback to this backup.
-  local ROLLBACK_TS="$TS"
+  # Global, and handed across the re-exec as SCF_UPGRADE_BACKUP_TS.
+  ROLLBACK_TS="$TS"
+  PRE_REF="$(tr -d '[:space:]' < "$ref_file")"
+  PG_DUMP_FILE="$pg_dump"
+  MINIO_TAR_FILE="$minio_tar"
+  SUM_FILE="$sum_file"
 
   # -------------------------------------------------------------------------
   step "Phase 3 — Fetch and checkout ${TAG}"
@@ -1010,6 +1322,22 @@ do_upgrade() {
   fi
   success "Checked out ${TAG}."
 
+  # scripts/upgrade.sh on disk is now ${TAG}'s copy, but THIS process is still
+  # running the pre-upgrade one. Hand the rest of the upgrade to the new file so
+  # the steps ${TAG} adds to it actually run (#979). This either never returns,
+  # or returns having explained why it did not re-exec.
+  maybe_reexec_post_checkout
+
+  do_upgrade_post_checkout
+}
+
+# Phases 4-6. Entered either straight after Phase 3 (when no re-exec was needed
+# or possible) or as the first thing a --resume-post-checkout process does. It
+# reads only the globals listed above do_upgrade, never do_upgrade's locals, so
+# the two entry paths are indistinguishable from here on.
+do_upgrade_post_checkout() {
+  local pg_dump="$PG_DUMP_FILE" minio_tar="$MINIO_TAR_FILE" sum_file="$SUM_FILE"
+
   # -------------------------------------------------------------------------
   step "Phase 4 — Build, migrate as a one-shot, then start"
   # -------------------------------------------------------------------------
@@ -1019,7 +1347,7 @@ do_upgrade() {
   if [[ -f RELEASE_META.yml ]]; then
     MIN_UPGRADABLE_VERSION="$(read_yaml_scalar RELEASE_META.yml min_upgradable_version)"
   fi
-  [[ -n "${MIN_UPGRADABLE_VERSION:-}" ]] || MIN_UPGRADABLE_VERSION="$m_min"
+  [[ -n "${MIN_UPGRADABLE_VERSION:-}" ]] || MIN_UPGRADABLE_VERSION="$M_MIN"
   info "BUILD_STAMP=${BUILD_STAMP}  MIN_UPGRADABLE_VERSION=${MIN_UPGRADABLE_VERSION}"
 
   info "Building backend image..."
@@ -1082,8 +1410,8 @@ do_upgrade() {
     rollback_after_failure "$ROLLBACK_TS" "alembic current ($cur) != head ($head): the database is not at the code's head revision."
   fi
   success "Database is at Alembic head (${cur})."
-  if [[ -n "$m_range" && "$m_range" != "[]" ]]; then
-    info "Manifest migration_range head (for reference): $(python3 -c 'import json,sys; a=json.loads(sys.argv[1]); print(a[-1] if a else "")' "$m_range" 2>/dev/null || true)"
+  if [[ -n "$M_RANGE" && "$M_RANGE" != "[]" ]]; then
+    info "Manifest migration_range head (for reference): $(python3 -c 'import json,sys; a=json.loads(sys.argv[1]); print(a[-1] if a else "")' "$M_RANGE" 2>/dev/null || true)"
   fi
 
   # 5c. Running-code identity: read the image-baked build_info.json (NOT the
@@ -1137,11 +1465,35 @@ except Exception:
   echo
   warn "Reminder: refresh your browser to load the new UI. And never run 'docker compose down -v' — it deletes your database and evidence."
 
+  warn_if_upgrade_script_drifted
+
   # (plain `if`, not `[[ ]] &&`: as the last command of this function a false
   # condition would make a successful --manifest upgrade exit nonzero)
-  if [[ "$cleanup_manifest" == "1" && -n "$tmp_manifest" ]]; then
-    rm -f "$tmp_manifest"
+  if [[ "${MANIFEST_IS_TMP:-0}" == "1" && -n "${MANIFEST_FILE:-}" ]]; then
+    rm -f "$MANIFEST_FILE"
   fi
+}
+
+# The issue's "at minimum" mitigation (#979), for the runs where the re-exec did
+# NOT happen: say plainly that the target release changed upgrade.sh, that this
+# run therefore executed the PRE-upgrade copy, and how to apply the missing
+# steps. Note that re-running `upgrade.sh vX.Y.Z` is NOT the remedy — Phase 1c
+# refuses it as a non-forward upgrade now that the install IS on the target — so
+# point at the post-checkout half, which is what was skipped.
+#
+# Silent in the two cases where there is nothing to say: this process IS the
+# target's copy (it re-exec'd, or resumed), and the target shipped a
+# byte-identical script.
+warn_if_upgrade_script_drifted() {
+  [[ -n "${REEXEC_SKIPPED_REASON:-}" ]] || return 0
+  local now_sha; now_sha="$(file_sha256 "scripts/upgrade.sh")"
+  [[ -n "$SELF_SHA256" && -n "$now_sha" && "$SELF_SHA256" != "$now_sha" ]] || return 0
+  echo
+  warn "${TAG} CHANGED scripts/upgrade.sh, and this run could not hand over to it (${REEXEC_SKIPPED_REASON})."
+  warn "Everything after the checkout therefore ran ${TAG}'s PREDECESSOR's copy of this script, so any upgrade step ${TAG} adds — a new .env key, a new profile, a new preflight — has NOT been applied."
+  warn "Apply them now by running the post-checkout half once, against the code that is already checked out:"
+  warn "    scripts/upgrade.sh --resume-post-checkout ${ROLLBACK_TS}"
+  warn "(It rebuilds, re-runs 'alembic upgrade head' — a no-op now — restarts the stack and re-verifies. Do NOT re-run 'scripts/upgrade.sh ${TAG}': you are already on ${TARGET}, so it stops as a non-forward upgrade.)"
 }
 
 # Automatic rollback wrapper used inside phases 4/5.
@@ -1254,15 +1606,42 @@ measure_vol_mb() {
 # ARG PARSING + DISPATCH
 # =============================================================================
 print_help() {
-  sed -n '2,44p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  # The range must cover the banner comment block at the top of this file: from
+  # its opening `# ===` rule to its closing one. Derive it rather than hardcode
+  # it, so editing the banner cannot silently truncate --help (or spill the
+  # code below it into the help text).
+  local first last
+  first="$(grep -n '^# =\{10,\}' "${BASH_SOURCE[0]}" | sed -n '1s/:.*//p')"
+  last="$(grep -n '^# =\{10,\}' "${BASH_SOURCE[0]}" | sed -n '2s/:.*//p')"
+  [[ -n "$first" && -n "$last" ]] || { first=2; last=54; }
+  sed -n "${first},${last}p" "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 main() {
   _selfguard
+
+  # Hash THIS file now, before anything can check out a different copy over it.
+  # After Phase 3, "$0" names the TARGET release's bytes, so a hash taken then
+  # would compare the new script against itself and always report "identical" —
+  # the precise blind spot that hid #979.
+  SELF_SHA256="$(file_sha256 "${BASH_SOURCE[0]}")"
+
+  # Apply the re-exec handoff (see "THE HANDOFF CONTRACT" above) BEFORE
+  # resolve_compose_files, which reads COMPOSE_FILE_ENV, and before any call
+  # that resolves the credential directory.
+  if [[ "${SCF_UPGRADE_REEXECED:-}" == "1" ]]; then
+    if [[ -n "${SCF_UPGRADE_COMPOSE_FILE:-}" ]]; then
+      COMPOSE_FILE_ENV="$SCF_UPGRADE_COMPOSE_FILE"
+    fi
+    if [[ -n "${SCF_UPGRADE_SECRETS_DIR:-}" ]]; then
+      export SCF_SECRETS_DIR="$SCF_UPGRADE_SECRETS_DIR"
+    fi
+  fi
+
   # Resolve the compose file set (env > .env > docker-compose.yml) before any
   # compose call or file grep.
   resolve_compose_files
-  ASSUME_YES=0
+  ASSUME_YES="${SCF_UPGRADE_ASSUME_YES:-0}"
   MANIFEST_OPT=""
   local target="" rollback_ts="" mode="upgrade"
 
@@ -1272,6 +1651,7 @@ main() {
       --yes|-y) ASSUME_YES=1; shift ;;
       --manifest) MANIFEST_OPT="${2:-}"; [[ -n "$MANIFEST_OPT" ]] || die "--manifest requires a FILE argument."; shift 2 ;;
       --rollback) mode="rollback"; rollback_ts="${2:-}"; shift 2 ;;
+      --resume-post-checkout) mode="resume"; shift ;;
       -*) die "unknown option: $1 (see --help)." ;;
       *) [[ -z "$target" ]] && target="$1" || die "unexpected extra argument: $1"; shift ;;
     esac
@@ -1281,6 +1661,13 @@ main() {
 
   if [[ "$mode" == "rollback" ]]; then
     do_rollback "$rollback_ts"
+    exit 0
+  fi
+
+  # In resume mode the positional argument is the BACKUP TIMESTAMP, not a target
+  # version: the target is whatever is already checked out here.
+  if [[ "$mode" == "resume" ]]; then
+    resume_post_checkout "$target"
     exit 0
   fi
 

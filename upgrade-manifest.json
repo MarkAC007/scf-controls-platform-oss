@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "version": "0.33.0",
-  "released": "2026-09-13T12:35:35Z",
+  "version": "0.33.1",
+  "released": "2026-09-13T22:04:14Z",
   "min_upgradable_version": "0.0.0",
   "breaking": false,
   "required_stops": [],
-  "release_url": "https://github.com/MarkAC007/scf-controls-platform-oss/releases/tag/v0.33.0",
-  "summary": "Adds bring-your-own evidence storage: an organisation can keep its evidence in its own S3-compatible bucket, configured and connection-tested under Settings, Evidence storage, and copy existing evidence between stores; installs that configure nothing keep the bundled MinIO untouched. Azure Blob is retired and the AZURE_STORAGE_* variables are ignored, so an install that relied on them must configure its store in the app before upgrading. A missing evidence store now refuses uploads with a 409 that names the screen to fix it, instead of a 503. One migration (evstorcfg1a1); the deployment guide was rewritten and both READMEs now point at docs.scfcontrolsplatform.app.",
+  "release_url": "https://github.com/MarkAC007/scf-controls-platform-oss/releases/tag/v0.33.1",
+  "summary": "Patching",
   "migration_range": [
     "20260119_000000_62bdef86f249_initial_schema",
     "20260120_075300_add_implementation_status_values",

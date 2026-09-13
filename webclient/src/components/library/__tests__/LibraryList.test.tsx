@@ -5,19 +5,12 @@
  *   - useControlsQuery / useCatalogFilters — same idiom as other component tests
  *   - react-window FixedSizeList — renders all items flat (no virtualization in jsdom)
  *   - useDebounce — passthrough so tests don't need fake timers
- *   - ResizeObserver — stub for jsdom
+ *   - ResizeObserver — stubbed globally in src/setup-tests.ts
  */
 import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 
 // ─── Stubs ────────────────────────────────────────────────────────────────────
-
-// ResizeObserver not available in jsdom
-globalThis.ResizeObserver = vi.fn().mockImplementation(() => ({
-  observe: vi.fn(),
-  unobserve: vi.fn(),
-  disconnect: vi.fn(),
-}))
 
 // react-window: render all items in a flat div (no virtual windowing in tests)
 vi.mock('react-window', () => ({
