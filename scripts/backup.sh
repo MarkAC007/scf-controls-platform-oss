@@ -4,6 +4,11 @@
 # Platform. Takes a dual-store snapshot (Postgres + MinIO evidence volume),
 # validates it, checksums it, write-protects it, and prunes old sets.
 #
+# On an install that bundles NO object store (installed with --no-minio, or
+# pointed at your own S3/Azure), the evidence half does not exist here: the set
+# is Postgres + credentials, the script says so on every run, and backing up the
+# external store is the operator's job. See WHAT IS CAPTURED below.
+#
 # Run this ON THE DOCKER HOST, from the repository root. It is safe to run on a
 # LIVE stack: it does NOT stop any service by default (see --quiesce).
 #
@@ -14,7 +19,8 @@
 # The output files use the SAME names as upgrade.sh's pre-upgrade backup, so a
 # set taken here can be restored with `./scripts/upgrade.sh --rollback <TS>`:
 #   <TS>_v<version>.dump          Postgres custom-format dump (whole database)
-#   <TS>_v<version>_minio.tgz     MinIO evidence volume tarball
+#   <TS>_v<version>_minio.tgz     MinIO evidence volume tarball — ONLY on an
+#                                 install that bundles an object store
 #   secrets-<TS>.tar.gz           credential files from SCF_SECRETS_DIR (0600),
 #                                 minus .provision-token — omitted on a legacy
 #                                 .env install, where the credentials are in .env
@@ -30,7 +36,22 @@
 #     extra flags. We deliberately pin NO --schema/--table filters (see #873).
 #   * MinIO: a tar of the evidence volume. For a GRC platform the evidence blobs
 #     — including quarantine/, which is the ONLY copy of virus-flagged uploads —
-#     are half the dataset, so this is mandatory and symmetric with the DB dump.
+#     are half the dataset, so on a BUNDLED install this is mandatory and
+#     symmetric with the DB dump.
+#   * NOT MinIO, on an install that bundles no object store: the evidence lives
+#     in the external bucket or container you configured, which this script can
+#     neither read nor restore. Back it up there (bucket versioning, provider
+#     snapshots, or your own copy). The test is a non-empty MINIO_ROOT_USER in
+#     .env or SCF_SECRETS_DIR — see bundled_object_store() below and the same
+#     function in upgrade.sh.
+#   * NOT the evidence of any organisation that brought its OWN store, on ANY
+#     install including a bundled one. Since the bring-your-own-storage work an
+#     organisation can point its evidence at its own S3, GCS or MinIO and the
+#     bytes never touch this host. The DB dump captures the rows describing
+#     those files; nothing here captures the files. The run warns about this
+#     every time, with a count when the database can be read — see
+#     external_store_orgs() below. This is the failure that looks most like
+#     success: a backup set that restores to dangling references.
 #
 # CONSISTENCY MODEL (why this is safe on a live stack)
 #   * `pg_dump -Fc` runs in a single serializable snapshot: the DB backup is
@@ -104,10 +125,73 @@ env_file_value() {
 }
 
 # Absolute host path of the secrets directory, or empty on a legacy .env install.
+#
+# Falls back to the installer's own default (D46 R2). `scripts/install.sh:27`
+# uses `${SCF_SECRETS_DIR:-$HOME/.scf/secrets}`, and it writes SCF_SECRETS_DIR
+# into .env -- but an operator who has since tidied that line out of .env, or
+# who runs this from a shell without the variable exported, leaves this
+# function with nothing while the credential files sit exactly where the
+# installer put them. The consequence was not a loud failure: it was
+# `bundled_object_store` answering NONE on an install that bundles one, and so
+# an evidence backup silently skipped on the install with the most to lose.
+#
+# The fallback is used ONLY when it actually contains credential files, so an
+# empty or absent ~/.scf/secrets still resolves to "" and the legacy .env path
+# is unchanged.
 resolve_secrets_dir() {
   local d="${SCF_SECRETS_DIR:-}"
   [[ -n "$d" ]] || d="$(env_file_value SCF_SECRETS_DIR)"
+  if [[ -z "$d" && -d "${HOME:-}/.scf/secrets" ]]; then
+    # Any one installer-written file is enough to identify the directory.
+    if [[ -s "${HOME}/.scf/secrets/MINIO_ROOT_USER" || -s "${HOME}/.scf/secrets/SCF_SECRET_KEY" ]]; then
+      d="${HOME}/.scf/secrets"
+    fi
+  fi
   printf '%s' "$d"
+}
+
+# --- does this install bundle an object store? (#956) ------------------------
+# THE signal for "is there an evidence volume to back up", identical in
+# scripts/upgrade.sh (see the long comment there): a NON-EMPTY MINIO_ROOT_USER,
+# in .env or as a file in the secrets directory. Not COMPOSE_PROFILES and not
+# EVIDENCE_STORAGE_BOOTSTRAP -- an install created before the storage profile
+# existed has a live bundled MinIO full of evidence and neither key, and keying
+# off them would silently skip its evidence backup. The minio entrypoint guard
+# refuses to boot without a root user, so an empty one really does mean this
+# install has never run a bundled object store; the --no-minio installer writes
+# the file deliberately EMPTY.
+bundled_object_store() {
+  local dir root_user=""
+  root_user="$(env_file_value MINIO_ROOT_USER)"
+  if [[ -z "$root_user" ]]; then
+    dir="$(resolve_secrets_dir)"
+    if [[ -n "$dir" && -s "${dir}/MINIO_ROOT_USER" ]]; then
+      root_user="$(tr -d '\r\n' < "${dir}/MINIO_ROOT_USER" 2>/dev/null || true)"
+    fi
+  fi
+  [[ -n "$root_user" ]]
+}
+
+# --- how many organisations keep evidence OUTSIDE this backup set? (#956) -----
+# ISC 56. Since Phase 1 an organisation can point its evidence at its own S3,
+# GCS or MinIO, and the bytes never touch this host. `pg_dump` captures the
+# EvidenceFile rows that describe those objects; nothing here captures the
+# objects. A backup set that looks complete and restores to dangling references
+# is the worst failure this script has, so it has to be said out loud, every
+# run, with a number when a number is obtainable.
+#
+# The count is deliberately cheap and deliberately optional: one SELECT against
+# a database we are already talking to, and "unknown" the moment anything is
+# not as expected -- the table not existing (a pre-Phase-1 install), postgres
+# not up yet, a psql that answers something that is not a number. The warning
+# is printed either way; only the precision of it depends on this.
+external_store_orgs() {
+  local pg_user pg_db out
+  pg_user="$(derive_pg user)"; pg_db="$(derive_pg db)"
+  out="$(compose exec -T postgres psql -U "$pg_user" -d "$pg_db" -tAc \
+          "SELECT count(*) FROM evidence_storage_configs WHERE organization_id IS NOT NULL AND status = 'active';" \
+          2>/dev/null | tr -d '[:space:]' || true)"
+  if [[ "$out" =~ ^[0-9]+$ ]]; then printf '%s' "$out"; else printf 'unknown'; fi
 }
 
 require_prereqs() {
@@ -254,7 +338,8 @@ Schedule it from host cron on the docker host, e.g. daily at 02:30:
   30 2 * * *  cd /opt/scf-controls-platform && KEEP_N=14 KEEP_DAYS=60 ./scripts/backup.sh >> ./backups/backup.log 2>&1
 
 Run it from the repository root (same directory the stack was brought up from),
-so `docker compose` resolves the running project. See docs/runbooks/backup-restore.md.
+so `docker compose` resolves the running project. See
+https://docs.scfcontrolsplatform.app/admin-guide/backup-and-restore/
 EOF
 }
 
@@ -272,11 +357,27 @@ main() {
 
   local pg_user pg_db minio_vol version
   pg_user="$(derive_pg user)"; pg_db="$(derive_pg db)"
-  minio_vol="$(derive_volume_name "$MINIO_VOL_LOGICAL")"
   version="$(jq_pkg_version)"; version="${version:-unknown}"
 
-  step "Scheduled backup (db=${pg_db}, minio_vol=${minio_vol}, version=${version})"
-  info "Postgres user/db: ${pg_user}/${pg_db}   MinIO volume: ${minio_vol}"
+  # Decide BEFORE deriving. On a --no-minio install minio_data is absent from
+  # the resolved compose config, but derive_volume_name still returns the FIXED
+  # name `cg-scf-minio-data` from the compose file's `name:` key -- and
+  # `docker run -v cg-scf-minio-data:...` CREATES that volume when it is absent,
+  # or attaches ANOTHER install's, the name being global to this host. The tar
+  # would be an 86-byte archive of an empty directory that passes both the
+  # non-empty and the `tar tzf` checks: a backup set that claims to hold the
+  # evidence and holds nothing.
+  local bundled_store=0
+  bundled_object_store && bundled_store=1
+  if (( bundled_store == 1 )); then
+    minio_vol="$(derive_volume_name "$MINIO_VOL_LOGICAL")"
+    step "Scheduled backup (db=${pg_db}, minio_vol=${minio_vol}, version=${version})"
+    info "Postgres user/db: ${pg_user}/${pg_db}   MinIO volume: ${minio_vol}"
+  else
+    minio_vol=""
+    step "Scheduled backup (db=${pg_db}, minio_vol=none, version=${version})"
+    info "Postgres user/db: ${pg_user}/${pg_db}   MinIO volume: (none -- this install bundles no object store)"
+  fi
 
   mkdir -p "$BACKUPS_DIR"
   # Resolve to an ABSOLUTE path for the docker bind-mount. Building the mount as
@@ -295,11 +396,22 @@ main() {
   # Optional quiesce for a strict point-in-time pair. Always restart writers on
   # exit so a failure mid-backup can never leave the platform paused.
   if (( QUIESCE == 1 )); then
-    info "Quiescing writers (backend + celery); postgres and minio stay up..."
+    if (( bundled_store == 1 )); then
+      info "Quiescing writers (backend + celery); postgres and minio stay up..."
+    else
+      info "Quiescing writers (backend + celery); postgres stays up..."
+    fi
     compose stop backend celery-worker celery-beat || true
     # shellcheck disable=SC2064
     trap "warn 'restarting writers...'; docker compose up -d backend celery-worker celery-beat >/dev/null 2>&1 || true" EXIT
-    compose up -d postgres minio >/dev/null 2>&1 || true
+    # NEVER name `minio` here when the storage profile is off: naming a profiled
+    # service on the command line ACTIVATES its profile, so this would boot a
+    # MinIO with an empty root credential on an install that has none.
+    if (( bundled_store == 1 )); then
+      compose up -d postgres minio >/dev/null 2>&1 || true
+    else
+      compose up -d postgres >/dev/null 2>&1 || true
+    fi
   fi
   _wait_pg "$pg_user" "$pg_db"
 
@@ -321,24 +433,54 @@ main() {
   fi
   success "Postgres dump validated."
 
-  # 3. MinIO evidence volume tar — MANDATORY, symmetric with pg_dump. Read-only
-  #    mount of the live volume; quarantine/ is the only copy of flagged files.
-  info "Backing up MinIO evidence volume -> ${minio_tar}"
-  if ! docker run --rm -v "${minio_vol}:/data:ro" -v "${BACKUPS_ABS}:/b" alpine \
-        tar czf "/b/$(basename "$minio_tar")" -C /data . ; then
-    rm -f "$minio_tar"
-    die "MinIO evidence backup failed (volume ${minio_vol}). Evidence blobs are half the dataset."
-  fi
-  [[ -s "$minio_tar" ]] || { rm -f "$minio_tar"; die "MinIO backup produced an empty file. Aborting."; }
+  # 3. MinIO evidence volume tar — MANDATORY on an install that bundles an
+  #    object store, symmetric with pg_dump. Read-only mount of the live volume;
+  #    quarantine/ is the only copy of flagged files. SKIPPED, loudly and with a
+  #    stated reason, on an install that bundles none.
+  if (( bundled_store == 1 )); then
+    info "Backing up MinIO evidence volume -> ${minio_tar}"
+    if ! docker run --rm -v "${minio_vol}:/data:ro" -v "${BACKUPS_ABS}:/b" alpine \
+          tar czf "/b/$(basename "$minio_tar")" -C /data . ; then
+      rm -f "$minio_tar"
+      die "MinIO evidence backup failed (volume ${minio_vol}). Evidence blobs are half the dataset."
+    fi
+    [[ -s "$minio_tar" ]] || { rm -f "$minio_tar"; die "MinIO backup produced an empty file. Aborting."; }
 
-  # 4. Validate the archive structurally (tar tzf) — symmetric with the DB check.
-  info "Validating the MinIO backup archive (tar tzf)..."
-  if ! docker run --rm -v "${BACKUPS_ABS}:/b:ro" alpine \
-        tar tzf "/b/$(basename "$minio_tar")" >/dev/null; then
-    rm -f "$minio_tar"
-    die "the MinIO evidence backup failed validation (tar tzf). Not trusting it."
+    # 4. Validate the archive structurally (tar tzf) — symmetric with the DB check.
+    info "Validating the MinIO backup archive (tar tzf)..."
+    if ! docker run --rm -v "${BACKUPS_ABS}:/b:ro" alpine \
+          tar tzf "/b/$(basename "$minio_tar")" >/dev/null; then
+      rm -f "$minio_tar"
+      die "the MinIO evidence backup failed validation (tar tzf). Not trusting it."
+    fi
+    success "MinIO evidence volume backed up and validated."
+  else
+    minio_tar=""
+    warn "SKIPPING the evidence backup: no bundled object store on this install (MINIO_ROOT_USER is empty)."
+    warn "  Evidence lives in the configured external store and is OUTSIDE this backup set."
+    warn "  Backing that store up is the operator's responsibility (bucket versioning, provider snapshots, or your own copy)."
+    warn "  This backup set covers the database and your credential files only."
   fi
-  success "MinIO evidence volume backed up and validated."
+
+  # 3b. ISC 56 -- the per-organisation warning, on EVERY install including a
+  #     bundled one. A bundled install is not covered just because its volume
+  #     was tarred: any organisation that has brought its own store keeps its
+  #     evidence somewhere this script has never heard of, and the tar above
+  #     does not contain it. This is #940's second-order finding, now
+  #     multiplied per organisation.
+  local external_orgs; external_orgs="$(external_store_orgs)"
+  if [[ "$external_orgs" == "unknown" ]]; then
+    warn "Could not count organisations on their own evidence store (the table does not exist on this version, or postgres is not reachable)."
+    warn "  If any organisation has configured its own store under Settings, Evidence storage, its evidence is NOT in this backup set."
+  elif (( external_orgs > 0 )); then
+    warn "${external_orgs} organisation(s) keep their evidence in a store of their OWN, which is OUTSIDE this backup set."
+    warn "  The database dump above captures the rows that describe those files. It does not capture the files."
+    warn "  Restoring this set alone would leave those organisations with evidence records pointing at objects nobody here has a copy of."
+    warn "  Back each of those stores up where it lives: bucket versioning, provider snapshots, or your own copy."
+    warn "  Settings, Evidence storage names the provider and bucket for each organisation."
+  else
+    info "No organisation is on an evidence store of its own; nothing is outside this set on that account."
+  fi
 
   # 4b. Credential files from SCF_SECRETS_DIR. Without these a restored pg_dump
   #     is inert: the tier-3 integration rows are encrypted under SCF_SECRET_KEY
@@ -374,18 +516,27 @@ main() {
 
   # 5. Record git ref (rollback code target) + checksums, then write-protect.
   git rev-parse HEAD > "$ref_file" 2>/dev/null || echo "unknown" > "$ref_file"
-  local sum_targets=("$(basename "$pg_dump")" "$(basename "$minio_tar")")
+  local sum_targets=("$(basename "$pg_dump")")
+  local protect=("$pg_dump")
+  if [[ -n "$minio_tar" ]]; then
+    sum_targets+=("$(basename "$minio_tar")")
+    protect+=("$minio_tar")
+  fi
   [[ -n "$secrets_tar" ]] && sum_targets+=("$(basename "$secrets_tar")")
   ( cd "$BACKUPS_DIR" && sha256sum "${sum_targets[@]}" > "$(basename "$sum_file")" ) \
     || ( cd "$BACKUPS_DIR" && shasum -a 256 "${sum_targets[@]}" > "$(basename "$sum_file")" ) \
     || warn "could not compute checksums (sha256sum/shasum missing)."
   # The credential tarball is deliberately NOT chmod a-w'd: it stays exactly
   # 0600 (owner read/write), the mode the credential files themselves carry.
-  chmod a-w "$pg_dump" "$minio_tar" "$sum_file" "$ref_file" 2>/dev/null || true
+  chmod a-w "${protect[@]}" "$sum_file" "$ref_file" 2>/dev/null || true
 
   success "Backup set ${TS} complete and write-protected:"
   info "  DB:       ${pg_dump}"
-  info "  Evidence: ${minio_tar}"
+  if [[ -n "$minio_tar" ]]; then
+    info "  Evidence: ${minio_tar}"
+  else
+    info "  Evidence: (not in this set — no bundled object store; see the warning above)"
+  fi
   [[ -n "$secrets_tar" ]] && info "  Secrets:  ${secrets_tar}"
   info "  Ref:      ${ref_file} ($(cat "$ref_file"))"
   info "  Sums:     ${sum_file}"

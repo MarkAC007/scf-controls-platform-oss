@@ -119,15 +119,35 @@ env_file_value() {
   [[ -f "$file" ]] || return 0
   val="$(grep -E "^[[:space:]]*${key}=" "$file" 2>/dev/null | tail -1 | cut -d= -f2- || true)"
   val="${val%$'\r'}"
+  # strip one layer of surrounding quotes
   [[ "$val" == \"*\" ]] && val="${val:1:${#val}-2}"
   [[ "$val" == \'*\' ]] && val="${val:1:${#val}-2}"
   printf '%s' "$val"
 }
 
 # Absolute host path of the credential directory, or empty on a legacy install.
+#
+# Falls back to the installer's own default (D46 R2). `scripts/install.sh:27`
+# uses `${SCF_SECRETS_DIR:-$HOME/.scf/secrets}`, and it writes SCF_SECRETS_DIR
+# into .env -- but an operator who has since tidied that line out of .env, or
+# who runs this from a shell without the variable exported, leaves this
+# function with nothing while the credential files sit exactly where the
+# installer put them. The consequence was not a loud failure: it was
+# `bundled_object_store` answering NONE on an install that bundles one, and so
+# an evidence backup silently skipped on the install with the most to lose.
+#
+# The fallback is used ONLY when it actually contains credential files, so an
+# empty or absent ~/.scf/secrets still resolves to "" and the legacy .env path
+# is unchanged. Byte-identical to the same function in scripts/backup.sh.
 resolve_secrets_dir() {
   local d="${SCF_SECRETS_DIR:-}"
   [[ -n "$d" ]] || d="$(env_file_value SCF_SECRETS_DIR)"
+  if [[ -z "$d" && -d "${HOME:-}/.scf/secrets" ]]; then
+    # Any one installer-written file is enough to identify the directory.
+    if [[ -s "${HOME}/.scf/secrets/MINIO_ROOT_USER" || -s "${HOME}/.scf/secrets/SCF_SECRET_KEY" ]]; then
+      d="${HOME}/.scf/secrets"
+    fi
+  fi
   printf '%s' "$d"
 }
 
@@ -207,6 +227,112 @@ generate_fernet_key() {
   fi
   (( ${#key} == 44 )) || return 1
   printf '%s' "$key"
+}
+
+# --- does this install bundle an object store? (#956) ------------------------
+# ONE signal, used by ensure_storage_profile, by the upgrade's mandatory backup
+# and by scripts/backup.sh: a NON-EMPTY MINIO_ROOT_USER, either in .env or as a
+# file in the secrets directory.
+#
+# Why not COMPOSE_PROFILES, and why not EVIDENCE_STORAGE_BOOTSTRAP: both are
+# written only by a Phase-4-or-later installer, and by ensure_storage_profile --
+# which runs in Phase 4 of this script, LONG AFTER the Phase 2 backup. An
+# install created before the storage profile existed has a live bundled MinIO
+# full of evidence and NEITHER key, so keying the backup off either of them
+# would silently skip the evidence tar on exactly the installs with the most
+# evidence to lose. MINIO_ROOT_USER is correct on all three shapes:
+#
+#   bundled install      non-empty (.env or secrets file)   -> back the volume up
+#   --no-minio install   the installer writes the file EMPTY -> skip, loudly
+#   pre-profile install  non-empty in .env or secrets dir    -> back the volume up
+#
+# The minio entrypoint guard refuses to boot without one, so "no MINIO_ROOT_USER"
+# really does mean "this install has never run a bundled MinIO".
+bundled_object_store() {
+  local dir root_user=""
+  root_user="$(env_file_value MINIO_ROOT_USER)"
+  if [[ -z "$root_user" ]]; then
+    dir="$(resolve_secrets_dir)"
+    if [[ -n "$dir" && -s "${dir}/MINIO_ROOT_USER" ]]; then
+      root_user="$(tr -d '\r\n' < "${dir}/MINIO_ROOT_USER" 2>/dev/null || true)"
+    fi
+  fi
+  [[ -n "$root_user" ]]
+}
+
+# --- the evidence storage profile (#956) ------------------------------------
+# `minio` and `minio-init` moved behind the `storage` compose profile so that an
+# install can choose NOT to bundle an object store. An existing install has no
+# such profile in its .env, so without this it would come back from the upgrade
+# with no object store at all: every evidence upload and download failing, and
+# nothing in the logs saying why, because a service behind an inactive profile
+# is simply absent rather than broken.
+#
+# The test for "this install has a bundled MinIO" is a non-empty MINIO_ROOT_USER
+# in .env or a non-empty MINIO_ROOT_USER file in the secrets directory. The minio
+# entrypoint guard refuses to boot without one, so an install that has neither
+# has not been running MinIO and must not be given the profile.
+#
+# Also writes EVIDENCE_STORAGE_BOOTSTRAP, which is how the BACKEND learns the
+# same fact: COMPOSE_PROFILES is read by the docker CLI on the host and is never
+# forwarded into a container.
+ensure_storage_profile() {
+  local profiles="" union=""
+  if ! bundled_object_store; then
+    info "No bundled MinIO credential found; leaving COMPOSE_PROFILES alone."
+    return 0
+  fi
+
+  [[ -f .env ]] || { warn "no .env to add the storage profile to."; return 0; }
+
+  profiles="$(env_file_value COMPOSE_PROFILES)"
+  case ",${profiles}," in
+    *,storage,*)
+      success "COMPOSE_PROFILES already includes 'storage' (left untouched)."
+      ;;
+    *)
+      # Does the KEY exist, whatever its value? Test that FIRST. A
+      # present-but-empty `COMPOSE_PROFILES=` is still a line in the operator's
+      # .env, and appending a second one leaves a duplicate key -- exactly what
+      # the in-place edit below exists to avoid.
+      if grep -qE '^[[:space:]]*COMPOSE_PROFILES=' .env 2>/dev/null; then
+        # Union, in place. A second appended line would shadow the first and
+        # switch off whatever profile the operator already runs.
+        union="storage"
+        [[ -n "$profiles" ]] && union="${profiles},storage"
+        if ! sed -i.upgrade-bak -E "s|^[[:space:]]*COMPOSE_PROFILES=.*$|COMPOSE_PROFILES=${union}|" .env 2>/dev/null; then
+          warn "could not add the 'storage' profile to COMPOSE_PROFILES in .env. Add it by hand, or the bundled MinIO will not start."
+          return 0
+        fi
+        rm -f .env.upgrade-bak
+      else
+        printf 'COMPOSE_PROFILES=storage\n' >> .env
+      fi
+      success "Added the 'storage' compose profile to .env (the bundled MinIO keeps starting)."
+      ;;
+  esac
+
+  # Test the KEY, not its value -- the same lesson as the COMPOSE_PROFILES
+  # block above (D46 R1). A present-but-empty `EVIDENCE_STORAGE_BOOTSTRAP=`
+  # line, which is what a .env.example copied verbatim gives you, has a value
+  # that fails the non-empty test; appending a second line then leaves a
+  # duplicate key. Compose takes the LAST one so the behaviour happens to be
+  # right, but a .env with two definitions of the same key is a thing an
+  # operator has to reason about at 3am, and this function exists to avoid it.
+  if grep -qE '^[[:space:]]*EVIDENCE_STORAGE_BOOTSTRAP=[[:space:]]*[^[:space:]]' .env 2>/dev/null; then
+    info "EVIDENCE_STORAGE_BOOTSTRAP already set in .env; leaving it alone."
+  elif grep -qE '^[[:space:]]*EVIDENCE_STORAGE_BOOTSTRAP=' .env 2>/dev/null; then
+    # The key exists and is empty. Fill it in place.
+    if sed -i.upgrade-bak -E "s|^[[:space:]]*EVIDENCE_STORAGE_BOOTSTRAP=.*$|EVIDENCE_STORAGE_BOOTSTRAP=bundled_minio|" .env 2>/dev/null; then
+      rm -f .env.upgrade-bak
+      success "Filled the empty EVIDENCE_STORAGE_BOOTSTRAP= line in .env (bundled_minio)."
+    else
+      warn "could not fill the empty EVIDENCE_STORAGE_BOOTSTRAP= line in .env. Set it to bundled_minio by hand, or the backend will not seed its platform storage configuration."
+    fi
+  else
+    printf 'EVIDENCE_STORAGE_BOOTSTRAP=bundled_minio\n' >> .env
+    success "Recorded EVIDENCE_STORAGE_BOOTSTRAP=bundled_minio in .env."
+  fi
 }
 
 # Generate-if-absent. Existing keys are NEVER overwritten — doing so would make
@@ -745,8 +871,24 @@ do_upgrade() {
   # -------------------------------------------------------------------------
   local pg_user pg_db minio_vol
   pg_user="$(derive_pg user)"; pg_db="$(derive_pg db)"
-  minio_vol="$(derive_volume_name "$MINIO_VOL_LOGICAL")"
-  info "Postgres user/db: ${pg_user}/${pg_db}   MinIO volume: ${minio_vol}"
+  # The evidence volume is only part of this backup when the install actually
+  # bundles an object store. On a --no-minio install there is no minio_data in
+  # the resolved compose config -- but derive_volume_name would still hand back
+  # the FIXED name `cg-scf-minio-data` from the compose file's `name:` key, and
+  # `docker run -v cg-scf-minio-data:...` CREATES that volume if it is absent
+  # (or attaches ANOTHER install's, the name being global to the host). The tar
+  # would then be an 86-byte archive of an empty directory that passes both the
+  # non-empty and the `tar tzf` checks: a backup set that claims to hold the
+  # evidence and holds nothing. So decide first, derive second.
+  local bundled_store=0
+  bundled_object_store && bundled_store=1
+  if (( bundled_store == 1 )); then
+    minio_vol="$(derive_volume_name "$MINIO_VOL_LOGICAL")"
+    info "Postgres user/db: ${pg_user}/${pg_db}   MinIO volume: ${minio_vol}"
+  else
+    minio_vol=""
+    info "Postgres user/db: ${pg_user}/${pg_db}   MinIO volume: (none -- this install bundles no object store)"
+  fi
 
   mkdir -p "$BACKUPS_DIR"
   local TS; TS="$(date +%Y%m%d_%H%M%S)"
@@ -757,9 +899,20 @@ do_upgrade() {
 
   # 2a. Quiesce writers so the two snapshots are a true point-in-time. Keep
   #     postgres + minio UP (we back them up). NEVER -v.
-  info "Stopping backend + celery workers (postgres and minio stay up)..."
+  #     NEVER name `minio` on the command line when the storage profile is off:
+  #     naming a profiled service ACTIVATES its profile, which would boot a
+  #     MinIO with an empty root credential on an install that has none.
+  if (( bundled_store == 1 )); then
+    info "Stopping backend + celery workers (postgres and minio stay up)..."
+  else
+    info "Stopping backend + celery workers (postgres stays up)..."
+  fi
   compose stop backend celery-worker celery-beat || true
-  compose up -d postgres minio >/dev/null 2>&1 || true
+  if (( bundled_store == 1 )); then
+    compose up -d postgres minio >/dev/null 2>&1 || true
+  else
+    compose up -d postgres >/dev/null 2>&1 || true
+  fi
   _wait_pg "$pg_user" "$pg_db"
 
   # Any failure below restarts services and exits — nothing has changed yet.
@@ -790,34 +943,54 @@ do_upgrade() {
   fi
   success "Postgres dump validated."
 
-  # 2d. MinIO evidence volume tar — MANDATORY, symmetric with pg_dump.
-  info "Backing up MinIO evidence volume -> ${minio_tar}"
-  if ! docker run --rm -v "${minio_vol}:/data:ro" -v "$(pwd)/${BACKUPS_DIR#./}:/b" alpine \
-        tar czf "/b/$(basename "$minio_tar")" -C /data . ; then
-    rm -f "$minio_tar"
-    restart_and_fail "MinIO evidence backup failed (volume ${minio_vol}). For a GRC platform the evidence blobs are half the dataset; refusing to upgrade without them."
+  # 2d. MinIO evidence volume tar — MANDATORY on an install that bundles an
+  #     object store, symmetric with pg_dump; SKIPPED, loudly and with a stated
+  #     reason, on an install that does not (--no-minio, or an external store).
+  if (( bundled_store == 1 )); then
+    info "Backing up MinIO evidence volume -> ${minio_tar}"
+    if ! docker run --rm -v "${minio_vol}:/data:ro" -v "$(pwd)/${BACKUPS_DIR#./}:/b" alpine \
+          tar czf "/b/$(basename "$minio_tar")" -C /data . ; then
+      rm -f "$minio_tar"
+      restart_and_fail "MinIO evidence backup failed (volume ${minio_vol}). For a GRC platform the evidence blobs are half the dataset; refusing to upgrade without them."
+    fi
+    [[ -s "$minio_tar" ]] || restart_and_fail "MinIO backup produced an empty file. Aborting."
+    # Validate the archive structurally NOW — rollback wipes the live volume
+    # before extracting, so this tar must be provably good before we rely on it
+    # (the pg_dump gets the equivalent check via pg_restore --list above).
+    info "Validating the MinIO backup archive (tar tzf)..."
+    if ! docker run --rm -v "$(pwd)/${BACKUPS_DIR#./}:/b:ro" alpine \
+          tar tzf "/b/$(basename "$minio_tar")" >/dev/null; then
+      rm -f "$minio_tar"
+      restart_and_fail "the MinIO evidence backup failed validation (tar tzf). Refusing to upgrade on an unverifiable backup."
+    fi
+    success "MinIO evidence volume backed up and validated."
+  else
+    minio_tar=""
+    warn "SKIPPING the evidence backup: no bundled object store on this install (MINIO_ROOT_USER is empty)."
+    warn "  Evidence lives in the configured external store and is OUTSIDE this backup set."
+    warn "  Backing that store up is the operator's responsibility (bucket versioning, provider snapshots, or your own copy)."
+    warn "  This backup set covers the database only; a --rollback from it leaves the external store untouched."
   fi
-  [[ -s "$minio_tar" ]] || restart_and_fail "MinIO backup produced an empty file. Aborting."
-  # Validate the archive structurally NOW — rollback wipes the live volume
-  # before extracting, so this tar must be provably good before we rely on it
-  # (the pg_dump gets the equivalent check via pg_restore --list above).
-  info "Validating the MinIO backup archive (tar tzf)..."
-  if ! docker run --rm -v "$(pwd)/${BACKUPS_DIR#./}:/b:ro" alpine \
-        tar tzf "/b/$(basename "$minio_tar")" >/dev/null; then
-    rm -f "$minio_tar"
-    restart_and_fail "the MinIO evidence backup failed validation (tar tzf). Refusing to upgrade on an unverifiable backup."
-  fi
-  success "MinIO evidence volume backed up and validated."
 
   # 2e. Record the current git ref (rollback target) + checksums, make immutable.
   git rev-parse HEAD > "$ref_file"
-  ( cd "$BACKUPS_DIR" && sha256sum "$(basename "$pg_dump")" "$(basename "$minio_tar")" > "$(basename "$sum_file")" ) \
-    || ( cd "$BACKUPS_DIR" && shasum -a 256 "$(basename "$pg_dump")" "$(basename "$minio_tar")" > "$(basename "$sum_file")" ) \
+  local sum_targets=("$(basename "$pg_dump")")
+  local protect=("$pg_dump")
+  if [[ -n "$minio_tar" ]]; then
+    sum_targets+=("$(basename "$minio_tar")")
+    protect+=("$minio_tar")
+  fi
+  ( cd "$BACKUPS_DIR" && sha256sum "${sum_targets[@]}" > "$(basename "$sum_file")" ) \
+    || ( cd "$BACKUPS_DIR" && shasum -a 256 "${sum_targets[@]}" > "$(basename "$sum_file")" ) \
     || warn "could not compute checksums (sha256sum/shasum missing)."
-  chmod a-w "$pg_dump" "$minio_tar" "$sum_file" "$ref_file" 2>/dev/null || true
+  chmod a-w "${protect[@]}" "$sum_file" "$ref_file" 2>/dev/null || true
   success "Backup set ${TS} complete and write-protected:"
   info "  DB:       ${pg_dump}"
-  info "  Evidence: ${minio_tar}"
+  if [[ -n "$minio_tar" ]]; then
+    info "  Evidence: ${minio_tar}"
+  else
+    info "  Evidence: (not in this set — no bundled object store; see the warning above)"
+  fi
   info "  Ref:      ${ref_file} ($(cat "$ref_file"))"
   info "  Sums:     ${sum_file}"
 
@@ -864,6 +1037,9 @@ do_upgrade() {
   # before the upgrade, and the one-shot below is the first process that could
   # need it. The image is built by now, so the generator container is available.
   ensure_secret_key
+  # Before the stack comes up, so the bundled MinIO is part of the `up` below
+  # and the backend sees the bootstrap signal on its first boot.
+  ensure_storage_profile
 
   info "Running database migrations (one-shot: alembic upgrade head)..."
   if ! compose run --rm -e SCF_MIGRATE_ACK="${TARGET}" backend alembic upgrade head; then
@@ -955,7 +1131,7 @@ except Exception:
   success "Upgrade complete: ${INSTALLED} -> ${TARGET}."
   info "Backups retained (write-protected) under ${BACKUPS_DIR}/:"
   info "  ${pg_dump}"
-  info "  ${minio_tar}"
+  [[ -n "$minio_tar" ]] && info "  ${minio_tar}"
   info "  checksums: ${sum_file}"
   info "Roll back at any time with:  scripts/upgrade.sh --rollback ${ROLLBACK_TS}"
   echo
@@ -1042,7 +1218,15 @@ check_disk_space() {
   pg_vol="$(derive_volume_name "$PG_VOL_LOGICAL")"
   minio_vol="$(derive_volume_name "$MINIO_VOL_LOGICAL")"
   used_mb="$(measure_vol_mb "$pg_vol")"
-  local minio_mb; minio_mb="$(measure_vol_mb "$minio_vol")"
+  local minio_mb
+  if bundled_object_store; then
+    minio_mb="$(measure_vol_mb "$minio_vol")"
+  else
+    # No bundled object store: there is no evidence volume to size, and none
+    # will be tarred. Zero, not "unmeasurable" — otherwise the whole hard check
+    # (including the Postgres one) is skipped on every --no-minio install.
+    minio_mb=0
+  fi
   if [[ -z "$used_mb" || -z "$minio_mb" ]]; then
     warn "Could not measure volume sizes (docker unavailable or volumes absent); skipping disk-space hard check."
     return 0

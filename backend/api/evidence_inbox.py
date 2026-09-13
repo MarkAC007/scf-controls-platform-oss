@@ -26,6 +26,8 @@ from database import get_db
 from models import WebhookEndpoint, WebhookDelivery, EvidenceFile, EvidenceTracking
 from schemas import WebhookIngestResponse
 from services.storage_service import ALLOWED_CONTENT_TYPES
+from api.storage_gate import storage_not_configured
+from services.storage_config import StorageNotConfigured
 from services.storage_service import write_inbox_payload
 from services.audit_service import create_audit_entry
 from services.validation_service import run_validation
@@ -489,6 +491,10 @@ async def ingest_evidence(
                 content_type="application/json",
                 file_size_bytes=len(body),
                 sha256_hash=ingest_digest,
+                # Which store these bytes went to — see the same stamp on the
+                # browser-upload confirm path. NULL means the environment
+                # configuration, which has no row to point at.
+                storage_config_id=_current_storage_config_id(str(org_id)),
                 # No uploaded_by_user_id — this is system-ingested. Attributing it
                 # to a person would invent an actor; the webhook endpoint id on
                 # the WebhookDelivery row is the real provenance, and it is
@@ -498,11 +504,19 @@ async def ingest_evidence(
             await db.flush()
 
             # --- Write raw payload to S3 (Issue #400 fix) ----------------------------
-            write_inbox_payload(
-                s3_key=evidence_file.s3_key,
-                body=body,
-                org_id=str(org_id),
-            )
+            # An organisation with no evidence store refuses here the same way
+            # the browser upload path refuses (ISC 53), rather than letting the
+            # catch-all below record a 200 with status="failed" and a message
+            # that names no remedy. The HTTPException is re-raised past that
+            # handler explicitly — see the `except HTTPException` below.
+            try:
+                write_inbox_payload(
+                    s3_key=evidence_file.s3_key,
+                    body=body,
+                    org_id=str(org_id),
+                )
+            except StorageNotConfigured:
+                raise storage_not_configured()
 
             # --- Malware scan ---
             scan_service = get_scan_service()
@@ -647,6 +661,21 @@ async def ingest_evidence(
             ),
         )
 
+    except HTTPException as http_exc:
+        # An explicit refusal with a status and a remedy — the unconfigured
+        # store, above. Recording it as a generic "Processing failed" 200 would
+        # hide exactly the actionable part, so the status goes back to the
+        # sender. The delivery row is still written: a refused delivery is the
+        # one an operator most needs to find afterwards.
+        detail = http_exc.detail
+        delivery.status = "failed"
+        delivery.error_message = str(
+            detail.get("message") if isinstance(detail, dict) else detail
+        )[:2000]
+        delivery.processed_at = datetime.utcnow()
+        await db.commit()
+        raise
+
     except Exception as e:
         logger.error(
             "Webhook delivery failed: endpoint=%s, evidence=%s, error=%s",
@@ -663,3 +692,24 @@ async def ingest_evidence(
             status="failed",
             message=f"Processing failed: {str(e)[:200]}",
         )
+
+
+def _current_storage_config_id(org_id: str):
+    """The configuration row this inbox write is landing in, or None.
+
+    Never raises: a delivery that reached storage must not fail to be recorded
+    because the stamp could not be worked out.
+    """
+    try:
+        from services.storage_service import current_config_row_id
+
+        raw = current_config_row_id(org_id)
+        return UUID(raw) if raw else None
+    except Exception:  # noqa: BLE001 — a stamp is not worth losing a delivery
+        logger.warning(
+            "Could not determine the evidence store for organisation %s; "
+            "leaving the inbox file unstamped",
+            org_id,
+            exc_info=True,
+        )
+        return None

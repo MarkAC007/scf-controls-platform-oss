@@ -125,6 +125,9 @@ def _fake_file(**overrides):
     f.filename = overrides.get("filename", "report.pdf")
     f.content_type = overrides.get("content_type", "application/pdf")
     f.sha256_hash = overrides.get("sha256_hash", None)
+    # Which store the bytes are in. NULL on every row written before
+    # per-file storage existed, which is what makes it the default here.
+    f.storage_config_id = overrides.get("storage_config_id", None)
     f.scan_status = overrides.get("scan_status", "pending")
     f.hash_verification_status = overrides.get("hash_verification_status", "pending")
     f.is_deleted = overrides.get("is_deleted", False)
@@ -254,7 +257,16 @@ class TestVerifyEvidenceFileTask:
              patch.object(t, "_scan_bytes_sync", return_value=_scan("clean")) as mock_scan:
             t.verify_evidence_file_task(str(f.id))
 
-        mock_fetch.assert_called_once_with(f.s3_key)
+        # One fetch, at the row's own key, resolved through the row's own
+        # storage configuration rather than the organisation's current one.
+        # Both halves matter: two reads could describe two objects, and
+        # resolving by the organisation would read the wrong store for a file
+        # written before the organisation switched (ISC 48).
+        mock_fetch.assert_called_once_with(
+            f.s3_key,
+            org_id=str(f.organization_id),
+            storage_config_id=None,
+        )
         assert mock_scan.call_args.args[0] is data
 
     def test_records_the_server_computed_digest(self):

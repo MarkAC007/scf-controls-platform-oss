@@ -79,6 +79,7 @@ celery_app = Celery(
         "tasks_automation",
         "tasks_doc_gen",
         "tasks_evidence_integrity",
+        "tasks_evidence_storage_copy",
         "services.composite_service",
     ],
 )
@@ -222,6 +223,10 @@ celery_app.conf.update(
         # dashboard while nothing was ever scanned.
         "tasks_evidence_integrity.verify_evidence_file_task": {"queue": "default"},
         "tasks_evidence_integrity.sweep_unverified_evidence_task": {"queue": "default"},
+        # Evidence store copy (Phase 6). `default` again, and for the same
+        # reason: a copy queued where no worker is listening would report
+        # progress forever and move nothing, while the UI showed it running.
+        "tasks_evidence_storage_copy.copy_evidence_store": {"queue": "default"},
         # Catalog upgrade flow (WP1b). catalog.import routes itself via its
         # task decorator (queue="catalog"); the upgrade tasks route here.
         "catalog.upgrade_stage": {"queue": "catalog"},

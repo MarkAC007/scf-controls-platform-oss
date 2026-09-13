@@ -257,11 +257,21 @@ def _extract_text(data: bytes, method: str, max_length: Optional[int]) -> Extrac
 # Helper: download file bytes from storage
 # ---------------------------------------------------------------------------
 
-def download_evidence_bytes(s3_key: str) -> Optional[bytes]:
+def download_evidence_bytes(
+    s3_key: str,
+    org_id: Optional[str] = None,
+    storage_config_id: Optional[str] = None,
+) -> Optional[bytes]:
     """Download evidence file as bytes from S3/Azure Blob storage.
 
     Collects streaming chunks into a single bytes object.
     Returns None if file not found or storage not configured.
+
+    ``org_id`` and ``storage_config_id`` say which store the object is in.
+    Both are optional so existing callers keep the platform-store behaviour,
+    but every caller reading an ``EvidenceFile`` should pass them: after an
+    organisation switches store, a read that resolves by organisation looks in
+    the new store for bytes that are still in the old one.
     """
     from services.storage_service import download_blob_stream, is_configured
 
@@ -270,7 +280,9 @@ def download_evidence_bytes(s3_key: str) -> Optional[bytes]:
         return None
 
     try:
-        chunks = download_blob_stream(s3_key)
+        chunks = download_blob_stream(
+            s3_key, org_id=org_id, storage_config_id=storage_config_id
+        )
         if chunks is None:
             return None
         return b"".join(chunks)

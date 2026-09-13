@@ -51,7 +51,7 @@ Run it via the one-shot importer container:
 docker compose --profile init run --rm catalog-importer
 ```
 
-Mount your SCF `.xlsx` as described in the project README ("Bring your own SCF Excel catalogue").
+Mount your SCF `.xlsx` as described in the deployment guide (https://docs.scfcontrolsplatform.app/admin-guide/deployment/).
 The importer is version-agnostic (auto-detects the SCF release and resolves sheets dynamically).
 
 `requirements-importer.txt` pins the importer's Python dependencies (pandas, openpyxl).

@@ -4,7 +4,7 @@ These define the API contract and handle data validation.
 """
 from enum import Enum
 from pydantic import BaseModel, Field, ConfigDict, computed_field, field_validator, model_validator
-from typing import Optional, Any, List, Dict, Union
+from typing import Optional, Any, List, Dict, Literal, Union
 from datetime import date, datetime, timedelta
 from uuid import UUID
 
@@ -3148,9 +3148,34 @@ class EvidenceFileUploadUrlRequest(BaseModel):
 
 
 class EvidenceFileUploadUrlResponse(BaseModel):
-    """Response with pre-signed POST fields and the S3 key for confirmation."""
-    url: str = Field(description="S3 endpoint URL to POST to")
-    fields: Dict[str, str] = Field(description="Form fields to include in the POST")
+    """Response with the pre-signed upload target and the key for confirmation.
+
+    ``method`` is stated rather than inferred, and that is the whole point of
+    it. The browser used to decide the verb by looking at whether ``fields``
+    was empty — a stand-in for "this is Azure" that is only ever right by
+    coincidence: a presigned POST with no extra form fields is a legal thing
+    for an S3-compatible store to return, and it would have been uploaded with
+    the wrong verb. The value is a closed vocabulary so that a preset which
+    signs a ``PUT`` can be added without the client guessing again, and so that
+    a client which does not recognise the value refuses rather than falls back.
+    """
+    method: Literal["POST", "PUT"] = Field(
+        description=(
+            "HTTP verb to upload with. POST means a presigned POST: send "
+            "`fields` plus the file as multipart form data. PUT means the URL "
+            "is self-contained: send the file as the raw request body."
+        ),
+    )
+    provider: str = Field(
+        description=(
+            "Which storage provider signed this: one of the evidence storage "
+            "presets (aws_s3, gcs, minio, s3_compatible), or azure_blob while "
+            "that backend still exists. Informational — the verb is `method`, "
+            "not something to re-derive from this."
+        ),
+    )
+    url: str = Field(description="Endpoint URL to upload to")
+    fields: Dict[str, str] = Field(description="Form fields to include in a POST; empty for PUT")
     s3_key: str = Field(description="S3 object key — pass this to confirm endpoint")
     expires_in: int = Field(description="URL expiry in seconds")
     upload_ticket: Optional[str] = Field(

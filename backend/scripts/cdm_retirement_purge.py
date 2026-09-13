@@ -30,22 +30,28 @@ Storage backends, resolved exactly as the platform resolves them
 report → list → dry-run gate → delete → re-list → exit-code sequence; each
 backend is a small adapter with three methods:
 
-* **S3 / MinIO** — ``services.s3_service._get_s3_client()`` against
-  ``EVIDENCE_BUCKET``: ``list_objects_v2`` paginator over the prefix, then
+* **S3 / MinIO** — ``services.storage_service.platform_object_client()``,
+  which hands back a client and the platform bucket: ``list_objects_v2``
+  paginator over the prefix, then
   ``delete_objects`` in batches of at most 1000 keys (the API maximum).
   Bucket versioning is reported first: with versioning on, deleted keys
   survive as non-current versions, and whether to expire those is the
   operator's decision — this script never touches versions.
-* **Azure Blob** — ``services.azure_blob_service._get_container_client()``:
-  ``list_blobs(name_starts_with="cdm/")`` + ``delete_blob`` one at a time.
-  **UNTESTED**: no live Azure installation was available when this was
-  written, which is also why it does not use the Blob Batch API. Soft-delete
-  retention is reported the same way versioning is for S3.
 * **none** — no object store configured: prints "nothing to purge", exit 0.
 
-``storage_service`` itself has no list or delete API and this script does not
-add one: deleting by prefix is a one-off retirement operation, not a platform
-capability.
+There is no Azure Blob path. There was one, untested against a live account
+because none existed, and it was removed with Phase 6 of the bring-your-own
+evidence storage work (ISA D13: no customer is on Azure Blob, so there is no
+Azure store holding retired CDM objects to purge). An installation that somehow
+reports the ``azure`` backend is refused by name rather than purged by
+guesswork — running an untested delete loop over somebody's container is the
+one outcome worse than telling them to do it themselves.
+
+``storage_service`` itself has no list-by-prefix or bulk-delete API and this
+script does not add one: deleting by prefix is a one-off retirement operation,
+not a platform capability. ``platform_object_client()`` is the named escape
+hatch it uses instead, so that this script does not reach past the facade —
+which is the drift #967 closed.
 
 Rollback of the files is ``scripts/upgrade.sh --rollback <ts>``, which
 restores the object store from the pre-upgrade backup — which is why the
@@ -98,10 +104,7 @@ class _Store(Protocol):
 # ---------------------------------------------------------------------------
 class _S3Store:
     def __init__(self) -> None:
-        from services import s3_service
-
-        self.bucket = s3_service.EVIDENCE_BUCKET
-        self.client = s3_service._get_s3_client()
+        self.client, self.bucket = storage_service.platform_object_client()
         self.where = f"bucket {self.bucket}"
 
     def report_retention(self) -> None:
@@ -138,41 +141,6 @@ class _S3Store:
 
 
 # ---------------------------------------------------------------------------
-# Azure Blob — UNTESTED (no live Azure installation available; see module doc)
-# ---------------------------------------------------------------------------
-class _AzureStore:
-    def __init__(self) -> None:
-        from services import azure_blob_service
-
-        self._service = azure_blob_service
-        self.container = azure_blob_service._get_container_client()
-        self.where = f"container {getattr(self.container, 'container_name', '?')}"
-        logger.warning("Azure path is UNTESTED against a live account — verify with a dry run first.")
-
-    def report_retention(self) -> None:
-        try:
-            props = self._service._get_blob_service_client().get_service_properties()
-            policy = props.get("delete_retention_policy") if isinstance(props, dict) else None
-            enabled = getattr(policy, "enabled", None) if policy is not None else None
-            logger.info("container soft-delete retention: %s", "enabled" if enabled else "disabled/unknown")
-        except Exception as exc:
-            logger.info("container soft-delete retention: unknown (%s)", exc.__class__.__name__)
-
-    def list_keys(self) -> List[str]:
-        return [b.name for b in self.container.list_blobs(name_starts_with=CDM_PREFIX)]
-
-    def delete_keys(self, keys: List[str]) -> int:
-        failed = 0
-        for name in keys:
-            try:
-                self.container.delete_blob(name)
-            except Exception as exc:
-                logger.error("failed to delete %s: %s", name, exc)
-                failed += 1
-        return failed
-
-
-# ---------------------------------------------------------------------------
 def _purge(store: _Store, apply: bool) -> int:
     store.report_retention()
     before = store.list_keys()
@@ -188,10 +156,6 @@ def _purge(store: _Store, apply: bool) -> int:
 
 def purge_s3(apply: bool) -> int:
     return _purge(_S3Store(), apply)
-
-
-def purge_azure(apply: bool) -> int:
-    return _purge(_AzureStore(), apply)
 
 
 def main(argv: List[str] | None = None) -> int:
@@ -214,7 +178,11 @@ def main(argv: List[str] | None = None) -> int:
     if backend == "s3":
         return purge_s3(apply=args.apply)
     if backend == "azure":
-        return purge_azure(apply=args.apply)
+        logger.error(
+            "the Azure Blob purge path was removed (no supported installation "
+            "uses it); purge the container manually if one exists"
+        )
+        return 2
     logger.error("unknown storage backend %r", backend)
     return 2
 

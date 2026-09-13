@@ -58,6 +58,7 @@ from api import (
     capability_themes,
     features,
     webhook_endpoints,
+    evidence_storage,
     evidence_inbox,
     evidence_validation,
     evidence_health,
@@ -183,6 +184,22 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error("Bootstrap admin seed failed (non-fatal): %s", e, exc_info=True)
 
+    # Seed the platform-scope evidence storage row describing the bundled MinIO,
+    # when the installer says this stack bundles one (EVIDENCE_STORAGE_BOOTSTRAP).
+    # Here rather than in the installer because the installer runs before the
+    # database exists, and here rather than in a one-shot compose service
+    # because an existing install would never run a service it does not have.
+    # Idempotent and non-fatal, like every seed above: an install whose evidence
+    # storage row is missing still serves every other page.
+    try:
+        from database import AsyncSessionLocal
+        from services.evidence_storage_admin import seed_bundled_platform_config
+
+        async with AsyncSessionLocal() as session:
+            await seed_bundled_platform_config(session)
+    except Exception as e:
+        logger.error("Bundled evidence storage seed failed (non-fatal): %s", e, exc_info=True)
+
     if os.getenv("ENVIRONMENT") == "development":
         logger.critical(
             "ENVIRONMENT=development — debug error detail and uvicorn reload are ON. "
@@ -295,10 +312,28 @@ async def health_check():
     # Check Redis health
     redis_status = await redis_health_check()
 
+    # Which evidence store this platform resolves to, and whether resolving it
+    # works at all (ISC 54). Synchronous and cheap by construction: it reads
+    # the resolver's TTL snapshot and never dials the object store — see
+    # `services.storage_service.evidence_storage_health` for why a probe here
+    # would be a mistake. Carries no bucket, endpoint or credential: /health
+    # takes no authentication, because the container healthcheck and the load
+    # balancer both poll it.
+    from services.storage_service import evidence_storage_health
+
+    storage_status = evidence_storage_health()
+
     # Determine overall health status
     overall_status = "healthy"
     if redis_status.get("status") != "healthy":
         overall_status = "degraded"  # Non-critical service down
+    # An unconfigured store is NOT degraded. A fresh --no-minio install is
+    # exactly that and is working as designed; reporting it as degraded would
+    # make every such install look broken to its own load balancer. A store
+    # that cannot be RESOLVED is different: something was configured and the
+    # platform can no longer read it.
+    if storage_status.get("status") == "error":
+        overall_status = "degraded"
 
     return {
         "status": overall_status,
@@ -306,6 +341,7 @@ async def health_check():
         "version": "1.0.0",
         "components": {
             "redis": redis_status,
+            "evidence_storage": storage_status,
         }
     }
 
@@ -408,6 +444,7 @@ app.include_router(capability_themes.router, prefix="/api")  # KSI capability th
 app.include_router(features.router, prefix="/api")  # Runtime feature flags (#787)
 app.include_router(evidence_files.router, prefix="/api")  # Evidence S3 file uploads (Issue #324)
 app.include_router(webhook_endpoints.router, prefix="/api")  # Webhook endpoint management (Issue #214)
+app.include_router(evidence_storage.router, prefix="/api")  # Evidence storage configuration test
 app.include_router(evidence_inbox.router, prefix="/api")  # Evidence inbox ingestion (Issue #214)
 app.include_router(evidence_validation.router, prefix="/api")  # Evidence validation engine (Issue #218)
 app.include_router(evidence_health.router, prefix="/api")  # Evidence health dashboard (Issue #220)

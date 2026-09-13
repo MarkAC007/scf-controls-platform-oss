@@ -17,7 +17,12 @@ from . import configure_logging, host_secrets_dir, out_dir, secrets_dir
 from . import validate as validate_mod
 from . import writer
 from .app import _provision, create_app
-from .generate import SECRET_FILE_NAMES, fernet_key
+from .generate import (
+    SECRET_FILE_NAMES,
+    STORAGE_BUNDLED_MINIO,
+    STORAGE_NONE,
+    fernet_key,
+)
 from .validate import ValidationRejected
 
 EXIT_OK = 0
@@ -87,6 +92,7 @@ def cmd_unattended(args: argparse.Namespace) -> int:
 
     db = dict(config.get("db") or {})
     idp = dict(config.get("idp") or {})
+    storage = dict(config.get("storage") or {})
 
     # The external DB password never travels as a flag (visible in `ps`).
     if args.db_password_stdin:
@@ -116,7 +122,10 @@ def cmd_unattended(args: argparse.Namespace) -> int:
 
     try:
         response = _provision(
-            payload={"db": db, "idp": idp}, secrets_path=sp, out_path=op, host_dir=host_dir
+            payload={"db": db, "idp": idp, "storage": storage},
+            secrets_path=sp,
+            out_path=op,
+            host_dir=host_dir,
         )
     except writer.AlreadyProvisioned:
         return EXIT_ALREADY_PROVISIONED
@@ -153,8 +162,36 @@ def cmd_import_env(args: argparse.Namespace) -> int:
     elif not writer.is_placeholder(values.get("OIDC_ISSUER")):
         idp_type = "external_oidc"
 
+    # Which object store this install already has. A bundled MinIO is exactly
+    # "MINIO_ROOT_USER is a real value": the minio entrypoint guard refuses to
+    # boot without one, so an install whose value is absent or a placeholder has
+    # never been starting the service.
+    #
+    # This detection is not cosmetic. `minio` and `minio-init` now sit behind the
+    # `storage` compose profile, so an existing install adopting the secrets
+    # overlay through this path would STOP STARTING ITS OBJECT STORE unless the
+    # profile is added to its `.env` here. Every evidence upload and download
+    # would fail the next time the stack came up.
+    storage_type = (
+        STORAGE_BUNDLED_MINIO
+        if not writer.is_placeholder(values.get("MINIO_ROOT_USER"))
+        else STORAGE_NONE
+    )
+
+    # Union, not replacement: whatever profiles this install already runs are
+    # kept, and `storage` is added when it is missing. A bare overwrite would
+    # switch off a profile the operator added by hand.
+    existing_profiles = [
+        p.strip()
+        for p in (values.get("COMPOSE_PROFILES") or "").split(",")
+        if p.strip()
+    ]
+    profiles = list(existing_profiles)
+    if storage_type == STORAGE_BUNDLED_MINIO and writer.STORAGE_PROFILE not in profiles:
+        profiles.append(writer.STORAGE_PROFILE)
+
     writer.ensure_secrets_dir(sp)
-    writer.create_sentinel(sp, db="imported", idp=idp_type)
+    writer.create_sentinel(sp, db="imported", idp=idp_type, storage=storage_type)
 
     imported: list[str] = []
     for name in SECRET_FILE_NAMES:
@@ -167,14 +204,14 @@ def cmd_import_env(args: argparse.Namespace) -> int:
             imported.append(name)
 
     backup = writer.backup_env(op)
-    rewritten = writer.strip_secret_lines(
-        original,
-        SECRET_FILE_NAMES,
-        {
-            "SCF_SECRETS_DIR": host_dir,
-            "COMPOSE_FILE": "docker-compose.yml:docker-compose.secrets.yml",
-        },
-    )
+    extra = {
+        "SCF_SECRETS_DIR": host_dir,
+        "COMPOSE_FILE": "docker-compose.yml:docker-compose.secrets.yml",
+        writer.STORAGE_BOOTSTRAP_KEY: storage_type,
+    }
+    if profiles:
+        extra["COMPOSE_PROFILES"] = ",".join(profiles)
+    rewritten = writer.strip_secret_lines(original, SECRET_FILE_NAMES, extra)
     writer.write_env(op, rewritten)
 
     print(
@@ -185,6 +222,8 @@ def cmd_import_env(args: argparse.Namespace) -> int:
                 "backup": str(backup),
                 "imported": imported,
                 "idp": idp_type,
+                "storage": storage_type,
+                "compose_profiles": ",".join(profiles),
             },
             indent=2,
         )

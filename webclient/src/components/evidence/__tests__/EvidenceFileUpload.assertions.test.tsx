@@ -83,6 +83,10 @@ describe('EvidenceFileUpload preparer assertions', () => {
     vi.clearAllMocks()
     stubTransport()
     vi.mocked(getEvidenceUploadUrl).mockResolvedValue({
+      // The verb is stated by the backend now; this file is about the confirm
+      // payload, so it takes the ordinary presigned-POST shape.
+      method: 'POST',
+      provider: 'minio',
       url: 'https://blob.example/upload',
       fields: {},
       s3_key: 'org-1/ERL-001/q2.csv',

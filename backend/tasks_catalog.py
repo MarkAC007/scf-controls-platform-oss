@@ -16,7 +16,7 @@ Two families share this module:
    ``catalog.upgrade_revert`` + the beat task ``catalog.cleanup_workbooks`` —
    the staged catalog upgrade flow (plan §4.2, WP1b). These operate on
    ``catalog_import_runs`` ledger rows, stash workbooks and diff details in
-   object storage via the same s3_service hand-off pattern as the import task,
+   object storage via the same storage_service hand-off pattern as the import task,
    and deliberately have NO single-tenant gate: staged diff + typed confirm +
    additive apply + revert replace it (plan §4.2.8).
 
@@ -35,7 +35,7 @@ from uuid import UUID
 from sqlalchemy import select
 
 from celery_app import celery_app
-from services import s3_service
+from services import storage_service
 from services.single_tenant import single_tenant_flag_set
 
 # The extractor ships at /app/scripts in the backend image (see Dockerfile.backend).
@@ -63,7 +63,7 @@ def import_catalog(self, object_key: str, original_filename: str = "scf.xlsx") -
         raise RuntimeError("catalog import refused: OSS_SINGLE_TENANT not set")
 
     self.update_state(state="PROGRESS", meta={"step": "downloading"})
-    chunks = s3_service.download_blob_stream(object_key)
+    chunks = storage_service.download_blob_stream(object_key)
     if chunks is None:
         raise RuntimeError(f"uploaded workbook not found in storage: {object_key}")
 
@@ -137,7 +137,7 @@ async def _load_run(session, run_id: str):
 
 
 def _download_to_temp(object_key: str, suffix: str) -> str:
-    chunks = s3_service.download_blob_stream(object_key)
+    chunks = storage_service.download_blob_stream(object_key)
     if chunks is None:
         raise RuntimeError(f"object not found in storage: {object_key}")
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
@@ -147,7 +147,7 @@ def _download_to_temp(object_key: str, suffix: str) -> str:
 
 
 def _download_json(object_key: str) -> dict:
-    chunks = s3_service.download_blob_stream(object_key)
+    chunks = storage_service.download_blob_stream(object_key)
     if chunks is None:
         raise RuntimeError(f"object not found in storage: {object_key}")
     return json.loads(b"".join(chunks))
@@ -219,7 +219,7 @@ async def _run_upgrade_stage(run_id: str, force: bool) -> dict:
                 return {"status": "blocked", "sanity_report": run.sanity_report}
 
             detail_key = diff_detail_object_key(run.id)
-            s3_service.put_bytes(
+            storage_service.put_bytes(
                 detail_key,
                 staged.diff_detail.model_dump_json().encode("utf-8"),
                 "application/json",
@@ -382,11 +382,9 @@ async def _run_cleanup_workbooks() -> dict:
             for run in runs[CLEANUP_KEEP_RUNS:]:
                 key = run.workbook_object_key
                 try:
-                    # s3_service has no public delete helper; use the client the
-                    # way move_to_quarantine does. Deletes the WORKBOOK only —
-                    # the diff detail is the revert anchor and is never removed.
-                    client = s3_service._get_s3_client()
-                    client.delete_object(Bucket=s3_service.EVIDENCE_BUCKET, Key=key)
+                    # Deletes the WORKBOOK only — the diff detail is the
+                    # revert anchor and is never removed.
+                    storage_service.delete_object(key)
                 except Exception as exc:
                     logger.warning("Workbook cleanup failed for %s: %s", key, exc)
                     continue

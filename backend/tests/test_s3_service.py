@@ -1,12 +1,24 @@
 """
 Unit tests for the S3 Evidence Storage Service (Issue #324).
 Uses unittest.mock to mock boto3 — no external dependencies required.
+
+Phase 0 (#967) replaced the driver's import-time module constants with a
+per-call :class:`ResolvedStorageConfig`, so these tests now build a config and
+hand it to each call rather than assigning to module globals. ``_get_s3_client``
+became ``_client``, which takes the config and caches per config identity.
 """
 import pytest
 from unittest.mock import patch, MagicMock
 
+from services.storage_config import (
+    PROVIDER_AWS_S3,
+    SOURCE_LEGACY_ENV,
+    SSE_AES256,
+    ResolvedStorageConfig,
+    StorageNotConfigured,
+)
 
-# Patch environment before importing the module
+
 @pytest.fixture(autouse=True)
 def mock_env(monkeypatch):
     """Set required env vars for all tests."""
@@ -16,18 +28,32 @@ def mock_env(monkeypatch):
     monkeypatch.setenv("EVIDENCE_MAX_FILE_SIZE", str(50 * 1024 * 1024))
 
 
+def _config(bucket: str = "test-evidence-bucket") -> ResolvedStorageConfig:
+    """A resolved config for real AWS S3 — no endpoint, so SSE-S3 is requested."""
+    return ResolvedStorageConfig(
+        config_id="test",
+        source=SOURCE_LEGACY_ENV,
+        provider=PROVIDER_AWS_S3,
+        bucket=bucket,
+        region="eu-west-1",
+        sse_mode=SSE_AES256,
+        url_expiry=900,
+        max_file_size=50 * 1024 * 1024,
+    )
+
+
+@pytest.fixture
+def config():
+    return _config()
+
+
 @pytest.fixture
 def s3_service(mock_env):
-    """Import s3_service fresh with mocked env."""
-    import importlib
+    """The driver module, with its client cache cleared between tests."""
     import services.s3_service as mod
-    # Reset lazy client
-    mod._s3_client = None
-    mod.EVIDENCE_BUCKET = "test-evidence-bucket"
-    mod.AWS_REGION = "eu-west-1"
-    mod.EVIDENCE_URL_EXPIRY = 900
-    mod.EVIDENCE_MAX_FILE_SIZE = 50 * 1024 * 1024
-    return mod
+    mod.reset_client_cache()
+    yield mod
+    mod.reset_client_cache()
 
 
 class TestSanitizeFilename:
@@ -78,7 +104,7 @@ class TestGenerateObjectKey:
 class TestGenerateUploadPresignedPost:
     """Tests for upload pre-signed POST generation."""
 
-    @patch("services.s3_service._get_s3_client")
+    @patch("services.s3_service._client")
     def test_returns_url_fields_and_key(self, mock_get_client, s3_service):
         mock_client = MagicMock()
         mock_client.generate_presigned_post.return_value = {
@@ -97,6 +123,7 @@ class TestGenerateUploadPresignedPost:
             org_id="org-1",
             filename="test.pdf",
             content_type="application/pdf",
+            config=_config(),
         )
 
         assert "url" in result
@@ -104,16 +131,17 @@ class TestGenerateUploadPresignedPost:
         assert "object_key" in result
         assert result["object_key"].startswith("evidence/org-1/")
 
-    @patch("services.s3_service._get_s3_client")
+    @patch("services.s3_service._client")
     def test_enforces_content_type_allowlist(self, mock_get_client, s3_service):
         with pytest.raises(ValueError, match="not allowed"):
             s3_service.generate_upload_presigned_post(
                 org_id="org-1",
                 filename="malware.exe",
                 content_type="application/x-msdownload",
+                config=_config(),
             )
 
-    @patch("services.s3_service._get_s3_client")
+    @patch("services.s3_service._client")
     def test_allows_pdf(self, mock_get_client, s3_service):
         mock_client = MagicMock()
         mock_client.generate_presigned_post.return_value = {
@@ -126,10 +154,11 @@ class TestGenerateUploadPresignedPost:
             org_id="org-1",
             filename="test.pdf",
             content_type="application/pdf",
+            config=_config(),
         )
         assert result is not None
 
-    @patch("services.s3_service._get_s3_client")
+    @patch("services.s3_service._client")
     def test_allows_xlsx(self, mock_get_client, s3_service):
         mock_client = MagicMock()
         mock_client.generate_presigned_post.return_value = {
@@ -142,19 +171,20 @@ class TestGenerateUploadPresignedPost:
             org_id="org-1",
             filename="data.xlsx",
             content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            config=_config(),
         )
         assert result is not None
 
     def test_raises_if_no_bucket(self, s3_service):
-        s3_service.EVIDENCE_BUCKET = ""
-        with pytest.raises(ValueError, match="not configured"):
+        with pytest.raises(StorageNotConfigured, match="No evidence store is configured"):
             s3_service.generate_upload_presigned_post(
                 org_id="org-1",
                 filename="test.pdf",
                 content_type="application/pdf",
+                config=_config(bucket=""),
             )
 
-    @patch("services.s3_service._get_s3_client")
+    @patch("services.s3_service._client")
     def test_presigned_post_conditions_include_sse(self, mock_get_client, s3_service):
         mock_client = MagicMock()
         mock_client.generate_presigned_post.return_value = {
@@ -167,6 +197,7 @@ class TestGenerateUploadPresignedPost:
             org_id="org-1",
             filename="test.pdf",
             content_type="application/pdf",
+            config=_config(),
         )
 
         call_kwargs = mock_client.generate_presigned_post.call_args
@@ -178,7 +209,7 @@ class TestGenerateUploadPresignedPost:
 class TestGenerateDownloadUrl:
     """Tests for download pre-signed URL generation."""
 
-    @patch("services.s3_service._get_s3_client")
+    @patch("services.s3_service._client")
     def test_returns_url_for_valid_key(self, mock_get_client, s3_service):
         mock_client = MagicMock()
         mock_client.generate_presigned_url.return_value = "https://s3.amazonaws.com/signed-url"
@@ -187,34 +218,37 @@ class TestGenerateDownloadUrl:
         url = s3_service.generate_download_url(
             org_id="org-1",
             file_key="evidence/org-1/2026/02/abc123_test.pdf",
+            config=_config(),
         )
         assert url == "https://s3.amazonaws.com/signed-url"
 
-    @patch("services.s3_service._get_s3_client")
+    @patch("services.s3_service._client")
     def test_rejects_cross_org_access(self, mock_get_client, s3_service):
         with pytest.raises(ValueError, match="Access denied"):
             s3_service.generate_download_url(
                 org_id="org-1",
                 file_key="evidence/org-2/2026/02/abc123_test.pdf",
+                config=_config(),
             )
 
-    @patch("services.s3_service._get_s3_client")
+    @patch("services.s3_service._client")
     def test_rejects_non_evidence_key(self, mock_get_client, s3_service):
         with pytest.raises(ValueError, match="Access denied"):
             s3_service.generate_download_url(
                 org_id="org-1",
                 file_key="static/org-1/something.pdf",
+                config=_config(),
             )
 
     def test_raises_if_no_bucket(self, s3_service):
-        s3_service.EVIDENCE_BUCKET = ""
-        with pytest.raises(ValueError, match="not configured"):
+        with pytest.raises(StorageNotConfigured, match="No evidence store is configured"):
             s3_service.generate_download_url(
                 org_id="org-1",
                 file_key="evidence/org-1/2026/02/abc123_test.pdf",
+                config=_config(bucket=""),
             )
 
-    @patch("services.s3_service._get_s3_client")
+    @patch("services.s3_service._client")
     def test_includes_content_disposition_when_filename_given(self, mock_get_client, s3_service):
         mock_client = MagicMock()
         mock_client.generate_presigned_url.return_value = "https://s3.amazonaws.com/signed-url"
@@ -224,6 +258,7 @@ class TestGenerateDownloadUrl:
             org_id="org-1",
             file_key="evidence/org-1/2026/02/abc123_test.pdf",
             filename="friendly-name.pdf",
+            config=_config(),
         )
 
         call_kwargs = mock_client.generate_presigned_url.call_args
@@ -235,7 +270,7 @@ class TestGenerateDownloadUrl:
 class TestTagEvidenceObject:
     """Tests for S3 object tagging."""
 
-    @patch("services.s3_service._get_s3_client")
+    @patch("services.s3_service._client")
     def test_applies_org_tag(self, mock_get_client, s3_service):
         mock_client = MagicMock()
         mock_get_client.return_value = mock_client
@@ -243,6 +278,7 @@ class TestTagEvidenceObject:
         result = s3_service.tag_evidence_object(
             file_key="evidence/org-1/2026/02/abc123_test.pdf",
             org_id="org-1",
+            config=_config(),
         )
 
         assert result["tagged"] is True
@@ -253,7 +289,7 @@ class TestTagEvidenceObject:
         tag_keys = [t["Key"] for t in tagging["TagSet"]]
         assert "organization_id" in tag_keys
 
-    @patch("services.s3_service._get_s3_client")
+    @patch("services.s3_service._client")
     def test_applies_all_tags_when_provided(self, mock_get_client, s3_service):
         mock_client = MagicMock()
         mock_get_client.return_value = mock_client
@@ -263,6 +299,7 @@ class TestTagEvidenceObject:
             org_id="org-1",
             evidence_id="ev-456",
             uploaded_by="user-789",
+            config=_config(),
         )
 
         assert result["tag_count"] == 3
@@ -275,9 +312,9 @@ class TestTagEvidenceObject:
         assert "uploaded_by" in tag_keys
 
     def test_raises_if_no_bucket(self, s3_service):
-        s3_service.EVIDENCE_BUCKET = ""
-        with pytest.raises(ValueError, match="not configured"):
+        with pytest.raises(StorageNotConfigured, match="No evidence store is configured"):
             s3_service.tag_evidence_object(
                 file_key="evidence/org-1/2026/02/abc123_test.pdf",
                 org_id="org-1",
+                config=_config(bucket=""),
             )

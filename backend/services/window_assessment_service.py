@@ -546,7 +546,13 @@ def assess_window(
             file_id=f.id,
         )
         # Extract text (best-effort; empty extraction still keeps the file as a source signal)
-        raw = download_evidence_bytes(f.s3_key)
+        raw = download_evidence_bytes(
+            f.s3_key,
+            org_id=str(f.organization_id),
+            storage_config_id=(
+                str(f.storage_config_id) if f.storage_config_id else None
+            ),
+        )
         extracted_text = ""
         if raw:
             extracted = extract_text_from_bytes(

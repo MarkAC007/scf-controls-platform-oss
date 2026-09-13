@@ -12,6 +12,13 @@ Scope: EvidenceFile records joined to WebhookDelivery where
   - scan_status = 'pending'  (malware scan never progressed — no S3 object)
   - head_object confirms S3 object is missing
 
+Storage is reached through ``services.storage_service`` rather than through a
+boto3 client of this script's own. That matters: the client it used to build
+passed no ``endpoint_url`` and hardcoded ``ServerSideEncryption=AES256``, so on
+any S3-compatible store (the bundled MinIO included) it addressed the wrong host
+and asked for an encryption mode MinIO rejects without a KMS. Going through the
+facade means it resolves the same configuration the application does.
+
 Usage:
     cd /path/to/backend
     DATABASE_URL=<...> EVIDENCE_BUCKET=<...> python scripts/backfill_inbox_s3_payloads.py --dry-run
@@ -24,10 +31,12 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from services import storage_service  # noqa: E402
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
@@ -97,29 +106,27 @@ async def find_affected_records(db: AsyncSession) -> List[Dict[str, Any]]:
     return affected
 
 
-def _s3_object_exists(s3_client, bucket: str, key: str) -> bool:
-    """Return True if the S3 object exists, False if 404."""
-    from botocore.exceptions import ClientError
-    try:
-        s3_client.head_object(Bucket=bucket, Key=key)
-        return True
-    except ClientError as exc:
-        if exc.response["Error"]["Code"] in ("404", "NoSuchKey"):
-            return False
-        raise
+def _object_exists(key: str, org_id: Optional[str] = None) -> bool:
+    """Return True if the object exists in evidence storage.
+
+    Scoped to the organisation, because an inbox payload is written through
+    ``write_inbox_payload`` against that organisation's store. Checking the
+    platform store instead reported every object of an organisation on its own
+    store as absent and would have rewritten payloads that were already there.
+    """
+    return storage_service.check_object_exists(key, org_id)
 
 
-def _write_payload(s3_client, bucket: str, key: str, payload_json: Any, org_id: str) -> int:
-    """Write JSON payload to S3.  Returns number of bytes written."""
+def _write_payload(key: str, payload_json: Any, org_id: str) -> int:
+    """Write the JSON payload through the facade. Returns bytes written.
+
+    ``write_inbox_payload`` is the same write the inbox handler performs — same
+    key, content type and org metadata — so the backfilled object is
+    byte-identical to one written live, and the encryption mode comes from the
+    resolved configuration rather than being hardcoded.
+    """
     body = json.dumps(payload_json).encode("utf-8")
-    s3_client.put_object(
-        Bucket=bucket,
-        Key=key,
-        Body=body,
-        ContentType="application/json",
-        ServerSideEncryption="AES256",
-        Metadata={"x-scf-org-id": org_id},
-    )
+    storage_service.write_inbox_payload(key, body, org_id)
     return len(body)
 
 
@@ -143,14 +150,13 @@ async def main() -> None:
     args = parser.parse_args()
     apply_mode = args.apply
 
-    evidence_bucket = os.getenv("EVIDENCE_BUCKET", "")
-    if not evidence_bucket:
-        logger.error("EVIDENCE_BUCKET environment variable is required")
+    if not storage_service.is_configured():
+        logger.error(
+            "Evidence storage is not configured (set EVIDENCE_BUCKET, or "
+            "AZURE_STORAGE_ACCOUNT_NAME for the Azure backend)"
+        )
         sys.exit(1)
-
-    import boto3
-    aws_region = os.getenv("AWS_DEFAULT_REGION", "eu-west-1")
-    s3_client = boto3.client("s3", region_name=aws_region)
+    evidence_bucket = storage_service.resolve_config().bucket or "<evidence store>"
 
     db = await get_db_session()
     try:
@@ -161,7 +167,7 @@ async def main() -> None:
         # Filter to records where S3 object is actually missing
         missing = []
         for rec in candidates:
-            exists = _s3_object_exists(s3_client, evidence_bucket, rec["s3_key"])
+            exists = _object_exists(rec["s3_key"], rec.get("org_id"))
             if not exists:
                 missing.append(rec)
                 logger.info(
@@ -207,8 +213,6 @@ async def main() -> None:
         for rec in missing:
             try:
                 nbytes = _write_payload(
-                    s3_client,
-                    evidence_bucket,
                     rec["s3_key"],
                     rec["payload_json"],
                     rec["org_id"],

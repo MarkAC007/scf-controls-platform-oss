@@ -19,13 +19,35 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from . import get_logger
-from .generate import SECRET_FILE_NAMES
+from .generate import (
+    DEFAULT_STORAGE_TYPE,
+    SECRET_FILE_NAMES,
+    STORAGE_BUNDLED_MINIO,
+    STORAGE_NONE,
+    STORAGE_TYPES,
+)
 
 logger = get_logger()
 
 SENTINEL_NAME = ".provisioned"
 TOKEN_NAME = ".provision-token"
-SENTINEL_VERSION = 1
+#: 2 since the storage choice joined the db and idp choices in the payload.
+SENTINEL_VERSION = 2
+
+#: The backend-visible signal for the storage choice.
+#:
+#: ``COMPOSE_PROFILES`` cannot serve this purpose: compose consumes it on the
+#: HOST to decide which services to create and never forwards it into any
+#: container, so a backend process has no way to read it. The seeding step
+#: (criterion 36) needs to know whether this install has a bundled object store
+#: waiting for it, so the choice gets its own key, forwarded to the backend
+#: service explicitly in docker-compose.yml.
+STORAGE_BOOTSTRAP_KEY = "EVIDENCE_STORAGE_BOOTSTRAP"
+
+#: Compose profile that gates `minio` and `minio-init`.
+STORAGE_PROFILE = "storage"
+#: Compose profile that gates `keycloak`, `keycloak-schema-init` and `idp-init`.
+IDP_PROFILE = "idp"
 
 SECRET_FILE_MODE = 0o600
 SECRETS_DIR_MODE = 0o700
@@ -94,14 +116,23 @@ def is_provisioned(secrets_dir: Path) -> bool:
     return True
 
 
-def create_sentinel(secrets_dir: Path, *, db: str, idp: str) -> Path:
-    """First write of a provisioning run.  Atomic, symlink-proof, race-proof."""
+def create_sentinel(
+    secrets_dir: Path, *, db: str, idp: str, storage: str = DEFAULT_STORAGE_TYPE
+) -> Path:
+    """First write of a provisioning run.  Atomic, symlink-proof, race-proof.
+
+    ``storage`` is recorded for the same reason ``db`` and ``idp`` are: the
+    sentinel is the only durable record of what this directory was provisioned
+    for, and an operator looking at a stack with no object store should be able
+    to find out from it whether that was a choice or an accident.
+    """
     path = sentinel_path(secrets_dir)
     payload = {
         "version": SENTINEL_VERSION,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "db": db,
         "idp": idp,
+        "storage": storage,
     }
     try:
         fd = os.open(
@@ -166,15 +197,48 @@ def delete_provision_token(secrets_dir: Path) -> bool:
         return False
 
 
+def compose_profiles(*, idp_type: str, storage_type: str) -> str:
+    """The single ``COMPOSE_PROFILES`` value for a set of choices.
+
+    One value, comma-separated, in a fixed order. Two separate
+    ``COMPOSE_PROFILES=`` lines would not union: compose takes the last
+    definition, so the earlier profile would be silently switched off and the
+    services behind it would never start.
+
+    Empty when neither optional tier is bundled — and the caller omits the key
+    entirely in that case rather than writing it empty, because
+    ``COMPOSE_PROFILES=`` set to the empty string and ``COMPOSE_PROFILES``
+    absent are not the same thing to every tool that reads a `.env`.
+    """
+    profiles: list[str] = []
+    if idp_type == "bundled_keycloak":
+        profiles.append(IDP_PROFILE)
+    if storage_type == STORAGE_BUNDLED_MINIO:
+        profiles.append(STORAGE_PROFILE)
+    return ",".join(profiles)
+
+
 def build_env(
     *,
     host_secrets_dir: str,
     db: dict[str, Any],
     idp: dict[str, Any],
+    storage: dict[str, Any] | None = None,
     when: str | None = None,
 ) -> str:
-    """Render `.env`.  NON-SECRET KEYS ONLY — this is the whole key set."""
+    """Render `.env`.  NON-SECRET KEYS ONLY — this is the whole key set.
+
+    ``storage`` defaults to the bundled MinIO, which is what every install
+    produced before the choice existed — so a caller that passes nothing keeps
+    getting the install it was getting.
+    """
     idp_type = idp.get("type", "none")
+    storage_type = str((storage or {}).get("type") or DEFAULT_STORAGE_TYPE)
+    if storage_type not in STORAGE_TYPES:
+        raise ValueError(
+            f"unknown storage type: {storage_type!r} "
+            f"(expected one of: {', '.join(STORAGE_TYPES)})"
+        )
     lines: list[str] = []
     lines.append(ENV_HEADER.format(when=when or datetime.now(timezone.utc).isoformat()))
 
@@ -182,8 +246,9 @@ def build_env(
         ("SCF_SECRETS_DIR", host_secrets_dir),
         ("COMPOSE_FILE", "docker-compose.yml:docker-compose.secrets.yml"),
     ]
-    if idp_type == "bundled_keycloak":
-        env.append(("COMPOSE_PROFILES", "idp"))
+    profiles = compose_profiles(idp_type=idp_type, storage_type=storage_type)
+    if profiles:
+        env.append(("COMPOSE_PROFILES", profiles))
     env += [
         ("ENVIRONMENT", "production"),
         ("OSS_SINGLE_TENANT", "1"),
@@ -193,7 +258,27 @@ def build_env(
         ("DB_USER", str(db.get("user") or "cg")),
         # unset or `disable` means "no ssl parameter" to backend/db_url.py
         ("DB_SSLMODE", "" if db.get("type") == "bundled" else str(db.get("sslmode") or "")),
+        # Read by the backend at startup to decide whether to seed the bundled
+        # platform storage configuration. See STORAGE_BOOTSTRAP_KEY above for
+        # why COMPOSE_PROFILES cannot do this job.
+        (STORAGE_BOOTSTRAP_KEY, storage_type),
     ]
+
+    if storage_type == STORAGE_NONE:
+        # Explicitly empty, and that emptiness is the whole point. These three
+        # are read in compose as `${VAR-default}` — NO COLON — so an empty value
+        # is honoured rather than replaced. Without these lines the backend on a
+        # `--no-minio` install would be handed a bucket called `evidence` at
+        # http://minio:9000, where nothing is listening: it would report itself
+        # as configured, refuse to start in production because the matching AWS
+        # credential is absent, and every upload would fail at the socket rather
+        # than with an answer. Empty is the honest description of a stack that
+        # has no object store until somebody configures one.
+        env += [
+            ("AWS_ENDPOINT_URL", ""),
+            ("EVIDENCE_BUCKET", ""),
+            ("EVIDENCE_PUBLIC_ENDPOINT", ""),
+        ]
 
     if idp_type == "bundled_keycloak":
         env.append(("KC_ADMIN_USER", str(idp.get("kc_admin_user") or "admin")))

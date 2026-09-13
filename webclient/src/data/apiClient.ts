@@ -97,6 +97,13 @@ async function apiFetch<T>(
       } else if (detail && typeof detail === 'object' && typeof detail.detail === 'string') {
         // Structured cap-exceeded shape: { detail: { detail: "...", cap: "..." } }
         errorMessage = detail.detail
+      } else if (detail && typeof detail === 'object' && typeof detail.message === 'string') {
+        // Structured refusal shape: { detail: { error: "...", message: "..." } }.
+        // Every evidence-storage refusal uses it (api/storage_gate.py), and the
+        // message is the only part that says what to do about it — without this
+        // branch the user reads "API Error: 409 Conflict" and the remedy is
+        // dropped on the floor.
+        errorMessage = detail.message
       } else if (typeof errorJson.error === 'string') {
         errorMessage = errorJson.error
       }
@@ -242,6 +249,9 @@ async function apiFetchRaw(
         errorMessage = detail
       } else if (Array.isArray(detail)) {
         errorMessage = detail.map((e: { msg?: string }) => e.msg || 'Validation error').join('; ')
+      } else if (detail && typeof detail === 'object' && typeof detail.message === 'string') {
+        // Same structured refusal shape as above.
+        errorMessage = detail.message
       } else if (typeof errorJson.error === 'string') {
         errorMessage = errorJson.error
       }
@@ -2846,7 +2856,21 @@ export interface EvidenceFileUploadUrlRequest {
   file_size_bytes: number
 }
 
+/**
+ * How to upload to the presigned target. Stated by the backend, never guessed.
+ *
+ * `POST` is a presigned POST: send `fields` plus the file as multipart form
+ * data. `PUT` is a self-contained URL: send the file as the raw body. A value
+ * outside this set means a backend newer than this client, and the upload is
+ * refused rather than attempted with a guessed verb.
+ */
+export type EvidenceUploadMethod = 'POST' | 'PUT'
+
 export interface EvidenceFileUploadUrlResponse {
+  /** The verb to upload with. See {@link EvidenceUploadMethod}. */
+  method: EvidenceUploadMethod
+  /** Which storage provider signed this. Informational: the verb is `method`. */
+  provider: string
   url: string
   fields: Record<string, string>
   s3_key: string

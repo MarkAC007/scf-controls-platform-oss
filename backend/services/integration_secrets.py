@@ -1,4 +1,4 @@
-"""Tier-3 credential store: the six values an operator may set in the app.
+"""Tier-3 credential store: the five values an operator may set in the app.
 
 Contract §3d. Precedence is fixed in `services.secrets.get_secret`: a value in
 a mounted file or the environment always wins over a value in this table. That
@@ -39,10 +39,13 @@ LABELS: Dict[str, tuple[str, str]] = {
         "Anthropic API key",
         "AI document generation and evidence assessment",
     ),
-    "AZURE_STORAGE_ACCOUNT_KEY": (
-        "Azure Storage account key",
-        "Evidence storage on Azure Blob",
-    ),
+    # `AZURE_STORAGE_ACCOUNT_KEY` was removed here and from
+    # `services.secrets.TIER3_NAMES` together. Evidence object storage is
+    # configured per organisation in `evidence_storage_configs`, which this
+    # name-keyed global table cannot express, and the Azure field was inert on
+    # its own besides. See the comment above `TIER3_NAMES`. This dict is what
+    # the Integrations screen renders, so removing the entry is also what takes
+    # the misleading field off that screen.
     "HIBP_API_KEY": (
         "Have I Been Pwned API key",
         "Vendor breach research",
@@ -57,7 +60,7 @@ ENTITY_TYPE = "integration_secret"
 
 
 class UnknownIntegration(Exception):
-    """The name is not one of the six settable credentials."""
+    """The name is not one of the five settable credentials."""
 
 
 class OperatorManaged(Exception):

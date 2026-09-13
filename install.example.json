@@ -12,10 +12,17 @@
     "",
     "idp.type                 'bundled_keycloak', 'external_oidc' or 'none'.",
     "idp.bootstrap_admin_email  REQUIRED for 'bundled_keycloak'. The account install.sh --up",
-    "                         promotes to platform administrator. Omit it and the stack comes",
-    "                         up healthy with no organisation membership and an unusable UI.",
+    "                         promotes to platform administrator. Omit it and provisioning",
+    "                         is refused before anything is written.",
     "idp.oidc_client_secret   only for 'external_oidc' — a secret owned by a system that is",
-    "                         not ours, so it is the one credential you may supply."
+    "                         not ours, so it is the one credential you may supply.",
+    "",
+    "storage.type             'bundled_minio' (the default, and what every install got before",
+    "                         this key existed) or 'none'. 'none' is the same choice as the",
+    "                         --no-minio flag: the minio and minio-init services are left out",
+    "                         of the stack entirely and evidence storage is configured",
+    "                         afterwards from Settings. Supplying BOTH this key and the flag",
+    "                         with different values is refused rather than resolved."
   ],
 
   "db": {
@@ -25,5 +32,9 @@
   "idp": {
     "type": "bundled_keycloak",
     "bootstrap_admin_email": "you@example.com"
+  },
+
+  "storage": {
+    "type": "bundled_minio"
   }
 }

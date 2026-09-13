@@ -19,7 +19,7 @@ from catalog_models import SCFCatalogControl
 from celery_app import celery_app
 from database import get_db
 from schemas_catalog_upgrade import CatalogStatusExtended
-from services import s3_service
+from services import storage_service
 from services.catalog_apply import get_current_catalog_version
 from services.single_tenant import is_single_tenant_active, single_tenant_org_id
 
@@ -125,7 +125,7 @@ async def import_catalog(
     object_key = f"_catalog-import/{task_id}.xlsx"
     org_id = single_tenant_org_id() or "single-tenant"
     try:
-        s3_service.put_bytes(object_key, body, _XLSX_CONTENT_TYPE, org_id)
+        storage_service.put_bytes(object_key, body, _XLSX_CONTENT_TYPE, org_id)
     except Exception as exc:  # noqa: BLE001 — surface a clean 502 to the operator
         logger.exception("Failed to stash catalogue upload")
         raise HTTPException(

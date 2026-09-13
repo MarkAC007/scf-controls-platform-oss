@@ -11,7 +11,7 @@ distributed in this repository.** SCF control content is licensed (CC BY-ND 4.0 
 commercial licence) and cannot be redistributed here. Instead they are **generated at install
 time** from your own SCF Excel workbook by the catalogue importer
 (`scripts/extract_scf_data.py`, run via `docker compose --profile init run --rm catalog-importer`).
-They are git-ignored. See the root `README.md` → "Bring your own SCF Excel catalogue".
+They are git-ignored. See the deployment guide (https://docs.scfcontrolsplatform.app/admin-guide/deployment/).
 
 - `control_guidance.json` - SCF control definitions with full metadata
 - `domains.json` - SCF domain definitions

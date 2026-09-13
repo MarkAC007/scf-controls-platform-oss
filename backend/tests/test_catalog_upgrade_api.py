@@ -177,7 +177,7 @@ def _diff_detail() -> DiffDetail:
 def _patch_diff_download(monkeypatch, detail: DiffDetail) -> None:
     payload = detail.model_dump_json().encode("utf-8")
     monkeypatch.setattr(
-        cua.s3_service, "download_blob_stream", lambda key: iter([payload])
+        cua.storage_service, "download_blob_stream", lambda key: iter([payload])
     )
 
 
@@ -245,7 +245,7 @@ def test_upload_creates_run_stashes_workbook_and_dispatches_staging(
     def _put(key, body, content_type, org_id):
         stashed.update(key=key, size=len(body), content_type=content_type, org=org_id)
 
-    monkeypatch.setattr(cua.s3_service, "put_bytes", _put)
+    monkeypatch.setattr(cua.storage_service, "put_bytes", _put)
 
     session = FakeSession([_Result([])])  # in-flight check: none
     client = client_factory(session)
