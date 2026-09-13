@@ -114,7 +114,7 @@ function makeProps(overrides: Partial<ControlDetailPageProps> = {}): ControlDeta
 
 describe('ControlDetailPage', () => {
   afterEach(() => {
-    vi.restoreAllMocks()
+    vi.resetAllMocks()
   })
 
   // ── Rendering: id, title, assessment question ─────────────────────────────

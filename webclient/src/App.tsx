@@ -84,11 +84,12 @@ type Tab = 'dashboard' | 'capability-posture' | 'library' | 'scoping' | 'evidenc
  * Screen selection lives in `activeTab`; `data/appUrl.ts` owns the vocabulary
  * that mirrors it into the address bar, and this file decides when to write.
  *
- * `react-router-dom` is a dependency that drives nothing, and giving it the
- * wheel would touch all twenty-two screens below. So `?tab=` names the screen
- * instead — every destination the sidebar offers, so that each one survives a
- * reload, can be bookmarked and can be sent to a colleague (#810). The bare
- * path stays the dashboard's address.
+ * The app deliberately uses no router library (`react-router-dom` was removed
+ * in 2026-09 — it drove nothing), and giving one the wheel would touch all
+ * twenty-two screens below. So `?tab=` names the screen instead — every
+ * destination the sidebar offers, so that each one survives a reload, can be
+ * bookmarked and can be sent to a colleague (#810). The bare path stays the
+ * dashboard's address.
  *
  * A `tab` naming anything `SYNCED_TABS` does not list is ignored rather than
  * honoured, and normalised off the URL on arrival.

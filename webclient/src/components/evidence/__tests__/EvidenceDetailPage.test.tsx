@@ -172,7 +172,7 @@ function makeProps(overrides: Partial<EvidenceDetailPageProps> = {}): EvidenceDe
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 afterEach(() => {
-  vi.restoreAllMocks()
+  vi.resetAllMocks()
 })
 
 describe('EvidenceDetailPage', () => {

@@ -151,7 +151,7 @@ describe('LibraryPage', () => {
   })
 
   afterEach(() => {
-    vi.restoreAllMocks()
+    vi.resetAllMocks(); vi.restoreAllMocks()
   })
 
   // ── Default: renders list ─────────────────────────────────────────────────
