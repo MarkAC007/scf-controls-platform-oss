@@ -30,7 +30,13 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from . import get_logger, host_secrets_dir, out_dir, secrets_dir
 from . import validate as validate_mod
-from .generate import SECRET_FILE_NAMES, generate_secrets
+from .generate import (
+    DEFAULT_STORAGE_TYPE,
+    SECRET_FILE_NAMES,
+    STORAGE_BUNDLED_MINIO,
+    STORAGE_TYPES,
+    generate_secrets,
+)
 from .validate import ValidationRejected
 from . import writer
 
@@ -58,6 +64,51 @@ ERR_ALREADY_PROVISIONED = "already_provisioned"
 ERR_VALIDATION_FAILED = "validation_failed"
 ERR_INVALID_REQUEST = "invalid_request"
 ERR_INTERNAL = "internal_error"
+
+#: Environment variable ``scripts/install.sh --no-minio`` sets on the wizard
+#: container. It is the flag's only transport: the browser wizard has no field
+#: for the storage choice, so a flag typed on the command line has to reach the
+#: provisioning code some other way.
+STORAGE_TYPE_ENV = "SCF_STORAGE_TYPE"
+
+
+def resolve_storage_type(storage: dict[str, Any]) -> str:
+    """Which object store this install provisions: the payload, then the flag.
+
+    Three refusals rather than a silent precedence, because both inputs are
+    things an operator typed and a disagreement between them is a mistake worth
+    naming:
+
+    * an unknown value in either place is refused by name;
+    * an explicit ``storage.type`` that **disagrees** with the flag is refused
+      rather than resolved. ``--no-minio`` with ``"type": "bundled_minio"`` in
+      the config file is not a precedence question, it is a contradiction, and
+      guessing which one the operator meant would provision a stack they did
+      not ask for.
+
+    With neither supplied the answer is the bundled MinIO, which is what every
+    install produced before this choice existed.
+    """
+    flag = (os.environ.get(STORAGE_TYPE_ENV) or "").strip()
+    requested = str(storage.get("type") or "").strip()
+
+    if flag and flag not in STORAGE_TYPES:
+        raise ValidationRejected(
+            ERR_INVALID_REQUEST,
+            f"{STORAGE_TYPE_ENV} must be one of: {', '.join(STORAGE_TYPES)}",
+        )
+    if requested and requested not in STORAGE_TYPES:
+        raise ValidationRejected(
+            ERR_INVALID_REQUEST,
+            f"storage.type must be one of: {', '.join(STORAGE_TYPES)}",
+        )
+    if requested and flag and requested != flag:
+        raise ValidationRejected(
+            ERR_INVALID_REQUEST,
+            "storage.type in the configuration disagrees with the storage flag "
+            "passed to scripts/install.sh. Remove one of them.",
+        )
+    return requested or flag or DEFAULT_STORAGE_TYPE
 
 
 def _json(status: int, payload: dict[str, Any]) -> JSONResponse:
@@ -216,8 +267,13 @@ def _provision(
     """Shared by the HTTP route and unattended mode: identical writes."""
     db = payload.get("db") or {}
     idp = payload.get("idp") or {}
+    storage = payload.get("storage") or {}
     db_type = str(db.get("type") or "bundled")
     idp_type = str(idp.get("type") or "none")
+    # Before the sentinel, like every other validation here: a refused storage
+    # choice must leave the secrets directory untouched so the operator can fix
+    # the file and re-run.
+    storage_type = resolve_storage_type(storage)
 
     # Validate BEFORE the sentinel: a rejected config must leave the secrets dir
     # untouched, so the operator can fix the file and re-run. The browser wizard
@@ -233,11 +289,14 @@ def _provision(
 
     writer.ensure_secrets_dir(secrets_path)
     # Sentinel FIRST: atomic, symlink-proof, race-proof.
-    writer.create_sentinel(secrets_path, db=db_type, idp=idp_type)
+    writer.create_sentinel(
+        secrets_path, db=db_type, idp=idp_type, storage=storage_type
+    )
 
     values = generate_secrets(
         db_type=db_type,
         idp_type=idp_type,
+        storage_type=storage_type,
         external_db_password=db.get("password"),
         external_oidc_client_secret=idp.get("oidc_client_secret"),
     )
@@ -248,7 +307,9 @@ def _provision(
     env_db["type"] = db_type
     if db_type == "bundled":
         env_db.update({"host": "postgres", "port": 5432, "dbname": "cg_scf", "user": "cg"})
-    content = writer.build_env(host_secrets_dir=host_dir, db=env_db, idp=idp)
+    content = writer.build_env(
+        host_secrets_dir=host_dir, db=env_db, idp=idp, storage={"type": storage_type}
+    )
     env_path = writer.write_env(out_path, content)
 
     writer.delete_provision_token(secrets_path)
@@ -257,6 +318,11 @@ def _provision(
         "Review .env — it holds non-secret configuration only.",
         "Start the stack: docker compose up -d",
     ]
+    if storage_type != STORAGE_BUNDLED_MINIO:
+        next_steps.append(
+            "No object store is bundled: open Settings and configure evidence "
+            "storage before uploading any evidence."
+        )
     if idp_type == "bundled_keycloak":
         next_steps += [
             "Read the one-time Keycloak password: docker compose logs idp-init",
@@ -274,6 +340,7 @@ def _provision(
         "env_path": str(env_path),
         "files_created": [n for n in SECRET_FILE_NAMES if created.get(n)],
         "files_kept": [n for n in SECRET_FILE_NAMES if not created.get(n)],
+        "storage": storage_type,
         "next_steps": next_steps,
     }
 

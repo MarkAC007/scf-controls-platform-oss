@@ -18585,12 +18585,12 @@ textarea.form-control{
 .toggle-label-text {
   font-size: 14px;
   font-weight: 500;
-  color: var(--text-heading, #f8f9fa);
+  color: var(--text);
 }
 
 .toggle-label-hint {
   font-size: 12px;
-  color: var(--text-muted, #9ca3af);
+  color: var(--muted);
 }
 
 .toggle-switch {
@@ -34302,4 +34302,156 @@ button.risk-list-header-cell:hover {
   .integration-audit-when {
     margin-left: 0;
   }
+}
+
+/* ── Settings → Evidence storage (ISA phase 5) ───────────────────────────────
+   The organisation's own object store. Shares the Integrations row, banner,
+   editor and confirm styles above — this block only adds what that screen has
+   no equivalent of: the "in force now" summary, its fact list, and the
+   per-step connection-test report. Token-driven like its neighbours. */
+
+.evidence-storage-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.evidence-storage-current,
+.evidence-storage-editor,
+.evidence-storage-migration,
+.evidence-storage-list-section {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+}
+
+.evidence-storage-current h3,
+.evidence-storage-editor h3,
+.evidence-storage-migration h3,
+.evidence-storage-list-section h3 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.evidence-storage-headline {
+  margin: 0 0 8px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.evidence-storage-facts {
+  margin: 10px 0 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px 16px;
+}
+
+.evidence-storage-facts div {
+  min-width: 0;
+}
+
+.evidence-storage-facts dt {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.evidence-storage-facts dd {
+  margin: 2px 0 0;
+  font-size: 13px;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.evidence-storage-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 560px;
+}
+
+.evidence-storage-editor label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.evidence-storage-steps {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.evidence-storage-steps li {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: baseline;
+  font-size: 12px;
+}
+
+.evidence-storage-step-name {
+  font-weight: 600;
+  color: var(--text);
+  min-width: 150px;
+}
+
+.evidence-storage-step-ok {
+  color: var(--success);
+  font-weight: 600;
+}
+
+.evidence-storage-step-failed {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.evidence-storage-step-detail {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 768px) {
+  .evidence-storage-step-name {
+    min-width: 0;
+  }
+}
+
+/* ── Settings → Evidence storage → move existing evidence (ISA phase 6) ──────
+   The copy panel reuses .progress-bar/.progress-fill rather than defining a
+   second bar, so a theme change moves both. Everything else here is layout. */
+
+.evidence-storage-migration-start {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+  margin-top: 10px;
+}
+
+.evidence-storage-migration-start label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.evidence-storage-migration-start select {
+  max-width: 100%;
+}
+
+.evidence-storage-copy-run {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
 }

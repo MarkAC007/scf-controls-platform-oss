@@ -21,9 +21,14 @@ from installer.generate import (
 )
 from installer.writer import AlreadyProvisioned, SENTINEL_NAME
 
+# The default storage choice is the bundled MinIO, so COMPOSE_PROFILES is now
+# present on EVERY path — carrying `storage` alone, or `idp,storage` when the
+# bundled identity provider is also selected. `test_installer_storage.py` covers
+# the no-storage path, where the key can be absent again.
 COMMON_KEYS = [
     "SCF_SECRETS_DIR",
     "COMPOSE_FILE",
+    "COMPOSE_PROFILES",
     "ENVIRONMENT",
     "OSS_SINGLE_TENANT",
     "DB_HOST",
@@ -31,6 +36,7 @@ COMMON_KEYS = [
     "DB_NAME",
     "DB_USER",
     "DB_SSLMODE",
+    "EVIDENCE_STORAGE_BOOTSTRAP",
 ]
 OIDC_KEYS = [
     "OIDC_ISSUER",
@@ -40,8 +46,7 @@ OIDC_KEYS = [
     "VITE_OIDC_ENABLED",
 ]
 EXPECTED_ENV_KEYS = {
-    "bundled_keycloak": ["SCF_SECRETS_DIR", "COMPOSE_FILE", "COMPOSE_PROFILES"]
-    + COMMON_KEYS[2:]
+    "bundled_keycloak": COMMON_KEYS
     + ["KC_ADMIN_USER", "BOOTSTRAP_ADMIN_EMAIL"]
     + OIDC_KEYS,
     "external_oidc": COMMON_KEYS + OIDC_KEYS,
@@ -75,10 +80,22 @@ def test_the_minio_user_is_twenty_lowercase_alphanumerics():
         assert re.fullmatch(r"[a-z0-9]{20}", user)
 
 
-def test_aws_credentials_mirror_the_minio_root_credentials_on_the_bundled_path():
+def test_the_application_credential_is_not_the_minio_root_credential():
+    """This assertion is the inverse of the one it replaces (criterion 37).
+
+    Until Phase 4 the installer set ``AWS_ACCESS_KEY_ID`` /
+    ``AWS_SECRET_ACCESS_KEY`` **equal** to ``MINIO_ROOT_USER`` /
+    ``MINIO_ROOT_PASSWORD``, and this test asserted that equality as the
+    contract. The application therefore talked to the object store holding every
+    evidence file as its root account. The pair is now independent and
+    ``minio-init`` gives it a MinIO user whose policy names one bucket.
+
+    Full storage coverage lives in ``test_installer_storage.py``; this one stays
+    here so the file that once pinned the equality now pins its removal.
+    """
     values = generate_secrets(db_type="bundled", idp_type="bundled_keycloak")
-    assert values["AWS_ACCESS_KEY_ID"] == values["MINIO_ROOT_USER"]
-    assert values["AWS_SECRET_ACCESS_KEY"] == values["MINIO_ROOT_PASSWORD"]
+    assert values["AWS_ACCESS_KEY_ID"] != values["MINIO_ROOT_USER"]
+    assert values["AWS_SECRET_ACCESS_KEY"] != values["MINIO_ROOT_PASSWORD"]
 
 
 def test_every_name_is_generated_and_no_value_is_a_placeholder():
@@ -118,7 +135,8 @@ def test_an_unknown_tier_is_rejected():
 def test_the_sentinel_is_created_once(tmp_path):
     writer.create_sentinel(tmp_path, db="bundled", idp="none")
     payload = json.loads((tmp_path / SENTINEL_NAME).read_text())
-    assert payload["version"] == 1
+    # 2 since the storage choice joined db and idp in the payload (Phase 4).
+    assert payload["version"] == 2
     assert payload["db"] == "bundled"
     with pytest.raises(AlreadyProvisioned):
         writer.create_sentinel(tmp_path, db="bundled", idp="none")

@@ -147,6 +147,10 @@ def _file_row(**overrides):
         "s3_key": "org/evidence/policy.pdf",
         "sha256_hash": FILE_SHA,
         "computed_sha256": FILE_SHA,
+        # Which store this file's bytes are in. NULL means "resolve by
+        # organisation", which is every row written before per-file storage
+        # existed, so it is the default here (ISC 48).
+        "storage_config_id": None,
     }
     row.update(overrides)
     return row
@@ -256,7 +260,12 @@ def _run(monkeypatch, session, extracted=None, llm=None, force=False, context=No
         ta, "assemble_control_context_sync",
         lambda s, eid: _context() if context is None else context,
     )
-    monkeypatch.setattr(ta, "download_evidence_bytes", lambda key: b"bytes")
+    # The task now resolves the store per file rather than per organisation,
+    # so the stub has to accept the resolution it passes (ISC 48).
+    monkeypatch.setattr(
+        ta, "download_evidence_bytes",
+        lambda key, org_id=None, storage_config_id=None: b"bytes",
+    )
     monkeypatch.setattr(
         ta, "extract_text_from_bytes",
         lambda data, ct, fn: extracted or ExtractedContent(text="policy body", extraction_method="pdf"),

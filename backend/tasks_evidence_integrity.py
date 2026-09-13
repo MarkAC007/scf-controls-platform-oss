@@ -162,7 +162,15 @@ def verify_evidence_file_task(self, evidence_file_id: str) -> Dict[str, Any]:
             return {"status": "skipped_deleted", "evidence_file_id": evidence_file_id}
 
         # ---- the one fetch -------------------------------------------------
-        data = download_evidence_bytes(evidence_file.s3_key)
+        data = download_evidence_bytes(
+            evidence_file.s3_key,
+            org_id=str(evidence_file.organization_id),
+            storage_config_id=(
+                str(evidence_file.storage_config_id)
+                if evidence_file.storage_config_id
+                else None
+            ),
+        )
 
         if data is None:
             # The record says there is an object; storage disagrees. That is

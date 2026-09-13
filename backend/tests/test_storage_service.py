@@ -17,14 +17,30 @@ from unittest.mock import patch, MagicMock
 class TestBackendDetection:
     """Tests for auto-detecting the storage backend."""
 
-    def test_detects_azure_when_account_name_set(self, monkeypatch):
+    def test_azure_is_ignored_and_reports_nothing_configured(self, monkeypatch, caplog):
+        """Phase 7, D13: the Azure selection is retired.
+
+        It used to return "azure" here and route every evidence operation at
+        one account read out of the process environment, whichever
+        organisation and whichever file was being asked about. Now the
+        variable is read only to warn, and this install reports what it
+        actually has: nothing.
+        """
+        import logging
+
         monkeypatch.setenv("AZURE_STORAGE_ACCOUNT_NAME", "teststorage")
         monkeypatch.setenv("AZURE_STORAGE_ACCOUNT_KEY", "dGVzdGtleQ==")
         monkeypatch.delenv("EVIDENCE_BUCKET", raising=False)
 
         import services.storage_service as mod
         mod._BACKEND = None  # Reset detection cache
-        assert mod._detect_backend() == "azure"
+        with caplog.at_level(logging.WARNING):
+            assert mod._detect_backend() == "none"
+        assert "RETIRED" in caplog.text
+        assert "IGNORED" in caplog.text
+        # Loud is the point: an operator whose store silently changed under
+        # them would find out from a missing file.
+        assert "AZURE_STORAGE_ACCOUNT_NAME" in caplog.text
 
     def test_detects_s3_when_bucket_set(self, monkeypatch):
         monkeypatch.delenv("AZURE_STORAGE_ACCOUNT_NAME", raising=False)
@@ -42,14 +58,23 @@ class TestBackendDetection:
         mod._BACKEND = None
         assert mod._detect_backend() == "none"
 
-    def test_azure_takes_precedence_over_s3(self, monkeypatch):
+    def test_azure_no_longer_takes_precedence_over_s3(self, monkeypatch):
+        """The inversion that matters.
+
+        An install carrying both settings used to have its S3 configuration
+        silently overruled by a leftover Azure variable. That is now the other
+        way round, which is also the only reading compatible with an
+        organisation configuring its own store: a per-organisation
+        configuration cannot be outranked by a process-wide environment
+        variable.
+        """
         monkeypatch.setenv("AZURE_STORAGE_ACCOUNT_NAME", "teststorage")
         monkeypatch.setenv("AZURE_STORAGE_ACCOUNT_KEY", "dGVzdGtleQ==")
         monkeypatch.setenv("EVIDENCE_BUCKET", "test-bucket")
 
         import services.storage_service as mod
         mod._BACKEND = None
-        assert mod._detect_backend() == "azure"
+        assert mod._detect_backend() == "s3"
 
 
 class TestIsConfigured:
@@ -60,9 +85,7 @@ class TestIsConfigured:
         monkeypatch.setenv("EVIDENCE_BUCKET", "test-bucket")
 
         import services.storage_service as mod
-        import services.s3_service as s3_mod
         mod._BACKEND = None
-        s3_mod.EVIDENCE_BUCKET = "test-bucket"
         assert mod.is_configured() is True
 
     def test_not_configured(self, monkeypatch):
@@ -96,7 +119,12 @@ class TestDelegation:
         mod._BACKEND = None
 
         mod.write_inbox_payload("key", b"body", "org-1")
-        mock_s3_write.assert_called_once_with("key", b"body", "org-1")
+        # The facade now resolves a configuration and hands it to the driver,
+        # rather than the driver reading module constants (Phase 0 / ISC-4).
+        mock_s3_write.assert_called_once()
+        args, kwargs = mock_s3_write.call_args
+        assert args == ("key", b"body", "org-1")
+        assert kwargs["config"].bucket == "test-bucket"
 
     def test_generate_upload_raises_when_not_configured(self, monkeypatch):
         monkeypatch.delenv("AZURE_STORAGE_ACCOUNT_NAME", raising=False)

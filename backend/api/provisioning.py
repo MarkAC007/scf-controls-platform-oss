@@ -296,22 +296,26 @@ async def sync_subscription(
             if suspended_count:
                 logger.info(f"Suspended {suspended_count} active relationships for consultant {consultant_profile.id}")
 
-    # Validate evidence storage is configured before provisioning org
-    from services.storage_service import is_configured as storage_configured, get_backend
+    # Evidence storage is NOT a precondition for having an organisation.
+    #
+    # This used to raise a hard 503 here, which made the ordinary sequence
+    # impossible: an operator installs with --no-minio, signs in, and cannot
+    # create the organisation from inside which the storage configuration is
+    # set. `api/organizations.py` has always been warn-only on the same
+    # condition, so the two org-creation paths disagreed — the same user could
+    # succeed through one and be refused by the other.
+    #
+    # The gate now lives where the missing store actually bites: presign and
+    # upload (`api/evidence_files.py`), which refuse with an error naming the
+    # screen that fixes it. Everything else about an organisation — scoping,
+    # assessments, documents, risks — works with no object store at all.
+    from services.storage_service import is_configured as storage_configured
     if not storage_configured():
-        logger.error(
-            "Evidence storage not configured — cannot provision org for user %s. "
-            "Set EVIDENCE_BUCKET (AWS) or AZURE_STORAGE_ACCOUNT_NAME + "
-            "AZURE_STORAGE_ACCOUNT_KEY (Azure).",
+        logger.warning(
+            "Evidence storage not configured — org provisioning for user %s will "
+            "proceed but evidence uploads will fail until an administrator "
+            "configures a store under Settings, Evidence storage.",
             db_user.id,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={
-                "message": "Evidence storage is not configured on this platform instance. "
-                           "Please contact the platform administrator.",
-                "storage_backend": get_backend(),
-            },
         )
 
     # Phase 1: Auto-provision organisation for all non-enterprise tiers

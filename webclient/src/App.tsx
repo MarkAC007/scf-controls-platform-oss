@@ -38,6 +38,8 @@ import ApiKeyManagement from './components/ApiKeyManagement'
 import WebhookManagement from './components/WebhookManagement'
 import BackupRestore from './components/BackupRestore'
 import IntegrationsSettings from './components/IntegrationsSettings'
+import EvidenceStorageSettings from './components/EvidenceStorageSettings'
+import EvidenceStorageMigrationPanel from './components/EvidenceStorageMigrationPanel'
 import AuditLogPage from './components/AuditLogPage'
 import EngagementsPage from './components/EngagementsPage'
 import DocumentsPage from './components/documents/DocumentsPage'
@@ -879,6 +881,7 @@ function AppContent() {
                 <a className="settings-section-nav-item" href="#settings-risk">RISK &amp; GOVERNANCE</a>
                 <a className="settings-section-nav-item" href="#settings-docgen">DOCUMENT GENERATION</a>
                 <a className="settings-section-nav-item" href="#settings-backups">BACKUPS</a>
+                <a className="settings-section-nav-item" href="#settings-evidence-storage">EVIDENCE STORAGE</a>
                 {canManageIntegrations && (
                   <a className="settings-section-nav-item" href="#settings-integrations">INTEGRATIONS</a>
                 )}
@@ -912,6 +915,21 @@ function AppContent() {
                 <div id="settings-backups">
                   <BackupRestore
                     organizationId={scopingData.organizationId!}
+                  />
+                </div>
+                {/* Where this organisation's evidence files are written.
+                    Org-scoped — the opposite of Integrations below — so it
+                    takes the current organisation id. The API gates it on the
+                    organisation admin role and answers 403 to anyone else,
+                    which the card renders as a read-only explanation. */}
+                <div id="settings-evidence-storage">
+                  <EvidenceStorageSettings
+                    organizationId={scopingData.organizationId!}
+                    migrationPanel={
+                      <EvidenceStorageMigrationPanel
+                        organizationId={scopingData.organizationId!}
+                      />
+                    }
                   />
                 </div>
                 {/* Platform-wide credential storage — platform admins (and the

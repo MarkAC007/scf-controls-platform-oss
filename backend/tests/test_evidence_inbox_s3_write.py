@@ -16,6 +16,8 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
+from services.storage_config import StorageNotConfigured
+
 
 # ---------------------------------------------------------------------------
 # Shared test helpers
@@ -362,17 +364,35 @@ class TestInboxTrackerLinking:
         assert mock_tracker.last_collection_date is not None
 
 
+def _aws_config(bucket: str):
+    """A resolved config standing in for real AWS S3 (so SSE-S3 is requested).
+
+    Phase 0 replaced the driver's module constants with a per-call resolved
+    configuration, so a test supplies one instead of poking globals.
+    """
+    from services.storage_config import (
+        PROVIDER_AWS_S3,
+        SOURCE_LEGACY_ENV,
+        SSE_AES256,
+        ResolvedStorageConfig,
+    )
+
+    return ResolvedStorageConfig(
+        config_id="test",
+        source=SOURCE_LEGACY_ENV,
+        provider=PROVIDER_AWS_S3,
+        bucket=bucket,
+        sse_mode=SSE_AES256,
+    )
+
+
 class TestWriteInboxPayload:
     """Unit tests for the s3_service.write_inbox_payload function."""
 
-    @patch("services.s3_service._get_s3_client")
+    @patch("services.s3_service._client")
     def test_calls_put_object_with_correct_args(self, mock_get_client):
         """write_inbox_payload must call put_object with expected parameters."""
-        import importlib
         import services.s3_service as mod
-        mod._s3_client = None
-        mod.EVIDENCE_BUCKET = "test-evidence-bucket"
-
         mock_client = MagicMock()
         mock_get_client.return_value = mock_client
 
@@ -381,6 +401,7 @@ class TestWriteInboxPayload:
             s3_key="evidence/org-1/inbox/delivery-abc.json",
             body=body,
             org_id="org-1",
+            config=_aws_config(bucket="test-evidence-bucket"),
         )
 
         mock_client.put_object.assert_called_once()
@@ -393,16 +414,12 @@ class TestWriteInboxPayload:
         assert call_kwargs["Metadata"]["x-scf-org-id"] == "org-1"
 
     def test_raises_if_no_bucket_configured(self):
-        """write_inbox_payload must raise ValueError when EVIDENCE_BUCKET is empty."""
+        """write_inbox_payload must raise ValueError when no bucket is resolved."""
         import services.s3_service as mod
-        original = mod.EVIDENCE_BUCKET
-        try:
-            mod.EVIDENCE_BUCKET = ""
-            with pytest.raises(ValueError, match="not configured"):
-                mod.write_inbox_payload(
-                    s3_key="evidence/org-1/inbox/x.json",
-                    body=b"{}",
-                    org_id="org-1",
-                )
-        finally:
-            mod.EVIDENCE_BUCKET = original
+        with pytest.raises(StorageNotConfigured, match="No evidence store is configured"):
+            mod.write_inbox_payload(
+                s3_key="evidence/org-1/inbox/x.json",
+                body=b"{}",
+                org_id="org-1",
+                config=_aws_config(bucket=""),
+            )

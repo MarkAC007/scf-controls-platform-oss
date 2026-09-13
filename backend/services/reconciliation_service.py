@@ -27,7 +27,7 @@ Design notes:
   returns tables wholesale.
 - **Diff details** live in object storage next to the platform run
   (``tasks_catalog.diff_detail_object_key``). The default loader streams them
-  from ``s3_service``; previews/changelog calls run it via ``asyncio.to_thread``
+  from ``storage_service``; previews/changelog calls run it via ``asyncio.to_thread``
   so the (synchronous, per plan §4.3) preview endpoint does not block the event
   loop. Tests inject an in-memory loader.
 """
@@ -175,10 +175,10 @@ def _now() -> datetime:
 
 def load_diff_detail_from_storage(run: CatalogImportRun) -> DiffDetail:
     """Fetch a platform run's stored DiffDetail JSON from object storage."""
-    from services import s3_service
+    from services import storage_service
 
     key = run.diff_detail_object_key or f"_catalog-upgrade/{run.id}/diff_detail.json"
-    chunks = s3_service.download_blob_stream(key)
+    chunks = storage_service.download_blob_stream(key)
     if chunks is None:
         raise DiffDetailUnavailableError(
             f"diff detail not found in storage for import run {run.id} ({key})"

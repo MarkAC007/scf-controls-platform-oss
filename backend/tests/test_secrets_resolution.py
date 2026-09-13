@@ -21,19 +21,86 @@ from services import secrets  # noqa: E402
 # Inventory
 # --------------------------------------------------------------------------
 
-def test_tier3_names_is_the_closed_list_of_six():
+def test_tier3_names_is_the_closed_list_of_five():
+    """The database-settable credential list, pinned.
+
+    It was six. ``AZURE_STORAGE_ACCOUNT_KEY`` left when evidence object storage
+    moved to its own per-organisation table, and this assertion is deliberately
+    the tripwire that forces that removal to be a decision rather than a drift.
+    The reasoning, recorded here rather than only in a commit message:
+
+    * It was the **only storage credential the database tier could supply**,
+      while ``AWS_ACCESS_KEY_ID`` and ``AWS_SECRET_ACCESS_KEY`` sat in
+      ``NEVER_DB_NAMES`` below. The deny-list's stated rationale — "anything
+      that would let a database row escalate into control of the platform's own
+      authentication or storage" — covers all three equally, so the platform was
+      applying two different answers to one question. That inconsistency was
+      the whole of issue #968.
+
+    * It was **inert on its own**. ``storage_service._detect_backend()`` keys
+      off ``AZURE_STORAGE_ACCOUNT_NAME``, which this tier has never been able
+      to set, so an administrator who typed the key into Settings changed
+      nothing they could observe.
+
+    * Azure Blob evidence storage is **retired**. One S3 driver now serves four
+      provider presets, Google Cloud Storage included through its S3-compatible
+      XML API, and no customer is on the Azure path.
+
+    Where storage credentials went instead: ``evidence_storage_configs``, one
+    row per organisation, secret encrypted with the same ``services.crypto``
+    MultiFernet helper this tier uses. They could not stay here — ``TIER3_NAMES``
+    is a list of *names* and ``integration_secrets`` is keyed by name alone and
+    is global to the process, so it has nowhere to put "this organisation's
+    bucket" as distinct from "that organisation's bucket".
+
+    What did **not** change: the Azure key is still readable from a
+    ``AZURE_STORAGE_ACCOUNT_KEY_FILE`` file or from the environment. Only the
+    database tier is closed to it, so an operator on the legacy Azure path keeps
+    working unchanged.
+    """
     assert secrets.TIER3_NAMES == (
         "OIDC_CLIENT_SECRET",
         "RESEND_API_KEY",
         "ANTHROPIC_API_KEY",
-        "AZURE_STORAGE_ACCOUNT_KEY",
         "HIBP_API_KEY",
         "NVD_API_KEY",
     )
     assert isinstance(secrets.TIER3_NAMES, tuple)
 
 
+def test_no_storage_credential_is_settable_from_the_database():
+    """The asymmetry issue #968 named, asserted as an invariant rather than a
+    list.
+
+    Every credential that names an object store is now either on the deny-list
+    or simply absent from the allow-list. A future name that reintroduces one
+    trips this without anyone having to remember the history above.
+    """
+    storage_names = [
+        name
+        for name in secrets.TIER3_NAMES
+        if any(
+            token in name
+            for token in ("AWS", "AZURE_STORAGE", "MINIO", "S3", "GCS", "STORAGE")
+        )
+    ]
+    assert storage_names == []
+
+
 def test_never_db_names_covers_every_tier1_and_tier2_credential():
+    """Unchanged by the Azure removal, and it must stay unchanged.
+
+    ``MINIO_ROOT_USER`` and ``MINIO_ROOT_PASSWORD`` in particular stay here and
+    stay host-only. They are the bundled object store's **own root account** —
+    the compose entrypoint guard refuses to boot without them — not an
+    integration credential, and no storage code path reads either name. On
+    today's bundled path the AWS pair the application is handed is still
+    byte-identical to this root pair; it will reach the bundled store with a
+    scoped account carried on a configuration row once Phase 4 provisions one.
+    That is why this tuple matters either way: moving either name into
+    ``TIER3_NAMES`` would let a database row take control of the object store
+    itself, which is the exact escalation this tuple exists to prevent.
+    """
     assert secrets.NEVER_DB_NAMES == (
         "SCF_SECRET_KEY",
         "API_KEY",
@@ -48,7 +115,82 @@ def test_never_db_names_covers_every_tier1_and_tier2_credential():
 
 
 def test_tier3_and_never_db_are_disjoint():
+    """Still true, and now for a better reason.
+
+    Before the Azure key left ``TIER3_NAMES`` the two tuples were disjoint by
+    accident: one storage credential happened to be on the allow-list and two
+    on the deny-list, and nothing reconciled them. The lists now agree on a
+    rule — no object-store credential is settable from the database — so
+    disjointness is a consequence rather than a coincidence. See
+    ``test_no_storage_credential_is_settable_from_the_database``.
+    """
     assert not set(secrets.TIER3_NAMES) & set(secrets.NEVER_DB_NAMES)
+
+
+def test_the_azure_storage_key_is_still_resolvable_from_a_file_and_the_environment(
+    tmp_path, monkeypatch
+):
+    """Removing a name from ``TIER3_NAMES`` closes the database tier to it and
+    nothing else.
+
+    An operator on the legacy Azure Blob path supplies the key through
+    ``AZURE_STORAGE_ACCOUNT_KEY_FILE`` or ``.env``; both tiers are untouched, so
+    that deployment keeps working. What they can no longer do is type it into
+    Settings — which never did anything on its own anyway, because the account
+    *name* that selects the Azure backend has never been settable there.
+    """
+    assert "AZURE_STORAGE_ACCOUNT_KEY" not in secrets.TIER3_NAMES
+
+    key_file = tmp_path / "AZURE_STORAGE_ACCOUNT_KEY"
+    key_file.write_text("from-file\n")
+    monkeypatch.setenv("AZURE_STORAGE_ACCOUNT_KEY_FILE", str(key_file))
+    secrets.register_db_provider(lambda: {"AZURE_STORAGE_ACCOUNT_KEY": "from-db"})
+    secrets.invalidate()
+
+    assert secrets.get_secret("AZURE_STORAGE_ACCOUNT_KEY") == "from-file"
+    assert secrets.source_of("AZURE_STORAGE_ACCOUNT_KEY") == "file"
+
+    monkeypatch.delenv("AZURE_STORAGE_ACCOUNT_KEY_FILE")
+    monkeypatch.setenv("AZURE_STORAGE_ACCOUNT_KEY", "from-env")
+    assert secrets.get_secret("AZURE_STORAGE_ACCOUNT_KEY") == "from-env"
+    assert secrets.source_of("AZURE_STORAGE_ACCOUNT_KEY") == "env"
+
+
+def test_a_stored_azure_key_row_is_no_longer_returned(monkeypatch):
+    """The database tier is now structurally unreachable for it.
+
+    ``get_secret`` tests ``TIER3_NAMES`` membership before it so much as calls
+    the provider, so a row planted for this name — by an older release, or by
+    hand — cannot resolve. Falling back to the environment is the correct
+    answer, not the stale row.
+    """
+    calls = []
+
+    def provider():
+        calls.append("consulted")
+        return {"AZURE_STORAGE_ACCOUNT_KEY": "db-poisoned"}
+
+    secrets.register_db_provider(provider)
+    secrets.invalidate()
+    monkeypatch.delenv("AZURE_STORAGE_ACCOUNT_KEY_FILE", raising=False)
+    monkeypatch.setenv("AZURE_STORAGE_ACCOUNT_KEY", "env-value")
+
+    assert secrets.get_secret("AZURE_STORAGE_ACCOUNT_KEY") == "env-value"
+    assert secrets.source_of("AZURE_STORAGE_ACCOUNT_KEY") == "env"
+    assert calls == []
+
+
+def test_the_integrations_screen_no_longer_offers_the_azure_key():
+    """The Settings list is rendered from ``integration_secrets.LABELS``, so the
+    misleading field disappears from the UI by removing the entry — there is no
+    second, hard-coded list in the frontend to keep in step. Both collections
+    are asserted together because a name in one and not the other would either
+    render a row nothing can store, or store a value nothing renders.
+    """
+    from services import integration_secrets
+
+    assert "AZURE_STORAGE_ACCOUNT_KEY" not in integration_secrets.LABELS
+    assert set(integration_secrets.LABELS) == set(secrets.TIER3_NAMES)
 
 
 # --------------------------------------------------------------------------

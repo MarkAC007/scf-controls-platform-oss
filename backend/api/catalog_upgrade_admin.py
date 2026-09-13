@@ -55,7 +55,7 @@ from schemas_catalog_upgrade import (
     UpgradeRevertResponse,
     UpgradeUploadResponse,
 )
-from services import s3_service
+from services import storage_service
 from services.catalog_apply import (
     RevertBlockedError,
     RevertNotLatestError,
@@ -160,7 +160,7 @@ def _load_diff_detail(run: CatalogImportRun) -> DiffDetail:
         )
     import json as _json
 
-    chunks = s3_service.download_blob_stream(run.diff_detail_object_key)
+    chunks = storage_service.download_blob_stream(run.diff_detail_object_key)
     if chunks is None:
         raise HTTPException(
             status_code=502,
@@ -293,7 +293,7 @@ async def upload_upgrade_workbook(
         await db.flush()  # assigns run.id for the object key
         object_key = f"{UPGRADE_OBJECT_PREFIX}/{run.id}/workbook.xlsx"
         try:
-            s3_service.put_bytes(object_key, body, _XLSX_CONTENT_TYPE, _PLATFORM_ORG_TAG)
+            storage_service.put_bytes(object_key, body, _XLSX_CONTENT_TYPE, _PLATFORM_ORG_TAG)
         except Exception as exc:  # noqa: BLE001 — surface a clean 502 to the operator
             logger.exception("Failed to stash upgrade workbook")
             raise HTTPException(

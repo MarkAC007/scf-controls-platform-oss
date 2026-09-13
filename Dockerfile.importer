@@ -3,7 +3,7 @@
 # Extracts a user-supplied SCF controls catalogue (.xlsx) into the JSON schema the backend
 # catalog_seeder.py consumes on startup. This image ships the importer CODE ONLY — it never
 # contains SCF's licensed catalogue content (CC BY-ND 4.0). Operators supply their own SCF
-# Excel workbook at run time. See README → "Bring your own SCF Excel catalogue".
+# Excel workbook at run time. See https://docs.scfcontrolsplatform.app/admin-guide/deployment/
 FROM python:3.11-slim
 
 WORKDIR /app

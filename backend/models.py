@@ -2175,6 +2175,25 @@ class EvidenceFile(Base):
     organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
     evidence_id = Column(String(50), nullable=False)  # ERL evidence ID (e.g., "ERL-001")
 
+    # Which evidence store these bytes are actually in (ISA 20260912-0930).
+    #
+    # NULL means legacy: the row predates per-organisation storage, so resolve
+    # it the way everything resolved before — the organisation's own config,
+    # then the configuration synthesised from the environment. When the column
+    # IS set it is authoritative and beats any resolution by organisation,
+    # which is what lets a file stay readable from its old store while a copy
+    # to a new one is in flight.
+    #
+    # ondelete is RESTRICT deliberately: a config a file still points at must
+    # not be deletable, or the row loses the only record of where its bytes
+    # live. SET NULL would silently re-point the file at whatever the
+    # organisation happens to be using now, which is a different store.
+    storage_config_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("evidence_storage_configs.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+
     # File metadata (never the actual file)
     filename = Column(String(255), nullable=False)
     s3_key = Column(String(1024), nullable=False, unique=True)
@@ -3675,4 +3694,105 @@ class PlatformAuditLog(Base):
         return (
             f"<PlatformAuditLog(action={self.action}, entity={self.entity_type}:"
             f"{self.entity_id}, actor={self.actor})>"
+        )
+
+
+# =============================================================================
+# Bring-your-own evidence storage (ISA 20260912-0930, Phase 1)
+# =============================================================================
+
+#: Provider presets. Mirrors `services.storage_config.PROVIDER_*`; the constants
+#: are duplicated rather than imported because `services.storage_config` is a
+#: leaf module and importing models from it would make every storage operation
+#: pull in the ORM.
+EVIDENCE_STORAGE_PROVIDERS = ("minio", "aws_s3", "gcs", "s3_compatible")
+
+#: Lifecycle. `draft` is a config being filled in and tested; `active` is the
+#: one the resolver returns; `retired` is kept because evidence files still
+#: point at it (see `EvidenceFile.storage_config_id`) and deleting it would
+#: orphan the record of where those bytes live.
+EVIDENCE_STORAGE_STATUSES = ("draft", "active", "retired")
+
+
+class EvidenceStorageConfig(Base):
+    """One evidence object store, owned by an organisation or by the platform.
+
+    `organization_id` is **nullable, and that is load-bearing**: a null row is
+    the platform-scope store. The catalogue workbook, catalogue-upgrade diffs
+    and reconciliation detail blobs belong to the platform rather than to any
+    tenant, so forcing an organisation onto every config would leave those
+    artefacts with nowhere to resolve (ISA §6).
+
+    Resolution order is org row, then platform row, then the configuration
+    synthesised from the process environment, and lives in
+    `services/storage_config.py`. The environment fallback is what keeps an
+    operator who has never opened the Settings screen working unchanged.
+
+    The secret is held as ciphertext and encrypted with the same
+    `services.crypto` MultiFernet helper as `IntegrationSecret`. `access_key_id`
+    is deliberately plaintext: it is an identifier, not a credential, and the
+    Settings screen has to be able to show it back.
+    """
+    __tablename__ = "evidence_storage_configs"
+    __table_args__ = (
+        Index("ix_evidence_storage_configs_org", "organization_id"),
+        # The two partial unique indexes that enforce "one active config per
+        # scope" are created in the migration, not here: the platform one is an
+        # expression index over `(organization_id IS NULL)`, which SQLAlchemy's
+        # Index() cannot express as a column reference. See
+        # alembic/versions/20260912_090000_evidence_storage_configs.py.
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    #: NULL means platform scope. Not a defaulted column — see the docstring.
+    organization_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+
+    provider = Column(String(32), nullable=False)
+    bucket = Column(String(255), nullable=False)
+    region = Column(String(64), nullable=True)
+    #: Empty or NULL means "AWS S3's own endpoint". Any other value is an
+    #: S3-compatible store, and is the server-side request forgery surface that
+    #: `services.storage_config.assert_endpoint_allowed` guards (ISA §7).
+    endpoint_url = Column(String(500), nullable=True)
+    #: Externally reachable endpoint, used only when signing browser-facing
+    #: URLs. The bundled MinIO is reachable as `minio:9000` inside the compose
+    #: network and as `localhost:9000` from a browser, so the two differ.
+    public_endpoint = Column(String(500), nullable=True)
+    path_style = Column(Boolean, nullable=False, server_default=text("false"), default=False)
+    #: "none" or "AES256". `none` is not an absence of configuration — it is the
+    #: correct answer for MinIO, which rejects SSE-S3 without a KMS.
+    sse_mode = Column(String(20), nullable=False, server_default="none", default="none")
+
+    #: An identifier, not a secret. NULL means "let boto3 resolve credentials
+    #: from its ambient chain", which is how an IAM instance role still works.
+    access_key_id = Column(String(255), nullable=True)
+    secret_ciphertext = Column(Text, nullable=True)
+    #: Which key in the SCF_SECRET_KEY list the row was last encrypted under,
+    #: and the value a rotation bumps. It is part of the boto3 client cache key,
+    #: so bumping it alone is enough to force every process to rebuild.
+    key_version = Column(SmallInteger, nullable=False, server_default="1", default=1)
+
+    status = Column(String(16), nullable=False, server_default="draft", default="draft")
+    #: True for the store the installer provisioned. Drives the "installed by
+    #: the installer" state in the Settings screen, and is what marks an
+    #: endpoint as operator-supplied rather than tenant-typed.
+    is_bundled = Column(Boolean, nullable=False, server_default=text("false"), default=False)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    updated_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    #: Free-text actor label, kept when there is no user row (master API key).
+    updated_by_label = Column(String(200), nullable=True)
+
+    organization = relationship("Organization", foreign_keys=[organization_id])
+
+    def __repr__(self):
+        scope = self.organization_id or "platform"
+        return (
+            f"<EvidenceStorageConfig(id={self.id}, scope={scope}, "
+            f"provider={self.provider}, status={self.status})>"
         )

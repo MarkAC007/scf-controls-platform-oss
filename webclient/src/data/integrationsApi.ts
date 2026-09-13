@@ -64,7 +64,7 @@ export interface IntegrationsAuditResponse {
 export type IntegrationsApiError = Error & { status?: number }
 
 /** Run a fetch with the current bearer; retry once on 401 after OIDC refresh. */
-async function fetchWithAuthRetry(doFetch: (bearer: string) => Promise<Response>): Promise<Response> {
+export async function fetchWithAuthRetry(doFetch: (bearer: string) => Promise<Response>): Promise<Response> {
   let response = await doFetch(getAuthToken())
   if (response.status === 401 && OIDC_ENABLED) {
     const refreshed = await refreshOidcToken()
@@ -75,24 +75,49 @@ async function fetchWithAuthRetry(doFetch: (bearer: string) => Promise<Response>
   return response
 }
 
+/**
+ * Extract the FastAPI error message from an already-parsed error body.
+ *
+ * Pure, and exported, because two screens need the same unwrapping and one of
+ * them (evidenceStorageApi) has to keep the parsed body as well as the message
+ * — a Response body can only be read once, so it parses first and asks this
+ * for the text.
+ *
+ * Four detail shapes reach a client from this backend:
+ *   - `"a string"` — the ordinary HTTPException.
+ *   - `[{loc, msg, type}, ...]` — a 422 from request validation.
+ *   - `{detail: "..."}` — a handler that nested its own body.
+ *   - `{message: "...", ...}` — the shape every structured 409 uses:
+ *     `OperatorManaged` (`api/integrations.py:140-147`), the missing
+ *     encryption key, a failed activation probe and a delete refused because
+ *     evidence files still reference the configuration. Without this branch
+ *     all of those surfaced as a bare `API Error: 409 Conflict`.
+ */
+export function errorMessageFromBody(body: unknown, fallback: string): string {
+  if (!body || typeof body !== 'object') return fallback
+  const detail = (body as { detail?: unknown }).detail
+  if (typeof detail === 'string') return detail
+  if (Array.isArray(detail)) {
+    // FastAPI 422 validation errors: [{loc, msg, type}, ...]
+    return detail.map((e: { msg?: string }) => e.msg || 'Validation error').join('; ')
+  }
+  if (detail && typeof detail === 'object') {
+    const nested = detail as { detail?: unknown; message?: unknown }
+    if (typeof nested.detail === 'string') return nested.detail
+    if (typeof nested.message === 'string' && nested.message) return nested.message
+  }
+  return fallback
+}
+
 /** Extract the FastAPI error message from a non-OK response body. */
-async function errorMessageFrom(response: Response): Promise<string> {
-  let message = `API Error: ${response.status} ${response.statusText}`
+export async function errorMessageFrom(response: Response): Promise<string> {
+  const fallback = `API Error: ${response.status} ${response.statusText}`
   try {
-    const body = await response.json()
-    const detail = body.detail
-    if (typeof detail === 'string') {
-      message = detail
-    } else if (Array.isArray(detail)) {
-      // FastAPI 422 validation errors: [{loc, msg, type}, ...]
-      message = detail.map((e: { msg?: string }) => e.msg || 'Validation error').join('; ')
-    } else if (detail && typeof detail === 'object' && typeof detail.detail === 'string') {
-      message = detail.detail
-    }
+    return errorMessageFromBody(await response.json(), fallback)
   } catch {
     // non-JSON error body — keep status text
+    return fallback
   }
-  return message
 }
 
 /** Generic JSON fetch wrapper for the integrations endpoints. */

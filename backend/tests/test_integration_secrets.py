@@ -42,7 +42,7 @@ def _key(monkeypatch):
 
     monkeypatch.delenv("SCF_SECRET_KEY_FILE", raising=False)
     for name in ("RESEND_API_KEY", "ANTHROPIC_API_KEY", "HIBP_API_KEY",
-                 "NVD_API_KEY", "AZURE_STORAGE_ACCOUNT_KEY", "OIDC_CLIENT_SECRET"):
+                 "NVD_API_KEY", "OIDC_CLIENT_SECRET"):
         monkeypatch.delenv(name, raising=False)
         monkeypatch.delenv(f"{name}_FILE", raising=False)
     monkeypatch.setenv("SCF_SECRET_KEY", KEY_A)

@@ -143,6 +143,9 @@ jobs:
           # --generate-notes. An empty summary therefore ships a release whose notes
           # are auto-generated commit spam, and leaves the in-app update panel
           # (backend/tasks_updates.py) with nothing useful to show operators.
+          # version-bump.yml no longer opens a PR without a summary (it refuses at
+          # dispatch), so on a bump PR this only trips if a later commit blanks the
+          # field; on a hand-made bump it is the first and only line of defence.
           # Same reasoning as release-oss.yml's preflight: pyyaml is not a
           # guaranteed part of the runner image, and this step only ever fires on
           # the PR that bumps the version — i.e. the release PR, the worst

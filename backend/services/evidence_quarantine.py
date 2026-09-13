@@ -77,7 +77,15 @@ def quarantine_evidence_file(session, evidence_file) -> None:
 
     original_key = evidence_file.s3_key
     try:
-        new_key = move_to_quarantine(original_key, str(evidence_file.organization_id))
+        new_key = move_to_quarantine(
+            original_key,
+            str(evidence_file.organization_id),
+            (
+                str(evidence_file.storage_config_id)
+                if getattr(evidence_file, "storage_config_id", None)
+                else None
+            ),
+        )
     except Exception as exc:  # noqa: BLE001 — a failed move must still be recorded
         logger.error("Quarantine move failed for %s: %s", original_key, exc, exc_info=True)
         write_system_audit_row(

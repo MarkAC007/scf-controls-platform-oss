@@ -113,6 +113,13 @@ class TestGetUploadUrl:
             "url": "https://s3.amazonaws.com/test-bucket",
             "fields": {"key": "evidence/org/2026/02/abc_test.pdf"},
             "object_key": "evidence/org/2026/02/abc_test.pdf",
+            # The expiry that was actually signed, not a module constant
+            # frozen at import (Phase 0 / ISA R8).
+            "expires_in": 900,
+            # The verb the signer signed, stated rather than inferred from the
+            # shape of "fields" (ISA phase 5, ISC 43).
+            "method": "POST",
+            "provider": "aws_s3",
         }
 
         request = EvidenceFileUploadUrlRequest(

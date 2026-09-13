@@ -162,8 +162,22 @@ export function EvidenceFileUpload({
       return false
     }
 
-    // Detect upload method: Azure SAS URLs have empty fields; S3 presigned POST has fields
-    const isAzureSas = Object.keys(uploadInfo.fields).length === 0
+    // The backend says which verb it signed. It used to be inferred from
+    // `fields` being empty — a stand-in for "this is Azure" that is only right
+    // by coincidence, since a presigned POST with no extra fields is a legal
+    // reply from an S3-compatible store and would have been uploaded as a PUT.
+    // An unrecognised verb is refused here rather than guessed: a backend that
+    // grows a third upload shape must not have this client silently pick one.
+    const method = uploadInfo.method
+    if (method !== 'POST' && method !== 'PUT') {
+      setState({
+        phase: 'error',
+        message:
+          'This server asked for an upload method this app does not support. Update the app, or report this to your administrator.',
+        file,
+      })
+      return false
+    }
 
     // XHR upload with progress tracking
     await new Promise<void>((resolve, reject) => {
@@ -198,10 +212,14 @@ export function EvidenceFileUpload({
 
       setState({ phase: 'uploading', progress: 0, filename: file.name })
 
-      if (isAzureSas) {
-        // Azure Blob Storage: PUT raw file body with required headers
+      if (method === 'PUT') {
+        // Self-contained signed URL: the file is the request body. The blob
+        // type header is Azure's alone, so it is keyed off the provider rather
+        // than off the verb — another store signing a PUT must not be sent it.
         xhr.open('PUT', uploadInfo.url)
-        xhr.setRequestHeader('x-ms-blob-type', 'BlockBlob')
+        if (uploadInfo.provider === 'azure_blob') {
+          xhr.setRequestHeader('x-ms-blob-type', 'BlockBlob')
+        }
         xhr.setRequestHeader('Content-Type', normalizeContentType(file))
         xhr.send(file)
       } else {

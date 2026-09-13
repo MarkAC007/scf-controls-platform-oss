@@ -77,7 +77,7 @@ docker compose exec backend python -m cli.admin secrets-status
 
 Both are idempotent, and `secrets-status` never prints a value. To rotate the
 key itself, see the rotation procedure in the
-[Credentials and secrets](https://markac007.github.io/scf-controls-platform/admin-guide/secrets/)
+[Credentials and secrets](https://docs.scfcontrolsplatform.app/admin-guide/secrets/)
 guide — in short, prepend the new key to the comma-separated list, restart, run
 `rotate-secret-key`, and remove the old key only once it reports zero rows
 remaining.
@@ -87,8 +87,8 @@ remaining.
 **This release is not a breaking change.** `scripts/upgrade.sh` on an existing
 install works with the credentials left in `.env`. One additive migration runs
 (`intsec947a1`: a new `integration_secrets` table, a new `platform_audit_log`
-table, two widened columns and a lookup hash on the invite tables — see
-[docs/MIGRATIONS.md](docs/MIGRATIONS.md)). It needs no `SCF_SECRET_KEY` and
+table, two widened columns and a lookup hash on the invite tables — see the
+release notes for this version). It needs no `SCF_SECRET_KEY` and
 encrypts nothing; legacy plaintext values stay readable afterwards. Nothing is
 forced: no credential moves, no format changes, no re-entry. You then have
 three routes.
@@ -139,8 +139,8 @@ three routes.
   in the `DB_PASSWORD` file. Note that `scripts/upgrade.sh --rollback <TS>`
   restores the *whole* set — including the credential tarball and the git ref
   recorded at backup time — so on a fresh checkout prefer restoring the dump
-  into the new, empty database by hand (the fresh-database shape in
-  [docs/runbooks/backup-restore.md](docs/runbooks/backup-restore.md)) plus the
+  into the new, empty database by hand (see
+  [Backup and restore](https://docs.scfcontrolsplatform.app/admin-guide/backup-and-restore/)) plus the
   MinIO tar, and copy only the key.
 
 **What still needs a hand** after any of the three:
@@ -149,7 +149,7 @@ three routes.
   (`ALTER ROLE` first, then the file, then recreate the services). Nothing
   automates it, because `POSTGRES_PASSWORD_FILE` has no effect on an existing
   database. See the
-  [Credentials and secrets](https://markac007.github.io/scf-controls-platform/admin-guide/secrets/)
+  [Credentials and secrets](https://docs.scfcontrolsplatform.app/admin-guide/secrets/)
   guide.
 - **`VITE_API_KEY` moves with `--import-env` in effect, but not by copying.**
   The frontend bundle still carries the API key at image build time. On an
@@ -166,12 +166,16 @@ three routes.
   release for any sign-in mode.
 - **MinIO console and S3 ports are unchanged.** The secrets overlay adds no
   port mappings; `MINIO_PORT` and `MINIO_CONSOLE_PORT` behave as before.
-- **`COMPOSE_PROFILES` is not written by `--import-env`.** An existing
-  `COMPOSE_PROFILES=idp` line in `.env` is kept, because only credential lines
-  are stripped, but no line is added. If you enable the bundled identity
-  provider by passing `--profile idp` on the command line, keep passing it
-  (`scripts/upgrade.sh` inherits it from the environment or `.env` the same
-  way it does today).
+- **`--import-env` now adds the `storage` profile to `COMPOSE_PROFILES`.** It
+  is the one line it writes rather than strips, and it has to: `minio` and
+  `minio-init` sit behind that profile from this release, so an install adopting
+  the overlay without it would come back up with no object store and no error
+  line anywhere. An existing `COMPOSE_PROFILES=idp` becomes `idp,storage` — a
+  union, never a replacement — and an install whose `MINIO_ROOT_USER` is absent
+  or still a placeholder gets nothing, because it has not been running MinIO.
+  If you enable the bundled identity provider by passing `--profile idp` on the
+  command line, keep passing it (`scripts/upgrade.sh` inherits it from the
+  environment or `.env` the same way it does today).
 
 ---
 
@@ -193,9 +197,12 @@ precondition fails:
    no downgrade, `.env` drift warnings, disk-space, floating-image warnings,
    compose validity. Nothing is changed here.
 3. **Quiesce + backup** — stops the app, then takes a **mandatory, validated**
-   backup of **both** stores: a `pg_dump` (custom format) of Postgres and a tar
-   of the MinIO evidence volume. Both are checksummed and made read-only. If
-   either fails, the app is restarted and the upgrade aborts — nothing changed.
+   backup: a `pg_dump` (custom format) of Postgres and, on an install that
+   bundles an object store, a tar of the MinIO evidence volume. Each is
+   checksummed and made read-only. If either fails, the app is restarted and the
+   upgrade aborts — nothing changed. On a `--no-minio` install there is no
+   volume to tar and the evidence half is skipped loudly — see *What the backup
+   does not cover* below.
 4. **Checkout + migrate** — checks out the target tag, rebuilds the backend
    image, and runs `alembic upgrade head` as a one-shot (workers stay stopped so
    nothing races the schema change), then starts the full stack.
@@ -205,6 +212,32 @@ precondition fails:
 6. **Done** — prints the new version and where your backups live.
 
 Add `--yes` to skip the confirmation prompt (for unattended runs).
+
+### What the backup does not cover
+
+The evidence half of the phase-3 backup is a tar of the bundled `minio_data`
+Docker volume, and nothing else. It is taken **only when this install bundles an
+object store** — the test is a non-empty `MINIO_ROOT_USER` in `.env` or in
+`SCF_SECRETS_DIR`, which is what having the `storage` compose profile on means.
+
+- **On a `--no-minio` install** there is no such volume. `scripts/upgrade.sh`
+  prints `SKIPPING the evidence backup: no bundled object store on this
+  install (MINIO_ROOT_USER is empty).` and **proceeds**. The set it writes is
+  the database dump plus the credential tarball, so a later `--rollback` rewinds
+  the database and leaves your external store untouched.
+- **On any install, bundled or not**, an organisation that has configured a store
+  of its own under **Settings → Evidence storage** keeps its evidence somewhere
+  this script has never heard of. Tarring the bundled volume does not cover it.
+  `scripts/backup.sh` counts those organisations and warns on every run;
+  `scripts/upgrade.sh` does neither.
+
+**What you must do.** Before upgrading, open **Settings → Evidence storage** in
+each organisation and list the stores in use. For every one that is not the
+bundled volume, take your own point-in-time copy — bucket versioning, a provider
+snapshot, cross-region replication or a scheduled copy — and record the moment
+you took it, because the database half is rewound independently and you will need
+to reconcile the two after a rollback. Do not read a green upgrade backup as
+covering an external store.
 
 ---
 
@@ -221,6 +254,34 @@ Add `--yes` to skip the confirmation prompt (for unattended runs).
   it and unrecoverable without it.
 
 ### Version-specific notes
+
+- **The bundled MinIO moved behind the `storage` compose profile, and
+  `scripts/upgrade.sh` adds that profile to your `.env` for you.** Nothing to do
+  before or after the upgrade on a normal install. Two things are worth knowing:
+
+  1. The profile is what makes `./scripts/install.sh --no-minio` possible — a
+     stack with no bundled object store at all. A compose profile that is off
+     makes its services **absent** rather than failed, so if `docker compose ps`
+     ever shows no `minio`, the first thing to look at is the
+     `COMPOSE_PROFILES=` line in `.env`. The upgrade adds `storage` to it when it
+     finds a real `MINIO_ROOT_USER` in `.env` or in the secrets directory, and
+     writes `EVIDENCE_STORAGE_BOOTSTRAP=bundled_minio` alongside it. Both are
+     left alone on a re-run.
+
+  2. `EVIDENCE_STORAGE_BOOTSTRAP=bundled_minio` makes the backend seed a single
+     platform-scope evidence storage configuration row on its next boot,
+     describing the object store you already have — same endpoint, same bucket,
+     same credential. It is skipped entirely when a platform-scope row already
+     exists, whatever that row's status, so it cannot overwrite a decision you
+     have made. Nothing about where evidence goes changes.
+
+  The application's `AWS_ACCESS_KEY_ID` is also no longer generated equal to
+  `MINIO_ROOT_USER` on **new** installs; on the bundled path `minio-init` gives
+  it a MinIO user scoped to the evidence bucket. Your existing install keeps the
+  pair it has — `minio-init` detects that the two are the same account, logs it
+  and does nothing. Moving to a scoped account is an operator step, documented
+  under *Credentials and secrets* in the admin guide, not something this upgrade
+  does underneath a running stack.
 
 - **The Control Documents Mapper (CDM) is retired; migration `cdmdrop001`
   drops its five tables (`cdm_documents`, `cdm_document_chunks`,
@@ -266,8 +327,7 @@ Add `--yes` to skip the confirmation prompt (for unattended runs).
      The purge deletes every object under the `cdm/` prefix of the evidence
      store and nothing else (evidence lives under `evidence/`). On a versioned
      S3 bucket the deleted keys survive as non-current versions; the script
-     reports the versioning state and leaves that decision to you. The Azure
-     Blob path is untested against a live account — run the dry run first.
+     reports the versioning state and leaves that decision to you.
   4. **Rollback** is `scripts/upgrade.sh --rollback <ts>` with the backup from
      step 2, which restores both the rows and the files. An Alembic downgrade
      of `cdmdrop001` recreates the five tables empty and is for development
@@ -503,12 +563,18 @@ roll back manually to a specific backup set:
 scripts/upgrade.sh --rollback 20260801_143000
 ```
 
-Rollback restores **both** stores. Postgres is restored **into a fresh database
-and swapped in only after the restore proves good**, so your current (failed)
-state is never destroyed mid-restore — it is set aside as `<db>_failed` for
-inspection, and you can drop it once satisfied. The MinIO evidence volume is
-restored from the phase-2 tar, and the code is checked out back to the
-pre-upgrade commit.
+Rollback restores whatever the backup set actually holds. Postgres is restored
+**into a fresh database and swapped in only after the restore proves good**, so
+your current (failed) state is never destroyed mid-restore — it is set aside as
+`<db>_failed` for inspection, and you can drop it once satisfied. Where the set
+includes an evidence tar, the MinIO volume is restored from it. The code is
+checked out back to the pre-upgrade commit either way.
+
+A `--no-minio` install has no evidence tar, so its rollback rewinds the database
+alone and leaves the external store exactly as it is. The same holds, on any
+install, for an organisation on a store of its own. In both cases the database is
+rewound and the evidence is not: see [What the backup does not
+cover](#what-the-backup-does-not-cover).
 
 > Database rollback is **restore-from-backup**, not `alembic downgrade` —
 > downgrade migrations are not trusted for a compliance dataset.

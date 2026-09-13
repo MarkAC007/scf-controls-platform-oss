@@ -272,26 +272,6 @@ class FakeS3:
         return {}
 
 
-class _Blob:
-    def __init__(self, name):
-        self.name = name
-
-
-class FakeContainer:
-    container_name = "evidence"
-
-    def __init__(self, names):
-        self.names = list(names)
-        self.deleted: List[str] = []
-
-    def list_blobs(self, name_starts_with):
-        return [_Blob(n) for n in self.names if n.startswith(name_starts_with)]
-
-    def delete_blob(self, name):
-        self.deleted.append(name)
-        self.names.remove(name)
-
-
 SEED = ["cdm/o/d/f.pdf", "cdm/o/d2/g.docx", "cdmx/decoy", "evidence/keep"]
 
 
@@ -302,24 +282,14 @@ def purge():
 
 @pytest.fixture()
 def s3(purge, monkeypatch):
-    from services import s3_service
-
     client = FakeS3(SEED)
     monkeypatch.setattr(purge.storage_service, "get_backend", lambda: "s3")
-    monkeypatch.setattr(s3_service, "_get_s3_client", lambda: client)
-    monkeypatch.setattr(s3_service, "EVIDENCE_BUCKET", "evidence")
+    # The script now goes through the facade's documented escape hatch rather
+    # than importing the S3 driver directly (Phase 0 / ISC-2).
+    monkeypatch.setattr(
+        purge.storage_service, "platform_object_client", lambda: (client, "evidence")
+    )
     return client
-
-
-@pytest.fixture()
-def azure(purge, monkeypatch):
-    from services import azure_blob_service
-
-    container = FakeContainer(SEED)
-    monkeypatch.setattr(purge.storage_service, "get_backend", lambda: "azure")
-    monkeypatch.setattr(azure_blob_service, "_get_container_client", lambda: container)
-    monkeypatch.setattr(azure_blob_service, "_get_blob_service_client", lambda: None)  # retention → "unknown"
-    return container
 
 
 def test_purge_prefix_is_fixed(purge):
@@ -360,15 +330,30 @@ def test_purge_batches_at_api_limit(purge, s3):
     assert calls == [1000, 1000, 500]
 
 
-def test_purge_azure_driver_same_contract(purge, azure):
-    """The Azure adapter shares the driver, so dry-run gate, prefix scoping,
-    idempotency and exit code are the tested S3 behaviour, not a copy."""
-    assert purge.main([]) == 0
-    assert azure.deleted == []
-    assert purge.main(["--apply"]) == 0
-    assert sorted(azure.deleted) == ["cdm/o/d/f.pdf", "cdm/o/d2/g.docx"]
-    assert sorted(azure.names) == ["cdmx/decoy", "evidence/keep"]
-    assert purge.main(["--apply"]) == 0
+def test_purge_refuses_the_azure_backend_rather_than_guessing(purge, monkeypatch):
+    """The Azure adapter was removed; an azure backend is refused, not purged.
+
+    It was never exercised against a live account. Keeping an untested delete
+    loop for a backend no installation uses (ISA D13) is a worse answer than
+    telling the operator to purge the container themselves, and a silent
+    success (exit 0, nothing deleted) would be worse than either.
+    """
+    monkeypatch.setattr(purge.storage_service, "get_backend", lambda: "azure")
+    assert purge.main([]) == 2
+    assert purge.main(["--apply"]) == 2
+
+
+def test_purge_module_does_not_import_the_azure_driver(purge):
+    """Nothing in the purge script reaches for `azure_blob_service` any more.
+
+    Source-level, because an import inside a function that is never called on
+    this machine would not show up any other way. This is the check that has
+    to keep passing before the module itself can eventually be deleted.
+    """
+    import inspect
+
+    source = inspect.getsource(purge)
+    assert "azure_blob_service" not in source
 
 
 def test_purge_exit_1_when_objects_remain(purge, s3):

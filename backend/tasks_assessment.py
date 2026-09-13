@@ -277,7 +277,7 @@ def assess_evidence_task(
         result = session.execute(
             text("""
                 SELECT id, evidence_id, organization_id, filename, content_type,
-                       s3_key, sha256_hash, computed_sha256
+                       s3_key, sha256_hash, computed_sha256, storage_config_id
                 FROM evidence_files
                 WHERE id = :file_id AND organization_id = :org_id AND is_deleted = false
             """),
@@ -292,6 +292,11 @@ def assess_evidence_task(
         filename = row["filename"]
         content_type = row["content_type"]
         s3_key = row["s3_key"]
+        # Which store the bytes are actually in. A row that predates per-file
+        # storage carries NULL and resolves by organisation, as it always did.
+        file_storage_config_id = (
+            str(row["storage_config_id"]) if row["storage_config_id"] else None
+        )
         # Prefer the hash the platform computed over the uploader's claim.
         file_sha256 = row["computed_sha256"] or row["sha256_hash"]
 
@@ -352,7 +357,11 @@ def assess_evidence_task(
         session.commit()
 
         # Step 6: Download and extract text
-        file_bytes = download_evidence_bytes(s3_key)
+        file_bytes = download_evidence_bytes(
+            s3_key,
+            org_id=str(organization_id),
+            storage_config_id=file_storage_config_id,
+        )
         if file_bytes is None:
             _update_assessment_error(
                 session, evidence_file_id, organization_id, start_time,

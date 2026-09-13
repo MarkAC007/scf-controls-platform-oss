@@ -12,6 +12,7 @@
 #   ./scripts/install.sh --unattended setup.json
 #   ./scripts/install.sh --import-env           # adopt an existing .env
 #   ./scripts/install.sh --up                   # start the stack afterwards
+#   ./scripts/install.sh --no-minio             # bring your own object store
 #
 # The wizard runs from the backend image as YOUR uid, publishes on loopback
 # ONLY, and stops itself the moment provisioning succeeds.
@@ -28,6 +29,10 @@ MODE="serve"
 UNATTENDED_CONFIG=""
 START_STACK=0
 CONTAINER_NAME="scf-installer"
+# Empty means "the operator did not choose", which the installer reads as the
+# bundled MinIO — what every install produced before this flag existed.
+STORAGE_TYPE=""
+
 
 RED=$'\033[31m'; GREEN=$'\033[32m'; BOLD=$'\033[1m'; DIM=$'\033[2m'; OFF=$'\033[0m'
 if [ ! -t 1 ]; then RED=""; GREEN=""; BOLD=""; DIM=""; OFF=""; fi
@@ -37,7 +42,7 @@ info() { printf '%s==>%s %s\n' "${BOLD}" "${OFF}" "$*"; }
 die()  { printf '%serror:%s %s\n' "${RED}" "${OFF}" "$*" >&2; exit 1; }
 
 usage() {
-  sed -n '3,17p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '3,18p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
   cat <<'USAGE'
 
 Flags:
@@ -47,6 +52,10 @@ Flags:
   --image IMG         backend image to run the wizard from
   --secrets-dir DIR   absolute host path for the secrets directory
   --up                start the stack after provisioning
+  --no-minio          do not bundle an object store. The stack starts without
+                      MinIO and stores no evidence until you configure your own
+                      S3-compatible bucket in Settings. Without this flag the
+                      bundled MinIO is provisioned as before.
   -h, --help          this text
 
 Environment:
@@ -66,6 +75,7 @@ while [ $# -gt 0 ]; do
     --image)      IMAGE="${2:-}"; shift 2 ;;
     --secrets-dir) SECRETS_DIR="${2:-}"; shift 2 ;;
     --up)         START_STACK=1; shift ;;
+    --no-minio)   STORAGE_TYPE="none"; shift ;;
     -h|--help)    usage; exit 0 ;;
     *)            die "unknown argument: $1 (try --help)" ;;
   esac
@@ -74,6 +84,12 @@ done
 command -v docker >/dev/null 2>&1 || die "docker is required but was not found on PATH"
 case "${PORT}" in ''|*[!0-9]*) die "--port must be a number" ;; esac
 case "${SECRETS_DIR}" in /*) ;; *) die "--secrets-dir must be an absolute path" ;; esac
+# The same closed vocabulary the installer package validates against; an empty
+# value is "unset" and resolves to bundled_minio there.
+case "${STORAGE_TYPE}" in
+  ''|none|bundled_minio) ;;
+  *) die "unknown storage type: ${STORAGE_TYPE} (expected: bundled_minio, none)" ;;
+esac
 [ "${MODE}" = "unattended" ] && [ -z "${UNATTENDED_CONFIG}" ] && die "--unattended needs a config file"
 
 # --- refuse to clobber an existing install ----------------------------------
@@ -102,6 +118,7 @@ COMMON_DOCKER_ARGS=(
   --user "$(id -u):$(id -g)"
   -e HOME=/tmp
   -e "SCF_SECRETS_DIR_HOST=${SECRETS_DIR}"
+  -e "SCF_STORAGE_TYPE=${STORAGE_TYPE}"
   -v "${SECRETS_DIR}:/secrets"
   -v "${CHECKOUT_DIR}:/out"
   "${DEV_MOUNT_ARGS[@]+"${DEV_MOUNT_ARGS[@]}"}"
@@ -163,7 +180,10 @@ start_stack() {
         python -m cli.admin setup --admin-email "${admin_email}" )
   fi
 
-  if grep -qE '^COMPOSE_PROFILES=.*idp' "${CHECKOUT_DIR}/.env" 2>/dev/null; then
+  # COMPOSE_PROFILES now carries `storage` as well, so the value may be `idp`,
+  # `storage`, or either order of both. Anchored on the whole field so that a
+  # profile merely CONTAINING "idp" is not mistaken for the bundled Keycloak.
+  if grep -qE '^COMPOSE_PROFILES=(.*,)?idp(,.*)?$' "${CHECKOUT_DIR}/.env" 2>/dev/null; then
     info "waiting for idp-init to finish (up to 180s)"
     for i in $(seq 1 90); do
       state="$(compose_field idp-init '{{.State}}')"

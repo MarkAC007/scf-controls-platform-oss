@@ -1,7 +1,8 @@
 """
 Azure Blob Storage service for evidence files.
 
-Drop-in alternative to s3_service.py for Azure deployments.
+Drop-in alternative to the S3 driver for Azure deployments. Reached only
+via ``storage_service``; retired by ISA D1/D13.
 Uses azure-storage-blob SDK with SAS tokens for pre-signed URLs.
 """
 import os
@@ -115,7 +116,7 @@ def generate_upload_presigned_post(
     if not is_configured():
         raise ValueError("Azure Blob Storage not configured")
 
-    from services.s3_service import ALLOWED_CONTENT_TYPES
+    from services.storage_service import ALLOWED_CONTENT_TYPES
     if content_type not in ALLOWED_CONTENT_TYPES:
         raise ValueError(
             f"Content type '{content_type}' not allowed. "
@@ -148,6 +149,10 @@ def generate_upload_presigned_post(
         "url": blob_url,
         "fields": {},  # Azure SAS URLs are self-contained — no form fields needed
         "object_key": object_key,
+        # A SAS URL is uploaded with PUT. Said explicitly because the client
+        # used to infer it from the empty `fields` above.
+        "method": "PUT",
+        "provider": "azure_blob",
     }
 
 

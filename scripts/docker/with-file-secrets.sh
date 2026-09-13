@@ -3,13 +3,18 @@
 # with-file-secrets — export file-backed credentials into the environment, then
 # exec the real command. Used ONLY by docker-compose.secrets.yml (#947).
 #
-# Why this exists: most of the backend's credentials are resolved through
-# backend/services/secrets.py, which understands the {NAME}_FILE convention on
-# its own. boto3 does not. It reads AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
-# from the process environment and nowhere else, so under the secrets overlay
-# those two have to be materialised here, inside the container, from the
-# mounted secret files — never interpolated into compose on the host, where
-# they would end up visible in `docker inspect`.
+# Why this exists: a credential that some third-party library insists on
+# reading from the process environment has to be materialised here, inside the
+# container, from the mounted secret file — never interpolated into compose on
+# the host, where it would end up visible in `docker inspect`.
+#
+# It held the two AWS_* variables because boto3 reads them from the environment
+# and nowhere else, and the S3 client relied on boto3's ambient credential
+# chain to find them. That is no longer true: the client is built with
+# credentials passed explicitly, resolved through backend/services/secrets.py,
+# which understands the {NAME}_FILE convention itself. So the export list is
+# now empty and this script is a pass-through — kept, with its helper, because
+# the next such credential is one line rather than a rewrite.
 #
 # Usage (compose):
 #   entrypoint: ["/bin/sh", "/with-file-secrets.sh"]
@@ -51,9 +56,20 @@ export_from_file() {
 # Keep this list short: it is only for consumers that cannot read a file
 # themselves. Everything the backend resolves through services/secrets.py
 # already understands {NAME}_FILE and must NOT be listed here.
-export_from_file AWS_ACCESS_KEY_ID "${AWS_ACCESS_KEY_ID_FILE:-}"
-export_from_file AWS_SECRET_ACCESS_KEY "${AWS_SECRET_ACCESS_KEY_FILE:-}"
-
+#
+# The list is currently EMPTY, and that is the finished state rather than an
+# oversight. It held AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY because boto3
+# reads those two from the process environment and nowhere else, and because
+# the S3 client used to let boto3's ambient credential chain find them. It no
+# longer does: the driver builds every client with credentials passed
+# explicitly, and they are resolved through services/secrets.py, which
+# understands {NAME}_FILE on its own. The overlay still mounts both files and
+# still sets both *_FILE variables; the difference is only who reads them.
+#
+# `export_from_file` is kept deliberately. It is the whole point of this script
+# and the next credential that cannot read a file for itself needs one line
+# here, not a rewrite. A shellcheck-style "unused function" warning on it is
+# expected.
 unset _name _file
 
 exec "$@"

@@ -91,6 +91,21 @@ services:
     # auto-upgrade of the storage tier on every `docker compose pull`.
     image: minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
     container_name: cg-scf-minio
+    # Behind the `storage` profile (#956). The installer writes
+    # COMPOSE_PROFILES=storage into .env on the bundled path, so this starts
+    # exactly as before for every install that wants it. `--no-minio` omits the
+    # profile and the service never starts: the ONLY way to not run an object
+    # store, because the entrypoint guard below refuses to boot on the empty
+    # credentials such an install has. (Not because compose would object to a
+    # missing secret file -- measured on Compose v5.4.0, `config` exits 0 and
+    # `create` proceeds with a `secret file ... does not exist` WARNING. The
+    # installer writes all ten files, empty ones empty, because MinIO's own
+    # `_FILE` handling fails OPEN on an absent file and boots on
+    # minioadmin:minioadmin; the guard is what turns that into a refusal.)
+    # Nothing may `depends_on` a profiled service, or compose starts it
+    # regardless of the profile.
+    profiles:
+      - storage
     command: server /data --console-address ":9001"
     # Credential guard (#947). MinIO's server binary reads MINIO_ROOT_*_FILE
     # itself, but a MISSING file fails OPEN and silently boots the object store
@@ -150,13 +165,25 @@ services:
     #   docker buildx imagetools inspect minio/mc:RELEASE.2025-08-13T08-35-41Z
     image: minio/mc:RELEASE.2025-08-13T08-35-41Z@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727
     container_name: cg-scf-minio-init
+    # Same `storage` profile as minio: the pair start together or not at all.
+    profiles:
+      - storage
     depends_on:
       minio:
         condition: service_started
     environment:
       # No working default (see the minio service): empty trips the guard below.
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-}
+      # SCF_-prefixed because `mc` reads MINIO_ROOT_* and AWS_* from its own
+      # environment; the script must not be able to authenticate AS the account
+      # it is trying to create.
+      SCF_ROOT_USER: ${MINIO_ROOT_USER:-}
+      SCF_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-}
+      # The application's own credential, which is NOT the root pair (#956).
+      # minio-init creates a MinIO user for it whose policy names one bucket, so
+      # a leaked application key reaches the evidence bucket and nothing else.
+      # Empty is allowed and means "bucket only, no scoped account".
+      SCF_APP_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      SCF_APP_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
       EVIDENCE_BUCKET: ${EVIDENCE_BUCKET:-evidence}
       # `mc alias set` persists to $HOME/.mc, which a read-only root forbids.
       # Point it at the tmpfs instead. Without this the `until` loop below
@@ -173,29 +200,15 @@ services:
       - /tmp
     mem_limit: 128m
     pids_limit: 64
-    # Bounded retry: 30 attempts x 2s. The old `until ...; do sleep 2; done`
-    # had no bound, so an unreachable or mis-credentialled MinIO spun silently
-    # instead of failing the deploy.
+    volumes:
+      - ./scripts/docker/minio-init.sh:/scf/minio-init.sh:ro
+    # The bucket, and the scoped account that reaches only it. The logic lives
+    # in a file because docker-compose.secrets.yml replaces this entrypoint
+    # wholesale to read credentials from /run/secrets, and two copies of a
+    # credential-provisioning script drift invisibly.
     entrypoint:
       - /bin/sh
-      - -c
-      - |
-        if [ -z "$$MINIO_ROOT_USER" ] || [ -z "$$MINIO_ROOT_PASSWORD" ]; then
-          echo "FATAL: minio-init refuses to start: MINIO_ROOT_USER/MINIO_ROOT_PASSWORD are empty." >&2
-          echo "       Run scripts/install.sh, or set them in .env." >&2
-          exit 1
-        fi
-        i=0
-        until mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" >/dev/null 2>&1; do
-          i=$$((i+1))
-          if [ "$$i" -ge 30 ]; then
-            echo "FATAL: minio-init gave up after $$i attempts: cannot reach or authenticate to http://minio:9000" >&2
-            exit 1
-          fi
-          echo "waiting for minio... ($$i/30)"; sleep 2
-        done
-        mc mb --ignore-existing local/"$$EVIDENCE_BUCKET"
-        echo "bucket ready: $$EVIDENCE_BUCKET"
+      - /scf/minio-init.sh
     networks:
       - cg-network
 
@@ -299,7 +312,12 @@ services:
       # (and clear AWS_ENDPOINT_URL), or set AZURE_STORAGE_* instead, to use a
       # managed backend. EVIDENCE_PUBLIC_ENDPOINT is the URL browsers use for
       # presigned upload/download (AWS_ENDPOINT_URL is the internal one).
-      EVIDENCE_BUCKET: ${EVIDENCE_BUCKET:-evidence}
+      # `${VAR-default}`, no colon, exactly like AWS_ENDPOINT_URL below: an
+      # EXPLICITLY EMPTY value is honoured rather than replaced by the default.
+      # That is what a `--no-minio` install writes, and it is the difference
+      # between "this stack has no object store" and "this stack has a bucket
+      # called evidence at an address where nothing is listening" (#956).
+      EVIDENCE_BUCKET: ${EVIDENCE_BUCKET-evidence}
       AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-eu-west-1}
       # No working default (#947): a shipped credential that also happens to be
       # MinIO's built-in root account is a default password, not a convenience.
@@ -307,6 +325,15 @@ services:
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
       AWS_ENDPOINT_URL: ${AWS_ENDPOINT_URL-http://minio:9000}
       EVIDENCE_PUBLIC_ENDPOINT: ${EVIDENCE_PUBLIC_ENDPOINT-http://localhost:${MINIO_PORT:-9000}}
+      # Which object store the INSTALLER provisioned (#956). COMPOSE_PROFILES is
+      # read on the host and never forwarded into a container, so the backend
+      # cannot see whether the bundled MinIO is part of this stack; this is the
+      # signal that tells it. `bundled_minio` makes the lifespan seed the single
+      # platform-scope storage configuration row that points at it.
+      # The default is EMPTY, not `bundled_minio`: an existing install that has
+      # never run the installer must not start seeding a row by surprise.
+      # scripts/upgrade.sh writes the real value into an existing .env.
+      EVIDENCE_STORAGE_BOOTSTRAP: ${EVIDENCE_STORAGE_BOOTSTRAP:-}
       # Azure Blob Storage (set these to store evidence in Azure Blob instead of MinIO/S3)
       AZURE_STORAGE_ACCOUNT_NAME: ${AZURE_STORAGE_ACCOUNT_NAME:-}
       AZURE_STORAGE_ACCOUNT_KEY: ${AZURE_STORAGE_ACCOUNT_KEY:-}
@@ -364,8 +391,11 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      minio:
-        condition: service_started
+      # No `minio` here (#956). A depends_on starts the named service EVEN WHEN
+      # ITS PROFILE IS INACTIVE, which would make `--no-minio` start MinIO
+      # anyway. Nothing was lost: minio has no healthcheck, so this was only
+      # ever `service_started` — an ordering hint, not a readiness gate. The
+      # backend already tolerates an unreachable object store at boot.
     networks:
       - cg-network
     restart: unless-stopped
@@ -438,7 +468,12 @@ services:
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
       AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-eu-west-1}
       # Evidence storage — defaults to the bundled MinIO (see backend service)
-      EVIDENCE_BUCKET: ${EVIDENCE_BUCKET:-evidence}
+      # `${VAR-default}`, no colon, exactly like AWS_ENDPOINT_URL below: an
+      # EXPLICITLY EMPTY value is honoured rather than replaced by the default.
+      # That is what a `--no-minio` install writes, and it is the difference
+      # between "this stack has no object store" and "this stack has a bucket
+      # called evidence at an address where nothing is listening" (#956).
+      EVIDENCE_BUCKET: ${EVIDENCE_BUCKET-evidence}
       AWS_ENDPOINT_URL: ${AWS_ENDPOINT_URL-http://minio:9000}
       EVIDENCE_PUBLIC_ENDPOINT: ${EVIDENCE_PUBLIC_ENDPOINT-http://localhost:${MINIO_PORT:-9000}}
       AZURE_STORAGE_ACCOUNT_NAME: ${AZURE_STORAGE_ACCOUNT_NAME:-}

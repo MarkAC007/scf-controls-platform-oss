@@ -291,7 +291,15 @@ async def _rule_s3_object_exists(evidence_file: "EvidenceFile") -> Dict[str, str
         }
 
     try:
-        if check_object_exists(evidence_file.s3_key):
+        if check_object_exists(
+            evidence_file.s3_key,
+            str(evidence_file.organization_id) if evidence_file.organization_id else None,
+            (
+                str(evidence_file.storage_config_id)
+                if getattr(evidence_file, "storage_config_id", None)
+                else None
+            ),
+        ):
             return {
                 "rule": "s3_object_exists",
                 "level": "valid",

@@ -1,10 +1,15 @@
-"""Platform-admin API for the six operator-settable integration credentials.
+"""Platform-admin API for the five operator-settable integration credentials.
 
 Contract §3e. Every endpoint requires platform admin. No response body ever
 carries a stored value — not the success shapes, not the error shapes. The
-write endpoints exist so an operator can turn on email, AI generation, Azure
-evidence storage and vendor research without editing a file on the host and
-restarting the stack.
+write endpoints exist so an operator can turn on email, AI generation, single
+sign-on and vendor research without editing a file on the host and restarting
+the stack.
+
+Evidence object storage is **not** one of them. It is configured per
+organisation under ``/api/organizations/{org_id}/evidence-storage``, because
+the table behind this one is keyed by credential name alone and is global to
+the process, so it cannot express one store per organisation.
 """
 from __future__ import annotations
 

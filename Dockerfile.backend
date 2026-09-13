@@ -47,8 +47,8 @@ COPY scripts/extract_scf_data.py /app/scripts/extract_scf_data.py
 # The SCF-licensed catalog JSON (control_guidance / domains / erl / assessment_objectives) is
 # deliberately NOT baked into the image. It is generated at install time by the catalogue
 # importer from the operator's SCF Excel workbook and provided to the container at runtime via
-# the ./webclient/public/data:/app/data/json bind mount (see docker-compose.yml + README:
-# "Bring your own SCF Excel catalogue"). This keeps licensed content out of built images.
+# the ./webclient/public/data:/app/data/json bind mount (see docker-compose.yml and the
+# deployment guide at https://docs.scfcontrolsplatform.app/admin-guide/deployment/). This keeps licensed content out of built images.
 COPY webclient/public/data/collection_interfaces.json /app/data/json/
 COPY webclient/public/data/system_collection_recipes.json /app/data/json/
 COPY webclient/public/data/capability_themes.json /app/data/json/

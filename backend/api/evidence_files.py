@@ -40,7 +40,6 @@ from services.storage_service import (
     generate_download_url,
     tag_evidence_object,
     download_blob_stream,
-    EVIDENCE_URL_EXPIRY,
 )
 from services.audit_service import (
     log_entity_changes,
@@ -68,6 +67,9 @@ from services.review_workflow import (
     transition_error,
 )
 from services.notifications import create_evidence_rejected_notifications
+
+from api.storage_gate import storage_not_configured
+from services.storage_config import StorageNotConfigured
 
 logger = logging.getLogger(__name__)
 
@@ -104,10 +106,19 @@ async def get_upload_url(
             content_type=request.content_type,
         )
         return EvidenceFileUploadUrlResponse(
+            # The verb the signer signed, carried through rather than left for
+            # the browser to guess from the shape of `fields` (ISA phase 5,
+            # frontend defect 1). Indexed, not `.get`-with-a-default: a driver
+            # that does not say which verb it signed is a bug to find here, not
+            # a POST to assume.
+            method=result["method"],
+            provider=result["provider"],
             url=result["url"],
             fields=result["fields"],
             s3_key=result["object_key"],
-            expires_in=EVIDENCE_URL_EXPIRY,
+            # The expiry that was actually signed, not a module constant
+            # frozen at import (ISA R8).
+            expires_in=result["expires_in"],
             # The confirm endpoint will not create a record for a key that
             # arrives without this. See services/upload_ticket.py for why a
             # prefix check was not enough.
@@ -118,7 +129,14 @@ async def get_upload_url(
                 user_id=str(UUID(membership.user.db_id)),
             ),
         )
+    except StorageNotConfigured:
+        # The gate that used to sit in front of org creation (ISC 52) lives
+        # here now: this is the first moment a missing store actually stops
+        # anyone, and the refusal names the screen that fixes it (ISC 53).
+        raise storage_not_configured()
     except ValueError as e:
+        # A genuinely bad argument — an unsupported content type, a filename
+        # the key builder refuses. Still the caller's fault, still a 400.
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error("Failed to generate upload URL: %s", e, exc_info=True)
@@ -203,6 +221,18 @@ async def confirm_upload(
         filename=key_filename,
         s3_key=request.s3_key,
         content_type=content_type,
+        # Which store these bytes went to. Recorded now, while the answer is
+        # known, because after this organisation switches store nothing can
+        # work it out again — and a file whose store is unknown is a file that
+        # becomes unreadable at the moment of the switch. NULL means the
+        # environment-synthesised configuration, which has no row.
+        #
+        # Resolved at confirm rather than carried from the presign call: the
+        # two are separate requests and the configuration could have changed
+        # between them. That window is small and unavoidable either way; the
+        # later reading is the one more likely to match where the object
+        # actually landed.
+        storage_config_id=_current_storage_config_id(str(org_id)),
         # Both of these are placeholders that the verification task replaces with
         # measurements taken over the bytes themselves. They are deliberately not
         # guessed at here: the backend has not seen the object at this point, and
@@ -466,9 +496,19 @@ async def download_evidence_file(
         )
 
     try:
-        chunks = download_blob_stream(evidence_file.s3_key)
-    except ValueError:
-        raise HTTPException(status_code=503, detail="Evidence storage not configured")
+        chunks = download_blob_stream(
+            evidence_file.s3_key,
+            org_id=str(org_id),
+            storage_config_id=(
+                str(evidence_file.storage_config_id)
+                if evidence_file.storage_config_id
+                else None
+            ),
+        )
+    except StorageNotConfigured:
+        # Same condition, same answer as the upload path. The two used to
+        # disagree on the status for one condition (D46).
+        raise storage_not_configured()
 
     if chunks is None:
         raise HTTPException(status_code=404, detail="Evidence file not found in storage")
@@ -738,10 +778,42 @@ async def review_evidence_file(
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _safe_download_url(org_id: str, s3_key: str, filename: str) -> str | None:
+def _current_storage_config_id(org_id: str):
+    """The configuration row an upload for ``org_id`` is landing in, or None.
+
+    Never raises: a storage configuration that cannot be resolved must not turn
+    a successful upload into a failed confirm. An unstamped row resolves by
+    organisation, which is the behaviour every row had before this column.
+    """
+    try:
+        from services.storage_service import current_config_row_id
+
+        raw = current_config_row_id(org_id)
+        return UUID(raw) if raw else None
+    except Exception:  # noqa: BLE001 — a stamp is not worth failing a confirm
+        logger.warning(
+            "Could not determine the evidence store for organisation %s; "
+            "leaving the file unstamped",
+            org_id,
+            exc_info=True,
+        )
+        return None
+
+
+def _safe_download_url(
+    org_id: str,
+    s3_key: str,
+    filename: str,
+    storage_config_id: str | None = None,
+) -> str | None:
     """Generate direct SAS/pre-signed download URL. Used as fallback only."""
     try:
-        return generate_download_url(org_id=org_id, file_key=s3_key, filename=filename)
+        return generate_download_url(
+            org_id=org_id,
+            file_key=s3_key,
+            filename=filename,
+            storage_config_id=storage_config_id,
+        )
     except (ValueError, Exception):
         return None
 

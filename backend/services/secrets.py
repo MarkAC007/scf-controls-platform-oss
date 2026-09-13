@@ -38,11 +38,32 @@ logger = logging.getLogger(__name__)
 
 # Integration credentials an administrator may store in the database. Closed
 # tuple: everything else is file or environment only, by construction.
+#
+# `AZURE_STORAGE_ACCOUNT_KEY` was removed from this tuple when evidence object
+# storage moved to its own per-organisation table. Three reasons, in order of
+# weight:
+#
+#   1. It was the only *storage* credential the database tier could supply,
+#      while `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` sat in
+#      `NEVER_DB_NAMES` below — whose stated rationale covers all three
+#      equally. That asymmetry was the whole of issue #968.
+#   2. It was inert on its own. `storage_service._detect_backend()` keys off
+#      `AZURE_STORAGE_ACCOUNT_NAME`, which this table has never been able to
+#      set, so storing just the key changed nothing an operator could observe.
+#   3. Azure Blob evidence storage is retired in favour of one S3 driver with
+#      four provider presets, and no customer is on it.
+#
+# Organisation storage credentials now live in `evidence_storage_configs`,
+# encrypted with the same `services.crypto` MultiFernet helper, **not** here:
+# this table is keyed by name alone and is global to the process, so it cannot
+# express one store per organisation. The Azure key itself is unchanged as a
+# file- or environment-supplied credential; only the database tier is closed to
+# it.
+
 TIER3_NAMES: Tuple[str, ...] = (
     "OIDC_CLIENT_SECRET",
     "RESEND_API_KEY",
     "ANTHROPIC_API_KEY",
-    "AZURE_STORAGE_ACCOUNT_KEY",
     "HIBP_API_KEY",
     "NVD_API_KEY",
 )
@@ -50,6 +71,18 @@ TIER3_NAMES: Tuple[str, ...] = (
 # Credentials the database tier must never be able to supply. Bootstrap secrets
 # and anything that would let a database row escalate into control of the
 # platform's own authentication or storage.
+#
+# `MINIO_ROOT_USER` and `MINIO_ROOT_PASSWORD` stay here and stay host-only. They
+# are the bundled object store's own root account and the compose entrypoint
+# guard refuses to boot without them, so they are bootstrap credentials rather
+# than integration ones. No evidence storage code path reads either name — a
+# test pins that against the syntax tree — and `services/storage_config.py`'s
+# environment fallback reads only the AWS pair. Note what that does *not* yet
+# say: on today's bundled path the AWS pair the backend is handed is byte-for-
+# byte the MinIO root pair, so the application still reaches the bundled store
+# as root. It will reach it with a scoped account carried on its own
+# configuration row once Phase 4 provisions one and the installer stops setting
+# the two pairs equal.
 NEVER_DB_NAMES: Tuple[str, ...] = (
     "SCF_SECRET_KEY",
     "API_KEY",

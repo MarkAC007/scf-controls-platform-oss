@@ -21,278 +21,38 @@ storage. No cloud account required.
 > **Bring your own SCF catalogue.** The SCF control content is licensed
 > [CC BY-ND 4.0](https://creativecommons.org/licenses/by-nd/4.0/) and is **not** distributed
 > with this project. You supply your own SCF Excel workbook (a free download from the SCF) and
-> the included importer loads it. See [Load the SCF catalogue](#3-load-the-scf-catalogue).
+> the included importer loads it. See [Getting started](#getting-started) below.
 
 ---
 
-## Contents
+## Getting started
 
-- [Prerequisites](#prerequisites)
-- [Quick start](#quick-start)
-- [Configuration](#configuration)
-- [Loading the SCF catalogue](#3-load-the-scf-catalogue)
-- [First-run setup](#5-create-your-organisation)
-- [Accessing the platform](#accessing-the-platform)
-- [Optional integrations](#optional-integrations)
-- [How it works](#how-it-works)
-- [Security & releases](#security--releases)
-- [Licensing](#licensing)
+**The install guide lives in the end-user documentation:**
 
----
+- **[Deployment guide](https://docs.scfcontrolsplatform.app/admin-guide/deployment/)** — requirements, the installer and every
+  option it takes, loading your SCF workbook, first sign-in, upgrades and backups.
+- **[Admin guide](https://docs.scfcontrolsplatform.app/admin-guide/)** — credentials and secrets, identity provider,
+  configuration reference, backup and restore, troubleshooting.
+- **[User guide](https://docs.scfcontrolsplatform.app/user-guide/)** — using the platform once it is running.
 
-## Prerequisites
-
-- **Docker** 24+ and the **Docker Compose** v2 plugin (`docker compose`, not `docker-compose`)
-- ~4 GB free RAM and a few GB of disk for the database and evidence volumes
-- An **SCF Excel workbook** (`.xlsx`) — download it free from
-  [securecontrolsframework.com](https://securecontrolsframework.com/) (see the
-  [SCF GitHub mirror](https://github.com/securecontrolsframework/securecontrolsframework) for
-  background)
-
----
-
-## Quick start
+The short version, for a host that already has Docker with the Compose v2 plugin:
 
 ```bash
-# 1. Clone
 git clone https://github.com/MarkAC007/scf-controls-platform-oss.git
 cd scf-controls-platform-oss
-
-# 2. Provision credentials — generated for you, none typed (see "Configuration" below)
-scripts/install.sh
-
-# 3. Load the SCF catalogue from your workbook (one-time)
-mkdir -p catalog-source
-cp /path/to/SCF-2025.4.xlsx ./catalog-source/scf.xlsx
-docker compose --profile init run --rm catalog-importer
-
-# 4. Start the stack
-docker compose up -d
-
-# 5. Create your organisation and grant yourself admin
-docker compose exec backend python -m cli.admin setup
-docker compose exec backend python -m cli.admin grant-admin --email you@example.com
+scripts/install.sh --up
 ```
 
-Then open **http://localhost:5173**.
+The installer generates every credential the stack needs, asks only which database and sign-in
+method to use, and starts the stack. Then open http://localhost:5173, upload your SCF workbook on
+the onboarding screen, and follow the first sign-in step in the deployment guide for the sign-in
+method you chose. Upgrades use `scripts/upgrade.sh`; read [UPGRADING.md](UPGRADING.md) first.
 
-Each step is explained below.
-
----
-
-## Configuration
-
-Run the installer. It generates every credential the platform needs, asks only for a database and
-an identity provider, and writes the values as `0600` files outside the checkout. The `.env` it
-writes holds **non-secret settings only**, plus `SCF_SECRETS_DIR` and `COMPOSE_FILE`.
-
-```bash
-scripts/install.sh              # interactive wizard on 127.0.0.1:8765, one-time token
-scripts/install.sh --unattended ./install.json   # scripted / CI, identical validation
-scripts/install.sh --import-env                  # move an existing .env onto files
-```
-
-**Never commit your `.env`**, and back up the secrets directory — see
-[Credentials and secrets](https://markac007.github.io/scf-controls-platform/admin-guide/secrets/).
-
-The table below documents the environment tier, which still works and is still last in the
-resolution order (database, then file, then environment). Existing installs are unaffected.
-
-### Required — change before you start
-
-| Variable            | What to set                                                        |
-| ------------------- | ------------------------------------------------------------------ |
-| `DB_PASSWORD`       | A strong PostgreSQL password.                                      |
-| `API_KEY`           | The master API key. Generate one: `openssl rand -hex 32`.          |
-| `OSS_SINGLE_TENANT` | Set to `1` for a self-hosted single-tenant install (recommended). |
-
-In single-tenant mode (`OSS_SINGLE_TENANT=1`) the master `API_KEY` acts as the admin for your
-one organisation, and the browser-based catalogue upload is enabled. The backend refuses to
-start in this mode if it detects more than one organisation or human member, so it stays safe.
-
-### Sensible defaults — review, but fine to leave
-
-| Variable                                       | Default                | Notes                                                   |
-| ---------------------------------------------- | ---------------------- | ------------------------------------------------------- |
-| `ENVIRONMENT`                                  | `production`           | `development` enables debug + reload.                   |
-| `LOG_LEVEL`                                    | `info`                 | `debug` / `info` / `warning` / `error`.                 |
-| `CATALOG_VERSION`                              | `2025.4`               | Label for your catalogue; match your workbook.          |
-| `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD`      | `minioadmin`           | Bundled object-storage credentials — change for prod.   |
-| `EVIDENCE_PUBLIC_ENDPOINT`                     | `http://localhost:9000`| URL the browser uses for evidence up/downloads.         |
-
-See `.env.example` for the full, commented list.
-
-### Port conflicts
-
-Every published port is remappable from `.env` — useful when another service on your host
-already owns a default (8000 and 9000 are popular):
-
-```bash
-# .env
-BACKEND_PORT=8080   # instead of 8000
-MINIO_PORT=9010     # instead of 9000 — EVIDENCE_PUBLIC_ENDPOINT follows automatically
-```
-
-Available: `BACKEND_PORT`, `FRONTEND_PORT`, `MINIO_PORT`, `MINIO_CONSOLE_PORT`,
-`POSTGRES_PORT`, `KEYCLOAK_PORT`. Postgres is published on `127.0.0.1` only (the app talks to
-it over the internal Docker network). For anything beyond port remaps, prefer a
-`docker-compose.override.yml` overlay so upgrades keep a clean tree — see
-[UPGRADING.md](UPGRADING.md) for the overlay pattern.
-
-### Deploying on a remote host
-
-If the stack runs on a machine other than the one you browse from:
-
-- Set `EVIDENCE_PUBLIC_ENDPOINT` to an address **your browser** can reach, e.g.
-  `http://<docker-host>:9000` — otherwise evidence upload/download will fail, because the
-  browser uses presigned URLs pointing at that endpoint.
-- Postgres is intentionally not reachable from other machines (loopback-only publish). Use an
-  overlay if you genuinely need remote DB access.
-- Using the bundled Keycloak (`--profile idp`)? Set `KC_HOSTNAME`, `OIDC_ISSUER`, and
-  `OIDC_REDIRECT_URI` to the host's reachable address too — see
-  [Identity Provider → Deploying on a remote host](https://docs.scfcontrolsplatform.app/admin-guide/identity-provider/#deploying-on-a-remote-host).
-
----
-
-## 3. Load the SCF catalogue
-
-The platform needs the SCF control catalogue in its database. Because the SCF content is
-licensed (CC BY-ND 4.0), you provide the workbook and the importer converts it — the project
-ships the **importer code only**, never SCF data.
-
-> **Permissions note:** the generated catalogue JSON is written to `webclient/public/data/`,
-> which is bind-mounted into the containers. The browser upload (Option B) runs inside the
-> worker container as uid `1001`, so that directory must be writable by uid `1001` — on a
-> clone owned by another user (e.g. cloned as `root` on a server) it fails with
-> `Permission denied`. Fix once, up front:
->
-> ```bash
-> sudo chown -R 1001:1001 webclient/public/data
-> ```
->
-> The CLI importer (Option A) is not affected.
-
-### Option A — CLI importer (works everywhere)
-
-Place your workbook where the importer expects it (or set `SCF_XLSX` in `.env` to a custom
-path), then run the one-shot importer container:
-
-```bash
-mkdir -p catalog-source
-cp /path/to/SCF-2025.4.xlsx ./catalog-source/scf.xlsx
-docker compose --profile init run --rm catalog-importer
-```
-
-The importer is version-agnostic: it auto-detects the SCF release from the workbook and writes
-the generated JSON to `webclient/public/data/` (these files are git-ignored and never
-committed). When you next start the backend, it seeds the catalogue into PostgreSQL
-automatically.
-
-### Option B — upload in the browser
-
-In single-tenant mode (`OSS_SINGLE_TENANT=1`), if the catalogue is empty the app shows a
-first-run onboarding screen at http://localhost:5173. Drop your SCF `.xlsx` there and it
-imports and seeds in the background — no CLI needed.
-
----
-
-## 4. Start the stack
-
-```bash
-docker compose up -d
-```
-
-The frontend is compiled to static files and served by nginx, so the `VITE_*`
-values in `.env` are **baked into the bundle at build time**. Change any of them
-and you need a rebuild, not a restart:
-
-```bash
-docker compose up -d --build frontend
-```
-
-Once it is up, confirm you are serving a production build with its security
-headers — this is the check that would have caught [#777](https://github.com/MarkAC007/scf-controls-platform/issues/777):
-
-```bash
-scripts/verify-prod-build.sh http://localhost:5173
-```
-
-On first boot the backend **runs database migrations automatically** (Alembic) and
-**seeds the catalogue** if it is empty — there is no manual migration step. Watch progress with:
-
-```bash
-docker compose logs -f backend
-```
-
-The API is healthy when `GET http://localhost:8000/health` returns `{"status": "healthy"}`.
-
----
-
-## 5. Create your organisation
-
-Create the default organisation and make yourself an administrator:
-
-```bash
-# Create the organisation (optionally: --name "Your Company")
-docker compose exec backend python -m cli.admin setup
-
-# Grant platform admin to your account
-docker compose exec backend python -m cli.admin grant-admin --email you@example.com
-
-# Or add a member directly (no OAuth required)
-docker compose exec backend python -m cli.admin add-member \
-  --email you@example.com --org-slug default --role admin
-```
-
-Run `docker compose exec backend python -m cli.admin --help` for the full command list
-(also documented in `backend/cli/README.md`).
-
----
-
-## Accessing the platform
-
-| Service              | URL                              | Notes                                   |
-| -------------------- | -------------------------------- | --------------------------------------- |
-| **Web app**          | http://localhost:5173            | The main interface.                     |
-| **API**              | http://localhost:8000            | REST API.                               |
-| **API docs**         | http://localhost:8000/docs       | Interactive Swagger UI.                 |
-| **MinIO console**    | http://localhost:9001            | Object-storage admin (evidence files).  |
-
-By default the platform authenticates with the `API_KEY` you set — no external identity
-provider is required.
-
----
-
-## Optional integrations
-
-All of these are off by default; enable only what you need in `.env`.
-
-- **Google OAuth** — set `GOOGLE_AUTH_ENABLED=true` (and the matching `VITE_GOOGLE_AUTH_ENABLED=true`)
-  plus `GOOGLE_CLIENT_ID` / `VITE_GOOGLE_CLIENT_ID` to let users sign in with Google.
-- **Object storage** — the bundled MinIO works out of the box. To use **AWS S3** or **Azure Blob**
-  instead, set the corresponding `AWS_*` or `AZURE_STORAGE_*` variables.
-- **AI assessment** — set `ANTHROPIC_API_KEY` to enable Claude-powered evidence and control
-  assessments.
-- **Email notifications** — set `RESEND_API_KEY` and `RESEND_FROM_EMAIL` to send outbound email.
-- **Vendor research** — set `HIBP_API_KEY` / `NVD_API_KEY` for breach and CVE lookups.
-
----
-
-## How it works
-
-| Component        | Role                                                                    |
-| ---------------- | ----------------------------------------------------------------------- |
-| **backend**      | FastAPI REST API (port 8000), runs migrations and seeds on startup.     |
-| **frontend**     | React web app (port 5173). A production `vite build`, served by nginx with security headers and an `/api/` proxy to the backend. Still put a reverse proxy with TLS in front before exposing it to the internet — and raise its request body limit to at least 64 MB, or the SCF catalogue workbook upload fails with `413 Request Entity Too Large` (nginx's own default is 1 MB, smaller than the workbook; see `MAX_UPLOAD_SIZE` in `.env.example`). Frontend developers swap in the Vite dev server with `docker compose -f docker-compose.yml -f docker-compose.dev.yml up` — **never** on a host reachable from outside your machine. |
-| **postgres**     | PostgreSQL 15 — the system of record.                                   |
-| **redis**        | Cache and Celery broker (internal network only).                        |
-| **celery-worker / celery-beat** | Async tasks: catalogue import, evidence assessment, scheduling. |
-| **minio**        | S3-compatible storage for evidence files (ports 9000 / 9001).           |
-| **catalog-importer** | One-shot container (profile `init`) that converts your SCF `.xlsx`. |
-
-The SCF workbook is converted to JSON once, seeded into PostgreSQL, and the database is the
-runtime source of truth thereafter. To load a newer SCF release, re-run the importer and
-re-seed (`docker compose exec backend python -m cli.admin seed-catalog --force --confirm`).
+> **Trust boundary in single-tenant mode.** With `OSS_SINGLE_TENANT=1` (the default) and no
+> identity provider enabled, the platform has **no user authentication**: anyone who can load the
+> UI holds a platform-administrator credential. Do not expose such a deployment beyond a trusted
+> network, and do not store third-party credentials in it, unless you have enabled the bundled
+> identity provider or an external OIDC provider. See [`SECURITY.md`](SECURITY.md).
 
 ---
 
