@@ -333,7 +333,7 @@ export default function InviteUserModal({ organizationId, onClose, onInviteSent 
               <p className="modal-description">
                 Send an invitation email to add a new member to your organisation.{' '}
                 {OIDC_ENABLED
-                  ? 'An account is created for them in the identity provider and a temporary password is shown here once. They sign in with it and are asked to set their own.'
+                  ? 'An account is created for them in the identity provider and a temporary password is shown here once. They sign in with it, set their own password, and join this organisation straight away.'
                   : "They'll be able to sign in using their Google account."}
               </p>
 

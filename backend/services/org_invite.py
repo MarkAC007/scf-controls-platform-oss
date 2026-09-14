@@ -384,8 +384,38 @@ async def accept_invite(
         await db.commit()
         raise ValueError("You are already a member of this organisation.")
 
-    # Create membership
-    #
+    await _grant_membership(invite, user_id, db)
+
+    # Mark invite as accepted
+    invite.status = OrgInviteStatus.ACCEPTED.value
+    await db.commit()
+
+    # Load organisation
+    result = await db.execute(
+        select(Organization).where(Organization.id == invite.organization_id)
+    )
+    org = result.scalar_one()
+
+    logger.info(
+        f"Invite accepted: user={user_id}, org={invite.organization_id}, "
+        f"role={invite.role}, member_type={invite.member_type}"
+    )
+    return invite, org
+
+
+async def _grant_membership(
+    invite: OrganizationInvite,
+    user_id: UUID,
+    db: AsyncSession,
+) -> OrganizationMember:
+    """Create the membership an invite promises, and audit it. Flushes, never commits.
+
+    Shared by the two ways an invitation is honoured: the invitee opening the
+    link (:func:`accept_invite`) and the invitee signing in with an identity the
+    platform created for that very invite (:func:`accept_provisioned_invites`).
+    One helper so the membership row, the audit row, and the invariant that they
+    land in the same transaction cannot drift between the two.
+    """
     # member_type is carried from the invite, not defaulted. If this line is
     # dropped the invite modal's employment-type selector becomes a control
     # that silently does nothing -- exactly the defect #822 was raised over.
@@ -435,22 +465,75 @@ async def accept_invite(
         },
         tracked_fields=ORG_MEMBER_TRACKED_FIELDS,
     )
+    return member
 
-    # Mark invite as accepted
-    invite.status = OrgInviteStatus.ACCEPTED.value
-    await db.commit()
 
-    # Load organisation
+async def accept_provisioned_invites(
+    *,
+    sub: str,
+    user_id: UUID,
+    db: AsyncSession,
+) -> List[OrganizationInvite]:
+    """Honour every pending invite whose identity the platform created for ``sub``.
+
+    On a bundled-Keycloak install :func:`create_invite` creates the invitee's
+    account and records its Keycloak id in ``idp_user_id``. That account exists
+    for one reason -- to join that organisation -- and the invite modal promises
+    exactly that ("they sign in with it"). So when the OIDC subject that arrives
+    at login *is* that id, the invitation is accepted here, at sign-in, and the
+    person lands in the organisation instead of on a screen with nothing in it.
+
+    The binding is the subject, never the email. ``idp_user_id`` is only ever set
+    to an identity this backend minted, so ``sub == idp_user_id`` proves the
+    login is the account the invite created. An email match alone would let any
+    identity provider that asserts that address claim the seat; those installs
+    keep the link-based :func:`accept_invite`, whose email check runs against a
+    token only the invitee received.
+
+    Skips (and leaves pending) invites that have expired, so an expired invite
+    is reported as expired by the link path rather than silently consumed here.
+    An existing membership is not duplicated; the invite is simply closed.
+
+    Flushes; the caller commits. Returns the invites accepted, for logging.
+    """
+    if not sub:
+        return []
+
     result = await db.execute(
-        select(Organization).where(Organization.id == invite.organization_id)
+        select(OrganizationInvite).where(
+            (OrganizationInvite.idp_user_id == sub) &
+            (OrganizationInvite.status == OrgInviteStatus.PENDING.value)
+        )
     )
-    org = result.scalar_one()
+    invites = list(result.scalars().all())
+    accepted: List[OrganizationInvite] = []
 
-    logger.info(
-        f"Invite accepted: user={user_id}, org={invite.organization_id}, "
-        f"role={invite.role}, member_type={invite.member_type}"
-    )
-    return invite, org
+    for invite in invites:
+        if invite.is_expired():
+            logger.info(
+                f"Provisioned invite {invite.id} for org {invite.organization_id} "
+                "has expired; not joining at sign-in"
+            )
+            continue
+
+        existing = await db.execute(
+            select(OrganizationMember).where(
+                OrganizationMember.organization_id == invite.organization_id,
+                OrganizationMember.user_id == user_id,
+            )
+        )
+        if existing.scalar_one_or_none() is None:
+            await _grant_membership(invite, user_id, db)
+
+        invite.status = OrgInviteStatus.ACCEPTED.value
+        accepted.append(invite)
+        logger.info(
+            f"Provisioned invite accepted at sign-in: user={user_id}, "
+            f"org={invite.organization_id}, role={invite.role}, "
+            f"member_type={invite.member_type}"
+        )
+
+    return accepted
 
 
 async def get_invite_preview(token: str, db: AsyncSession) -> dict:
