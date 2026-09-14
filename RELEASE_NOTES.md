@@ -1,17 +1,28 @@
-# v0.33.1
+# v0.34.0
 
-Patching
+KeyCloak user prov
+
+## What's new
+
+- Provision the invitee's Keycloak account on invite
+- Wire KC admin credentials to the backend and document provisioning
+- Show the IdP account and its one-time password on invite
+- Schema and Keycloak admin client for bundled-IdP invite provisioning
 
 ## Fixes and improvements
 
-- Re-exec the checked-out upgrade.sh after Phase 3 so target-release steps run (PR 980)
-- Make the bump's summary a required dispatch input (PR 981)
-- Close 12 Dependabot alerts — drop react-router-dom, vitest 4 (PR 976)
-- Close 25 Dependabot alerts via Astro 7 / Starlight 0.42 (PR 975)
-- Classify GCS by exact host or subdomain, not a bare suffix (PR 974)
-- Harden the dispatch-time summary check after review
-- Resolve the summary at dispatch instead of failing the bump PR
+- Mark only the async keycloak_admin tests
+- Mark keycloak_admin tests asyncio for root-run pytest
+- Badge copy — an IdP account may pre-date the invite
+- Document invite-time Keycloak provisioning
+- Provision the parsed DSN parts; add screenshot-led first-run setup page (PR 985)
+
+## Migrations
+
+- `invidpcols1` — Record the bundled-Keycloak identity created for an organisation invite.
+
+`scripts/upgrade.sh` runs these after its backup. A plain `docker compose up -d` refuses to migrate an existing database until `SCF_MIGRATE_ACK` is set, so read `UPGRADING.md` before upgrading a deployment you cannot restore.
 
 ## Upgrading
 
-- Run `scripts/upgrade.sh v0.33.1` (read `UPGRADING.md` first).
+- Run `scripts/upgrade.sh v0.34.0` (read `UPGRADING.md` first).

@@ -225,6 +225,123 @@ def test_unattended_takes_the_database_password_from_the_environment(tmp_path, m
     ) == EXIT_OK
 
 
+# --------------------------------------------- provision from a connection string
+# The probe is stubbed: these tests are about what is WRITTEN once validation has
+# passed, and no test host runs a reachable PostgreSQL 15.
+EXTERNAL_DSN = (
+    "postgresql://scf_app:inline-secret@db.example.test:6543/scf_prod?sslmode=verify-full"
+)
+
+
+@pytest.fixture
+def probe_passes(monkeypatch):
+    async def _ok(parts):
+        return {"ok": True, "checks": [], "hint": None}
+
+    monkeypatch.setattr("installer.validate.run_checks", _ok)
+
+
+def _db_lines(out_dir):
+    return {
+        line.split("=", 1)[0]: line.split("=", 1)[1]
+        for line in (out_dir / ".env").read_text().splitlines()
+        if line.startswith("DB_")
+    }
+
+
+def test_a_connection_string_provisions_the_parts_it_was_validated_with(tmp_path, probe_passes):
+    client, secrets_dir, out_dir = make_client(tmp_path)
+    response = client.post(
+        "/api/provision",
+        headers={TOKEN_HEADER: TOKEN},
+        json={"db": {"type": "external", "dsn": EXTERNAL_DSN}, "idp": {"type": "none"}},
+    )
+    assert response.status_code == 200, response.text
+    assert _db_lines(out_dir) == {
+        "DB_HOST": "db.example.test",
+        "DB_PORT": "6543",
+        "DB_NAME": "scf_prod",
+        "DB_USER": "scf_app",
+        "DB_SSLMODE": "verify-full",
+    }
+    assert (secrets_dir / "DB_PASSWORD").read_text() == "inline-secret"
+    assert "inline-secret" not in (out_dir / ".env").read_text()
+
+
+def test_the_separate_password_field_overrides_the_one_inside_the_string(tmp_path, probe_passes):
+    client, secrets_dir, out_dir = make_client(tmp_path)
+    response = client.post(
+        "/api/provision",
+        headers={TOKEN_HEADER: TOKEN},
+        json={
+            "db": {"type": "external", "dsn": EXTERNAL_DSN, "password": "from-the-field"},
+            "idp": {"type": "none"},
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert (secrets_dir / "DB_PASSWORD").read_text() == "from-the-field"
+    assert _db_lines(out_dir)["DB_HOST"] == "db.example.test"
+
+
+def test_discrete_fields_still_provision_unchanged_and_default_to_the_validated_tls_mode(
+    tmp_path, probe_passes
+):
+    client, secrets_dir, out_dir = make_client(tmp_path)
+    response = client.post(
+        "/api/provision",
+        headers={TOKEN_HEADER: TOKEN},
+        json={
+            "db": {
+                "type": "external",
+                "host": "db.example.test",
+                "port": "6543",
+                "dbname": "scf_prod",
+                "user": "scf_app",
+                "password": "from-the-field",
+            },
+            "idp": {"type": "none"},
+        },
+    )
+    assert response.status_code == 200, response.text
+    lines = _db_lines(out_dir)
+    assert lines["DB_HOST"] == "db.example.test"
+    assert lines["DB_PORT"] == "6543"
+    assert lines["DB_NAME"] == "scf_prod"
+    assert lines["DB_USER"] == "scf_app"
+    # An omitted TLS mode was probed as `require`; what is written must match.
+    assert lines["DB_SSLMODE"] == "require"
+    assert (secrets_dir / "DB_PASSWORD").read_text() == "from-the-field"
+
+
+def test_unattended_db_dsn_provisions_the_same_parts(tmp_path, probe_passes):
+    secrets_dir = tmp_path / "secrets"
+    out_dir = tmp_path / "out"
+    secrets_dir.mkdir()
+    out_dir.mkdir()
+    config = tmp_path / "config.json"
+    config.write_text(
+        json.dumps({"db": {"type": "external", "dsn": EXTERNAL_DSN}, "idp": {"type": "none"}})
+    )
+    assert main(
+        ["unattended", "--config", str(config), "--secrets-dir", str(secrets_dir), "--out-dir", str(out_dir)]
+    ) == EXIT_OK
+    assert _db_lines(out_dir)["DB_HOST"] == "db.example.test"
+    assert _db_lines(out_dir)["DB_USER"] == "scf_app"
+    assert (secrets_dir / "DB_PASSWORD").read_text() == "inline-secret"
+
+
+def test_a_malformed_connection_string_writes_nothing(tmp_path, probe_passes):
+    client, secrets_dir, out_dir = make_client(tmp_path)
+    response = client.post(
+        "/api/provision",
+        headers={TOKEN_HEADER: TOKEN},
+        json={"db": {"type": "external", "dsn": "mysql://x@y/z"}, "idp": {"type": "none"}},
+    )
+    assert response.status_code == 400
+    assert not (secrets_dir / SENTINEL_NAME).exists()
+    assert not (out_dir / ".env").exists()
+
+
 # ------------------------------------------------------------------ import-env
 LEGACY_ENV = """# legacy install
 ENVIRONMENT=production

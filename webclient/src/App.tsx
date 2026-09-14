@@ -74,7 +74,7 @@ import {
   withSystemItem,
   withTaskItem,
 } from './data/appUrl'
-import InviteAcceptance from './components/InviteAcceptance'
+import InviteAcceptance, { PENDING_INVITE_KEY } from './components/InviteAcceptance'
 import OrgSwitcher from './components/OrgSwitcher'
 import type { ClientSummary, ConsultantInvite } from './types'
 
@@ -600,6 +600,29 @@ function AppContent() {
         .catch(() => setCatalogSeeded(true)) // fail open: don't block on a status hiccup
     }
   }, [authReady, isAuthenticated, catalogSeeded])
+
+  // Restore an invitation the OIDC round trip dropped (#984).
+  //
+  // The sign-in callback in AuthContext finishes with
+  // `replaceState({}, '', '/')` to get the authorization code out of the URL,
+  // which also removes `?invite=`. InviteAcceptance stashes the invitation
+  // before redirecting; this picks it up on the way back, and removes the key
+  // in the same breath so a spent invitation cannot reappear on a later login.
+  useEffect(() => {
+    if (!authReady || !isAuthenticated || inviteToken) return
+    try {
+      const stashed = sessionStorage.getItem(PENDING_INVITE_KEY)
+      if (!stashed) return
+      sessionStorage.removeItem(PENDING_INVITE_KEY)
+      const pending = JSON.parse(stashed)
+      if (pending?.token) {
+        setInviteToken(pending.token)
+        setInviteType(pending.inviteType === 'org' ? 'org' : 'consultant')
+      }
+    } catch {
+      // Storage unavailable or the stash is unreadable — nothing to restore.
+    }
+  }, [authReady, isAuthenticated, inviteToken])
 
   // Check consultant status when authenticated
   useEffect(() => {

@@ -16531,6 +16531,109 @@ textarea.form-control{
   background: #fee2e2;
 }
 
+/* Identity-provider state on an invite (#984) ------------------------------ */
+
+/* Sits beside the contractor badge on a pending row: whether this person has
+   an account they can actually sign in with. */
+.idp-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.idp-badge--provisioned {
+  background: var(--success-bg);
+  color: var(--success);
+}
+
+.idp-badge--missing {
+  background: var(--warning-bg);
+  color: var(--warning);
+}
+
+.idp-badge--external {
+  background: var(--secondary);
+  color: var(--muted);
+}
+
+/* The one-time password, in the invite modal's success state. Deliberately
+   loud: it is on screen once and the admin has to notice and copy it. */
+.idp-temp-password {
+  margin: 16px 0 0;
+  padding: 12px 14px;
+  text-align: left;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--primary);
+  border-radius: 8px;
+  background: var(--secondary);
+}
+
+.idp-temp-password-label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.idp-temp-password-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.idp-temp-password-row code {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  /* A password may contain anything; it must wrap rather than overflow. */
+  word-break: break-all;
+}
+
+.btn-copy-temp-password {
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-copy-temp-password:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.idp-temp-password-help {
+  margin: 10px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+/* "They already have an account", "your IdP owns this" — no secret involved. */
+.idp-status-note {
+  margin: 12px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
 /* ============================================================================
    CROSS-ORG COMPARISON STYLES
    ============================================================================ */

@@ -957,6 +957,26 @@ class OrgInviteResponse(BaseModel):
     member_type: str = Field(..., pattern=f"^({MEMBER_TYPES_PATTERN})$")
     status: str
     invite_token: Optional[str] = Field(None, description="Token for acceptance (only shown on creation)")
+    #: The one-time Keycloak password minted for a *newly created* identity
+    #: (#984). Returned by the create endpoint and by nothing else: it is never
+    #: stored, so the list endpoint has nothing to return even if it tried.
+    #: Optional because the common cases have no password — an external IdP, or
+    #: an invitee who already had an account.
+    idp_temporary_password: Optional[str] = Field(
+        None,
+        description=(
+            "Temporary IdP password — only on creation, never stored"
+        ),
+    )
+    #: Whether an account exists for this address in the identity provider:
+    #: `provisioned`, `not_in_idp`, or `external` when the customer's own IdP
+    #: owns the directory. Drives the wording the admin sees, so a BYO-OIDC
+    #: install is told the invite is all the platform can do.
+    idp_status: Optional[str] = Field(
+        None,
+        pattern="^(provisioned|not_in_idp|external)$",
+        description="Identity-provider state for this invite",
+    )
     expires_at: datetime
     created_at: datetime
 

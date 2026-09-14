@@ -402,7 +402,9 @@ async def invite_user_to_organization(
     org = result.scalar_one_or_none()
 
     try:
-        invite = await org_invite_service.create_invite(
+        # The temporary password exists only in this local, for the length of
+        # this request: into the email and into the response, never into a row.
+        invite, idp_temporary_password = await org_invite_service.create_invite(
             org_id=org_id,
             inviter_user_id=current_user.db_id,
             inviter_email=current_user.email,
@@ -414,6 +416,14 @@ async def invite_user_to_organization(
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except org_invite_service.IdpProvisioningError as e:
+        # 502, not 400 or 500: the request was well formed and this service is
+        # healthy — the identity provider behind it is not. The step name is the
+        # whole diagnostic, and carries no response body, token or password.
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Identity provider {e.step} failed: {e.message}",
+        )
     except PermissionError as e:
         raise HTTPException(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
@@ -433,6 +443,7 @@ async def invite_user_to_organization(
             invite_token=invite.invite_token,
             custom_message=invite_data.message,
             invite_type="org",
+            temporary_password=idp_temporary_password,
         )
     except Exception as e:
         logger.error(f"Email send failed for invite {invite.id}: {e}")
@@ -447,6 +458,14 @@ async def invite_user_to_organization(
         member_type=invite.member_type,
         status=invite.status,
         invite_token=invite.invite_token,
+        # The only response that ever carries it. The admin has one chance to
+        # copy it; there is no endpoint that can hand it over a second time.
+        idp_temporary_password=idp_temporary_password,
+        idp_status=(
+            "provisioned"
+            if invite.idp_user_id
+            else await org_invite_service.idp_status_for(invite, db)
+        ),
         expires_at=invite.expires_at,
         created_at=invite.created_at,
     )
@@ -464,6 +483,9 @@ async def list_organization_invites(
     org = result.scalar_one_or_none()
 
     invites = await org_invite_service.list_org_invites(org_id, status_filter, db)
+    # One batched resolution rather than a directory round trip per row; see
+    # `idp_statuses_for` for what it does and does not look up.
+    idp_statuses = await org_invite_service.idp_statuses_for(invites, db)
 
     invite_responses = [
         OrgInviteResponse(
@@ -475,6 +497,8 @@ async def list_organization_invites(
             member_type=inv.member_type,
             status=inv.status,
             invite_token=None,  # Don't expose tokens in list view
+            idp_temporary_password=None,  # Never stored, never listed
+            idp_status=idp_statuses.get(inv.id),
             expires_at=inv.expires_at,
             created_at=inv.created_at,
         )
@@ -493,7 +517,12 @@ async def cancel_organization_invite(
 ):
     """Cancel a pending invitation. Requires: admin role."""
     try:
-        await org_invite_service.cancel_invite(invite_id, org_id, db)
+        await org_invite_service.cancel_invite(
+            invite_id,
+            org_id,
+            db,
+            cancelled_by_user_id=membership.user.db_id,
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

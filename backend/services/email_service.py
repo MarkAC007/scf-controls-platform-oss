@@ -497,6 +497,7 @@ async def send_invitation_email(
     invite_token: str,
     custom_message: Optional[str] = None,
     invite_type: str = "consultant",
+    temporary_password: Optional[str] = None,
 ):
     """
     Send an invitation email to join the organization.
@@ -507,6 +508,10 @@ async def send_invitation_email(
         inviter_name: Name of the person sending the invitation
         invite_token: The secure token for accepting the invitation
         custom_message: Optional custom message from the inviter
+        invite_type: Which invitation flow the accept link should open
+        temporary_password: One-time password for an account the platform just
+            provisioned in the bundled identity provider. None on the external-IdP
+            path, where the provider owns the credential. NEVER logged.
 
     Returns:
         Email ID if successful, None if email service is disabled or failed
@@ -517,6 +522,8 @@ async def send_invitation_email(
     logger.info(f"   Invited by: {inviter_name}")
     logger.info(f"   Invite token: {invite_token[:8]}...")
     logger.info(f"   Custom message: {'Yes' if custom_message else 'No'}")
+    # Presence only. The password itself must never reach a log line.
+    logger.info(f"   Temporary password included: {'Yes' if temporary_password else 'No'}")
     logger.info(f"   RESEND_ENABLED: {resend_enabled()}")
     logger.info(f"   RESEND_API_KEY set: {'Yes' if get_secret('RESEND_API_KEY') else 'No'}")
     logger.info(f"   RESEND_FROM_EMAIL: {RESEND_FROM_EMAIL}")
@@ -546,6 +553,31 @@ async def send_invitation_email(
         safe_inviter_name = html.escape(inviter_name)
         safe_org_name = html.escape(organization_name)
 
+        # Two sign-in paths, and the invitee cannot tell which one applies from
+        # the outside. With the bundled Keycloak the platform has just created
+        # the account and owns the first credential; with an external IdP the
+        # provider owns the identity and there is nothing for us to hand over.
+        if temporary_password:
+            sign_in_line = (
+                "An account has been created for you. Use the temporary password "
+                "below the first time you sign in."
+            )
+            credentials_section = f"""
+            <div style="background-color: #fff8e1; padding: 16px; border-radius: 8px; margin: 24px 0; border-left: 4px solid #f5a623;">
+                <p style="margin: 0 0 8px 0; font-size: 14px; color: #555;">Your temporary password:</p>
+                <p style="margin: 0 0 8px 0;">
+                    <code style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 16px; background-color: #ffffff; padding: 8px 12px; border-radius: 6px; border: 1px solid #e5e7eb; display: inline-block;">{html.escape(temporary_password)}</code>
+                </p>
+                <p style="margin: 0; font-size: 13px; color: #666;">You will be asked to set a new one at first sign-in.</p>
+            </div>
+            """
+        else:
+            sign_in_line = (
+                "Sign in with your organisation's identity provider, or the account "
+                "you already use for this platform."
+            )
+            credentials_section = ""
+
         html_body = f"""
         <html>
         <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; color: #333;">
@@ -564,8 +596,10 @@ async def send_invitation_email(
 
             <p style="font-size: 16px; line-height: 1.6;">
                 Click the button below to view and accept your invitation.
-                You'll be able to sign in with Google if you don't have an account yet.
+                {sign_in_line}
             </p>
+
+            {credentials_section}
 
             <div style="text-align: center; margin: 32px 0;">
                 <a href="{APP_URL}/?invite={invite_token}&invite_type={invite_type}"

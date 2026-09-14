@@ -287,6 +287,22 @@ def _provision(
             "it is the account promoted to platform administrator",
         )
 
+    # Provision exactly what was validated. Both callers probe the external
+    # database through parts_from_payload, which accepts EITHER the discrete
+    # fields OR a connection string (`dsn`) with an optional separate password.
+    # The written config must come from the same parse: before this, a `dsn`
+    # submission validated the operator's server and then wrote DB_HOST=postgres
+    # (and an empty DB_PASSWORD when the password was inside the string), so the
+    # stack came up on the bundled container with nobody told. Parsed BEFORE the
+    # sentinel, like every other refusal: a bad payload leaves nothing behind.
+    if db_type == "external":
+        parts, _ = validate_mod.parts_from_payload(db)
+        external_db_password: str | None = parts.password
+        env_db: dict[str, Any] = {"type": db_type, **parts.safe_dict()}
+    else:
+        external_db_password = None
+        env_db = {"type": db_type, "host": "postgres", "port": 5432, "dbname": "cg_scf", "user": "cg"}
+
     writer.ensure_secrets_dir(secrets_path)
     # Sentinel FIRST: atomic, symlink-proof, race-proof.
     writer.create_sentinel(
@@ -297,16 +313,11 @@ def _provision(
         db_type=db_type,
         idp_type=idp_type,
         storage_type=storage_type,
-        external_db_password=db.get("password"),
+        external_db_password=external_db_password,
         external_oidc_client_secret=idp.get("oidc_client_secret"),
     )
     created = writer.write_secret_files(secrets_path, values)
 
-    env_db = dict(db)
-    env_db.pop("password", None)
-    env_db["type"] = db_type
-    if db_type == "bundled":
-        env_db.update({"host": "postgres", "port": 5432, "dbname": "cg_scf", "user": "cg"})
     content = writer.build_env(
         host_secrets_dir=host_dir, db=env_db, idp=idp, storage={"type": storage_type}
     )
