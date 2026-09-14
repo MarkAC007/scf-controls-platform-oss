@@ -3,6 +3,8 @@ Organisation Invite Service - Business logic for org member invitations.
 
 Handles:
 - Creating invitations with domain validation and subscription checks
+- Provisioning the invitee's identity when the platform runs the bundled
+  Keycloak (#984) -- see :func:`create_invite`
 - Accepting invitations (token-based, email-verified)
 - Previewing invitations (public, no auth)
 - Listing and cancelling invitations
@@ -28,12 +30,52 @@ from models import (
 from services.domain_validation import validate_invite_domain, is_public_domain
 from services.org_utils import MEMBER_TYPES
 from services.invite_tokens import hash_invite_token
-from services.audit_service import log_entity_changes, ORG_MEMBER_TRACKED_FIELDS
+from services.audit_service import (
+    create_audit_entry,
+    log_entity_changes,
+    ORG_MEMBER_TRACKED_FIELDS,
+)
 from services.subscription import get_user_subscription, can_invite_member
+from services import keycloak_admin
 
 logger = logging.getLogger(__name__)
 
 INVITE_EXPIRY_DAYS = 7
+
+
+class IdpProvisioningError(Exception):
+    """The invitee's identity could not be provisioned, named by the step.
+
+    ``step`` is one of ``token``, ``lookup``, ``create``, ``set_password`` --
+    :class:`services.keycloak_admin.KeycloakAdminError`'s vocabulary, carried
+    through unchanged so the API can tell an operator *which* half of the round
+    trip broke. The message deliberately carries no response body, token or
+    password: it reaches an HTTP response.
+
+    Distinct from ``ValueError`` (a 400: the caller asked for something invalid)
+    because this is a 502 -- the request was fine, a dependency was not.
+    """
+
+    def __init__(self, *, step: str, message: str) -> None:
+        super().__init__(f"Identity provider {step} failed: {message}")
+        self.step = step
+        self.message = message
+
+
+def _as_uuid(value: Optional[str]) -> Optional[UUID]:
+    """A Keycloak user id as a UUID, or None when it is not one.
+
+    Keycloak mints UUIDs, but the column holds an opaque string from another
+    system, so nothing here may assume the shape. ``audit_log.entity_id`` is a
+    UUID column; a non-UUID id falls back to the invite's own id rather than
+    costing us the audit row.
+    """
+    if not value:
+        return None
+    try:
+        return UUID(str(value))
+    except (TypeError, ValueError):
+        return None
 
 
 async def get_org_owner_user_id(org_id: UUID, db: AsyncSession) -> Optional[UUID]:
@@ -58,11 +100,17 @@ async def create_invite(
     message: Optional[str],
     db: AsyncSession,
     member_type: str = "internal",
-) -> OrganizationInvite:
+) -> tuple[OrganizationInvite, Optional[str]]:
     """
     Create an organisation member invitation.
 
     Validates domain rules, checks for duplicates, enforces subscription limits.
+
+    Returns ``(invite, temporary_password)``. The password is not None only when
+    this call created a *new* identity in the bundled Keycloak: it is handed to
+    the inviter once, put in the invitation email once, and never stored. The
+    tuple exists so it can never be read back off the invite row -- there is
+    nowhere to read it from.
 
     *member_type* is the employment type the membership will carry once the
     invite is accepted (#822 phase 2). Defaulted so that every existing caller
@@ -74,6 +122,9 @@ async def create_invite(
     Raises:
         ValueError: For validation failures (domain, duplicates, existing member)
         PermissionError: For subscription limit exceeded
+        IdpProvisioningError: The bundled Keycloak rejected the provisioning
+            round trip. The invite is NOT created -- a row promising a login
+            that does not exist is the defect #984 was raised over.
     """
     # Validate role
     if role not in ("admin", "editor", "viewer"):
@@ -174,6 +225,28 @@ async def create_invite(
                 "Upgrade your subscription to invite more members."
             )
 
+    # --- Identity provisioning (#984) -------------------------------------
+    #
+    # Placed after every validation and the seat check, and before the invite is
+    # committed. Provisioning earlier would mint identities for invites that are
+    # about to be rejected; committing first would leave a row promising a login
+    # that does not exist, which is exactly the defect being fixed.
+    #
+    # `is_enabled()` is false on a bring-your-own-OIDC install and this block
+    # then makes no HTTP call whatsoever. That gate is the whole guarantee that
+    # the platform never writes to a directory it does not own, so it must stay
+    # the only way in.
+    provision: Optional[keycloak_admin.ProvisionResult] = None
+    if keycloak_admin.is_enabled():
+        try:
+            provision = await keycloak_admin.provision_user(email.strip().lower())
+        except keycloak_admin.KeycloakAdminError as exc:
+            # Deliberately fatal. A database-only invite would look successful
+            # to the admin and fail days later in front of the invitee, who can
+            # do nothing about it. An identity that already existed is not a
+            # failure -- `provision_user` returns it with created=False.
+            raise IdpProvisioningError(step=exc.step, message=exc.message) from exc
+
     # Generate secure token and create invite. The hash is the lookup key —
     # invite_token itself is encrypted at rest and cannot be matched by value.
     token = secrets.token_urlsafe(32)
@@ -189,15 +262,58 @@ async def create_invite(
         custom_message=message,
         expires_at=datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=INVITE_EXPIRY_DAYS),
     )
+    # Only an identity this call *created* is recorded as ours. An account that
+    # already existed belongs to a person who may be using it in another
+    # organisation: we do not own it, we did not touch it, and cancelling this
+    # invite must not delete it. Null columns are what say so.
+    if provision is not None and provision.created:
+        invite.idp_user_id = provision.user_id
+        invite.idp_provisioned_at = datetime.now(timezone.utc)
+
     db.add(invite)
-    await db.commit()
-    await db.refresh(invite)
+    try:
+        if provision is not None and provision.created:
+            # `invite.id` is generated at INSERT, and the audit row needs a real
+            # entity id, so flush first. One transaction: a failure below takes
+            # the audit row with it rather than leaving a record of a
+            # provisioning that has been undone.
+            await db.flush()
+            await create_audit_entry(
+                db=db,
+                organization_id=org_id,
+                entity_type="idp_user",
+                entity_id=_as_uuid(provision.user_id) or invite.id,
+                action="create",
+                changed_by_user_id=inviter_user_id,
+                field_name="email",
+                new_value=invite.email,
+            )
+        await db.commit()
+        await db.refresh(invite)
+    except Exception:
+        # The account exists and the invite does not. Leaving it stranded would
+        # also poison the retry: the next invite for this address would find an
+        # existing identity, leave it alone, and issue no password at all.
+        if provision is not None and provision.created:
+            try:
+                await keycloak_admin.delete_user(provision.user_id)
+            except Exception as cleanup_error:  # pragma: no cover - defensive
+                # Best effort, and never the password: this log line is the
+                # operator's only trace of an orphaned account.
+                logger.warning(
+                    "Could not undo the Keycloak user created for a failed "
+                    "invite to %s (idp_user_id=%s): %s",
+                    invite.email,
+                    provision.user_id,
+                    cleanup_error,
+                )
+        raise
 
     logger.info(
         f"Created org invite: org={org_id}, email={email}, role={role}, "
-        f"member_type={member_type}"
+        f"member_type={member_type}, idp_provisioned={bool(invite.idp_user_id)}"
     )
-    return invite
+    return invite, (provision.temporary_password if provision and provision.created else None)
 
 
 async def accept_invite(
@@ -417,9 +533,21 @@ async def cancel_invite(
     invite_id: UUID,
     org_id: UUID,
     db: AsyncSession,
+    cancelled_by_user_id: Optional[UUID] = None,
 ) -> OrganizationInvite:
     """
     Cancel a pending invitation.
+
+    When the invite provisioned an identity in the bundled Keycloak (#984) and
+    nobody has logged in with it, the identity is removed too -- otherwise
+    cancelling would leave an account with a live temporary password and no
+    invitation behind it. Both halves of that condition matter: ``idp_user_id``
+    means *we* created it, and the absence of a ``users`` row means it has never
+    been used. Either one missing and the account is left completely alone.
+
+    *cancelled_by_user_id* is the actor for the audit row; it falls back to the
+    original inviter, because an audit entry needs a user and the API has one
+    more readily than this service does.
 
     Raises:
         ValueError: If invite not found or not pending
@@ -437,9 +565,123 @@ async def cancel_invite(
     if invite.status != OrgInviteStatus.PENDING.value:
         raise ValueError(f"Cannot cancel an invitation that is already {invite.status}.")
 
+    if invite.idp_user_id and keycloak_admin.is_enabled():
+        user_row = await db.execute(
+            select(DBUser).where(DBUser.email == invite.email)
+        )
+        if user_row.scalar_one_or_none() is None:
+            deleted = False
+            try:
+                await keycloak_admin.delete_user(invite.idp_user_id)
+                deleted = True
+            except keycloak_admin.KeycloakAdminError as exc:
+                # The cancellation itself still stands. Refusing to cancel
+                # because a directory call failed would leave the admin with an
+                # invite they cannot withdraw; the operator gets the account.
+                logger.warning(
+                    "Invite %s cancelled but its Keycloak user %s could not be "
+                    "removed at the %s step: %s",
+                    invite_id,
+                    invite.idp_user_id,
+                    exc.step,
+                    exc.message,
+                )
+            if deleted:
+                await create_audit_entry(
+                    db=db,
+                    organization_id=org_id,
+                    entity_type="idp_user",
+                    entity_id=_as_uuid(invite.idp_user_id) or invite.id,
+                    action="delete",
+                    changed_by_user_id=cancelled_by_user_id or invite.invited_by_user_id,
+                    field_name="email",
+                    old_value=invite.email,
+                )
+
     invite.status = OrgInviteStatus.CANCELLED.value
     await db.commit()
     await db.refresh(invite)
 
     logger.info(f"Invite cancelled: id={invite_id}, org={org_id}")
     return invite
+
+
+# ---------------------------------------------------------------------------
+# Identity-provider status for pending invites (#984)
+# ---------------------------------------------------------------------------
+
+#: What an invite's identity looks like from the platform's side.
+#:   ``provisioned``  — an account exists for this address in the realm
+#:   ``not_in_idp``   — bundled Keycloak is on and the address has no account
+#:   ``external``     — provisioning is off; the customer's IdP owns the account
+IDP_STATUS_PROVISIONED = "provisioned"
+IDP_STATUS_NOT_IN_IDP = "not_in_idp"
+IDP_STATUS_EXTERNAL = "external"
+
+
+async def idp_status_for(invite: OrganizationInvite, db: AsyncSession) -> str:
+    """The :data:`IDP_STATUS_PROVISIONED`-family status for one invite.
+
+    A null ``idp_user_id`` on a bundled install is not the same as "no account":
+    the address may have had one before it was ever invited here. That case is
+    exactly why the lookup happens rather than reading the column alone -- an
+    admin told "not in the IdP" about someone who *is* would go and create a
+    duplicate.
+
+    *db* is unused today and kept in the signature deliberately: it is the shape
+    every other reader of this module expects, and a future status that needs a
+    row (say, "already a member elsewhere") should not churn every call site.
+
+    A lookup failure reports ``not_in_idp`` rather than raising. This feeds a
+    list endpoint, and a directory hiccup must not take the invitations page
+    down; the warning names the step for whoever has to look.
+    """
+    if not keycloak_admin.is_enabled():
+        return IDP_STATUS_EXTERNAL
+    if invite.idp_user_id:
+        return IDP_STATUS_PROVISIONED
+    try:
+        found = await keycloak_admin.find_user_id(invite.email)
+    except keycloak_admin.KeycloakAdminError as exc:
+        logger.warning(
+            "Could not resolve idp_status for invite %s at the %s step: %s",
+            invite.id,
+            exc.step,
+            exc.message,
+        )
+        return IDP_STATUS_NOT_IN_IDP
+    return IDP_STATUS_PROVISIONED if found else IDP_STATUS_NOT_IN_IDP
+
+
+async def idp_statuses_for(
+    invites: List[OrganizationInvite], db: AsyncSession
+) -> dict:
+    """Statuses for a whole list, keyed by invite id, cheaply.
+
+    The list endpoint renders every invite an organisation has ever sent, so the
+    naive version is one Keycloak round trip per row. Three things keep it
+    small: a disabled install makes none at all; a row that already carries an
+    ``idp_user_id`` needs none; and results are memoised per address, because a
+    cancelled and a re-sent invite share one.
+
+    Only *pending* invites are looked up. A cancelled or expired invite's
+    identity is not actionable, and paying for a directory call to decorate it
+    would make the page slower for no decision anyone can act on.
+    """
+    if not keycloak_admin.is_enabled():
+        return {invite.id: IDP_STATUS_EXTERNAL for invite in invites}
+
+    statuses: dict = {}
+    by_email: dict = {}
+    for invite in invites:
+        if invite.idp_user_id:
+            statuses[invite.id] = IDP_STATUS_PROVISIONED
+            continue
+        if invite.status != OrgInviteStatus.PENDING.value:
+            statuses[invite.id] = IDP_STATUS_NOT_IN_IDP
+            continue
+        email = (invite.email or "").strip().lower()
+        if email not in by_email:
+            by_email[email] = await idp_status_for(invite, db)
+        statuses[invite.id] = by_email[email]
+    return statuses

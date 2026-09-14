@@ -1761,6 +1761,20 @@ export interface OrgInvitePreviewResponse {
 }
 
 /**
+ * Where the invitee stands in the identity provider (#984).
+ *
+ *   provisioned  — they have an IdP account (created by this invite, or
+ *                  already present before it).
+ *   not_in_idp   — no IdP account exists; they cannot sign in yet.
+ *   external     — the install uses a BYO identity provider, which owns the
+ *                  account lifecycle. The platform neither creates nor knows.
+ *
+ * Absent/null means the backend predates #984 or provisioning is switched off:
+ * read it as "nothing to say", never as a failure.
+ */
+export type OrgInviteIdpStatus = 'provisioned' | 'not_in_idp' | 'external'
+
+/**
  * Organisation invite response (from create/list)
  */
 export interface OrgInviteResponse {
@@ -1781,6 +1795,18 @@ export interface OrgInviteResponse {
   member_type?: import('../types').MemberType
   status: string
   invite_token: string | null
+  /**
+   * One-time temporary password for the IdP account this invite just created
+   * (#984). Present ONLY on the create response, and only when an account was
+   * actually created — null when one already existed, when a BYO provider owns
+   * the account, or when provisioning is off.
+   *
+   * The list endpoint never carries it. It is displayed once, in the invite
+   * modal's success state, and is never persisted anywhere on the client.
+   */
+  idp_temporary_password?: string | null
+  /** Where the invitee stands in the IdP. Safe to show in a list. */
+  idp_status?: OrgInviteIdpStatus | null
   expires_at: string
   created_at: string
 }

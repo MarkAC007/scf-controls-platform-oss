@@ -371,7 +371,7 @@ async def cmd_add_member(args: argparse.Namespace) -> int:
 
         if created_user:
             print(f"✅ Created user {email} and added to '{org.name}' as {role}")
-            print(f"   User can now sign in with Google at the platform URL.")
+            print("   They can now sign in through the configured identity provider at the platform URL.")
         else:
             print(f"✅ Added existing user {email} to '{org.name}' as {role}")
 

@@ -27,8 +27,25 @@ import {
   type OrgInvitePreviewResponse,
 } from '../data/apiClient'
 import GoogleSignIn from './GoogleSignIn'
+import OidcSignIn from './OidcSignIn'
+import { OIDC_ENABLED } from '../data/authToken'
 
 type InviteType = 'consultant' | 'org'
+
+/**
+ * Where an unaccepted invitation waits out the OIDC round trip (#984).
+ *
+ * The invite arrives as `?invite=<token>` and the OIDC callback in
+ * AuthContext ends with `window.history.replaceState({}, '', '/')` — which is
+ * correct (the authorization code must not stay in the URL) and takes the
+ * invite token with it. The invitee then signs in perfectly and lands on a
+ * dashboard that has forgotten why they came.
+ *
+ * sessionStorage rather than the URL because the URL is exactly what does not
+ * survive; sessionStorage rather than localStorage because this belongs to one
+ * tab's sign-in, and App removes it the moment it is consumed.
+ */
+export const PENDING_INVITE_KEY = 'scf.pendingInvite'
 
 interface InviteAcceptanceProps {
   token: string
@@ -71,6 +88,28 @@ export default function InviteAcceptance({ token, inviteType = 'consultant', onC
 
     loadInvite()
   }, [token, isOrgInvite])
+
+  /**
+   * Stash the invitation while the visitor is still unauthenticated, so the
+   * OIDC callback's replaceState cannot lose it (see PENDING_INVITE_KEY).
+   *
+   * Written on render rather than inside the sign-in button because OidcSignIn
+   * navigates the whole document away (`window.location.href`) and takes no
+   * before-redirect hook; by the time it runs there is nowhere to put this.
+   *
+   * Gated on OIDC_ENABLED so a Google install writes nothing, and on being
+   * signed out so an accepted invite is not re-stashed and resurrected on a
+   * later, unrelated login.
+   */
+  useEffect(() => {
+    if (!OIDC_ENABLED) return
+    if (!authReady || isAuthenticated) return
+    try {
+      sessionStorage.setItem(PENDING_INVITE_KEY, JSON.stringify({ token, inviteType }))
+    } catch {
+      // Storage disabled/full: the invitee can still paste the link again.
+    }
+  }, [authReady, isAuthenticated, token, inviteType])
 
   // Track if we've already accepted to prevent double-processing
   const [accepted, setAccepted] = useState(false)
@@ -259,10 +298,28 @@ export default function InviteAcceptance({ token, inviteType = 'consultant', onC
           </div>
         ) : !isAuthenticated ? (
           <div className="invite-signin">
-            <p className="signin-prompt">
-              Sign in with Google to accept this invitation:
-            </p>
-            <GoogleSignIn />
+            {OIDC_ENABLED ? (
+              <>
+                {/*
+                  An OIDC install has no Google button to offer, and the
+                  invitee may be holding a temporary password their admin read
+                  off the invite modal. Nothing else on this page tells them
+                  that is what to type (#984).
+                */}
+                <p className="signin-prompt">
+                  Sign in to accept this invitation. If you were sent a
+                  temporary password, use it and set a new one when asked.
+                </p>
+                <OidcSignIn />
+              </>
+            ) : (
+              <>
+                <p className="signin-prompt">
+                  Sign in with Google to accept this invitation:
+                </p>
+                <GoogleSignIn />
+              </>
+            )}
           </div>
         ) : (
           <div className="invite-actions">

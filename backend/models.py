@@ -1214,6 +1214,14 @@ class OrganizationInvite(InviteMixin, Base):
     expires_at = Column(DateTime(timezone=False), nullable=False)
     created_at = Column(DateTime(timezone=False), server_default=func.now())
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now())
+    #: The Keycloak identity created for this invite by the bundled-IdP
+    #: provisioning path (#984), and when. Nullable: unset on external-IdP
+    #: installs, where the platform does not own the directory and provisions
+    #: nothing, and unset on a bundled install where the person already had an
+    #: account. A plain string, not a UUID column — an opaque identifier minted
+    #: by another system, with no foreign key to point at.
+    idp_user_id = Column(String(64), nullable=True)
+    idp_provisioned_at = Column(DateTime(timezone=True), nullable=True)
 
     # Relationships
     organization = relationship("Organization", back_populates="invites")
