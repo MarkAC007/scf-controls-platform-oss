@@ -56,6 +56,13 @@ describe('with OIDC enabled', () => {
     expect(screen.getByText(/temporary password is shown here once/i)).toBeInTheDocument()
   })
 
+  it('promises they join the organisation at first sign-in', async () => {
+    // The backend honours a provisioned invite when that account signs in,
+    // so the admin need not chase the invitee to click a link.
+    await renderModal()
+    expect(screen.getByText(/join this organisation straight away/i)).toBeInTheDocument()
+  })
+
   it('drops the Google sentence', async () => {
     // Leaving it in is worse than saying nothing: it names a sign-in method
     // the install does not have.

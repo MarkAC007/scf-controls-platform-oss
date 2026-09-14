@@ -14116,6 +14116,23 @@ textarea.form-control{
   cursor: not-allowed;
 }
 
+/* Secondary action on the auth-style screens (NoOrganisationScreen: Sign out). */
+.auth-link-btn {
+  margin: 12px auto 0;
+  padding: 8px 16px;
+  display: block;
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 14px;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.auth-link-btn:hover {
+  color: var(--text);
+}
+
 .auth-disclaimer {
   margin-top: 30px;
   font-size: 12px;

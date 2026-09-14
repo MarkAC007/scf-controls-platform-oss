@@ -326,6 +326,27 @@ async def _persist_oidc_user(
 
         logger.debug(f"User persisted to database with ID: {db_user.id}")
 
+        # Join the organisation(s) this identity was created for (#984 follow-up).
+        # On a bundled-Keycloak install the invite created this very Keycloak
+        # account, so signing in with it IS the acceptance: the invitee lands
+        # in the organisation instead of on an empty workspace. Bound on the
+        # subject the invite recorded, never on the email claim. Its own
+        # transaction, after the user is committed: a failure here must leave
+        # the login intact and the invite pending for the link-based path.
+        try:
+            from services.org_invite import accept_provisioned_invites
+
+            joined = await accept_provisioned_invites(sub=sub, user_id=db_user.id, db=db)
+            if joined:
+                await db.commit()
+                logger.info(
+                    f"User {_mask_email(email)} joined {len(joined)} organisation(s) "
+                    "via provisioned invite at sign-in"
+                )
+        except Exception as join_error:
+            logger.warning(f"Provisioned-invite auto-join failed (login continues): {join_error}")
+            await db.rollback()
+
         # WEBSITE-FIRST PROVISIONING: Organisation linking is handled by the website
         # The website sync API creates the user's organisation and membership.
         # We only need to check for pending consultant invites here for the invite flow.

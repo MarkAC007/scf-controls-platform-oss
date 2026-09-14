@@ -57,6 +57,7 @@ import GoogleSignIn from './components/GoogleSignIn'
 import OidcSignIn from './components/OidcSignIn'
 import { OIDC_ENABLED } from './data/authToken'
 import CatalogOnboarding from './components/CatalogOnboarding'
+import NoOrganisationScreen from './components/NoOrganisationScreen'
 import { getCatalogStatus } from './data/apiClient'
 import {
   SYNCED_TABS,
@@ -702,6 +703,14 @@ function AppContent() {
         </div>
       </div>
     )
+  }
+
+  // No organisation to load. `loading` is only ever cleared by loadData, and
+  // loadData only runs once an organisation is selected, so without this
+  // branch a user with zero organisations sits on "Loading data" for ever.
+  // The screen tells them what is actually going on.
+  if (!currentOrg) {
+    return <NoOrganisationScreen />
   }
 
   if (loading) {

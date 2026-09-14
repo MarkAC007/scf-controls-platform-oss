@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "version": "0.34.0",
-  "released": "2026-09-14T19:25:34Z",
+  "version": "0.34.1",
+  "released": "2026-09-14T21:02:17Z",
   "min_upgradable_version": "0.0.0",
   "breaking": false,
   "required_stops": [],
-  "release_url": "https://github.com/MarkAC007/scf-controls-platform-oss/releases/tag/v0.34.0",
-  "summary": "KeyCloak user prov",
+  "release_url": "https://github.com/MarkAC007/scf-controls-platform-oss/releases/tag/v0.34.1",
+  "summary": "fix keycloak",
   "migration_range": [
     "20260119_000000_62bdef86f249_initial_schema",
     "20260120_075300_add_implementation_status_values",
