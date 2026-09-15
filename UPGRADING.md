@@ -255,6 +255,26 @@ covering an external store.
 
 ### Version-specific notes
 
+- **The two bundled MinIO images are now pulled from `quay.io` instead of Docker
+  Hub.** MinIO unpublished `minio/minio` and `minio/mc` from Docker Hub, so on
+  any earlier release `docker compose up` fails with `pull access denied ... may
+  require 'docker login'`. That message is misleading: Hub reports an absent
+  repository as `401` rather than `404`, and **no Docker Hub credential can fix
+  it** — there is nothing left to authenticate against. `quay.io` still serves
+  both repositories and the `@sha256:` digests in `docker-compose.yml` are
+  **unchanged**, so this is a registry re-point, not a different image; the
+  digest pinning introduced in #947 is intact. Nothing to do on your side beyond
+  upgrading — but note two consequences:
+
+  1. **Your host must be able to reach `quay.io`.** An install behind an egress
+     allow-list that names only `docker.io`/`ghcr.io` needs `quay.io` added. (If
+     you run the bundled Keycloak you already reach it —
+     `quay.io/keycloak/keycloak` has always come from there.)
+  2. **A locally cached copy under the old name is not reused by name.** Compose
+     asks for `quay.io/minio/minio@sha256:…`, so the first `up` after the upgrade
+     re-resolves it against quay. The content is identical, so Docker recognises
+     the digest and no layers are re-downloaded.
+
 - **The bundled MinIO moved behind the `storage` compose profile, and
   `scripts/upgrade.sh` adds that profile to your `.env` for you.** Nothing to do
   before or after the upgrade on a normal install. Two things are worth knowing:
@@ -579,6 +599,57 @@ cover](#what-the-backup-does-not-cover).
 > Database rollback is **restore-from-backup**, not `alembic downgrade` —
 > downgrade migrations are not trusted for a compliance dataset.
 
+> **Rolling back past the MinIO registry re-point.** Rollback checks the code
+> out to the pre-upgrade commit and rebuilds. If that commit predates the move
+> to `quay.io` (see [Version-specific notes](#version-specific-notes)), its
+> `docker-compose.yml` still names Docker Hub — which no longer serves those
+> repositories at all.
+>
+> **On the host that was already running, this normally succeeds**: compose's
+> default pull policy is `missing`, and the Hub-named image is still in that
+> host's image store from before the upgrade, so nothing is fetched. The cases
+> that fail are the ones where the local copy is gone:
+>
+> - a **disaster-recovery restore onto a fresh host** at a pre-re-point release, and
+> - any host that has run `docker system prune -a` since.
+>
+> Both are already broken today by MinIO's unpublishing, independently of this
+> change — the re-point neither causes nor worsens them. To make a rollback safe
+> on such a host, put an override in place **before** rolling back;
+> `docker-compose.override.yml` is untracked, so it survives the checkout:
+>
+> ```yaml
+> services:
+>   minio:
+>     image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+>   minio-init:
+>     image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727
+> ```
+>
+> **Check `COMPOSE_FILE` in your `.env` first — on an installer-provisioned
+> install this file is ignored unless you say so.** `scripts/install.sh` writes
+> `COMPOSE_FILE=docker-compose.yml:docker-compose.secrets.yml`, and setting
+> `COMPOSE_FILE` at all turns off compose's automatic discovery of
+> `docker-compose.override.yml` (see [§1](#1-before-you-upgrade)). Append it:
+>
+> ```bash
+> COMPOSE_FILE=docker-compose.yml:docker-compose.secrets.yml:docker-compose.override.yml
+> ```
+>
+> This matters most on exactly this path. `scripts/upgrade.sh` resolves its
+> compose file set once, before the rollback runs, so a rollback inherits
+> whatever `COMPOSE_FILE` says — an override it never loaded cannot save the
+> rebuild, and the failure lands *after* the database and evidence have been
+> restored.
+>
+> **Delete the override once you are back on a release that ships the quay
+> refs.** Left in place it is an untracked, permanent pin on the storage tier
+> that outlives this problem and will silently win against a future MinIO
+> security bump. `scripts/upgrade.sh` checks for a clean tree with
+> `--untracked-files=no`, so it will never warn you about it.
+>
+> A `--no-minio` install is unaffected: it has neither service.
+
 ---
 
 ## 5. Air-gapped / offline upgrades
@@ -605,9 +676,35 @@ The same script works offline; you supply the inputs out-of-band.
    ```
 
 3. **Pre-cache base images.** `docker compose up --build` re-resolves base
-   images (e.g. MinIO); make sure the exact tags in `docker-compose.yml` are
-   already present in the host's Docker cache, or the rebuild will fail with no
+   images (e.g. MinIO); make sure the exact refs in `docker-compose.yml` are
+   already present in the host's image store, or the rebuild will fail with no
    registry to pull from.
+
+   Pre-cache by the **full ref including the registry host**. A cache populated
+   before the move off Docker Hub holds the right *content* but not the right
+   *reference*, and compose resolves by reference:
+
+   ```bash
+   # On a connected host, then transfer:
+   docker pull quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+   docker pull quay.io/minio/mc@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727
+   ```
+
+   The compose refs carry a tag *and* a digest, but the digest-only pulls above
+   satisfy them: when a reference has a digest, the tag is not consulted —
+   `docker image inspect 'repo:any-tag@sha256:<the digest>'` resolves even if
+   that tag has never existed. The registry host is the part that must match.
+
+   > **`docker save` / `docker load` may not satisfy a digest-pinned ref.**
+   > Whether a loaded image satisfies a `repo:tag@sha256:…` reference depends on
+   > the host's image store. The containerd store preserves the manifest digest
+   > and its distribution-source annotations in the tarball, so it resolves. The
+   > classic graph driver's `manifest.json` records `RepoTags` only and **no
+   > digest**, so on a classic-store host a loaded image does *not* satisfy the
+   > pinned ref — and the rebuild fails even though the image is present.
+   > Confirm with `docker image inspect <repo>@sha256:…` on the air-gapped host
+   > before relying on it; if that errors, the host needs a registry it can
+   > reach (an internal mirror) rather than a tarball.
 
 Update discovery (the in-app badge) is outbound-only to GitHub and can be turned
 off entirely; on an air-gapped install it simply reports "disabled".

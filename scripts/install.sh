@@ -25,6 +25,11 @@ CHECKOUT_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 PORT=8765
 IMAGE="ghcr.io/markac007/scf-backend:${SCF_IMAGE_TAG:-latest}"
 SECRETS_DIR="${SCF_SECRETS_DIR:-$HOME/.scf/secrets}"
+# The gid this script grants on the host paths the containers must reach. 1001
+# is the gid the backend image's `apiuser` account runs as, and the value the
+# compose files default to; override only if that gid is already taken on the
+# host by something you do not want reading the secrets directory.
+APP_GID="${SCF_APP_GID:-1001}"
 MODE="serve"
 UNATTENDED_CONFIG=""
 START_STACK=0
@@ -60,6 +65,10 @@ Flags:
 
 Environment:
   SCF_SECRETS_DIR           default secrets directory
+  SCF_APP_GID               gid granted read on the secrets directory and
+                            write on webclient/public/data (default 1001, the
+                            gid the backend image's apiuser runs as). Recorded
+                            in .env; the compose files read it for group_add.
   SCF_IMAGE_TAG             tag for the default image
   SCF_INSTALLER_DEV_MOUNT   path to a backend/ directory to bind over /app,
                             so the installer can be tested from a worktree
@@ -84,6 +93,7 @@ done
 command -v docker >/dev/null 2>&1 || die "docker is required but was not found on PATH"
 case "${PORT}" in ''|*[!0-9]*) die "--port must be a number" ;; esac
 case "${SECRETS_DIR}" in /*) ;; *) die "--secrets-dir must be an absolute path" ;; esac
+case "${APP_GID}" in ''|*[!0-9]*) die "SCF_APP_GID must be a numeric gid" ;; esac
 # The same closed vocabulary the installer package validates against; an empty
 # value is "unset" and resolves to bundled_minio there.
 case "${STORAGE_TYPE}" in
@@ -128,10 +138,31 @@ run_headless() {
   docker run --rm -i "${COMMON_DOCKER_ARGS[@]}" "${IMAGE}" python -m installer "$@"
 }
 
-# --- Linux only: make the files readable by the service uid ------------------
-# The backend and celery containers run as uid 1001.  A 0600 file owned by the
-# operator is unreadable to them under a plain bind mount; Docker Desktop on
-# macOS remaps ownership, so this step is unnecessary there.
+# --- Linux only: make the host paths reachable by the service gid ------------
+# Two bind-mounted host paths have to match the identity the containers run as.
+# A 0600 file owned by the operator, or a 0755 directory owned by the cloning
+# user, is unreachable to them; Docker Desktop on macOS remaps ownership, so
+# this step is unnecessary there.
+#
+#   ${SECRETS_DIR}          0750 dir + 0640 files -- group READ
+#   webclient/public/data   0775 dir              -- group WRITE
+#
+# Who needs which, and why it is a group and not the uid:
+#   backend, celery-*       run AS uid/gid ${APP_GID}; they read the secrets
+#                           and WRITE the catalogue JSON
+#   minio, minio-init,      container root with `cap_drop: ALL`. Dropping the
+#   keycloak, idp-init,     capabilities takes CAP_DAC_OVERRIDE away from root,
+#   catalog-importer        so they are subject to the ordinary mode check and
+#                           get ${APP_GID} as a supplementary group instead
+#                           (`group_add` in the compose files) -- OSS #98, #99.
+#
+# The catalogue directory is the one the in-app import writes into. Without it
+# the import dies with `PermissionError: /app/data/json/...` and a fresh
+# install cannot get past first login (OSS #99). It is a chgrp, not a chown:
+# the operator stays the owner and can still edit the tree by hand.
+#
+# The chgrp runs inside a container because the operator is usually not a
+# member of gid ${APP_GID} and so cannot chgrp to it directly.
 apply_linux_group() {
   local kernel
   kernel="$(uname -s)"
@@ -143,11 +174,50 @@ apply_linux_group() {
     info "${kernel} detected: skipping the Linux group step."
     return 0
   fi
-  info "Linux detected: granting gid 1001 read access to ${SECRETS_DIR}"
-  log "${DIM}    docker run --rm -v \"${SECRETS_DIR}:/s\" alpine:3 sh -c 'chgrp -R 1001 /s && chmod 0750 /s && chmod 0640 /s/*'${OFF}"
+
+  info "Linux detected: granting gid ${APP_GID} read access to ${SECRETS_DIR}"
+  log "${DIM}    docker run --rm -v \"${SECRETS_DIR}:/s\" alpine:3 sh -c 'chgrp -R ${APP_GID} /s && chmod 0750 /s && chmod 0640 /s/*'${OFF}"
   docker run --rm -v "${SECRETS_DIR}:/s" alpine:3 \
-    sh -c 'chgrp -R 1001 /s && chmod 0750 /s && chmod 0640 /s/*'
-  log "    files stay owner-only-writable; group 1001 gained read."
+    sh -c "chgrp -R ${APP_GID} /s && chmod 0750 /s && chmod 0640 /s/*"
+  log "    files stay owner-only-writable; group ${APP_GID} gained read."
+
+  local data_dir="${CHECKOUT_DIR}/webclient/public/data"
+  if [ -d "${data_dir}" ]; then
+    info "granting gid ${APP_GID} write access to webclient/public/data (catalogue output)"
+    docker run --rm -v "${data_dir}:/d" alpine:3 \
+      sh -c "chgrp -R ${APP_GID} /d && chmod 2775 /d && find /d -type d -exec chmod 2775 {} + && find /d -type f -exec chmod 0664 {} +"
+    log "    setgid on the directory so imported JSON keeps group ${APP_GID}."
+  else
+    printf '%swarning:%s %s does not exist; the in-app catalogue import will fail until it does.\n' \
+      "${RED}" "${OFF}" "${data_dir}" >&2
+  fi
+
+  write_env_app_gid
+}
+
+# Record the gid the compose files must hand to `group_add`. Without this line
+# they fall back to their built-in default of 1001, which is wrong the moment
+# SCF_APP_GID was overridden above.
+write_env_app_gid() {
+  local env_file="${CHECKOUT_DIR}/.env"
+  [ -f "${env_file}" ] || return 0
+  local tmp
+  tmp="$(mktemp "${env_file}.XXXXXX")" || return 0
+  # Strip the marker comment as well as the value, so a re-run replaces the
+  # block instead of stacking another copy of the comment above it.
+  grep -v -e '^# scf-app-gid:' -e '^SCF_APP_GID=' -- "${env_file}" > "${tmp}" || true
+  {
+    printf '# scf-app-gid: set by scripts/install.sh. The gid granted read on the secrets\n'
+    printf '# scf-app-gid: directory and write on webclient/public/data; the compose files hand\n'
+    printf '# scf-app-gid: it to `group_add`. Re-run the installer after changing it, or the\n'
+    printf '# scf-app-gid: host files stay on the old gid and the containers lose access.\n'
+    printf 'SCF_APP_GID=%s\n' "${APP_GID}"
+  } >> "${tmp}"
+  # Write THROUGH the existing file so its mode and ownership survive.
+  if cat -- "${tmp}" > "${env_file}"; then
+    log "    recorded SCF_APP_GID=${APP_GID} in .env"
+  fi
+  rm -f -- "${tmp}"
 }
 
 # --- start the stack ---------------------------------------------------------
