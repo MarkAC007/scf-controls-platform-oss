@@ -1,13 +1,14 @@
-# v0.34.2
+# v0.34.3
 
-Three fixes.
+.
 
 ## Fixes and improvements
 
-- The override workaround was inert, and the pin's provenance was wrong
-- Give the hardened root services the gid they need on bind mounts
-- Pull the bundled MinIO images from quay.io, not Docker Hub
+- Document the MinIO EOL exposure and de-default the bundled store
+- Say plainly that no backup contains the SCF catalogue JSON
+- Set minimumReleaseAge on the MinIO digest rule
+- Stop :automergeDigest from merging MinIO pin bumps unreviewed
 
 ## Upgrading
 
-- Run `scripts/upgrade.sh v0.34.2` (read `UPGRADING.md` first).
+- Run `scripts/upgrade.sh v0.34.3` (read `UPGRADING.md` first).
