@@ -442,9 +442,32 @@ class TestLauncher:
 
     def test_the_linux_group_step_is_present_and_darwin_skips_it(self):
         script = self.script()
-        assert "chgrp -R 1001 /s" in script
+        assert "chgrp -R ${APP_GID} /s" in script
         assert "chmod 0640 /s/*" in script
         assert "Darwin" in script
+
+    def test_the_gid_is_a_variable_defaulting_to_1001(self):
+        """Hardcoding it in five compose services and one chgrp is how the gid
+        drifts out of agreement with itself (OSS #98)."""
+        script = self.script()
+        assert 'APP_GID="${SCF_APP_GID:-1001}"' in script
+        assert "chgrp -R 1001" not in script
+
+    def test_it_prepares_the_catalogue_data_directory(self):
+        """Without group WRITE on webclient/public/data the in-app catalogue
+        import dies with PermissionError and the install cannot reach first
+        login (OSS #99). setgid so imported JSON keeps the group."""
+        script = self.script()
+        assert "webclient/public/data" in script
+        assert "chgrp -R ${APP_GID} /d" in script
+        assert "chmod 2775 /d" in script
+
+    def test_it_records_the_gid_in_env_for_compose_to_read(self):
+        """compose falls back to 1001 when the line is absent, which is wrong
+        the moment SCF_APP_GID was overridden."""
+        script = self.script()
+        assert "write_env_app_gid" in script
+        assert "SCF_APP_GID=%s" in script
 
     def test_it_offers_the_documented_flags(self):
         script = self.script()
@@ -616,3 +639,74 @@ def test_the_shipped_install_example_json_still_provisions(tmp_path):
         ["unattended", "--config", str(config), "--secrets-dir", str(secrets_dir), "--out-dir", str(out_dir)]
     ) == EXIT_OK
     assert (secrets_dir / "SCF_SECRET_KEY").read_text().strip()
+
+
+# ------------------------------------------- service gid on bind mounts (OSS #98, #99)
+# `cap_drop: ALL` takes CAP_DAC_OVERRIDE away from container root, so a root
+# service is subject to the ordinary mode check on every host file it touches.
+# Measured, same file and uid, differing only in capabilities:
+#
+#   root + default caps : reads a 0640 file it neither owns nor shares a group with
+#   root + cap_drop ALL : Permission denied
+#
+# Five services are in that position. Each one reads the 0640 secret files, or
+# writes the catalogue directory, or both, and each one therefore needs the
+# owning gid as a supplementary group. Miss one and the failure is remote from
+# the cause: minio reports "Unable to validate credentials inherited from the
+# secret file(s)", which reads as a bad password rather than an unreadable file.
+ROOT_CAP_DROP_SERVICES = {
+    "minio": SECRETS_OVERLAY,
+    "minio-init": SECRETS_OVERLAY,
+    "keycloak": SECRETS_OVERLAY,
+    "idp-init": SECRETS_OVERLAY,
+    "catalog-importer": BASE_COMPOSE,
+}
+GROUP_ADD = ["${SCF_APP_GID:-1001}"]
+
+
+@pytest.mark.skipif(
+    not (BASE_COMPOSE.exists() and SECRETS_OVERLAY.exists()),
+    reason="repo root not available",
+)
+class TestServiceGidOnBindMounts:
+    def _load(self, path: Path) -> dict:
+        import yaml
+
+        return yaml.safe_load(path.read_text())
+
+    @pytest.mark.parametrize("service", sorted(ROOT_CAP_DROP_SERVICES))
+    def test_each_root_cap_drop_service_carries_group_add(self, service):
+        compose = self._load(ROOT_CAP_DROP_SERVICES[service])
+        assert compose["services"][service].get("group_add") == GROUP_ADD
+
+    def test_the_services_really_are_root_with_no_dac_override(self):
+        """The premise of the test above. If one of these ever gains a `user:`
+        or CAP_DAC_OVERRIDE, group_add stops being what makes it work and this
+        pairing should be revisited rather than silently kept."""
+        base = self._load(BASE_COMPOSE)
+        for service in ROOT_CAP_DROP_SERVICES:
+            spec = base["services"][service]
+            assert "user" not in spec, service
+            assert "ALL" in spec.get("cap_drop", []), service
+            assert "DAC_OVERRIDE" not in spec.get("cap_add", []), service
+
+    def test_no_gid_is_hardcoded_in_either_compose_file(self):
+        for path in (BASE_COMPOSE, SECRETS_OVERLAY):
+            assert 'group_add: ["1001"]' not in path.read_text(), path.name
+
+    def test_the_default_preserves_the_shipped_gid(self):
+        """1001 is `useradd -m -u 1001 apiuser` in Dockerfile.backend. An
+        install that never sets SCF_APP_GID must behave exactly as before."""
+        assert "useradd -m -u 1001 apiuser" in (REPO_ROOT / "Dockerfile.backend").read_text()
+
+    def test_env_example_documents_the_variable(self):
+        text = (REPO_ROOT / ".env.example").read_text()
+        assert "SCF_APP_GID" in text
+
+    def test_minio_init_has_headroom_over_the_measured_mc_peak(self):
+        """`mc admin policy attach` peaks at ~142-152 MiB measured, and the Go
+        runtime sizes its heap against the cgroup limit. At 128m it is
+        SIGKILLed AFTER the attach succeeds, so the container reports a MinIO
+        authorization failure that never happened (OSS #98)."""
+        spec = self._load(BASE_COMPOSE)["services"]["minio-init"]
+        assert spec["mem_limit"] == "256m"

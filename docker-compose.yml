@@ -85,11 +85,23 @@ services:
   # default so the platform needs no AWS/Azure account. API on :9000, web
   # console on :9001 (login with MINIO_ROOT_USER / MINIO_ROOT_PASSWORD).
   minio:
-    # Digest-pinned to a named RELEASE tag (#947). Resolved 2026-09-10 with
-    #   docker buildx imagetools inspect minio/minio:RELEASE.2025-09-07T16-13-09Z
-    # `:latest` on an object store that holds every evidence file is a silent
-    # auto-upgrade of the storage tier on every `docker compose pull`.
-    image: minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+    # Digest-pinned to a named RELEASE tag (#947). `:latest` on an object store
+    # that holds every evidence file is a silent auto-upgrade of the storage
+    # tier on every `docker compose pull`.
+    #
+    # PROVENANCE — read the order, it is the whole argument:
+    #   2026-09-10  digest resolved from DOCKER HUB, with
+    #               docker buildx imagetools inspect minio/minio:RELEASE.2025-09-07T16-13-09Z
+    #   2026-09-15  MinIO unpublished `minio/minio` from Hub (OSS #97), which
+    #               Hub reports as a misleading 401 "may require `docker
+    #               login`". The SAME digest was confirmed served by
+    #               quay.io/minio/minio and only the registry host changed.
+    #
+    # So the pin predates the registry move and was minted against the original
+    # registry. That is what separates a re-point from a substitution: a pin
+    # minted against the new registry would look identical here but would prove
+    # nothing. Do not collapse these two dates into one.
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
     container_name: cg-scf-minio
     # Behind the `storage` profile (#956). The installer writes
     # COMPOSE_PROFILES=storage into .env on the bundled path, so this starts
@@ -161,9 +173,13 @@ services:
   # One-shot: wait for MinIO, then create the evidence bucket if absent.
   # Exits 0 once done; `docker compose up` runs it automatically.
   minio-init:
-    # Digest-pinned to a named RELEASE tag (#947). Resolved 2026-09-10 with
-    #   docker buildx imagetools inspect minio/mc:RELEASE.2025-08-13T08-35-41Z
-    image: minio/mc:RELEASE.2025-08-13T08-35-41Z@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727
+    # Digest-pinned to a named RELEASE tag (#947). Same provenance shape as the
+    # `minio` service above, and the same reason for the registry (OSS #97):
+    #   2026-09-10  digest resolved from DOCKER HUB, with
+    #               docker buildx imagetools inspect minio/mc:RELEASE.2025-08-13T08-35-41Z
+    #   2026-09-15  same digest confirmed served by quay.io/minio/mc; registry
+    #               host changed, digest UNCHANGED.
+    image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727
     container_name: cg-scf-minio-init
     # Same `storage` profile as minio: the pair start together or not at all.
     profiles:
@@ -198,7 +214,15 @@ services:
     read_only: true
     tmpfs:
       - /tmp
-    mem_limit: 128m
+    # 256m, not 128m (OSS #98). `mc` is a Go binary whose runtime sizes its
+    # heap against the cgroup limit, and this workload peaks at ~142-152 MiB
+    # measured, so 128m SIGKILLs `mc admin policy attach`. The kill lands
+    # AFTER the attach has already succeeded, so the FATAL quotes mc's own
+    # success output and reads as a MinIO authorization failure that never
+    # happened; `OOMKilled=true` in `docker inspect` is the only honest
+    # signal. 160m was the lowest limit tested that survives; 256m leaves
+    # ~1.7x headroom over the observed peak.
+    mem_limit: 256m
     pids_limit: 64
     volumes:
       - ./scripts/docker/minio-init.sh:/scf/minio-init.sh:ro
@@ -667,6 +691,15 @@ services:
       - /tmp
     mem_limit: 2g
     pids_limit: 256
+    # This one-shot runs as container root, but `cap_drop: ALL` removes
+    # CAP_DAC_OVERRIDE, so it is subject to ordinary DAC checks and matches
+    # neither the owner nor the group of a freshly cloned
+    # webclient/public/data. Without this it lands in "other" and cannot
+    # write its output (OSS #99) -- the same shape as OSS #98. scripts/
+    # install.sh gives that directory this gid; 1001 is the gid the backend
+    # image's `apiuser` runs as. Ignored on Docker Desktop, which remaps
+    # bind-mount ownership.
+    group_add: ["${SCF_APP_GID:-1001}"]
     profiles:
       - init
     volumes:
