@@ -71,6 +71,14 @@
       "matchDepTypes": ["dependencies", "default"],
       "automerge": false,
       "labels": ["dependencies", "production"]
+    },
+    {
+      "description": "Bundled MinIO images are digest-pinned deliberately (#947, #990). A digest bump is a storage-tier upgrade on the store holding every evidence file, so it gets a human. Keep this LAST: later packageRules win. matchUpdateTypes is required, not decorative -- it forces this rule to be evaluated after the :automergeDigest object merge (flattenUpdates in lib/workers/repository/updates/flatten.ts merges config[updateType] BETWEEN the two applyPackageRules passes), instead of relying on undocumented rule ordering. See #992.",
+      "matchPackageNames": ["quay.io/minio/minio", "quay.io/minio/mc"],
+      "matchUpdateTypes": ["digest"],
+      "automerge": false,
+      "minimumReleaseAge": "7 days",
+      "addLabels": ["needs-review", "pinned-digest"]
     }
   ],
   "python": {
