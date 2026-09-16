@@ -267,6 +267,17 @@ def _unique_result_for(row):
 
 @pytest.mark.asyncio
 class TestPerFileGates:
+    # The per-file document review gates only run on the pre-cutover path.
+    # With ``ENABLE_PER_WINDOW_REVIEW`` on (the default since window parity)
+    # the endpoint first looks for a window assessment and answers 410 when
+    # one exists — and ``mock_db.execute`` here returns the file row for every
+    # query, which that lookup reads as "a window exists". Pin the flag off so
+    # these tests keep exercising the gates; the 410 path is covered by
+    # ``TestReviewEvidenceFile410Gating`` in ``test_evidence_files_api.py``.
+    @pytest.fixture(autouse=True)
+    def _per_window_review_off(self, monkeypatch):
+        monkeypatch.setenv("ENABLE_PER_WINDOW_REVIEW", "false")
+
     @patch("api.evidence_files.get_assurance_policy", new_callable=AsyncMock)
     async def test_rejected_to_approved_is_409(
         self, policy, membership, mock_db, org_id, user_id

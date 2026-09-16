@@ -7,7 +7,6 @@ posture scoring per theme for an organization's scoped controls.
 Part of Epic #317: KSI-Aligned Platform Evolution
 Issue #303: Capability Themes API endpoints with posture scoring
 """
-import os
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,6 +30,7 @@ from schemas import (
     CapabilityThemeScorecardItem,
     CapabilityThemeScorecardResponse,
 )
+from api.features import flag_enabled
 from api.ksi_scoring import (
     apply_confirmation_weight,
     band_for_axis,
@@ -128,6 +128,37 @@ _FILE_SCORE_ATTESTED = (
 #: control. The two mechanisms compose in sequence: the gate decides whether a
 #: verdict counts at all, then confirmation decides how much it is worth.
 _FILE_CONFIRMED = "(ea.review_decision IS NOT NULL) AS assessment_confirmed"
+
+#: Window tier: has a human confirmed or overridden the window's AI verdict?
+#: Read off the denormalized column on `evidence_window_assessments`. This is
+#: the verdict-confirmation block, not `review_status` (the acceptance verb
+#: the attestation gate reads): the gate decides whether a verdict counts at
+#: all, then confirmation decides how much it is worth. Both tiers use the
+#: same weight, so "reviewed" means one thing across the whole EQ axis.
+_WINDOW_CONFIRMED = "(ewa.review_decision IS NOT NULL) AS window_confirmed"
+
+#: The mixed tier carries whichever confirmation applies to the row that
+#: supplied the status: the window's where a window exists, the file's
+#: underneath it where one does not.
+_MIXED_CONFIRMED = (
+    "COALESCE(ws.window_confirmed, ea.review_decision IS NOT NULL) AS assessment_confirmed"
+)
+
+#: Composite tier: a composite is a projection of windows, so it is confirmed
+#: only when every window it folded in carries a decision. The
+#: `jsonb_array_length(...) > 0` guard keeps a composite with no provenance
+#: from reading as fully confirmed (NOT EXISTS over an empty set is true).
+_COMPOSITE_CONFIRMED = """(
+                  jsonb_array_length(cac.included_window_ids) > 0
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM jsonb_array_elements_text(cac.included_window_ids) AS w(id)
+                      LEFT JOIN evidence_window_assessments ewa3
+                             ON ewa3.id = w.id::uuid
+                      WHERE ewa3.id IS NULL
+                         OR ewa3.review_decision IS NULL
+                  )
+              ) AS assessment_confirmed"""
 
 #: Window tier: the disposition lives on `evidence_window_assessments`.
 #: Note this yields 'unassessed' rather than NULL, so `has_window` stays true
@@ -271,6 +302,8 @@ def _build_window_aware_sql(attested_only: bool = False) -> "text":
     wscore = _WINDOW_SCORE_ATTESTED if attested_only else _WINDOW_SCORE_OPEN
     status = _MIXED_STATUS_ATTESTED if attested_only else _MIXED_STATUS_OPEN
     score = _MIXED_SCORE_ATTESTED if attested_only else _MIXED_SCORE_OPEN
+    wconfirmed = _WINDOW_CONFIRMED
+    confirmed = _MIXED_CONFIRMED
     # Verified false positive. The template is a module-level literal and every
     # interpolated fragment is one of the module-private constants above,
     # selected by a boolean. No string crosses this function's boundary --
@@ -303,7 +336,8 @@ def _build_window_aware_sql(attested_only: bool = False) -> "text":
         SELECT DISTINCT ON (ewa.evidence_id)
             ewa.evidence_id,
             {wstatus},
-            {wscore}
+            {wscore},
+            {wconfirmed}
         FROM evidence_window_assessments ewa
         WHERE ewa.organization_id = :org_id
           AND ewa.status NOT IN ('pending', 'processing', 'error')
@@ -316,6 +350,7 @@ def _build_window_aware_sql(attested_only: bool = False) -> "text":
             -- Prefer window_status; fall back to per-file assessment
             {status},
             {score},
+            {confirmed},
             ws.window_status IS NOT NULL AS has_window
         FROM evidence_files ef
         LEFT JOIN evidence_assessments ea ON ea.evidence_file_id = ef.id
@@ -330,7 +365,8 @@ def _build_window_aware_sql(attested_only: bool = False) -> "text":
             oe.evidence_id,
             NULL::uuid AS file_id,
             oe.assessment_status,
-            oe.relevance_score
+            oe.relevance_score,
+            oe.assessment_confirmed
         FROM org_evidence oe
         WHERE oe.has_window = true
     ),
@@ -339,14 +375,15 @@ def _build_window_aware_sql(attested_only: bool = False) -> "text":
             oe.evidence_id,
             oe.file_id,
             oe.assessment_status,
-            oe.relevance_score
+            oe.relevance_score,
+            oe.assessment_confirmed
         FROM org_evidence oe
         WHERE oe.has_window = false
     ),
     unified AS (
-        SELECT evidence_id, file_id, assessment_status, relevance_score FROM evidence_level
+        SELECT evidence_id, file_id, assessment_status, relevance_score, assessment_confirmed FROM evidence_level
         UNION ALL
-        SELECT evidence_id, file_id, assessment_status, relevance_score FROM file_level
+        SELECT evidence_id, file_id, assessment_status, relevance_score, assessment_confirmed FROM file_level
     )
     SELECT
         etm.theme_code,
@@ -356,6 +393,9 @@ def _build_window_aware_sql(attested_only: bool = False) -> "text":
         COUNT(*) FILTER (WHERE u.assessment_status = 'partial') AS partial_count,
         COUNT(*) FILTER (WHERE u.assessment_status = 'insufficient') AS insufficient_count,
         COUNT(*) FILTER (WHERE u.assessment_status = 'insufficient_sample') AS insufficient_sample_count,
+        COUNT(*) FILTER (WHERE u.assessment_status = 'sufficient' AND u.assessment_confirmed) AS sufficient_confirmed_count,
+        COUNT(*) FILTER (WHERE u.assessment_status = 'partial' AND u.assessment_confirmed) AS partial_confirmed_count,
+        COUNT(*) FILTER (WHERE u.assessment_status = 'insufficient' AND u.assessment_confirmed) AS insufficient_confirmed_count,
         COUNT(*) FILTER (WHERE u.assessment_status = 'unassessable') AS unassessable_count,
         COUNT(*) FILTER (WHERE u.assessment_status IN ('pending', 'processing')) AS pending_count,
         COUNT(*) FILTER (WHERE u.assessment_status = 'unassessed') AS unassessed_count,
@@ -432,6 +472,10 @@ def _build_composite_aware_sql(
     file_status = _FILE_STATUS_ATTESTED if attested_only else _FILE_STATUS_OPEN
     file_score = _FILE_SCORE_ATTESTED if attested_only else _FILE_SCORE_OPEN
     composite_gate = _COMPOSITE_ATTESTED_PREDICATE if attested_only else ""
+    composite_confirmed = _COMPOSITE_CONFIRMED
+    wconfirmed = _WINDOW_CONFIRMED
+    mixed_confirmed = _MIXED_CONFIRMED
+    file_confirmed = _FILE_CONFIRMED
 
     if window_enabled:
         fallback_cte = f"""
@@ -439,7 +483,8 @@ def _build_composite_aware_sql(
             SELECT DISTINCT ON (ewa.evidence_id)
                 ewa.evidence_id,
                 {wstatus},
-                {wscore}
+                {wscore},
+                {wconfirmed}
             FROM evidence_window_assessments ewa
             WHERE ewa.organization_id = :org_id
               AND ewa.status NOT IN ('pending', 'processing', 'error')
@@ -451,6 +496,7 @@ def _build_composite_aware_sql(
                 ef.id AS file_id,
                 {mixed_status},
                 {mixed_score},
+                {mixed_confirmed},
                 ws.window_status IS NOT NULL AS has_window
             FROM evidence_files ef
             LEFT JOIN evidence_assessments ea ON ea.evidence_file_id = ef.id
@@ -463,7 +509,8 @@ def _build_composite_aware_sql(
                 oe.evidence_id,
                 NULL::uuid AS file_id,
                 oe.assessment_status,
-                oe.relevance_score
+                oe.relevance_score,
+                oe.assessment_confirmed
             FROM org_evidence oe
             WHERE oe.has_window = true
         ),
@@ -472,14 +519,15 @@ def _build_composite_aware_sql(
                 oe.evidence_id,
                 oe.file_id,
                 oe.assessment_status,
-                oe.relevance_score
+                oe.relevance_score,
+                oe.assessment_confirmed
             FROM org_evidence oe
             WHERE oe.has_window = false
         ),
         fallback_unified AS (
-            SELECT evidence_id, file_id, assessment_status, relevance_score FROM evidence_level
+            SELECT evidence_id, file_id, assessment_status, relevance_score, assessment_confirmed FROM evidence_level
             UNION ALL
-            SELECT evidence_id, file_id, assessment_status, relevance_score FROM file_level
+            SELECT evidence_id, file_id, assessment_status, relevance_score, assessment_confirmed FROM file_level
         )
         """
     else:
@@ -489,14 +537,15 @@ def _build_composite_aware_sql(
                 ef.evidence_id,
                 ef.id AS file_id,
                 {file_status},
-                {file_score}
+                {file_score},
+                {file_confirmed}
             FROM evidence_files ef
             LEFT JOIN evidence_assessments ea ON ea.evidence_file_id = ef.id
             WHERE ef.organization_id = :org_id
               AND ef.is_deleted = false
         ),
         fallback_unified AS (
-            SELECT evidence_id, file_id, assessment_status, relevance_score
+            SELECT evidence_id, file_id, assessment_status, relevance_score, assessment_confirmed
             FROM org_evidence
         )
         """
@@ -525,7 +574,8 @@ def _build_composite_aware_sql(
             SELECT
                 cac.scf_id,
                 cac.composite_status AS assessment_status,
-                cac.composite_score AS relevance_score
+                cac.composite_score AS relevance_score,
+                {composite_confirmed}
             FROM control_assessment_composites cac
             WHERE cac.organization_id = :org_id
               AND cac.composite_status IN (
@@ -539,7 +589,8 @@ def _build_composite_aware_sql(
                 ct.theme_code,
                 cs.scf_id,
                 cs.assessment_status,
-                cs.relevance_score
+                cs.relevance_score,
+                cs.assessment_confirmed
             FROM composite_status cs
             JOIN scf_catalog_controls c ON c.scf_id = cs.scf_id AND c.status = 'active'
             JOIN capability_theme_mappings ctm ON ctm.scf_id = cs.scf_id
@@ -556,7 +607,8 @@ def _build_composite_aware_sql(
                 etm.evidence_id,
                 fu.file_id,
                 fu.assessment_status,
-                fu.relevance_score
+                fu.relevance_score,
+                fu.assessment_confirmed
             FROM evidence_theme_map etm
             LEFT JOIN fallback_unified fu ON etm.evidence_id = fu.evidence_id
             WHERE NOT EXISTS (
@@ -576,6 +628,9 @@ def _build_composite_aware_sql(
             COUNT(*) FILTER (WHERE assessment_status = 'partial') AS partial_count,
             COUNT(*) FILTER (WHERE assessment_status = 'insufficient') AS insufficient_count,
             COUNT(*) FILTER (WHERE assessment_status = 'insufficient_sample') AS insufficient_sample_count,
+            COUNT(*) FILTER (WHERE assessment_status = 'sufficient' AND assessment_confirmed) AS sufficient_confirmed_count,
+            COUNT(*) FILTER (WHERE assessment_status = 'partial' AND assessment_confirmed) AS partial_confirmed_count,
+            COUNT(*) FILTER (WHERE assessment_status = 'insufficient' AND assessment_confirmed) AS insufficient_confirmed_count,
             COUNT(*) FILTER (WHERE assessment_status = 'unassessable') AS unassessable_count,
             COUNT(*) FILTER (WHERE assessment_status IN ('pending', 'processing')) AS pending_count,
             COUNT(*) FILTER (WHERE assessment_status = 'unassessed') AS unassessed_count,
@@ -586,6 +641,7 @@ def _build_composite_aware_sql(
                 scf_id,
                 assessment_status,
                 relevance_score,
+                assessment_confirmed,
                 true AS has_signal
             FROM composite_theme
             UNION ALL
@@ -594,6 +650,7 @@ def _build_composite_aware_sql(
                 scf_id,
                 assessment_status,
                 relevance_score,
+                assessment_confirmed,
                 (evidence_id IS NOT NULL) AS has_signal
             FROM fallback_theme
         ) merged
@@ -613,7 +670,7 @@ _EVIDENCE_METRICS_COMPOSITE_AWARE_WINDOW_SQL_ATTESTED = _build_composite_aware_s
 
 def _window_ksi_enabled() -> bool:
     """Feature flag: prefer windowed assessment in KSI SQL when true."""
-    return os.getenv("ENABLE_WINDOW_ASSESSMENT_KSI", "false").lower() == "true"
+    return flag_enabled("ENABLE_WINDOW_ASSESSMENT_KSI")
 
 
 def _composite_ksi_enabled() -> bool:
@@ -623,7 +680,7 @@ def _composite_ksi_enabled() -> bool:
     when on; window/per-file is the fallback chain. Default ``false`` so
     merging M3 PR 3 produces no user-visible change. See M3 spec ISC-18..19.
     """
-    return os.getenv("ENABLE_COMPOSITE_KSI", "false").lower() == "true"
+    return flag_enabled("ENABLE_COMPOSITE_KSI")
 
 
 def _select_evidence_metrics_sql(

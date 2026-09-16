@@ -4,6 +4,7 @@ import {
   type AssessmentReviewQueueItem,
 } from '../../data/apiClient'
 import { useIsOrgEditor } from '../../hooks/useHasOrgRole'
+import { PER_WINDOW_REVIEW_ENABLED } from '../../data/featureFlags'
 import { verdictPresentation } from './assessmentVerdict'
 
 /**
@@ -23,22 +24,41 @@ import { verdictPresentation } from './assessmentVerdict'
  *
  * Viewer sees the list. Only an editor sees the prompt to act on it, matching
  * what the backend will actually accept.
+ *
+ * Which layer it lists follows the per-window review flag (window parity):
+ * with the flag on, the window layer is the primary assessment surface and
+ * the queue lists window verdicts; off, it lists per-file verdicts as it
+ * always has. The per-file assessor stays available either way — it is the
+ * diagnostic layer, and its own review lives in the file preview modal.
  */
 
 interface AssessmentReviewQueueCardProps {
   orgId: string
-  /** Open an evidence item (and, where the caller supports it, a file). */
-  onOpenEvidence?: (evidenceId: string, fileId: string) => void
+  /**
+   * Open an evidence item (and, where the caller supports it, a file).
+   * ``fileId`` is null for a window entry: the whole period is the subject.
+   */
+  onOpenEvidence?: (evidenceId: string, fileId: string | null) => void
   /** Bumped by the parent to force a refetch after something changes. */
   refreshTrigger?: number
+  /** Overrides the flag-derived default; mainly for tests. */
+  tier?: 'file' | 'window'
 }
 
 const PAGE_SIZE = 10
+
+function windowLabel(item: AssessmentReviewQueueItem): string {
+  const start = item.window_start ? new Date(item.window_start).toLocaleDateString() : '?'
+  const end = item.window_end ? new Date(item.window_end).toLocaleDateString() : '?'
+  const files = item.file_count ?? 0
+  return `${start} → ${end} · ${files} file${files === 1 ? '' : 's'}`
+}
 
 export function AssessmentReviewQueueCard({
   orgId,
   onOpenEvidence,
   refreshTrigger = 0,
+  tier = PER_WINDOW_REVIEW_ENABLED ? 'window' : 'file',
 }: AssessmentReviewQueueCardProps) {
   const canReview = useIsOrgEditor(orgId)
   const [items, setItems] = useState<AssessmentReviewQueueItem[]>([])
@@ -52,6 +72,7 @@ export function AssessmentReviewQueueCard({
     try {
       const result = await getAssessmentReviewQueue(orgId, {
         status: 'awaiting',
+        tier,
         limit: PAGE_SIZE,
       })
       setItems(result.items)
@@ -63,7 +84,7 @@ export function AssessmentReviewQueueCard({
     } finally {
       setLoading(false)
     }
-  }, [orgId])
+  }, [orgId, tier])
 
   useEffect(() => {
     void load()
@@ -100,10 +121,21 @@ export function AssessmentReviewQueueCard({
           <ul className="assessment-queue-list">
             {items.map((item) => {
               const verdict = verdictPresentation(item.status, item.review_decision)
+              const isWindow = item.kind === 'window' || (!item.file_id && Boolean(item.window_assessment_id))
               const row = (
                 <>
                   <span className="assessment-queue-filename">
-                    {item.filename || item.evidence_id}
+                    {isWindow ? (
+                      <>
+                        {item.evidence_id}
+                        <span className="assessment-queue-window" data-testid="assessment-queue-window">
+                          {' '}
+                          {windowLabel(item)}
+                        </span>
+                      </>
+                    ) : (
+                      item.filename || item.evidence_id
+                    )}
                   </span>
                   <span className={verdict.className}>{verdict.text}</span>
                   <span className="assessment-queue-counts">
@@ -121,12 +153,12 @@ export function AssessmentReviewQueueCard({
                 </>
               )
               return (
-                <li key={item.file_id} className="assessment-queue-item">
+                <li key={item.window_assessment_id ?? item.file_id ?? item.evidence_id} className="assessment-queue-item">
                   {onOpenEvidence ? (
                     <button
                       type="button"
                       className="assessment-queue-link"
-                      onClick={() => onOpenEvidence(item.evidence_id, item.file_id)}
+                      onClick={() => onOpenEvidence(item.evidence_id, isWindow ? null : item.file_id)}
                     >
                       {row}
                     </button>

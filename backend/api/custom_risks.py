@@ -4,7 +4,7 @@ Handles CRUD operations for organisation-defined custom risks.
 """
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, func
+from sqlalchemy import select, and_
 from typing import List
 from uuid import UUID
 
@@ -28,18 +28,28 @@ router = APIRouter(tags=["custom-risks"])
 
 
 async def _next_risk_code(org_id: UUID, db: AsyncSession) -> str:
-    """Generate the next R-ORG-N risk code for an organisation."""
+    """Generate the next R-ORG-N risk code for an organisation.
+
+    The maximum is taken over the numeric suffix, never over the code string:
+    with R-ORG-1..R-ORG-10 present, max(risk_code) is the string "R-ORG-9",
+    which made every eleventh create collide with R-ORG-10 (#1036).
+    """
     result = await db.execute(
-        select(func.max(CustomRiskDefinition.risk_code)).where(
+        select(CustomRiskDefinition.risk_code).where(
             CustomRiskDefinition.organization_id == org_id
         )
     )
-    max_code = result.scalar()
-    if max_code:
-        next_num = int(max_code.split('-')[-1]) + 1
-    else:
-        next_num = 1
-    return f"R-ORG-{next_num}"
+    return f"R-ORG-{_next_risk_number(result.scalars().all())}"
+
+
+def _next_risk_number(codes) -> int:
+    """Return max numeric suffix of the R-ORG-N codes plus one (1 when empty)."""
+    highest = 0
+    for code in codes:
+        suffix = str(code).rsplit('-', 1)[-1]
+        if suffix.isdigit():
+            highest = max(highest, int(suffix))
+    return highest + 1
 
 
 @router.get(

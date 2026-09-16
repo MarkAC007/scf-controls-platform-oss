@@ -3,6 +3,7 @@ import {
   reviewAssessment,
   listAssessmentVersions,
   type AOFinding,
+  type AOOverride,
   type AOOverrideRequestItem,
   type AssessmentVersion,
   type EvidenceAssessmentResponse,
@@ -279,17 +280,44 @@ export function AssessmentReviewPanel({
 }
 
 // ---------------------------------------------------------------------------
+// Shared with WindowVerdictReviewPanel: the same objective row and the same
+// history list, so the two layers read identically to a reviewer.
 
-function AOFindingRow({
+/**
+ * What the history list needs from a version, whichever layer it came from.
+ * A structural subset of both ``AssessmentVersion`` and
+ * ``WindowAssessmentVersion``.
+ */
+export interface VerdictHistoryEntry {
+  id: string
+  version_number: number
+  schema_version: number
+  status: string
+  model_id: string | null
+  prompt_version: string | null
+  assessed_at: string | null
+  review_decision: string | null
+  review_reason: string | null
+  ao_overrides: AOOverride[] | null
+}
+
+export function AOFindingRow({
   finding,
   editable,
   selected,
   onSelect,
+  fileLabel,
 }: {
   finding: AOFinding
   editable: boolean
   selected?: string
   onSelect: (designation: string) => void
+  /**
+   * Window assessments: how to name a file the AI attributed this answer to.
+   * When absent, attribution is not drawn (a per-file assessment has exactly
+   * one file, so there is nothing to attribute).
+   */
+  fileLabel?: (fileId: string) => string
 }) {
   // What the reviewer has picked in this session takes precedence, but the AI's
   // answer is still shown struck through beside it: a correction that hid what
@@ -327,6 +355,13 @@ function AOFindingRow({
       {finding.override_note && (
         <p className="ao-finding-override-note">Reviewer note: {finding.override_note}</p>
       )}
+      {fileLabel && (
+        <p className="ao-finding-attribution" data-testid={`ao-finding-attribution-${finding.ao_id}`}>
+          {finding.evidence_file_ids && finding.evidence_file_ids.length > 0
+            ? `Based on: ${finding.evidence_file_ids.map(fileLabel).join(', ')}`
+            : 'Not attributed to a specific file.'}
+        </p>
+      )}
 
       {editable && (
         <div className="ao-finding-picker" role="group" aria-label={`Designation for ${finding.ao_id}`}>
@@ -350,11 +385,11 @@ function AOFindingRow({
   )
 }
 
-function AssessmentHistory({
+export function AssessmentHistory({
   versions,
   error,
 }: {
-  versions: AssessmentVersion[] | null
+  versions: VerdictHistoryEntry[] | null
   error: string | null
 }) {
   if (error) {

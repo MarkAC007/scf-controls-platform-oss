@@ -4,6 +4,9 @@
  *
  * `VITE_ENABLE_PER_WINDOW_REVIEW` is compiled into the bundle; the backend
  * reads `ENABLE_PER_WINDOW_REVIEW` from its environment at request time.
+ * Both default ON (window-assessment parity): only the literal string
+ * `'false'` turns the compiled flag off, so a build that never mentions the
+ * variable agrees with a backend that never mentions it.
  * Two switches for one behaviour, set in two different places, is a
  * divergence waiting to happen — and the dangerous direction is silent:
  * a bundle built without the flag keeps showing per-file Approve buttons
@@ -19,7 +22,7 @@
  */
 
 export const PER_WINDOW_REVIEW_ENABLED =
-  import.meta.env.VITE_ENABLE_PER_WINDOW_REVIEW === 'true'
+  import.meta.env.VITE_ENABLE_PER_WINDOW_REVIEW !== 'false'
 
 export interface ServerFeatureFlags {
   per_window_review: boolean
@@ -41,7 +44,7 @@ export function featureFlagMismatch(
   if (server.per_window_review) {
     return (
       'Feature flag mismatch: the backend has ENABLE_PER_WINDOW_REVIEW=true ' +
-      'but this build was made without VITE_ENABLE_PER_WINDOW_REVIEW=true. ' +
+      'but this build was made with VITE_ENABLE_PER_WINDOW_REVIEW=false. ' +
       'Per-file review requests will be refused with 410 Gone and the ' +
       'per-window review panel is not in this bundle, so evidence cannot be ' +
       'reviewed. Rebuild the webclient with the flag set, or turn the ' +
@@ -49,11 +52,11 @@ export function featureFlagMismatch(
     )
   }
   return (
-    'Feature flag mismatch: this build has VITE_ENABLE_PER_WINDOW_REVIEW=true ' +
-    'but the backend has ENABLE_PER_WINDOW_REVIEW off. The per-window review ' +
+    'Feature flag mismatch: this build has VITE_ENABLE_PER_WINDOW_REVIEW on ' +
+    'but the backend has ENABLE_PER_WINDOW_REVIEW=false. The per-window review ' +
     'panel is showing while the backend still expects per-file review. Set ' +
     'ENABLE_PER_WINDOW_REVIEW=true on the backend and celery-worker, or ' +
-    'rebuild the webclient without the flag.'
+    'rebuild the webclient with VITE_ENABLE_PER_WINDOW_REVIEW=false.'
   )
 }
 

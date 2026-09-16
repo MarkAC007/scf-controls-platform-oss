@@ -49,11 +49,19 @@ from services.assurance_policy import (  # noqa: E402
 # but the strings did, and a pin that were quietly loosened to accommodate that
 # would stop being a pin. Anything that changes these hashes again should be a
 # decision somebody wrote down here, not a diff that slid past.
+#
+# Re-pinned again by window-assessment parity (PR2, 2026-09-16). The window,
+# composite and composite-window variants gained the same three
+# `*_confirmed_count` columns the per-file pair already had, so confirmation
+# weighting applies to every tier. The new columns are additive SELECT
+# expressions (a `window_confirmed` / `assessment_confirmed` flag carried
+# through the CTEs); FROM/WHERE and the coverage columns are unchanged. The
+# per-file hash did not move.
 SHIPPED_HASHES = {
     "per_file": "af1ce345428aea2d4edaa3b2db1da708751eca772cede7db5ab4189ab76f5e43",
-    "window": "70dab84ffc8b3d5febd5d786b8ef91fef303cb5b5bfeb65053886954504bc71b",
-    "composite": "489182bbf5015e59871ed3c8af3734d618e860166ed49db9a0b14bdcc8de6c6e",
-    "composite_window": "21cb324951742c386df9ca3ec31204cf2125132762bd30ad9d6aa03e98ad4759",
+    "window": "5ea1a57d7ac9fb722d54e94e9afa8698f096bdc2a70b661717f0c3806df68ad1",
+    "composite": "c9d52f99a6ff5bbdda4647a4bafdc548f2c642cc9f3e9f104e1baa0be0a107f2",
+    "composite_window": "94d9c5626118bc399c8c5264fa01750847413f64acd8cc57b4fadf96e49e3204",
 }
 
 OPEN_VARIANTS = {
@@ -237,7 +245,7 @@ class TestVariantSelection:
         assert _sha(chosen) == _sha(ATTESTED_VARIANTS[expected])
 
     @pytest.mark.parametrize(
-        "composite,window", [(False, False), (False, True), (True, True)]
+        "composite,window", [(False, False), (False, True), (True, False), (True, True)]
     )
     def test_attestation_does_not_change_which_tables_are_read(
         self, composite, window
@@ -249,16 +257,19 @@ class TestVariantSelection:
         gated_sql = _select_evidence_metrics_sql(composite, window, True)
         assert _tables(gated_sql) == _tables(open_sql)
 
-    def test_attesting_a_composite_consults_the_windows_it_folded_in(self):
-        # The one deliberate exception to the rule above. With the window
-        # tier off, the open composite SQL never touches
-        # evidence_window_assessments — but a composite's attestation is
-        # not its own to claim: it is only as attested as the windows it
-        # rolled up, so the gated variant must reach for them.
+    def test_a_composite_always_consults_the_windows_it_folded_in(self):
+        # A composite's attestation and its confirmation are not its own to
+        # claim: it is only as attested, and only as confirmed, as the
+        # windows it rolled up. Both the open variant (confirmation
+        # weighting, window parity PR2) and the gated variant (attestation,
+        # #787) therefore reach for evidence_window_assessments even with
+        # the window tier off — and, per the rule above, read the same
+        # tables as each other.
         open_sql = _select_evidence_metrics_sql(True, False, False)
         gated_sql = _select_evidence_metrics_sql(True, False, True)
-        assert "evidence_window_assessments" not in _tables(open_sql)
+        assert "evidence_window_assessments" in _tables(open_sql)
         assert "evidence_window_assessments" in _tables(gated_sql)
+        assert _tables(open_sql) == _tables(gated_sql)
 
 
 class TestBuildersCannotBeFedCallerInput:

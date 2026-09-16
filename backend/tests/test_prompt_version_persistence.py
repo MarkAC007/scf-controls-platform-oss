@@ -28,7 +28,7 @@ from schemas import (  # noqa: E402
     EvidenceWindowAssessmentResponse,
 )
 from services import window_assessment_service  # noqa: E402
-from services.assessment_prompts import PROMPT_VERSION  # noqa: E402
+from services.assessment_prompts import PROMPT_VERSION, WINDOW_PROMPT_VERSION  # noqa: E402
 
 
 class TestColumns:
@@ -52,7 +52,7 @@ class TestColumns:
     )
     def test_column_is_wide_enough_for_the_current_version(self, model):
         length = model.__table__.columns["prompt_version"].type.length
-        assert length >= len(PROMPT_VERSION)
+        assert length >= max(len(PROMPT_VERSION), len(WINDOW_PROMPT_VERSION))
 
 
 class TestApiExposure:
@@ -135,7 +135,7 @@ class TestWriters:
 
     @pytest.mark.parametrize(
         "count_at_least,fragment",
-        [(3, "assessment.prompt_version = PROMPT_VERSION")],
+        [(3, "assessment.prompt_version = WINDOW_PROMPT_VERSION")],
     )
     def test_window_service_writes_it_on_every_finalising_path(
         self, count_at_least, fragment
@@ -148,10 +148,20 @@ class TestWriters:
         hash_writes = len(
             re.findall(r"assessment\.prompt_hash = ", source)
         )
-        version_writes = source.count("assessment.prompt_version = PROMPT_VERSION")
+        version_writes = source.count("assessment.prompt_version = WINDOW_PROMPT_VERSION")
         assert version_writes >= hash_writes
 
 
 class TestVersionValue:
     def test_current_version_is_a_dotted_release(self):
         assert re.fullmatch(r"\d+\.\d+\.\d+", PROMPT_VERSION)
+
+    def test_window_version_is_a_dotted_release_on_its_own_line(self):
+        # The window prompt versions independently of the per-file one: a
+        # change to either must not re-stamp, or re-cache, the other.
+        assert re.fullmatch(r"\d+\.\d+\.\d+", WINDOW_PROMPT_VERSION)
+        assert WINDOW_PROMPT_VERSION != PROMPT_VERSION
+
+    def test_window_service_never_stamps_the_per_file_version(self):
+        source = inspect.getsource(window_assessment_service)
+        assert "assessment.prompt_version = PROMPT_VERSION" not in source

@@ -322,11 +322,19 @@ export function EvidenceFilePreviewModal({
     if (isPdf) {
       return (
         <div className="evidence-preview-body evidence-preview-body--pdf">
+          {/*
+            Deliberately NOT sandboxed. Chrome refuses to load its PDF viewer
+            plugin inside any sandboxed iframe (there is no sandbox token that
+            re-enables it), so a sandbox here renders the grey "plugin blocked"
+            placeholder instead of the document. The old value
+            (allow-same-origin + allow-scripts) gave no isolation anyway: a
+            same-origin frame with scripts can strip its own sandbox. The file
+            is served same-origin by our own backend with an inline disposition.
+          */}
           <iframe
             src={file.download_url}
             title={file.filename}
             className="evidence-preview-iframe"
-            sandbox="allow-same-origin allow-scripts allow-popups"
           />
           {/* iOS Safari fallback — WebKit doesn't embed PDFs in iframes */}
           <a

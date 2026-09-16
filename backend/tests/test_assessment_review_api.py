@@ -645,11 +645,12 @@ class TestReviewQueueEndpoint:
         db.execute = AsyncMock(side_effect=[rows_result, count_result])
 
         result = await get_review_queue(
-            org_id=org_id, status="awaiting", limit=50, offset=0,
+            org_id=org_id, status="awaiting", tier="file", limit=50, offset=0,
             membership=membership, db=db,
         )
 
         assert result.total == 7
+        assert result.items[0].kind == "file"
         assert len(result.items) == 1
         assert result.items[0].gap_count == 3
         assert result.items[0].filename == "policy.pdf"
@@ -661,7 +662,7 @@ class TestReviewQueueEndpoint:
 
         with pytest.raises(HTTPException) as exc:
             await get_review_queue(
-                org_id=org_id, status="everything", limit=50, offset=0,
+                org_id=org_id, status="everything", tier="file", limit=50, offset=0,
                 membership=membership, db=AsyncMock(),
             )
         assert exc.value.status_code == 422

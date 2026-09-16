@@ -10,7 +10,7 @@ Endpoints:
   POST /organizations/{org_id}/evidence/{evidence_id}/files/{file_id}/assessment/review — Confirm/override
   GET  /organizations/{org_id}/evidence/{evidence_id}/files/{file_id}/assessment/versions — History
   POST /organizations/{org_id}/evidence/assess-bulk — Bulk assess files
-  GET  /organizations/{org_id}/evidence/assessment/review-queue — Files awaiting confirmation
+  GET  /organizations/{org_id}/evidence/assessment/review-queue — Verdicts awaiting confirmation (tier=file|window)
   GET  /organizations/{org_id}/evidence/assessment/summary — Dashboard metrics
 """
 import logging
@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth import require_org_role, OrgMembership
 from database import get_db
-from models import EvidenceFile, EvidenceAssessment, EvidenceAssessmentVersion
+from models import EvidenceFile, EvidenceAssessment, EvidenceAssessmentVersion, EvidenceWindowAssessment
 from services.assessment_prompts import assemble_control_context
 from services.assessment_verdict import derive_assessment_status
 from services.assurance_policy import get_assurance_policy
@@ -716,6 +716,78 @@ def _review_queue_count_query(org_id: UUID, status_filter: str):
 
 REVIEW_QUEUE_FILTERS = ("awaiting", "reviewed", "all")
 
+#: Which assessment layer the queue lists. ``file`` is the per-file
+#: (diagnostic) layer and the default, so existing callers see the same
+#: shape; ``window`` lists window verdicts awaiting confirmation.
+REVIEW_QUEUE_TIERS = ("file", "window")
+
+#: Window statuses that carry a verdict a person can confirm. Kept in step
+#: with WINDOW_REVIEWABLE_STATUSES in api.evidence_window_assessment; the
+#: queue must not list a window the review endpoint would refuse.
+_WINDOW_QUEUE_STATUSES = ("sufficient", "partial", "insufficient", "insufficient_sample", "unassessable")
+
+
+def build_window_review_queue_query(org_id: UUID, status_filter: str, limit: int, offset: int):
+    """The window confirmation queue, worst first — same severity order as
+    the per-file queue so the two lists mean the same thing to a reviewer:
+    most gaps, then most objectives that could not be read either way, then
+    least relevant, then oldest verdict."""
+    query = (
+        select(
+            EvidenceWindowAssessment.id.label("window_assessment_id"),
+            EvidenceWindowAssessment.evidence_id,
+            EvidenceWindowAssessment.window_start,
+            EvidenceWindowAssessment.window_end,
+            EvidenceWindowAssessment.frequency_used,
+            EvidenceWindowAssessment.file_ids,
+            EvidenceWindowAssessment.status,
+            EvidenceWindowAssessment.relevance_score,
+            EvidenceWindowAssessment.gap_count,
+            EvidenceWindowAssessment.cannot_assess_count,
+            EvidenceWindowAssessment.version_number,
+            EvidenceWindowAssessment.assessed_at,
+            EvidenceWindowAssessment.review_decision,
+            EvidenceWindowAssessment.verdict_reviewed_at,
+        )
+        .where(
+            and_(
+                EvidenceWindowAssessment.organization_id == org_id,
+                EvidenceWindowAssessment.status.in_(_WINDOW_QUEUE_STATUSES),
+                # A window with no frozen version has nothing the review
+                # endpoint could attach a decision to.
+                EvidenceWindowAssessment.current_version_id.isnot(None),
+            )
+        )
+        .order_by(
+            desc(EvidenceWindowAssessment.gap_count),
+            desc(EvidenceWindowAssessment.cannot_assess_count),
+            nullslast(asc(EvidenceWindowAssessment.relevance_score)),
+            asc(EvidenceWindowAssessment.assessed_at),
+        )
+        .limit(limit)
+        .offset(offset)
+    )
+    if status_filter == "awaiting":
+        query = query.where(EvidenceWindowAssessment.review_decision.is_(None))
+    elif status_filter == "reviewed":
+        query = query.where(EvidenceWindowAssessment.review_decision.isnot(None))
+    return query
+
+
+def _window_review_queue_count_query(org_id: UUID, status_filter: str):
+    query = select(func.count(EvidenceWindowAssessment.id)).where(
+        and_(
+            EvidenceWindowAssessment.organization_id == org_id,
+            EvidenceWindowAssessment.status.in_(_WINDOW_QUEUE_STATUSES),
+            EvidenceWindowAssessment.current_version_id.isnot(None),
+        )
+    )
+    if status_filter == "awaiting":
+        query = query.where(EvidenceWindowAssessment.review_decision.is_(None))
+    elif status_filter == "reviewed":
+        query = query.where(EvidenceWindowAssessment.review_decision.isnot(None))
+    return query
+
 
 @router.get(
     "/organizations/{org_id}/evidence/assessment/review-queue",
@@ -726,25 +798,64 @@ REVIEW_QUEUE_FILTERS = ("awaiting", "reviewed", "all")
     then most objectives that could not be assessed, then least relevant, then
     oldest.
 
+    `tier=file` (default) lists per-file verdicts; `tier=window` lists window
+    verdicts, each entry carrying `window_assessment_id` instead of `file_id`.
+    Every entry says which it is in `kind`.
+
     Viewing the queue needs viewer access; acting on an entry needs editor.
     """,
 )
 async def get_review_queue(
     org_id: UUID,
     status: str = Query("awaiting", description="awaiting, reviewed, or all"),
+    tier: str = Query("file", description="file or window"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     membership: OrgMembership = Depends(require_org_role("viewer")),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    List evidence files whose AI assessment awaits (or has had) a human decision.
+    List AI assessments that await (or have had) a human decision.
     Requires: viewer role or higher.
     """
     if status not in REVIEW_QUEUE_FILTERS:
         raise HTTPException(
             status_code=422,
             detail=f"status must be one of: {', '.join(REVIEW_QUEUE_FILTERS)}",
+        )
+    if tier not in REVIEW_QUEUE_TIERS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"tier must be one of: {', '.join(REVIEW_QUEUE_TIERS)}",
+        )
+
+    if tier == "window":
+        rows = (await db.execute(build_window_review_queue_query(org_id, status, limit, offset))).all()
+        total = (await db.execute(_window_review_queue_count_query(org_id, status))).scalar() or 0
+        return AssessmentReviewQueueResponse(
+            items=[
+                AssessmentReviewQueueItem(
+                    kind="window",
+                    window_assessment_id=row.window_assessment_id,
+                    evidence_id=row.evidence_id,
+                    window_start=row.window_start,
+                    window_end=row.window_end,
+                    frequency_used=row.frequency_used,
+                    file_count=len(row.file_ids or []),
+                    status=row.status,
+                    relevance_score=float(row.relevance_score) if row.relevance_score is not None else None,
+                    gap_count=row.gap_count or 0,
+                    cannot_assess_count=row.cannot_assess_count or 0,
+                    version_number=row.version_number or 0,
+                    assessed_at=row.assessed_at,
+                    review_decision=row.review_decision,
+                    reviewed_at=row.verdict_reviewed_at,
+                )
+                for row in rows
+            ],
+            total=total,
+            limit=limit,
+            offset=offset,
         )
 
     rows = (await db.execute(build_review_queue_query(org_id, status, limit, offset))).all()
@@ -753,6 +864,7 @@ async def get_review_queue(
     return AssessmentReviewQueueResponse(
         items=[
             AssessmentReviewQueueItem(
+                kind="file",
                 file_id=row.file_id,
                 evidence_id=row.evidence_id,
                 filename=row.filename,

@@ -381,10 +381,22 @@ services:
       # reaches the container and the flag reads as its "false" default.
       # ENABLE_PER_WINDOW_REVIEW switches the review path from per-file to
       # per-window; the two KSI flags select which assessment tier the EQ axis
-      # reads. All default off — today's behaviour.
-      ENABLE_PER_WINDOW_REVIEW: ${ENABLE_PER_WINDOW_REVIEW:-false}
-      ENABLE_WINDOW_ASSESSMENT_KSI: ${ENABLE_WINDOW_ASSESSMENT_KSI:-false}
-      ENABLE_COMPOSITE_KSI: ${ENABLE_COMPOSITE_KSI:-false}
+      # reads. All default ON: the windowed assessment is the primary
+      # assessment surface. Set a flag to false on BOTH services to opt out.
+      ENABLE_PER_WINDOW_REVIEW: ${ENABLE_PER_WINDOW_REVIEW:-true}
+      ENABLE_WINDOW_ASSESSMENT_KSI: ${ENABLE_WINDOW_ASSESSMENT_KSI:-true}
+      ENABLE_COMPOSITE_KSI: ${ENABLE_COMPOSITE_KSI:-true}
+      # Window assessment knobs. Lazy extraction fills a control's
+      # required_artifact_types on the first window assessment that needs
+      # them (cached on the catalog row; one model call per control, ever).
+      # The text budget caps the characters sent in one window prompt.
+      ARTIFACT_TYPE_LAZY_EXTRACTION: ${ARTIFACT_TYPE_LAZY_EXTRACTION:-true}
+      WINDOW_ASSESSMENT_TEXT_BUDGET: ${WINDOW_ASSESSMENT_TEXT_BUDGET:-150000}
+      # Ingest trigger: upload and webhook ingest schedule the window
+      # assessment after a per-evidence debounce; the nightly job stays as
+      # the sweep.
+      WINDOW_ASSESSMENT_ON_INGEST: ${WINDOW_ASSESSMENT_ON_INGEST:-true}
+      WINDOW_ASSESSMENT_INGEST_DEBOUNCE_SECONDS: ${WINDOW_ASSESSMENT_INGEST_DEBOUNCE_SECONDS:-120}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       # Model ids for every AI path live in backend/services/model_registry.py
       # (#782). These override that registry's defaults without a rebuild —
@@ -530,9 +542,20 @@ services:
       # worker imports the same api modules through the doc-gen and
       # assessment task paths, so a flag set on one service and not the other
       # produces two different answers for the same organization.
-      ENABLE_PER_WINDOW_REVIEW: ${ENABLE_PER_WINDOW_REVIEW:-false}
-      ENABLE_WINDOW_ASSESSMENT_KSI: ${ENABLE_WINDOW_ASSESSMENT_KSI:-false}
-      ENABLE_COMPOSITE_KSI: ${ENABLE_COMPOSITE_KSI:-false}
+      ENABLE_PER_WINDOW_REVIEW: ${ENABLE_PER_WINDOW_REVIEW:-true}
+      ENABLE_WINDOW_ASSESSMENT_KSI: ${ENABLE_WINDOW_ASSESSMENT_KSI:-true}
+      ENABLE_COMPOSITE_KSI: ${ENABLE_COMPOSITE_KSI:-true}
+      # Window assessment knobs. Lazy extraction fills a control's
+      # required_artifact_types on the first window assessment that needs
+      # them (cached on the catalog row; one model call per control, ever).
+      # The text budget caps the characters sent in one window prompt.
+      ARTIFACT_TYPE_LAZY_EXTRACTION: ${ARTIFACT_TYPE_LAZY_EXTRACTION:-true}
+      WINDOW_ASSESSMENT_TEXT_BUDGET: ${WINDOW_ASSESSMENT_TEXT_BUDGET:-150000}
+      # Ingest trigger: upload and webhook ingest schedule the window
+      # assessment after a per-evidence debounce; the nightly job stays as
+      # the sweep.
+      WINDOW_ASSESSMENT_ON_INGEST: ${WINDOW_ASSESSMENT_ON_INGEST:-true}
+      WINDOW_ASSESSMENT_INGEST_DEBOUNCE_SECONDS: ${WINDOW_ASSESSMENT_INGEST_DEBOUNCE_SECONDS:-120}
       # Model ids for every AI path live in backend/services/model_registry.py
       # (#782). These override that registry's defaults without a rebuild —
       # forwarded here because a variable documented in .env.example that never
@@ -917,6 +940,10 @@ services:
         # NOTE: these are BAKED INTO THE BUNDLE at build time. Changing any of
         # them requires `docker compose up -d --build frontend`, not a restart.
         VITE_GOOGLE_AUTH_ENABLED: ${VITE_GOOGLE_AUTH_ENABLED:-false}
+        # Build-time twin of the backend's ENABLE_PER_WINDOW_REVIEW. Defaults
+        # on; must match the backend flag or the app logs a parity mismatch
+        # (GET /api/features). Set to false only together with the backend.
+        VITE_ENABLE_PER_WINDOW_REVIEW: ${VITE_ENABLE_PER_WINDOW_REVIEW:-true}
         # Issue #699: redirect-based OIDC sign-in (bundled Keycloak or BYO IdP)
         VITE_OIDC_ENABLED: ${VITE_OIDC_ENABLED:-false}
         VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID:-}

@@ -1685,6 +1685,30 @@ export interface EvidenceWindowAssessment {
   source_coverage?: Record<string, number>
   file_ids?: string[]
   frequency_used?: string
+  // Window parity (v2 prompt + assurance parity). All optional: a row
+  // assessed before the v2 rollout carries none of them.
+  /** 1 = pre-objective verdict, 2 = objective-grounded. */
+  schema_version?: number
+  /** The AI's advisory read of each assessment objective, with file attribution. */
+  ao_findings?: import('./data/apiClient').AOFinding[]
+  gap_count?: number
+  cannot_assess_count?: number
+  unassessable_reason?: string | null
+  /** Why each file was in the window: asserted period or upload date. */
+  file_membership?: Record<string, { rule?: string; [key: string]: unknown }>
+  file_effective_dates?: Array<{ file_id?: string; effective_date?: string | null; [key: string]: unknown }>
+  /** How many verdicts this window has received. 0 = never reached a terminal state. */
+  version_number?: number
+  current_version_id?: string | null
+  /**
+   * Human confirmation of the AI *verdict* — distinct from ``review_status``,
+   * which is the organisation's acceptance of the evidence itself.
+   * 'confirmed' | 'overridden' | null.
+   */
+  review_decision?: string | null
+  review_reason?: string | null
+  verdict_reviewed_by_user_id?: string | null
+  verdict_reviewed_at?: string | null
 }
 
 /**
@@ -1701,6 +1725,8 @@ export interface EvidenceWindowAssessmentSummary {
   partial_count: number
   insufficient_count: number
   insufficient_sample_count: number
+  /** Windows whose objectives could not be evaluated from the files at all (v2). */
+  unassessable_count?: number
   pending_count: number
   error_count: number
   average_relevance_score: number | null

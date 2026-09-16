@@ -18,7 +18,6 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from uuid import UUID
 from typing import List, Optional
 import logging
-import os
 
 from sqlalchemy import select, and_, desc
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -57,6 +56,8 @@ from services.evidence_integrity_service import (
 )
 from services.audit_service import create_audit_entry, get_client_ip, get_user_agent
 from services.evidence_quarantine import enqueue_integrity_verification
+from services.window_assessment_trigger import schedule_window_assessment_on_ingest
+from api.features import flag_enabled
 from services.preparer_assertions import PREPARER_ASSERTION_FIELDS
 from services.collection_date import advance_last_collection_date, collection_date_from
 from services.assurance_policy import get_assurance_policy
@@ -313,6 +314,13 @@ async def confirm_upload(
     # Hash, scan and size the stored object — one fetch, off the request path.
     # Enqueued after commit so the worker cannot race the row into existence.
     enqueue_integrity_verification(evidence_file.id)
+
+    # Record-level verdict: schedule the window assessment now rather than
+    # leaving it to the 04:00 UTC sweep. Debounced per evidence item so a
+    # burst of uploads yields one assessment; only meaningful when the item
+    # is tracked, since the window is derived from the tracker's frequency.
+    if tracker is not None:
+        await schedule_window_assessment_on_ingest(org_id, evidence_id, trigger="upload")
 
     # Generate proxy download URL for response
     download_url = _proxy_download_url(org_id, evidence_id, evidence_file.id, membership)
@@ -647,7 +655,7 @@ async def review_evidence_file(
     compatibility for freshly added evidence IDs.
     """
     # ISC-23: lazy env read so monkeypatch works in tests.
-    if os.getenv("ENABLE_PER_WINDOW_REVIEW", "false").lower() == "true":
+    if flag_enabled("ENABLE_PER_WINDOW_REVIEW"):
         ewa_lookup = await db.execute(
             select(EvidenceWindowAssessment.id)
             .where(

@@ -4031,12 +4031,25 @@ class EvidenceAssessmentVersionResponse(BaseModel):
 
 
 class AssessmentReviewQueueItem(BaseModel):
-    """One file waiting for (or already carrying) a human decision."""
-    file_id: UUID
+    """One AI verdict waiting for (or already carrying) a human decision.
+
+    ``kind`` says which assessment layer the entry comes from. A ``file``
+    entry carries ``file_id`` and the file columns; a ``window`` entry
+    carries ``window_assessment_id`` and the window columns. The shared
+    columns (status, counts, version, decision) mean the same on both.
+    """
+    kind: str = Field("file", description="file or window")
+    file_id: Optional[UUID] = None
     evidence_id: str
     filename: Optional[str] = None
     uploaded_at: Optional[datetime] = None
     uploaded_by_user_id: Optional[UUID] = None
+
+    window_assessment_id: Optional[UUID] = None
+    window_start: Optional[datetime] = None
+    window_end: Optional[datetime] = None
+    frequency_used: Optional[str] = None
+    file_count: Optional[int] = None
 
     status: str
     relevance_score: Optional[float] = None
@@ -4081,15 +4094,36 @@ class EvidenceWindowAssessmentResponse(BaseModel):
     artifact_type_coverage: Dict[str, Any] = Field(default_factory=dict)
     expected_artifact_types: List[Dict[str, Any]] = Field(default_factory=list)
 
-    status: str = Field(..., description="pending, processing, sufficient, partial, insufficient, insufficient_sample, error")
+    status: str = Field(..., description="pending, processing, sufficient, partial, insufficient, insufficient_sample, unassessable, error")
     relevance_score: Optional[float] = None
     findings: List[Dict[str, Any]] = Field(default_factory=list)
     summary: Optional[str] = None
 
+    # Window verdict v2 (parity with the per-file assessment). All optional
+    # or defaulted so responses built from older rows still validate.
+    schema_version: Optional[int] = Field(
+        None, description="1 = pre-objective window verdict, 2 = per-objective ao_findings"
+    )
+    ao_findings: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="One advisory entry per assessment objective, each naming the file ids it relied on",
+    )
+    gap_count: Optional[int] = None
+    cannot_assess_count: Optional[int] = None
+    unassessable_reason: Optional[str] = None
+    file_effective_dates: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Model-extracted effective date per file that states one; never the preparer's asserted period",
+    )
+    file_membership: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Per file id: the rule that put it in the window and how its content was used",
+    )
+
     model_id: Optional[str] = None
     prompt_hash: Optional[str] = None
     prompt_version: Optional[str] = Field(
-        None, description="Release of the prompt template that produced this verdict"
+        None, description="Release of the window prompt template that produced this verdict"
     )
     control_context_hash: Optional[str] = None
     framework_version: Optional[str] = None
@@ -4113,12 +4147,72 @@ class EvidenceWindowAssessmentResponse(BaseModel):
     reviewed_at: Optional[datetime] = None
     review_notes: Optional[str] = None
 
+    # Verdict confirmation (parity with the per-file assessment). NULL
+    # review_decision means awaiting a human decision on the AI's reading;
+    # independent of review_status, which is the acceptance verb above.
+    current_version_id: Optional[UUID] = None
+    version_number: Optional[int] = Field(None, description="0 = never assessed")
+    review_decision: Optional[str] = Field(None, description="confirmed or overridden; null = awaiting")
+    review_reason: Optional[str] = None
+    verdict_reviewed_by_user_id: Optional[UUID] = None
+    verdict_reviewed_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class EvidenceWindowAssessmentVersionResponse(BaseModel):
+    """One frozen verdict from a window's assessment history.
+
+    Everything here is as it was when the verdict was reached. The review
+    block is the only part written after the fact, and only once.
+    """
+    id: UUID
+    window_assessment_id: UUID
+    version_number: int
+    schema_version: int = Field(
+        2, description="1 = pre-objective window verdict, 2 = per-objective ao_findings with file attribution"
+    )
+
+    window_start: datetime
+    window_end: datetime
+    frequency_used: str
+    file_ids: List[str] = Field(default_factory=list)
+    file_membership: Dict[str, Any] = Field(default_factory=dict)
+
+    status: str
+    relevance_score: Optional[float] = None
+    summary: Optional[str] = None
+    findings: List[Dict[str, Any]] = Field(default_factory=list)
+    ao_findings: List[Dict[str, Any]] = Field(default_factory=list)
+    gap_count: int = 0
+    cannot_assess_count: int = 0
+    file_effective_dates: List[Dict[str, Any]] = Field(default_factory=list)
+    unassessable_reason: Optional[str] = None
+
+    model_id: Optional[str] = None
+    prompt_version: Optional[str] = None
+    assessment_source: Optional[str] = None
+    assessed_at: Optional[datetime] = None
+    created_at: datetime
+
+    review_decision: Optional[str] = None
+    review_reason: Optional[str] = None
+    reviewed_by_user_id: Optional[UUID] = None
+    reviewed_at: Optional[datetime] = None
+    ao_overrides: Optional[List[AOOverrideSchema]] = None
+
     model_config = ConfigDict(from_attributes=True)
 
 
 class EvidenceWindowAssessmentRequest(BaseModel):
     """Request to trigger a windowed evidence assessment."""
-    assessment_source: str = Field("on_demand", description="Trigger source: on_demand, auto, bulk")
+    assessment_source: str = Field(
+        "on_demand",
+        description=(
+            "Trigger source: on_demand, auto, bulk. Rows the platform creates itself "
+            "also carry ingest (upload or webhook) and review_revision."
+        ),
+    )
 
 
 class EvidenceWindowAssessmentBulkRequest(BaseModel):
@@ -4133,6 +4227,7 @@ class EvidenceWindowAssessmentSummary(BaseModel):
     partial_count: int
     insufficient_count: int
     insufficient_sample_count: int
+    unassessable_count: int = 0
     pending_count: int
     error_count: int
     average_relevance_score: Optional[float] = None

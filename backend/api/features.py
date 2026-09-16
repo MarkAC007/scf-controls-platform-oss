@@ -20,8 +20,33 @@ from fastapi import APIRouter
 router = APIRouter(tags=["features"])
 
 
+#: Deployment defaults for the assurance flags. All three default ON since the
+#: window-assessment parity work (#569 follow-up): the windowed, record-level
+#: assessment is the primary assessment surface and the per-file assessor is
+#: the diagnostic layer beneath it. An operator turns one off by setting the
+#: variable to ``false`` on BOTH the backend and celery-worker services.
+FLAG_DEFAULTS = {
+    "ENABLE_PER_WINDOW_REVIEW": "true",
+    "ENABLE_WINDOW_ASSESSMENT_KSI": "true",
+    "ENABLE_COMPOSITE_KSI": "true",
+}
+
+
+def flag_enabled(name: str) -> bool:
+    """Read a deployment flag at call time.
+
+    Unset and empty both mean "use the default"; anything other than the
+    literal ``true`` (any case) is off. Shared by every reader of these flags
+    so the API, the KSI dispatcher and the review cutover cannot drift.
+    """
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        raw = FLAG_DEFAULTS.get(name, "false")
+    return raw.strip().lower() == "true"
+
+
 def _flag(name: str) -> bool:
-    return os.getenv(name, "false").lower() == "true"
+    return flag_enabled(name)
 
 
 @router.get(

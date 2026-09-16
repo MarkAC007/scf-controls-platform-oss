@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest'
+import { afterEach, describe, it, expect, vi } from 'vitest'
 import {
   featureFlagMismatch,
   checkFeatureFlagParity,
@@ -47,17 +47,18 @@ describe('checkFeatureFlagParity', () => {
   it('reports the mismatch through the reporter', async () => {
     const report = vi.fn()
     const result = await checkFeatureFlagParity(
-      async () => flags(true),
+      async () => flags(false),
       report,
     )
-    // The compiled flag is false under test (no VITE_ var set in vitest env).
-    expect(result).toContain('410 Gone')
+    // The compiled flag defaults on (no VITE_ var set in the vitest env), so
+    // a backend that has turned the flag off is the mismatch.
+    expect(result).toContain('ENABLE_PER_WINDOW_REVIEW=false')
     expect(report).toHaveBeenCalledOnce()
   })
 
   it('says nothing when the backend agrees', async () => {
     const report = vi.fn()
-    expect(await checkFeatureFlagParity(async () => flags(false), report)).toBeNull()
+    expect(await checkFeatureFlagParity(async () => flags(true), report)).toBeNull()
     expect(report).not.toHaveBeenCalled()
   })
 
@@ -78,5 +79,37 @@ describe('checkFeatureFlagParity', () => {
     )
     expect(result).toBeNull()
     expect(report).not.toHaveBeenCalled()
+  })
+})
+
+describe('PER_WINDOW_REVIEW_ENABLED default', () => {
+  // The compiled flag defaults on so a bundle that never mentions the
+  // variable agrees with a backend that never mentions it (both default on
+  // since the window-assessment parity flip). Only the literal 'false' opts
+  // out — an unset or empty value must not silently drop the review panel.
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    vi.resetModules()
+  })
+
+  it('is on when the build never set the variable', async () => {
+    vi.stubEnv('VITE_ENABLE_PER_WINDOW_REVIEW', undefined as unknown as string)
+    vi.resetModules()
+    const mod = await import('../featureFlags')
+    expect(mod.PER_WINDOW_REVIEW_ENABLED).toBe(true)
+  })
+
+  it('is on for an explicit true', async () => {
+    vi.stubEnv('VITE_ENABLE_PER_WINDOW_REVIEW', 'true')
+    vi.resetModules()
+    const mod = await import('../featureFlags')
+    expect(mod.PER_WINDOW_REVIEW_ENABLED).toBe(true)
+  })
+
+  it('is off only for the literal false', async () => {
+    vi.stubEnv('VITE_ENABLE_PER_WINDOW_REVIEW', 'false')
+    vi.resetModules()
+    const mod = await import('../featureFlags')
+    expect(mod.PER_WINDOW_REVIEW_ENABLED).toBe(false)
   })
 })

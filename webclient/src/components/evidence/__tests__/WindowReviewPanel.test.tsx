@@ -18,6 +18,16 @@ import type { EvidenceWindowAssessment } from '../../../types'
 vi.mock('../../../data/apiClient', () => ({
   listWindowAssessments: vi.fn(),
   reviewWindowAssessment: vi.fn(),
+  // Used by the nested WindowVerdictReviewPanel (window parity).
+  reviewWindowVerdict: vi.fn(),
+  listWindowAssessmentVersions: vi.fn(),
+}))
+
+// The nested verdict panel reads the org role; without this the render dies
+// in AuthContext rather than testing anything.
+vi.mock('../../../hooks/useHasOrgRole', () => ({
+  useHasOrgRole: () => true,
+  useIsOrgEditor: () => true,
 }))
 
 import {
@@ -141,5 +151,48 @@ describe('WindowReviewPanel', () => {
         /invalid review_status/,
       ),
     )
+  })
+
+  it('mounts the verdict confirmation beneath the AI context for a terminal window (window parity)', async () => {
+    vi.mocked(listWindowAssessments).mockResolvedValueOnce([
+      {
+        ...sampleEwa,
+        status: 'partial',
+        summary: 'Two of three months are evidenced.',
+        schema_version: 2,
+        ao_findings: [
+          { ao_id: 'objective_alpha', suggested_designation: 'gap_identified', rationale: 'r', suggestion: 's', evidence_file_ids: [] },
+        ],
+        file_ids: ['f1', 'f2'],
+        current_version_id: 'ver_one',
+        version_number: 1,
+        review_decision: null,
+      },
+    ])
+    render(<WindowReviewPanel orgId="org-1" evidenceId="E-BCM-11" />)
+    await waitFor(() => expect(screen.getByTestId('window-verdict-review')).toBeInTheDocument())
+    // The status badge says who stands behind the verdict.
+    expect(screen.getByTestId('window-review-status-assessment-badge')).toHaveTextContent('AI suggests: Partial')
+    expect(screen.getByTestId('window-verdict-confirm-btn')).toBeInTheDocument()
+    // The acceptance buttons are still there: the two verbs coexist.
+    expect(screen.getByTestId('window-review-approve-btn')).toBeInTheDocument()
+  })
+
+  it('shows the unassessable reason and labels the status', async () => {
+    vi.mocked(listWindowAssessments).mockResolvedValueOnce([
+      {
+        ...sampleEwa,
+        status: 'unassessable',
+        unassessable_reason: 'No assessment objective could be evaluated from the files in this window.',
+        schema_version: 2,
+        ao_findings: [],
+        current_version_id: 'ver_one',
+        version_number: 1,
+        review_decision: null,
+      },
+    ])
+    render(<WindowReviewPanel orgId="org-1" evidenceId="E-BCM-11" />)
+    await waitFor(() => expect(screen.getByTestId('window-review-unassessable-reason')).toBeInTheDocument())
+    expect(screen.getByTestId('window-review-status-assessment-badge')).toHaveTextContent('AI suggests: Unassessable')
   })
 })
