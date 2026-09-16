@@ -74,6 +74,108 @@ interface AddMemberDraft {
   membershipRole: TeamMembershipRole
 }
 
+/**
+ * Business functions held for a team while the admin edits them, before
+ * anything is sent. ``teamId`` is carried so that expanding a different team
+ * cannot silently apply one team's draft to another.
+ */
+interface FunctionDraft {
+  teamId: string
+  ids: string[]
+}
+
+/**
+ * Business functions as add/remove chips.
+ *
+ * Replaces the native ``<select multiple>`` both team forms used to carry.
+ * That control is hostile on a form that means something: a plain click
+ * inside it collapses the entire selection down to the one option under the
+ * cursor, and nothing on screen distinguishes "I picked one" from "I just
+ * discarded four". Chips make every add and every remove a separate, named,
+ * reversible act, and the current selection is readable without opening
+ * anything.
+ *
+ * ``is_active`` behaviour is carried over from the select unchanged. An
+ * inactive function cannot be added — it is listed, disabled, and suffixed
+ * "(inactive)", exactly as the old ``<option disabled>`` was. One that is
+ * already assigned still renders as a chip and is still removable, because a
+ * team left holding a retired function needs a way out of it.
+ *
+ * The last chip cannot be removed: a team must serve at least one function,
+ * so an empty selection is not a state the form should be able to reach. To
+ * swap the only function, add the replacement first.
+ */
+function FunctionChips({
+  selectId,
+  addLabel,
+  functions,
+  selectedIds,
+  onChange,
+}: {
+  selectId: string
+  addLabel: string
+  functions: OrgFunction[]
+  selectedIds: string[]
+  onChange: (next: string[]) => void
+}) {
+  const unselected = functions.filter(fn => !selectedIds.includes(fn.id))
+  return (
+    <div className="team-function-chips">
+      <ul className="team-function-chip-list">
+        {selectedIds.map(id => {
+          // A selected id the catalogue did not return still gets a chip
+          // rather than vanishing. Dropping it from the display would drop it
+          // from the next save too, which is data loss by omission.
+          const fn = functions.find(f => f.id === id)
+          const name = fn?.name ?? 'Unrecognised function'
+          const inactive = fn ? !fn.is_active : false
+          return (
+            <li
+              key={id}
+              className={`team-function-chip${inactive ? ' team-function-chip--inactive' : ''}`}
+            >
+              <span className="team-function-chip-label">
+                {name}{inactive ? ' (inactive)' : ''}
+              </span>
+              <button
+                type="button"
+                className="team-function-chip-remove"
+                aria-label={`Remove ${name}`}
+                disabled={selectedIds.length === 1}
+                title={
+                  selectedIds.length === 1
+                    ? 'A team must serve at least one business function.'
+                    : `Remove ${name}`
+                }
+                onClick={() => onChange(selectedIds.filter(sel => sel !== id))}
+              >
+                ×
+              </button>
+            </li>
+          )
+        })}
+      </ul>
+      <select
+        id={selectId}
+        className="team-function-chip-add"
+        aria-label={addLabel}
+        value=""
+        onChange={event => {
+          const id = event.currentTarget.value
+          if (id) onChange([...selectedIds, id])
+        }}
+      >
+        <option value="">Add a business function…</option>
+        {unselected.map(fn => (
+          <option key={fn.id} value={fn.id} disabled={!fn.is_active}>
+            {fn.name}{fn.is_active ? '' : ' (inactive)'}
+          </option>
+        ))}
+      </select>
+    </div>
+  )
+}
+
 function displayName(user: UserSimple | null | undefined, fallback: string): string {
   return user?.display_name || user?.email || fallback
 }
@@ -95,6 +197,8 @@ export default function TeamManagement({ organizationId }: TeamManagementProps) 
   const [expandedTeamId, setExpandedTeamId] = useState<string | null>(null)
   const [pendingRoleChange, setPendingRoleChange] = useState<PendingRoleChange | null>(null)
   const [addDraft, setAddDraft] = useState<AddMemberDraft>({ userId: '', membershipRole: 'member' })
+  const [functionDraft, setFunctionDraft] = useState<FunctionDraft | null>(null)
+  const [isSavingFunctions, setIsSavingFunctions] = useState(false)
 
   // Internal / contractor, per organisation. One request for the screen; each
   // member row looks itself up rather than fetching. Display only — it never
@@ -318,6 +422,35 @@ export default function TeamManagement({ organizationId }: TeamManagementProps) 
     setExpandedTeamId(prev => (prev === teamId ? null : teamId))
     setPendingRoleChange(null)
     setAddDraft({ userId: '', membershipRole: 'member' })
+    // Unsaved function edits die with the panel they were made in. Carrying
+    // them to the next team is the only way this draft could ever be applied
+    // to the wrong one.
+    setFunctionDraft(null)
+  }
+
+  /**
+   * Send the staged business functions for one team. Nothing reaches the API
+   * until this runs — see the note on the edit form's chip picker for why.
+   */
+  const saveFunctions = async (team: TeamDetail, ids: string[]) => {
+    if (ids.length === 0) return
+    try {
+      setIsSavingFunctions(true)
+      await updateTeam(organizationId, team.id, {
+        // The existing primary stays primary if it survived the edit;
+        // otherwise the first remaining function takes the slot.
+        function_id: ids.includes(team.function_id) ? team.function_id : ids[0],
+        function_ids: ids,
+      })
+      setFunctionDraft(null)
+      await refreshTeam(team.id)
+      toast.success('Business functions updated')
+    } catch (err: any) {
+      console.error('Failed to update business functions:', err)
+      toast.error(err?.message || 'Failed to update business functions')
+    } finally {
+      setIsSavingFunctions(false)
+    }
   }
 
   const renderWarnings = (team: TeamDetail) => {
@@ -354,35 +487,59 @@ export default function TeamManagement({ organizationId }: TeamManagementProps) 
     const assignable = orgUsers.filter(
       user => !team.members.some(m => m.user_id === user.id)
     )
+    const savedFunctionIds = team.function_ids ?? [team.function_id]
+    const draftFunctionIds =
+      functionDraft?.teamId === team.id ? functionDraft.ids : savedFunctionIds
+    const functionsDirty =
+      draftFunctionIds.length !== savedFunctionIds.length ||
+      draftFunctionIds.some((id, idx) => id !== savedFunctionIds[idx])
     return (
       <div className="team-detail">
         {team.description && <p className="team-detail-description">{team.description}</p>}
 
         <div className="team-create-field">
           <label htmlFor={`team-functions-${team.id}`}>Business functions</label>
-          <select
-            id={`team-functions-${team.id}`}
-            multiple
-            value={team.function_ids ?? [team.function_id]}
-            aria-label={`Business functions for ${team.name}`}
-            onChange={event => {
-              const functionIds = Array.from(event.currentTarget.selectedOptions, option => option.value)
-              if (functionIds.length === 0) return
-              void updateTeam(organizationId, team.id, {
-                function_id: functionIds.includes(team.function_id) ? team.function_id : functionIds[0],
-                function_ids: functionIds,
-              }).then(() => refreshTeam(team.id)).catch((err: any) => {
-                toast.error(err?.message || 'Failed to update business functions')
-              })
-            }}
-          >
-            {sortedFunctions.map(fn => (
-              <option key={fn.id} value={fn.id} disabled={!fn.is_active}>{fn.name}</option>
-            ))}
-          </select>
-          <span className="team-add-hint">
-            Select one or more. The current primary remains primary unless you remove it.
-          </span>
+          {/*
+            Staged, not live. This picker used to write straight through: every
+            change to the old multi-select fired an immediate ``updateTeam``,
+            so one stray click inside it collapsed a team's functions to a
+            single entry and persisted that before the admin could react. The
+            edit is now held until Save, and Cancel puts it back — the same
+            contract the create form has always had, which is also why both
+            forms now use the same control.
+          */}
+          <FunctionChips
+            selectId={`team-functions-${team.id}`}
+            addLabel={`Business functions for ${team.name}`}
+            functions={sortedFunctions}
+            selectedIds={draftFunctionIds}
+            onChange={ids => setFunctionDraft({ teamId: team.id, ids })}
+          />
+          {functionsDirty ? (
+            <div className="team-function-chip-actions">
+              <button
+                type="button"
+                className="btn-team-primary"
+                disabled={isSavingFunctions}
+                onClick={() => void saveFunctions(team, draftFunctionIds)}
+              >
+                {isSavingFunctions ? 'Saving…' : 'Save functions'}
+              </button>
+              <button
+                type="button"
+                className="btn-team-secondary"
+                disabled={isSavingFunctions}
+                onClick={() => setFunctionDraft(null)}
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <span className="team-add-hint">
+              Add or remove functions, then save. The current primary remains
+              primary unless you remove it.
+            </span>
+          )}
         </div>
 
         {(team.health?.warnings?.length ?? 0) > 0 && (
@@ -618,22 +775,16 @@ export default function TeamManagement({ organizationId }: TeamManagementProps) 
           </div>
           <div className="team-create-field">
             <label htmlFor="team-function">Business functions</label>
-            <select
-              id="team-function"
-              multiple
-              value={newFunctionIds}
-              onChange={e => setNewFunctionIds(
-                Array.from(e.currentTarget.selectedOptions, option => option.value)
-              )}
-              required
-            >
-              {sortedFunctions.map(fn => (
-                <option key={fn.id} value={fn.id} disabled={!fn.is_active}>
-                  {fn.name}{fn.is_active ? '' : ' (inactive)'}
-                </option>
-              ))}
-            </select>
-            <span className="team-add-hint">Select one or more functions.</span>
+            <FunctionChips
+              selectId="team-function"
+              addLabel="Business functions"
+              functions={sortedFunctions}
+              selectedIds={newFunctionIds}
+              onChange={setNewFunctionIds}
+            />
+            <span className="team-add-hint">
+              Add one or more functions. The first one added is the team's primary function.
+            </span>
           </div>
           <div className="team-create-field team-create-field-wide">
             <label htmlFor="team-description">Description</label>

@@ -149,7 +149,6 @@ function makeProps(overrides: Partial<EvidenceDetailPageProps> = {}): EvidenceDe
     scopingData: SCOPING_DATA,
     systems: [],
     orgMembers: [],
-    memberTypeOf: () => undefined,
     suggestions: null,
     loadingSuggestions: false,
     collectionGuidance: null,
@@ -436,7 +435,10 @@ describe('EvidenceDetailPage', () => {
       // getEvidenceTracking returns null → no id → shows save hint
       render(<EvidenceDetailPage {...makeProps()} />)
       expect(
-        screen.getByText(/Save this evidence tracking to enable tasks, assignments and comments/i),
+        // C3 removed the Collaborators picker, so the hint no longer promises
+        // "assignments"; tasks render unconditionally (disabled) and are not
+        // behind this gate either.
+        screen.getByText(/Save this evidence tracking to enable owning teams and comments/i),
       ).toBeInTheDocument()
     })
   })

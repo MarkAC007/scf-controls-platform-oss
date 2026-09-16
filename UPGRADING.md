@@ -203,15 +203,79 @@ precondition fails:
    upgrade aborts — nothing changed. On a `--no-minio` install there is no
    volume to tar and the evidence half is skipped loudly — see *What the backup
    does not cover* below.
-4. **Checkout + migrate** — checks out the target tag, rebuilds the backend
-   image, and runs `alembic upgrade head` as a one-shot (workers stay stopped so
-   nothing races the schema change), then starts the full stack.
+4. **Checkout + migrate** — checks out the target tag, re-asserts the group on
+   the catalogue directory on a Linux host (see *The catalogue directory's group*
+   below), rebuilds the backend image, and runs `alembic upgrade head` as a
+   one-shot (workers stay stopped so nothing races the schema change), then
+   starts the full stack.
 5. **Verify the running code** — waits for `/health`, checks the database is at
    the code's Alembic head, and checks the rebuilt image's baked build stamp.
    **If any check fails, it rolls back automatically** (see §4).
 6. **Done** — prints the new version and where your backups live.
 
 Add `--yes` to skip the confirmation prompt (for unattended runs).
+
+### The catalogue directory's group (Linux hosts)
+
+`webclient/public/data` is a **host** directory, bind-mounted into the backend
+and the catalogue importer at `/app/data/json`. The in-app catalogue import
+writes its JSON there, so the containers need **write** access to it.
+
+They do not get that as the owner. The backend runs as gid `SCF_APP_GID` (1001
+by default) and the importer runs as container root with `cap_drop: ALL`, which
+takes `CAP_DAC_OVERRIDE` away and leaves it subject to the ordinary mode check
+with `SCF_APP_GID` as a supplementary group. `scripts/install.sh` therefore
+`chgrp`s the directory to that gid and sets mode `2775` — setgid, so JSON the
+import writes inherits the group. Without it the import fails with
+`PermissionError: /app/data/json/...` (OSS #98, #99).
+
+Phase 4 of `scripts/upgrade.sh` now re-asserts that, before the stack starts.
+It is deliberately a **check** that usually does nothing, because the group can
+drift for several reasons and none of them announce themselves:
+
+- The nine generated catalogue files are gitignored, so a checkout does leave
+  them alone — but the **four tracked files** in that directory, and any file or
+  subdirectory a new release adds under it, are written by `git checkout` with
+  **your** group and an ordinary mode, which the importer then cannot overwrite.
+- An install provisioned **by hand** rather than with `scripts/install.sh` never
+  had the group set at all, and nothing before this check ever told you.
+- `SCF_APP_GID` may have been changed in `.env` since the install ran.
+
+In every one of those cases the symptom is the same and arrives late: the first
+catalogue import after the upgrade fails with `PermissionError`.
+
+What it does, before anything is built or started:
+
+- **On a non-Linux host it does nothing** and says so. Docker Desktop maps file
+  ownership for you, so there is no group to set.
+- **On Linux** it reads `SCF_APP_GID` from `.env` (falling back to `1001`, the
+  value the compose files default to), and compares the directory's current
+  group and mode against `<gid> 2775`. If they already match it prints
+  `nothing to do` and moves on.
+- If they do not match it **says what was wrong before fixing it** — the silence
+  is what made #98/#99 hard to diagnose — then `chgrp`s to `SCF_APP_GID` and
+  sets `2775` on directories, `0664` on files, from a throwaway
+  `alpine:3` container (you are usually not a member of that gid yourself, so
+  you cannot `chgrp` to it directly). It then re-reads the directory and prints
+  what it actually ended up as.
+- It is a **`chgrp`, never a `chown`** — you stay the owner of your checkout —
+  and it never widens modes beyond `2775`/`0664`.
+- **A failure here warns and continues; it does not roll back.** This is
+  host-side file hygiene, and a migrated, verified database must not be reverted
+  because a `chgrp` did not take. If you see that warning, run the command it
+  prints and then re-run the catalogue import.
+
+**This applies to every self-hosted install, bundled or not.** The catalogue
+directory is a host path in your checkout; it is not in Postgres and not in an
+object store. So an install using an **external database**, or organisations
+using **their own evidence storage** under *Settings → Evidence storage*, need
+this step exactly as much as a fully bundled one — the external-DB and BYO-
+evidence choices move other data out of the bundled containers, but they do not
+move the catalogue JSON, which is still written to `webclient/public/data` on
+this host.
+
+If you have overridden `SCF_APP_GID`, keep that line in `.env`: it is what both
+the compose files' `group_add` and this step read.
 
 ### What the backup does not cover
 

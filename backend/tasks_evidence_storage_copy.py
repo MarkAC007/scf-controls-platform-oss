@@ -579,6 +579,9 @@ async def _retire_source_if_empty(
     name="tasks_evidence_storage_copy.copy_evidence_store",
     time_limit=COPY_TIME_LIMIT,
     soft_time_limit=COPY_SOFT_TIME_LIMIT,
+    # A run that finished with per-file failures is logged at WARNING rather
+    # than "succeeded" (#1018); the run record stays the source of truth.
+    partial_statuses=frozenset({STATE_COMPLETED_WITH_ERRORS}),
 )
 def copy_evidence_store(
     self,

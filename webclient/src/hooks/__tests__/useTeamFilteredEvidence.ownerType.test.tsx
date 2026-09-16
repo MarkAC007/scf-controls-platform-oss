@@ -157,8 +157,13 @@ describe('when the request fails', () => {
     await waitFor(() => expect(result.current.error).toBe('boom'))
     fetchTracking.mockResolvedValue([{ id: 't9' }] as never)
     rerender({ team: 'team-2' })
-    await waitFor(() => expect(result.current.error).toBeNull())
-    expect([...(result.current.trackingIds ?? [])]).toEqual(['t9'])
+    // The hook clears `error` synchronously when the effect for the new team
+    // starts, before the request has answered, so waiting on it proves nothing
+    // about the success path: under full-suite load the tracking-ids assertion
+    // ran before the promise had settled (#1017). Wait for the answer itself;
+    // the cleared error is then a consequence we can assert outright.
+    await waitFor(() => expect([...(result.current.trackingIds ?? [])]).toEqual(['t9']))
+    expect(result.current.error).toBeNull()
   })
 })
 

@@ -639,6 +639,14 @@ export interface BatchScopedControlOperation {
   selected?: boolean
   implementation_status?: string
   selection_reason?: string
+  /**
+   * The ORGANISATION's own maturity setting, L0 through L5.
+   *
+   * Not to be confused with the catalogue's recommended levels, which arrive
+   * on the listing as `cmm_maturity` and are read-only guidance. Writing one
+   * where the other is meant corrupts data while appearing to work.
+   */
+  maturity_level?: string
 }
 
 export interface BatchScopedControlResponse {
@@ -815,6 +823,8 @@ export interface ScopedControlWithCatalog {
   selected: boolean
   implementation_status?: string | null
   selection_reason?: string | null
+  /** The org's own maturity setting; null when never set. Not `cmm_maturity`. */
+  maturity_level?: string | null
   // Extended data
   pptdf_applicability: {
     people: boolean

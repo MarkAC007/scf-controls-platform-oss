@@ -30,6 +30,7 @@ from catalog_models import SCFCatalogControl, SCFCatalogAssessmentObjective
 from services.anthropic_response import extract_text
 from services.model_registry import cost_cents as model_cost_cents, resolve as resolve_model
 
+from services.llm_client import build_anthropic_client
 from services.secrets import get_secret
 
 logger = logging.getLogger(__name__)
@@ -165,13 +166,12 @@ def _call_llm(system_prompt: str, user_prompt: str) -> Optional[dict]:
         logger.warning("anthropic package not installed — cannot extract artifact types")
         return None
 
-    api_key = get_secret("ANTHROPIC_API_KEY")
-    if not api_key:
+    if not get_secret("ANTHROPIC_API_KEY"):
         logger.warning("ANTHROPIC_API_KEY not set — cannot extract artifact types")
         return None
 
     try:
-        client = anthropic.Anthropic(api_key=api_key)
+        client = build_anthropic_client()
         message = client.messages.create(
             model=resolve_model(MODEL_ROLE),
             max_tokens=MAX_OUTPUT_TOKENS,

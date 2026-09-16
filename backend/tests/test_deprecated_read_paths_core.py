@@ -220,7 +220,8 @@ class TestMainListing:
             RETIRED_ID, status="deprecated",
             retired_in_version=RETIRED_VERSION, superseded_by=SUCCESSOR_ID,
         )
-        rows = [(deprecated, True, "implemented", "kept for history")]
+        # (catalog, selected, implementation_status, selection_reason, maturity_level)
+        rows = [(deprecated, True, "implemented", "kept for history", "L3")]
         client, _session = client_factory([1, rows])  # count, then page rows
 
         resp = client.get(

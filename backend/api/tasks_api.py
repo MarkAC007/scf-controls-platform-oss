@@ -17,7 +17,7 @@ from tasks import (
     trigger_notification,
     trigger_bulk_operation,
 )
-from celery_app import celery_app
+from celery_app import celery_app, payload_reports_failure
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +131,45 @@ async def trigger_bulk_task(request: TriggerBulkOperationRequest):
         raise HTTPException(status_code=500, detail="Failed to queue bulk operation")
 
 
+def _describe_task_result(result) -> tuple[str, Optional[dict], Optional[str]]:
+    """Derive ``(status, result, error)`` from a Celery result object (#1013).
+
+    Celery reports ``SUCCESS`` whenever no exception escaped the task body,
+    which is not the same as the work having succeeded. Tasks in this codebase
+    catch their own exception, record the failure and **return** a payload that
+    says so (``{"status": "failed", "error": ...}``) — see the note above
+    ``FAILURE_STATUSES`` in ``celery_app``. Reporting Celery's literal status
+    therefore told a caller polling a vendor assessment, a recipe generation,
+    an evidence assessment, a research run, an evidence-store copy or a window
+    assessment that the job had succeeded when it had not.
+
+    Such a payload is reported as ``FAILURE`` with the task's own reason. The
+    payload is still returned in ``result`` so the caller keeps the detail, and
+    every other state — a task that genuinely raised, ``PROGRESS``, ``PENDING``
+    and the rest — is derived exactly as before.
+
+    ``payload_reports_failure`` is deliberately shared with the worker-side
+    handler rather than reimplemented, so the log and the API cannot drift into
+    disagreeing about which statuses mean "this did not work".
+    """
+    status = result.status
+    task_result = None
+    error = None
+
+    if status == "SUCCESS":
+        task_result = result.result
+        if payload_reports_failure(task_result):
+            status = "FAILURE"
+            detail = task_result.get("error") or task_result.get("message")
+            error = str(detail)[:500] if detail else "Task returned a failure payload"
+    elif status == "FAILURE":
+        error = str(result.result) if result.result else "Unknown error"
+    elif status == "PROGRESS":
+        task_result = result.info
+
+    return status, task_result, error
+
+
 @router.get("/status/{task_id}", response_model=TaskStatusResponse)
 async def get_task_status(task_id: str):
     """
@@ -139,16 +178,7 @@ async def get_task_status(task_id: str):
     try:
         result = celery_app.AsyncResult(task_id)
 
-        status = result.status
-        task_result = None
-        error = None
-
-        if status == "SUCCESS":
-            task_result = result.result
-        elif status == "FAILURE":
-            error = str(result.result) if result.result else "Unknown error"
-        elif status == "PROGRESS":
-            task_result = result.info
+        status, task_result, error = _describe_task_result(result)
 
         return TaskStatusResponse(
             task_id=task_id,

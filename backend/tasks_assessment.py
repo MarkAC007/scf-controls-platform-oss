@@ -42,6 +42,7 @@ from services.text_extraction_service import (
 from services.anthropic_response import extract_text
 from services.model_registry import cost_cents as model_cost_cents, resolve as resolve_model
 
+from services.llm_client import build_anthropic_client
 from services.secrets import get_secret
 
 from db_url import get_sync_database_url
@@ -199,14 +200,13 @@ def _call_llm(system_prompt: str, user_prompt: str) -> dict:
             "anthropic package not installed — AI assessment cannot run in this worker"
         )
 
-    api_key = get_secret("ANTHROPIC_API_KEY")
-    if not api_key:
+    if not get_secret("ANTHROPIC_API_KEY"):
         raise LLMUnavailableError(
             "ANTHROPIC_API_KEY not set — AI assessment cannot run in this worker"
         )
 
     try:
-        client = anthropic.Anthropic(api_key=api_key)
+        client = build_anthropic_client()
         with client.messages.stream(
             model=resolve_model(MODEL_ROLE),
             max_tokens=MAX_OUTPUT_TOKENS,

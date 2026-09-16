@@ -31,7 +31,16 @@ export async function loadScopedControls(): Promise<ScopedControlsFile | null> {
         assigned_user: toUserSimple(item.assigned_user),
         owner_user: toUserSimple(item.owner_user),
         frequency: item.frequency ?? undefined,
-        comments: item.comments ?? undefined
+        comments: item.comments ?? undefined,
+        // Omitting this dropped the org's collection maturity on every load: the
+        // API serves it (evidence_tracking.py:210 declares a response_model that
+        // carries it) and the database holds it, but this literal rebuilt
+        // `evidence_tracking` without it, so the re-sync effect in
+        // EvidenceReview.tsx:553 faithfully pushed a stripped object into local
+        // state and the value "refreshed out". Every field on EvidenceTracking is
+        // optional, so nothing type-checked the omission. See the completeness
+        // test in __tests__/scopingService.mappers.test.ts.
+        maturity_level: (item.maturity_level as EvidenceTracking['maturity_level']) ?? undefined
       }
     })
 
@@ -147,7 +156,12 @@ function normalizeEvidenceTracking(tracking: EvidenceTracking): EvidenceTracking
     assigned_user: tracking.assigned_user ?? undefined,
     owner_user: tracking.owner_user ?? undefined,
     frequency: tracking.frequency ?? undefined,
-    comments: tracking.comments ?? undefined
+    comments: tracking.comments ?? undefined,
+    // Same omission as the loader's mapper above, on a different surface: this
+    // one feeds exportScopedControls(), so every JSON export ever produced left
+    // out each evidence item's collection maturity — under a comment promising
+    // "all fields".
+    maturity_level: tracking.maturity_level ?? undefined
   }
 }
 

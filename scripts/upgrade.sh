@@ -223,6 +223,91 @@ resolve_compose_files() {
   fi
 }
 
+# --- Host-side group on the catalogue directory (Linux only) -----------------
+# Parity with `apply_linux_group` in scripts/install.sh:166. The installer
+# chgrp's webclient/public/data to ${SCF_APP_GID} and sets mode 2775, because
+# that host directory is where the in-app catalogue import writes its JSON.
+# Without it the import dies with `PermissionError: /app/data/json/...` and the
+# operator cannot get past first login -- OSS #98, #99.
+#
+# upgrade.sh did none of this, and Phase 3 checks out a new tree: a directory
+# (or a file the release adds under it) can come back carrying the operator's
+# own group, which turns a correct install into the #98/#99 failure at the
+# first import AFTER the upgrade. Re-asserting it here closes that gap.
+#
+# Only the data-directory half of apply_linux_group is reproduced. The secrets
+# directory is not touched by a git checkout, and .env already carries
+# SCF_APP_GID, so neither the secrets chgrp nor write_env_app_gid belongs here.
+#
+# It is a chgrp, never a chown: the operator stays the owner of their checkout.
+# Failure is a warning, not a rollback -- this is host-side file hygiene, and a
+# migrated, healthy database must not be reverted because a chgrp did not take.
+
+# Host path, relative to the checkout root this script already runs from
+# (require_prereqs asserts `.git` is here).
+CATALOG_DATA_DIR="webclient/public/data"
+
+# The gid the compose files run the backend as and hand to `group_add`. Read
+# from .env, where scripts/install.sh records it (`write_env_app_gid`), falling
+# back to the same built-in default the compose files and the installer use.
+catalog_app_gid() {
+  local gid
+  gid="$(env_file_value SCF_APP_GID)"
+  [[ "$gid" =~ ^[0-9]+$ ]] || gid=1001
+  printf '%s' "$gid"
+}
+
+# Preflight + apply. The PREFLIGHT is half the point: #98/#99 were hard to
+# diagnose precisely because a wrongly-grouped directory produced no signal
+# until an import failed deep inside the app, so say what was wrong out loud
+# even when the fix that follows succeeds.
+apply_linux_catalog_group() {
+  local kernel
+  kernel="$(uname -s)"
+  if [[ "$kernel" = "Darwin" ]]; then
+    info "Darwin detected: Docker Desktop maps file ownership, so no group step is needed."
+    return 0
+  fi
+  if [[ "$kernel" != "Linux" ]]; then
+    info "${kernel} detected: skipping the Linux group step."
+    return 0
+  fi
+
+  local gid dir
+  gid="$(catalog_app_gid)"
+  dir="$CATALOG_DATA_DIR"
+
+  if [[ ! -d "$dir" ]]; then
+    warn "${dir} does not exist after the checkout; the in-app catalogue import will fail until it does."
+    return 0
+  fi
+
+  local before
+  before="$(stat -c '%g %a' "$dir" 2>/dev/null || true)"
+  if [[ "$before" = "${gid} 2775" ]]; then
+    info "${dir} is already gid ${gid} mode 2775 — nothing to do."
+    return 0
+  fi
+  warn "${dir} is '${before:-unreadable}', but the catalogue import needs gid ${gid} mode 2775 (a checkout, or an install provisioned by hand, can leave it wrong) — fixing."
+
+  # The chgrp runs inside a container because the operator is usually not a
+  # member of gid ${gid} and so cannot chgrp to it directly.
+  info "granting gid ${gid} write access to ${dir} (catalogue output)"
+  if ! docker run --rm -v "${PWD}/${dir}:/d" alpine:3 \
+       sh -c "chgrp -R ${gid} /d && chmod 2775 /d && find /d -type d -exec chmod 2775 {} + && find /d -type f -exec chmod 0664 {} +"; then
+    warn "could not set gid ${gid} on ${dir}. The upgrade continues, but the next catalogue import will fail with PermissionError until you run: docker run --rm -v \"${PWD}/${dir}:/d\" alpine:3 sh -c 'chgrp -R ${gid} /d && chmod 2775 /d'"
+    return 0
+  fi
+
+  local after
+  after="$(stat -c '%g %a' "$dir" 2>/dev/null || true)"
+  if [[ "$after" = "${gid} 2775" ]]; then
+    success "${dir} is gid ${gid} mode 2775 — setgid, so imported JSON keeps group ${gid}."
+  else
+    warn "${dir} is '${after:-unreadable}' after the group step, expected '${gid} 2775'. The next catalogue import may fail with PermissionError."
+  fi
+}
+
 # --- SCF_SECRET_KEY -----------------------------------------------------------
 # The key that encrypts tier-3 integration credentials. It must exist BEFORE the
 # migration one-shot runs: a migration that needed a key nobody has yet would
@@ -1337,6 +1422,17 @@ do_upgrade() {
 # the two entry paths are indistinguishable from here on.
 do_upgrade_post_checkout() {
   local pg_dump="$PG_DUMP_FILE" minio_tar="$MINIO_TAR_FILE" sum_file="$SUM_FILE"
+
+  # Host-side group parity with the installer, before anything is built or
+  # started: Phase 3 has just checked out a new tree, and the first catalogue
+  # import after startup writes into webclient/public/data.
+  #
+  # Deliberately here and NOT immediately after the checkout in do_upgrade:
+  # this function is the ONLY point both entry paths pass through. A run that
+  # re-execs the target release's own upgrade.sh (#979) re-enters here, so a
+  # call placed up in do_upgrade would be skipped on the very upgrade that
+  # introduces it -- the pre-upgrade copy of this script does not have it.
+  apply_linux_catalog_group
 
   # -------------------------------------------------------------------------
   step "Phase 4 — Build, migrate as a one-shot, then start"

@@ -24,8 +24,8 @@ function defaultProps(overrides: Partial<ScopingBulkBarProps> = {}): ScopingBulk
     busy: false,
     progressText: undefined,
     onSelectAllVisible: vi.fn(),
-    onSetApplicable: vi.fn(),
-    onSetNA: vi.fn(),
+    onSetMaturity: vi.fn(),
+    onSetStatus: vi.fn(),
     onAssignOwner: vi.fn(),
     onClear: vi.fn(),
     ...overrides,
@@ -79,31 +79,98 @@ describe('ScopingBulkBar', () => {
     })
   })
 
+  describe('bulk scoping is gone', () => {
+    // The removed buttons wrote `selected` — bulk SCOPING, not status. Bulk
+    // descoping of an arbitrary row selection was withdrawn deliberately, so
+    // assert their absence rather than trusting the props type alone.
+    it('no longer renders "Set applicable"', () => {
+      render(<ScopingBulkBar {...defaultProps()} />)
+      expect(screen.queryByRole('button', { name: /set applicable/i })).toBeNull()
+    })
+
+    it('no longer renders "Set N/A"', () => {
+      render(<ScopingBulkBar {...defaultProps()} />)
+      expect(screen.queryByRole('button', { name: /set n\/a/i })).toBeNull()
+    })
+  })
+
+  describe('set maturity', () => {
+    it('renders the "Set maturity" select with L0 through L5', () => {
+      render(<ScopingBulkBar {...defaultProps()} />)
+      const select = screen.getByRole('combobox', { name: /set maturity level/i })
+      expect(select).toBeInTheDocument()
+      for (const level of ['L0', 'L1', 'L2', 'L3', 'L4', 'L5']) {
+        expect(screen.getByRole('option', { name: new RegExp(`^${level} - `) })).toBeInTheDocument()
+      }
+    })
+
+    it('calls onSetMaturity with the chosen level', () => {
+      const onSetMaturity = vi.fn()
+      render(<ScopingBulkBar {...defaultProps({ onSetMaturity })} />)
+      const select = screen.getByRole('combobox', { name: /set maturity level/i })
+      fireEvent.change(select, { target: { value: 'L3' } })
+      expect(onSetMaturity).toHaveBeenCalledTimes(1)
+      expect(onSetMaturity).toHaveBeenCalledWith('L3')
+    })
+
+    it('resets to the placeholder after firing (it is a command, not a bound value)', () => {
+      render(<ScopingBulkBar {...defaultProps()} />)
+      const select = screen.getByRole('combobox', { name: /set maturity level/i })
+      fireEvent.change(select, { target: { value: 'L3' } })
+      expect((select as HTMLSelectElement).value).toBe('')
+    })
+
+    it('does not fire on the placeholder option', () => {
+      const onSetMaturity = vi.fn()
+      render(<ScopingBulkBar {...defaultProps({ onSetMaturity })} />)
+      const select = screen.getByRole('combobox', { name: /set maturity level/i })
+      fireEvent.change(select, { target: { value: '' } })
+      expect(onSetMaturity).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('set status', () => {
+    it('renders the "Set status" select with all eight API values', () => {
+      render(<ScopingBulkBar {...defaultProps()} />)
+      const select = screen.getByRole('combobox', { name: /set implementation status/i })
+      expect(select).toBeInTheDocument()
+      // Eight statuses + the placeholder option.
+      expect(select.querySelectorAll('option')).toHaveLength(9)
+    })
+
+    it('offers "Not applicable" under its plain API label', () => {
+      // implementation_status = not_applicable is NOT the removed "Set N/A",
+      // which wrote `selected = false` and took the control out of scope.
+      render(<ScopingBulkBar {...defaultProps()} />)
+      expect(screen.getByRole('option', { name: 'Not applicable' })).toBeInTheDocument()
+    })
+
+    it('calls onSetStatus with the chosen status', () => {
+      const onSetStatus = vi.fn()
+      render(<ScopingBulkBar {...defaultProps({ onSetStatus })} />)
+      const select = screen.getByRole('combobox', { name: /set implementation status/i })
+      fireEvent.change(select, { target: { value: 'ready_for_review' } })
+      expect(onSetStatus).toHaveBeenCalledTimes(1)
+      expect(onSetStatus).toHaveBeenCalledWith('ready_for_review')
+    })
+
+    it('resets to the placeholder after firing', () => {
+      render(<ScopingBulkBar {...defaultProps()} />)
+      const select = screen.getByRole('combobox', { name: /set implementation status/i })
+      fireEvent.change(select, { target: { value: 'implemented' } })
+      expect((select as HTMLSelectElement).value).toBe('')
+    })
+
+    it('does not fire on the placeholder option', () => {
+      const onSetStatus = vi.fn()
+      render(<ScopingBulkBar {...defaultProps({ onSetStatus })} />)
+      const select = screen.getByRole('combobox', { name: /set implementation status/i })
+      fireEvent.change(select, { target: { value: '' } })
+      expect(onSetStatus).not.toHaveBeenCalled()
+    })
+  })
+
   describe('action buttons', () => {
-    it('renders "Set applicable" button', () => {
-      render(<ScopingBulkBar {...defaultProps()} />)
-      expect(screen.getByRole('button', { name: /set applicable/i })).toBeInTheDocument()
-    })
-
-    it('calls onSetApplicable when "Set applicable" is clicked', () => {
-      const onSetApplicable = vi.fn()
-      render(<ScopingBulkBar {...defaultProps({ onSetApplicable })} />)
-      fireEvent.click(screen.getByRole('button', { name: /set applicable/i }))
-      expect(onSetApplicable).toHaveBeenCalledTimes(1)
-    })
-
-    it('renders "Set N/A" button', () => {
-      render(<ScopingBulkBar {...defaultProps()} />)
-      expect(screen.getByRole('button', { name: /set n\/a/i })).toBeInTheDocument()
-    })
-
-    it('calls onSetNA when "Set N/A" is clicked', () => {
-      const onSetNA = vi.fn()
-      render(<ScopingBulkBar {...defaultProps({ onSetNA })} />)
-      fireEvent.click(screen.getByRole('button', { name: /set n\/a/i }))
-      expect(onSetNA).toHaveBeenCalledTimes(1)
-    })
-
     it('renders the "Assign owner" select with the org teams', () => {
       render(<ScopingBulkBar {...defaultProps()} />)
       expect(screen.getByRole('combobox', { name: /assign owner/i })).toBeInTheDocument()
@@ -151,14 +218,14 @@ describe('ScopingBulkBar', () => {
   })
 
   describe('busy state', () => {
-    it('disables "Set applicable" when busy=true', () => {
+    it('disables the "Set maturity" select when busy=true', () => {
       render(<ScopingBulkBar {...defaultProps({ busy: true })} />)
-      expect(screen.getByRole('button', { name: /set applicable/i })).toBeDisabled()
+      expect(screen.getByRole('combobox', { name: /set maturity level/i })).toBeDisabled()
     })
 
-    it('disables "Set N/A" when busy=true', () => {
+    it('disables the "Set status" select when busy=true', () => {
       render(<ScopingBulkBar {...defaultProps({ busy: true })} />)
-      expect(screen.getByRole('button', { name: /set n\/a/i })).toBeDisabled()
+      expect(screen.getByRole('combobox', { name: /set implementation status/i })).toBeDisabled()
     })
 
     it('disables "Assign owner" select when busy=true', () => {

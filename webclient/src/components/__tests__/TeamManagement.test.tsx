@@ -332,6 +332,7 @@ describe('TeamManagement membership and archiving', () => {
     await user.click(await screen.findByRole('button', { name: 'New team' }))
     await user.type(screen.getByLabelText('Team name'), 'Incident Response')
     await user.selectOptions(screen.getByLabelText('Business functions'), FUNCTION_ID)
+    expect(screen.getByRole('button', { name: 'Remove Security' })).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Create team' }))
 
     await waitFor(() =>
@@ -354,10 +355,10 @@ describe('TeamManagement membership and archiving', () => {
 
     await user.click(await screen.findByRole('button', { name: 'New team' }))
     await user.type(screen.getByLabelText('Team name'), 'Platform')
-    await user.selectOptions(
-      screen.getByLabelText('Business functions'),
-      [FUNCTION_ID, 'fn-ops']
-    )
+    // Two separate adds. The old control took both in one gesture and could
+    // lose both the same way; the chips make each one its own act.
+    await user.selectOptions(screen.getByLabelText('Business functions'), FUNCTION_ID)
+    await user.selectOptions(screen.getByLabelText('Business functions'), 'fn-ops')
     await user.click(screen.getByRole('button', { name: 'Create team' }))
 
     await waitFor(() => expect(mockCreate).toHaveBeenCalledWith(ORG_ID, {
@@ -366,5 +367,199 @@ describe('TeamManagement membership and archiving', () => {
       function_id: FUNCTION_ID,
       function_ids: [FUNCTION_ID, 'fn-ops'],
     }))
+  })
+})
+
+/**
+ * C5: the business-function picker is add/remove chips, not <select multiple>.
+ *
+ * The regression this suite exists for is the edit form. It used to write
+ * straight through — every change to the native multi-select fired an
+ * immediate ``updateTeam`` — so a single stray click inside the control
+ * collapsed a team's functions to one entry and persisted that before anyone
+ * could react. The staging test below is the guard on that, and it is the
+ * most important assertion in this file.
+ */
+describe('TeamManagement business function chips', () => {
+  const opsFn = fn({ id: 'fn-ops', key: 'ops', name: 'Operations', display_order: 2 })
+  const retiredFn = fn({
+    id: 'fn-retired',
+    key: 'retired',
+    name: 'Shared Services',
+    display_order: 3,
+    is_active: false,
+  })
+
+  it('adds a function to the staged create selection as a chip', async () => {
+    const user = userEvent.setup()
+    primeLoad([], [fn(), opsFn])
+
+    render(<TeamManagement organizationId={ORG_ID} />)
+
+    await user.click(await screen.findByRole('button', { name: 'New team' }))
+    const picker = screen.getByLabelText('Business functions')
+    expect(screen.queryByRole('button', { name: 'Remove Security' })).not.toBeInTheDocument()
+
+    await user.selectOptions(picker, FUNCTION_ID)
+    await user.selectOptions(picker, 'fn-ops')
+
+    expect(screen.getByRole('button', { name: 'Remove Security' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Remove Operations' })).toBeInTheDocument()
+    // An added function leaves the add list, so it cannot be added twice.
+    expect(within(picker).queryByRole('option', { name: 'Security' })).not.toBeInTheDocument()
+    // Staged only — creating is still the admin's move.
+    expect(mockCreate).not.toHaveBeenCalled()
+  })
+
+  it('removes a chip from the staged create selection', async () => {
+    const user = userEvent.setup()
+    primeLoad([], [fn(), opsFn])
+    mockCreate.mockResolvedValue(team({ id: 'team-new' }) as Team)
+
+    render(<TeamManagement organizationId={ORG_ID} />)
+
+    await user.click(await screen.findByRole('button', { name: 'New team' }))
+    await user.type(screen.getByLabelText('Team name'), 'Platform')
+    const picker = screen.getByLabelText('Business functions')
+    await user.selectOptions(picker, FUNCTION_ID)
+    await user.selectOptions(picker, 'fn-ops')
+
+    await user.click(screen.getByRole('button', { name: 'Remove Security' }))
+
+    expect(screen.queryByRole('button', { name: 'Remove Security' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Create team' }))
+    await waitFor(() => expect(mockCreate).toHaveBeenCalledWith(ORG_ID, {
+      name: 'Platform',
+      description: '',
+      function_id: 'fn-ops',
+      function_ids: ['fn-ops'],
+    }))
+  })
+
+  it('will not let the last chip be removed', async () => {
+    const user = userEvent.setup()
+    primeLoad([], [fn(), opsFn])
+
+    render(<TeamManagement organizationId={ORG_ID} />)
+
+    await user.click(await screen.findByRole('button', { name: 'New team' }))
+    await user.selectOptions(screen.getByLabelText('Business functions'), FUNCTION_ID)
+
+    expect(screen.getByRole('button', { name: 'Remove Security' })).toBeDisabled()
+  })
+
+  it('offers an inactive function marked "(inactive)" but refuses to add it', async () => {
+    const user = userEvent.setup()
+    primeLoad([], [fn(), retiredFn])
+
+    render(<TeamManagement organizationId={ORG_ID} />)
+
+    await user.click(await screen.findByRole('button', { name: 'New team' }))
+    const picker = screen.getByLabelText('Business functions')
+    const inactiveOption = within(picker).getByRole('option', {
+      name: 'Shared Services (inactive)',
+    })
+    expect(inactiveOption).toBeDisabled()
+
+    await user.selectOptions(picker, FUNCTION_ID)
+    // The disabled option cannot be chosen, so no chip for it can ever exist.
+    expect(
+      screen.queryByRole('button', { name: 'Remove Shared Services' })
+    ).not.toBeInTheDocument()
+  })
+
+  it('still shows and can remove an inactive function a team already holds', async () => {
+    const user = userEvent.setup()
+    primeLoad(
+      [team({ function_id: FUNCTION_ID, function_ids: [FUNCTION_ID, 'fn-retired'] })],
+      [fn(), retiredFn]
+    )
+
+    render(<TeamManagement organizationId={ORG_ID} />)
+
+    await user.click(await screen.findByRole('button', { name: /Security Operations/ }))
+
+    // Marked inactive on the chip, exactly as the old <option> marked it.
+    const chip = screen
+      .getByRole('button', { name: 'Remove Shared Services' })
+      .closest('li') as HTMLElement
+    expect(chip).toHaveTextContent('Shared Services (inactive)')
+
+    const remove = within(chip).getByRole('button', { name: 'Remove Shared Services' })
+    expect(remove).toBeEnabled()
+    await user.click(remove)
+
+    // Gone from the selection. It reappears in the add list as a disabled
+    // option, which is the point — removable, but not addable again.
+    expect(
+      screen.queryByRole('button', { name: 'Remove Shared Services' })
+    ).not.toBeInTheDocument()
+    expect(
+      within(screen.getByLabelText('Business functions for Security Operations'))
+        .getByRole('option', { name: 'Shared Services (inactive)' })
+    ).toBeDisabled()
+  })
+
+  it('does NOT call updateTeam when the edit selection changes', async () => {
+    const user = userEvent.setup()
+    primeLoad(
+      [team({ function_id: FUNCTION_ID, function_ids: [FUNCTION_ID] })],
+      [fn(), opsFn]
+    )
+
+    render(<TeamManagement organizationId={ORG_ID} />)
+
+    await user.click(await screen.findByRole('button', { name: /Security Operations/ }))
+    await user.selectOptions(
+      screen.getByLabelText('Business functions for Security Operations'),
+      'fn-ops'
+    )
+
+    // The whole point of C5. The old control persisted here, on the keystroke.
+    expect(mockUpdateTeam).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'Save functions' })).toBeInTheDocument()
+  })
+
+  it('persists the edit only on Save, as one call', async () => {
+    const user = userEvent.setup()
+    const detail = team({ function_id: FUNCTION_ID, function_ids: [FUNCTION_ID] })
+    primeLoad([detail], [fn(), opsFn])
+    mockUpdateTeam.mockResolvedValue(detail)
+
+    render(<TeamManagement organizationId={ORG_ID} />)
+
+    await user.click(await screen.findByRole('button', { name: /Security Operations/ }))
+    await user.selectOptions(
+      screen.getByLabelText('Business functions for Security Operations'),
+      'fn-ops'
+    )
+    await user.click(screen.getByRole('button', { name: 'Save functions' }))
+
+    await waitFor(() => expect(mockUpdateTeam).toHaveBeenCalledTimes(1))
+    expect(mockUpdateTeam).toHaveBeenCalledWith(ORG_ID, 'team-1', {
+      function_id: FUNCTION_ID,
+      function_ids: [FUNCTION_ID, 'fn-ops'],
+    })
+  })
+
+  it('discards the edit on Cancel without sending anything', async () => {
+    const user = userEvent.setup()
+    primeLoad(
+      [team({ function_id: FUNCTION_ID, function_ids: [FUNCTION_ID] })],
+      [fn(), opsFn]
+    )
+
+    render(<TeamManagement organizationId={ORG_ID} />)
+
+    await user.click(await screen.findByRole('button', { name: /Security Operations/ }))
+    await user.selectOptions(
+      screen.getByLabelText('Business functions for Security Operations'),
+      'fn-ops'
+    )
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+
+    expect(mockUpdateTeam).not.toHaveBeenCalled()
+    expect(screen.queryByRole('button', { name: 'Remove Operations' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Save functions' })).not.toBeInTheDocument()
   })
 })
