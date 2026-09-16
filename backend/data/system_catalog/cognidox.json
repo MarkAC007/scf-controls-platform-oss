@@ -1,0 +1,182 @@
+{
+  "slug": "cognidox",
+  "name": "Cognidox",
+  "vendor": "Cognidox Ltd",
+  "category": "Document Control & QMS",
+  "description": "Cognidox's document-control and eQMS platform for controlled documents in regulated industries (ISO 13485, ISO 27001); yields controlled-document registers with draft/issue state, review and approval workflow records, version history, category-level security-profile permissions and per-document audit history.",
+  "website": "https://www.cognidox.com",
+  "aliases": [
+    "cognidox",
+    "cognidox dms",
+    "cognidox document management",
+    "cogni dox"
+  ],
+  "logo_hint": "cognidox",
+  "system_type": "document_management",
+  "version": "1.0",
+  "recipes": {
+    "L1": {
+      "title": "Cognidox Manual Evidence Collection",
+      "estimated_time": "30 minutes",
+      "frequency": "quarterly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Open Search > Advanced Search, add criteria such as Document Type and the in-scope categories, run the search and take a dated screenshot of the results listing each controlled document's Part Number, current version (Draft A/B/C or Issue 1/2/3) and Document Status; save the criteria via the Save Search menu so the same register can be re-run each cycle",
+          "permissions_required": "User with read access to the in-scope categories",
+          "audit_note": "Cognidox labels unapproved drafts in bold red on the details page; the register screenshot should show which documents are at an Issue (approved) state versus a Draft, because that distinction is what an auditor checks against the ISMS document list",
+          "vendor_docs_url": "https://www.cognidox.com/knowledge/advanced-search-and-saved-searches"
+        },
+        {
+          "step": 2,
+          "action": "For each in-scope policy or procedure, open the Document Details page and screenshot the Part Number, Master File and PDF Preview, Document Status and Metadata (author, categories, issuer), then open the document's History section to capture the approval record (approver, decision, comment and date)",
+          "permissions_required": "User with read access to the document",
+          "audit_note": "The History section is where Cognidox stores each approval decision; capturing it per document is the approval-workflow evidence, and the details page confirms the approved version is the one in circulation",
+          "vendor_docs_url": "https://www.cognidox.com/knowledge/understanding-document-details"
+        },
+        {
+          "step": 3,
+          "action": "From the Document Details page (or the Action sidebar) open Version history and review history, sort newest to oldest and screenshot the list of drafts and issued versions showing whether a review was requested and how many responses were received for each",
+          "permissions_required": "User with read access to the document",
+          "audit_note": "Version history plus review responses demonstrates the review-then-approve cycle operated for each issue; there is no documented export of this view, so the dated screenshot is the primary record",
+          "vendor_docs_url": "https://www.cognidox.com/knowledge/version-history-and-review-history"
+        },
+        {
+          "step": 4,
+          "action": "Go to Manage Cognidox > Users, Groups & Security > User and Group Rights and screenshot the user list with each user's Role Group and User Groups; then for each in-scope category click Security, open the Security Profiles tab and screenshot the applied profile (or click the padlock icon next to the category for the summary of active security settings)",
+          "permissions_required": "Cognidox administrator",
+          "audit_note": "Role Groups carry default permissions and a user holds exactly one, so the user list doubles as the privileged-access register; the category security profile shows who can see and change the controlled documents",
+          "vendor_docs_url": "https://www.cognidox.com/knowledge/using-security-profiles"
+        },
+        {
+          "step": 5,
+          "action": "For documents with a defined review cycle, open the Action sidebar > View, Create, or Edit Scheduled Reminders and screenshot the shared reminder (start date, end date, frequency and recipients) as evidence that periodic review is scheduled",
+          "permissions_required": "Document owner or administrator",
+          "audit_note": "Cognidox does not document a system-wide 'documents due for review' report; reminder configuration per document is the verifiable evidence, so pair it with the register from step 1",
+          "vendor_docs_url": "https://www.cognidox.com/knowledge/scheduled-document-reminders"
+        },
+        {
+          "step": 6,
+          "action": "Upload the screenshots to the evidence repository with the evidence ID reference, naming each file with the Cognidox Part Number and version it evidences",
+          "security_note": "Controlled documents in a QMS may themselves be confidential; capture metadata and history views rather than document body content, and restrict access to the user-list screenshot because it contains names and email addresses"
+        }
+      ]
+    },
+    "L2": {
+      "title": "Cognidox Recurring Export Cadence",
+      "estimated_time": "60 minutes initial setup, then 20 minutes per run",
+      "frequency": "monthly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Build the register once: create saved searches in Advanced Search for each in-scope category or document type, then on the homepage open the Custom Reports portlet, choose Add Report, select the fields to appear in the spreadsheet report, drag the saved searches into the report columns and click Store",
+          "permissions_required": "User with read access to the in-scope categories (Custom Reports portlet enabled)",
+          "audit_note": "A stored report re-runs against live data, so each monthly download reflects the register as it stood on that date without rebuilding the query",
+          "vendor_docs_url": "https://www.cognidox.com/knowledge/create-custom-report"
+        },
+        {
+          "step": 2,
+          "action": "Each month open the stored report and click the Excel icon to download the spreadsheet of the register; file it with the run date in the filename",
+          "permissions_required": "User with access to the stored report",
+          "audit_note": "Cognidox has no scheduled report delivery documented, so anchor the cadence on a recurring task in your tracker and record the completed task alongside the download",
+          "vendor_docs_url": "https://www.cognidox.com/knowledge/create-custom-report"
+        },
+        {
+          "step": 3,
+          "action": "Each month go to Manage Cognidox > Users, Groups & Security > User and Group Rights, use Upload Users to download the 'current users' spreadsheet (without re-uploading it) and file it as the monthly user and role listing",
+          "permissions_required": "Cognidox administrator",
+          "security_note": "The current-users spreadsheet is a bulk-edit template; download only, never re-upload from the evidence copy, and store it with restricted access because it contains logins and email addresses",
+          "vendor_docs_url": "https://www.cognidox.com/knowledge/how-do-i-add-users-to-my-cognidox-system"
+        },
+        {
+          "step": 4,
+          "action": "Quarterly, for the in-scope categories, screenshot the Category Analytics portlet (watched categories with review and approval status bars) and the Security Profiles tab of each category, and add them to the same evidence folder",
+          "permissions_required": "User watching the categories; administrator for security settings",
+          "audit_note": "Category Analytics shows outstanding versus completed reviews and approvals per category, which is a compact summary of workflow health for the period",
+          "vendor_docs_url": "https://www.cognidox.com/knowledge/using-category-analytics"
+        },
+        {
+          "step": 5,
+          "action": "File each export in the evidence repository against the evidence ID with restricted access",
+          "security_note": "Register and user exports reveal document titles and personnel; limit access to the compliance team"
+        }
+      ]
+    },
+    "L3": {
+      "title": "Cognidox API-Driven Evidence Automation",
+      "estimated_time": "3-5 hours initial setup",
+      "frequency": "automated weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Confirm API availability for your instance: Cognidox introduced a REST API in the v10.4 release (October 2024) for integration with tools such as Microsoft Office.js, JIRA and Confluence, and the API reference is supplied to customers rather than published openly, so request the API documentation and integration credentials from Cognidox support or your Cognidox administrator",
+          "permissions_required": "Cognidox administrator (to request and hold integration credentials)",
+          "audit_note": "The public site confirms the REST API exists but does not publish endpoint or authentication detail; record the documentation version you received against the evidence ID so the collector's basis is traceable",
+          "vendor_docs_url": "https://www.cognidox.com/blog/cognidox-unveils-new-integration-features-v10.4-release"
+        },
+        {
+          "step": 2,
+          "action": "Provision a dedicated read-only integration account (its own Role Group with no edit or approval rights) via Manage Cognidox > Users, Groups & Security > User and Group Rights, and issue the API credential against that account rather than a named person",
+          "permissions_required": "Cognidox administrator",
+          "security_note": "Store the credential in a secrets manager, scope the account's security profiles to the in-scope categories only, and deactivate the account rather than deleting it if the collector is retired so its history is preserved",
+          "vendor_docs_url": "https://www.cognidox.com/knowledge/how-do-i-add-and-delete-role-groups"
+        },
+        {
+          "step": 3,
+          "action": "Using the endpoints named in the documentation you received, schedule a weekly pull of the in-scope category listings and each document's metadata (Part Number, current version, status, categories, issuer) and its version list, and write the result as a dated JSON register",
+          "permissions_required": "Integration account with read access to the in-scope categories",
+          "audit_note": "Cognidox describes a Part Number as an envelope holding multiple versions and metadata; a register keyed on Part Number with the current version and status is the API equivalent of the L1 screenshot",
+          "vendor_docs_url": "https://www.cognidox.com/knowledge/introduction-to-cognidox-key-concepts-and-insights"
+        },
+        {
+          "step": 4,
+          "action": "Where the supplied documentation exposes version or approval history, pull it per in-scope document; where it does not, keep the L1 History-section screenshot as a compensating control and record that gap explicitly in the evidence record",
+          "audit_note": "Documenting a known API gap and its manual compensating control is stronger evidence than silently omitting the approval record",
+          "vendor_docs_url": "https://www.cognidox.com/knowledge/version-history-and-review-history"
+        },
+        {
+          "step": 5,
+          "action": "Add run metadata and validation: record the run timestamp, a SHA-256 checksum of each output file, alert on authentication failures or an empty register, and keep the L2 monthly spreadsheet download running until the API register has reconciled cleanly against it for two consecutive months",
+          "audit_note": "Recording run metadata and checksums makes each collected file independently verifiable"
+        }
+      ]
+    },
+    "L4": {
+      "title": "Cognidox Managed Pipeline with Reconciliation",
+      "estimated_time": "4-6 hours initial setup",
+      "frequency": "automated weekly with monthly reconciliation",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Run the L3 collector on a fixed weekly schedule, writing each register and version pull to immutable storage with its timestamp and SHA-256 hash, and retain every run so a document's status on any past date can be shown",
+          "audit_note": "Cognidox publicly documents no webhooks or event stream, so a scheduled pull with retained snapshots is the continuous-evidence mechanism; do not describe the pipeline as event-driven",
+          "vendor_docs_url": "https://www.cognidox.com/lean-eqms"
+        },
+        {
+          "step": 2,
+          "action": "Reconcile the Cognidox register against the ISMS or QMS master document list each month: flag documents on the master list with no Cognidox Part Number, Part Numbers in scope that are absent from the master list, and any in-scope document whose current version is a Draft rather than an Issue",
+          "audit_note": "Reconciliation, not collection, is what proves the controlled-document set is complete and that only approved issues are in circulation",
+          "vendor_docs_url": "https://www.cognidox.com/knowledge/the-document-lifecycle"
+        },
+        {
+          "step": 3,
+          "action": "Hold each document's review period in the pipeline configuration (or read the shared reminder settings if your API documentation exposes them), compute the next review date from the last Issue date, and alert the document owner and the compliance lead when a document is within 30 days of, or past, its review date",
+          "permissions_required": "Document owners receive alerts; compliance lead receives the summary",
+          "audit_note": "Cognidox documents per-document scheduled reminders but no consolidated overdue-review report, so the pipeline's computed list is the overdue-review evidence",
+          "vendor_docs_url": "https://www.cognidox.com/knowledge/scheduled-document-reminders"
+        },
+        {
+          "step": 4,
+          "action": "Reconcile access quarterly: compare the API-collected or downloaded user list and Role Groups against the HR leaver list and the intended security-profile assignments per category, and alert on any active account for a leaver or any administrator Role Group holder not on the approved list",
+          "permissions_required": "Cognidox administrator (for the user list); compliance lead",
+          "vendor_docs_url": "https://www.cognidox.com/knowledge/how-do-i-add-users-to-my-cognidox-system"
+        },
+        {
+          "step": 5,
+          "action": "Publish a monthly dashboard covering register completeness, count of in-scope documents at Draft state, documents overdue for review, and pipeline health (last successful run, hash verification result), and rotate the integration credential at least annually or when the holding administrator changes",
+          "security_note": "The integration credential is tied to a Cognidox account; rotate it on schedule and on administrator change, and keep the credential out of dashboards and evidence files"
+        }
+      ]
+    }
+  }
+}

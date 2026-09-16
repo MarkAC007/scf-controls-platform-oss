@@ -14,7 +14,12 @@
     "exchange online",
     "sharepoint online",
     "microsoft teams",
-    "microsoft purview"
+    "microsoft purview",
+    "outlook",
+    "microsoft outlook",
+    "sharepoint",
+    "onedrive",
+    "microsoft sharepoint"
   ],
   "logo_hint": "microsoft-365",
   "system_type": "document_management",

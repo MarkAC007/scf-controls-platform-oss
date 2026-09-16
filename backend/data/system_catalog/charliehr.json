@@ -1,0 +1,184 @@
+{
+  "slug": "charliehr",
+  "name": "CharlieHR",
+  "vendor": "Charlie HR Ltd",
+  "category": "HR & People Operations",
+  "description": "SMB HR platform for team member records, onboarding and time off. Yields joiner/mover/leaver evidence: team directories with start and leaving dates, onboarding checklist completion, policy reading confirmations, time-off and role records, and permission-level listings.",
+  "website": "https://www.charliehr.com",
+  "aliases": [
+    "charlie hr",
+    "charliehr",
+    "charlie",
+    "charlie hr software"
+  ],
+  "logo_hint": "charliehr",
+  "system_type": "hr_system",
+  "version": "1.0",
+  "recipes": {
+    "L1": {
+      "title": "CharlieHR Manual Evidence Collection",
+      "estimated_time": "20 minutes",
+      "frequency": "weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Sign in to CharlieHR, select Reports in the side navigation, open the team member report covering the collection period, click Export data and download the CSV once the button changes to Download; the export gives the current team list with start dates, job titles and teams",
+          "permissions_required": "Super Admin or Admin (only these roles can export reports)",
+          "security_note": "Use a named admin account reserved for evidence collection rather than a shared login; the CSV contains personal HR data",
+          "vendor_docs_url": "https://help.charliehr.com/en/articles/839572-exporting-reports"
+        },
+        {
+          "step": 2,
+          "action": "Go to People in the side navigation, click the arrow next to Everyone and select Archived to list offboarded team members; capture the list and, for each leaver in the period, open the archived profile and screenshot the leaving date",
+          "permissions_required": "Super Admin or Admin",
+          "audit_note": "The archived list plus leaving dates is the leaver population that the identity provider deprovisioning evidence must reconcile against",
+          "vendor_docs_url": "https://help.charliehr.com/en/articles/839563-viewing-archived-people"
+        },
+        {
+          "step": 3,
+          "action": "Expand Grow in the side navigation and open Checklists; for a sample of joiners in the period, open each new starter checklist and capture the task list showing completed and outstanding tasks (for example account provisioning and equipment issue) with assignees",
+          "permissions_required": "Checklist owner, Team Lead or Admin (these roles can see checklist progress)",
+          "audit_note": "Checklist completion status is the primary evidence that the documented onboarding procedure was followed for each joiner",
+          "vendor_docs_url": "https://help.charliehr.com/en/articles/4419349-manage-and-assign-tasks-using-checklists"
+        },
+        {
+          "step": 4,
+          "action": "Open the Handbook and Policies page, choose Handbook Actions then Read Confirmations, and capture the view showing which team members have confirmed each policy and the confirmation dates",
+          "permissions_required": "Super Admin or Admin",
+          "audit_note": "Reading confirmations are the policy acknowledgement evidence; note any joiners who have not yet confirmed the security and acceptable use policies",
+          "vendor_docs_url": "https://help.charliehr.com/en/articles/12000584-how-to-set-up-reading-confirmation-for-policies"
+        },
+        {
+          "step": 5,
+          "action": "Expand People, select Settings then Permissions, open each role (Super Admin, Admin, Payroll Admin, Team Lead, Line Manager) and capture the list of people holding it",
+          "permissions_required": "Super Admin (only Super Admins can view and change permission levels)",
+          "audit_note": "This is the periodic access review evidence for the HR system itself; date-stamp the capture and record any elevated roles that are no longer justified",
+          "vendor_docs_url": "https://help.charliehr.com/en/articles/839602-change-permission-levels"
+        },
+        {
+          "step": 6,
+          "action": "Upload the exports and screenshots to the evidence repository with the evidence ID reference and the collection date in each filename",
+          "security_note": "CharlieHR exports and profiles contain personal data (names, dates of birth, addresses, National Insurance numbers, salary fields); redact columns not needed for the control before uploading and store only in the approved evidence repository under UK GDPR retention limits"
+        }
+      ]
+    },
+    "L2": {
+      "title": "CharlieHR Recurring Export Cadence",
+      "estimated_time": "45 minutes (setup), then 15 minutes per cycle",
+      "frequency": "monthly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "In Reports, click New under Custom Reports and build a saved team member report with the fields needed for the joiner/mover/leaver population (name, work email, job title, team, office, manager, start date, employment status and leaving date); give it a clear name and description so every cycle uses the same definition",
+          "permissions_required": "Super Admin or Admin (Payroll Admins can only edit reports they created)",
+          "audit_note": "A saved custom report gives a consistent, repeatable evidence definition between cycles",
+          "vendor_docs_url": "https://help.charliehr.com/en/articles/839567-easily-build-manage-and-export-custom-reports"
+        },
+        {
+          "step": 2,
+          "action": "On the first working day of each month, open the saved report, click Export data and file the CSV in the evidence repository with the run date in the filename; in the same session capture the People > Archived list so leavers since the previous run are recorded",
+          "permissions_required": "Super Admin or Admin",
+          "audit_note": "Keep a simple collection log (date run, by whom) so a missed cycle is visible within one period; consecutive exports must be contiguous so no joiner or leaver falls in a gap",
+          "vendor_docs_url": "https://help.charliehr.com/en/articles/839572-exporting-reports"
+        },
+        {
+          "step": 3,
+          "action": "Each month capture the Read Confirmations view from Handbook Actions on the Handbook and Policies page and record which team members have not confirmed current policies; when a policy is materially updated, toggle the option requiring a new reading confirmation so acknowledgements are refreshed",
+          "permissions_required": "Super Admin or Admin",
+          "audit_note": "A monthly acknowledgement snapshot shows the policy sign-off control operating continuously rather than only at onboarding",
+          "vendor_docs_url": "https://help.charliehr.com/en/articles/12000584-how-to-set-up-reading-confirmation-for-policies"
+        },
+        {
+          "step": 4,
+          "action": "CharlieHR does not document scheduled or emailed report delivery; record in the collection procedure that the export is a manual step on the agreed calendar cadence, and automate it via the API instead (see L3)",
+          "audit_note": "Documenting the limitation shows the manual cadence is a deliberate, evidenced control rather than an omission"
+        },
+        {
+          "step": 5,
+          "action": "Quarterly, re-capture the People > Settings > Permissions role lists alongside the monthly export to keep the HR-system access review on the same cadence",
+          "permissions_required": "Super Admin",
+          "vendor_docs_url": "https://help.charliehr.com/en/articles/839602-change-permission-levels"
+        }
+      ]
+    },
+    "L3": {
+      "title": "CharlieHR API-Driven Automated Collection",
+      "estimated_time": "2-3 hours initial setup",
+      "frequency": "automated daily",
+      "steps": [
+        {
+          "step": 1,
+          "action": "As a Super Admin, expand Company in the side navigation, click Integrations, open the API Access tab and generate a Client ID and Client Secret for the evidence collector",
+          "permissions_required": "Super Admin (only Super Admins can generate API keys)",
+          "security_note": "The secret is shown once and then masked; store it in a secrets manager immediately, never in plaintext or source control, and regenerate it when the owner leaves",
+          "vendor_docs_url": "https://help.charliehr.com/en/articles/6193173-integrate-charlie-with-selected-apps"
+        },
+        {
+          "step": 2,
+          "action": "Authenticate every request with the header Authorization: Token token=client_id:client_secret and call GET https://charliehr.com/api/v1/team_members, following the meta.next_url pagination (page and per_page parameters) until total_pages is reached; each record includes start_date, employment_status, leaving_date, job_title, manager, teams, office and work_email",
+          "permissions_required": "Valid Client ID and Client Secret",
+          "audit_note": "Diffing consecutive daily pulls on start_date, leaving_date, employment_status, job_title and manager yields the joiner, mover and leaver deltas",
+          "vendor_docs_url": "https://app.charliehr.com/api_docs"
+        },
+        {
+          "step": 3,
+          "action": "Call GET https://charliehr.com/api/v1/teams and GET https://charliehr.com/api/v1/offices to resolve the team and office identifiers on each team member record, and GET https://charliehr.com/api/v1/leave_requests where the control requires time-off evidence",
+          "permissions_required": "Valid Client ID and Client Secret",
+          "audit_note": "Resolved team and office names make the export readable to an auditor without access to CharlieHR",
+          "vendor_docs_url": "https://app.charliehr.com/api_docs"
+        },
+        {
+          "step": 4,
+          "action": "Schedule the collection script via cron or a CI/CD pipeline to run daily, writing date-stamped JSON or CSV outputs to the evidence repository and dropping fields the control does not need (date_of_birth, ni_number, address, personal_email, bank and salary data) before persisting",
+          "security_note": "The API returns special-category and financial personal data; minimise at the point of collection, transfer over HTTPS only, encrypt at rest and apply UK GDPR retention limits and access controls to the repository"
+        },
+        {
+          "step": 5,
+          "action": "Implement error handling and alerting: treat HTTP 401 as a revoked or regenerated credential requiring immediate attention, retry transient failures, and alert on any failed run for re-collection within SLA",
+          "audit_note": "A logged failure-and-recovery trail demonstrates the collection process is controlled"
+        },
+        {
+          "step": 6,
+          "action": "Validate each run against the previous day's total_results and headcount, flagging anomalies (zero changes for a week, headcount jumps, records missing start_date) for human review",
+          "audit_note": "Volume validation provides assurance of collection completeness"
+        }
+      ]
+    },
+    "L4": {
+      "title": "CharlieHR Managed Pipeline with Reconciliation",
+      "estimated_time": "1 day initial setup",
+      "frequency": "continuous with daily reporting",
+      "steps": [
+        {
+          "step": 1,
+          "action": "CharlieHR does not document webhooks or change events, so run the L3 team_members pull on a fixed schedule (at least daily), compute a SHA-256 hash of each normalised record and store hash, record ID and collection timestamp in an append-only ledger",
+          "security_note": "Hashing normalised records lets you prove a record has not changed between pulls without retaining redundant copies of the personal data",
+          "audit_note": "The ledger is tamper-evident change history that substitutes for the event feed the vendor does not provide",
+          "vendor_docs_url": "https://app.charliehr.com/api_docs"
+        },
+        {
+          "step": 2,
+          "action": "Each day derive the leaver set (records whose employment_status is no longer active or whose leaving_date is on or before today) and the joiner set (start_date within the window) from the hash diff, and write them as dated joiner and leaver manifests",
+          "audit_note": "The manifests are the authoritative HR-side population for the joiner/mover/leaver control"
+        },
+        {
+          "step": 3,
+          "action": "Reconcile the leaver manifest against the identity provider's active account list by work_email: any leaver whose account remains enabled after the leaving date plus the agreed grace period is a deprovisioning exception; reconcile the joiner manifest the other way to detect accounts created without an HR record",
+          "permissions_required": "Read access to the identity provider's user directory in addition to the CharlieHR credentials",
+          "audit_note": "This cross-system reconciliation is the classic access-termination control; retain each run's result even when there are zero exceptions"
+        },
+        {
+          "step": 4,
+          "action": "Raise alerts to the security and HR owners when a reconciliation mismatch is found, when a scheduled pull fails or returns zero records on a working day, or when the API credential returns 401; track each alert to closure with a ticket reference",
+          "audit_note": "Alert-to-closure records show the control detects and corrects failures, not just that it runs"
+        },
+        {
+          "step": 5,
+          "action": "Publish a collection health dashboard (pulls per day, records hashed, mismatches open and closed, mean time to deprovision) and generate an automated quarterly review report covering exceptions, SLA breaches and Client Secret rotation",
+          "security_note": "Rotate the CharlieHR Client Secret on a defined schedule and after personnel changes, and review who holds Super Admin in CharlieHR at the same time",
+          "audit_note": "The dashboard and quarterly report are continuous evidence of a managed collection process"
+        }
+      ]
+    }
+  }
+}

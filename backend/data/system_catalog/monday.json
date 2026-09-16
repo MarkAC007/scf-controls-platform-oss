@@ -1,0 +1,192 @@
+{
+  "slug": "monday",
+  "name": "monday.com",
+  "vendor": "monday.com Ltd.",
+  "category": "Work & Project Management",
+  "description": "monday.com's cloud work-management platform for boards, items and workflows; yields board items with approval status and update/activity history, account member and guest listings with roles, account security settings such as SSO, 2FA enforcement and session policies, and the Enterprise-plan audit log.",
+  "website": "https://monday.com",
+  "aliases": [
+    "monday",
+    "monday.com",
+    "monday work management",
+    "monday dev"
+  ],
+  "logo_hint": "monday",
+  "system_type": "ticketing",
+  "version": "1.0",
+  "recipes": {
+    "L1": {
+      "title": "monday.com Manual Evidence Collection",
+      "estimated_time": "25 minutes",
+      "frequency": "weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Open each in-scope change, incident or access-request board, click the three-dot menu at the top right of the board, select More actions > Export board to Excel, tick the option to include updates (and subitems if used) and select Export; the workbook contains the table on one tab and every update and reply, which is where approval comments live, on a second tab",
+          "permissions_required": "Board access with export rights (Enterprise admins can restrict export to admins via Account permissions)",
+          "audit_note": "The export respects the active filter and covers up to 100,000 items, so apply and save a filter for the review period before exporting; subitem updates are not included, so keep approvals on parent items",
+          "vendor_docs_url": "https://support.monday.com/hc/en-us/articles/26989749858578-Export-from-monday-to-Excel"
+        },
+        {
+          "step": 2,
+          "action": "For status-change history on the same boards, open the board Activity Log (profile icon at the top right of the board), filter to the period, and use the Excel icon to export it; record that the export lists column value changes only, so item creation, deletion and moves are evidenced by the board export or screenshots",
+          "permissions_required": "Board access",
+          "audit_note": "Activity Log retention is plan-gated: one week on Basic, six months on Standard, one year on Pro and five years on Enterprise, and the Filter Log option is Pro and Enterprise only, so capture within the retention window for your plan",
+          "vendor_docs_url": "https://support.monday.com/hc/en-us/articles/115005310745-The-Activity-Log"
+        },
+        {
+          "step": 3,
+          "action": "Click your profile picture, select Administration > Directory > Users, filter the Users table by role and by status, and take dated screenshots showing every admin, member, viewer and guest together with their teams and last activity",
+          "permissions_required": "Account admin (or a custom role with access to the User management section)",
+          "audit_note": "Guests must have an email domain different from the organisation's, so the guest filter is the authoritative external-collaborator inventory; note deactivated users separately by filtering for inactive status",
+          "vendor_docs_url": "https://support.monday.com/hc/en-us/articles/360002426980-How-to-manage-users-on-your-account"
+        },
+        {
+          "step": 4,
+          "action": "Go to Administration > Security and take dated screenshots of the Authentication tab (Two-Factor Authentication status and whether it is required for members, guests or both), the Authentication policies tab (SAML SSO policy) and the Advanced tab (No-activity timeout and Session expired values); then open Administration > Permissions and screenshot the Account and Boards permission groups covering guest invites, shareable boards, public links, Excel export and API token generation for each role",
+          "permissions_required": "Account admin",
+          "audit_note": "2FA is available on all plans; SAML SSO and session duration are Enterprise only and Google SSO is Pro and Enterprise, so record the account plan alongside these screenshots",
+          "vendor_docs_url": "https://support.monday.com/hc/en-us/articles/360003457320-Account-permissions"
+        },
+        {
+          "step": 5,
+          "action": "On the Enterprise plan, go to Administration > Security > Audit tab, filter by User name or Event type (logins, failed logins, board exports, attachment downloads) for the review period and take dated screenshots; on lower plans there is no audit log, so record that limitation against the evidence ID",
+          "permissions_required": "Account admin (Enterprise plan only)",
+          "audit_note": "Timestamps in the audit log are shown in GMT; the vendor states that records are not currently deleted after a set period, but do not rely on that for retention",
+          "vendor_docs_url": "https://support.monday.com/hc/en-us/articles/360001259429-The-Audit-Log"
+        },
+        {
+          "step": 6,
+          "action": "Upload the Excel exports and screenshots to the evidence repository with the evidence ID reference",
+          "security_note": "Board exports include update text and user names and the Users screenshots include email addresses; redact unrelated item content and restrict access to the compliance team"
+        }
+      ]
+    },
+    "L2": {
+      "title": "monday.com Recurring Export Cadence",
+      "estimated_time": "45 minutes initial setup, then 15 minutes per run",
+      "frequency": "monthly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "On a compliance-tasks board, click Automate > Create > Create from scratch and build a recurring automation that creates an item every month (for example on the 1st at 9am) assigned to the evidence owner, so the evidence run is itself tracked as a board item with its own status history",
+          "permissions_required": "Board owner with permission to create automations",
+          "audit_note": "Each recurrence creates a new item rather than updating the last one, which gives an auditable record of every run; recurring automations run in the timezone of the person who set them up and consume the board automation quota",
+          "vendor_docs_url": "https://support.monday.com/hc/en-us/articles/360000221159-How-to-create-recurring-tasks"
+        },
+        {
+          "step": 2,
+          "action": "When the monthly item is created, apply a saved filter for the previous calendar month on each in-scope board and export it to Excel with updates included via the three-dot menu > More actions > Export board to Excel, using the option to send a copy to your email if the file should land in a monitored mailbox",
+          "permissions_required": "Board access with export rights",
+          "audit_note": "Exporting with updates places approvals and discussion on a second tab of the same workbook, keeping the approval trail with the item record",
+          "vendor_docs_url": "https://support.monday.com/hc/en-us/articles/26989749858578-Export-from-monday-to-Excel"
+        },
+        {
+          "step": 3,
+          "action": "At the same cadence, capture Administration > Directory > Users filtered by role and by status, and export the board Activity Log for each in-scope board to Excel for the month",
+          "permissions_required": "Account admin for the Users view; board access for Activity Logs",
+          "audit_note": "Monthly Activity Log exports build a continuous archive well inside even the one-week Basic-plan retention window if the cadence is shortened to weekly on that plan",
+          "vendor_docs_url": "https://support.monday.com/hc/en-us/articles/115005310745-The-Activity-Log"
+        },
+        {
+          "step": 4,
+          "action": "On the Enterprise plan, open Administration > Security > Audit each month, filter to the month and to the event types your controls rely on, and screenshot the filtered view; for a machine-readable copy use the Audit Log API pull described in L3",
+          "permissions_required": "Account admin (Enterprise plan only)",
+          "vendor_docs_url": "https://support.monday.com/hc/en-us/articles/360001259429-The-Audit-Log"
+        },
+        {
+          "step": 5,
+          "action": "Mark the monthly automation item Done with the evidence ID in an update, and file each export in the evidence repository with restricted access",
+          "security_note": "Exports contain member email addresses, update text and audit events; limit access to the compliance team and do not leave emailed copies in shared mailboxes"
+        }
+      ]
+    },
+    "L3": {
+      "title": "monday.com API-Driven Evidence Automation",
+      "estimated_time": "2-4 hours initial setup",
+      "frequency": "automated daily",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Create a dedicated read-only service user (Viewer role where the boards allow it), then from that user click the profile picture > Developers to open the Developer Center and select API token > Show; account admins can also reach it via Administration > Connections > Personal API token",
+          "permissions_required": "A user account with the Generate API tokens account permission",
+          "security_note": "Personal tokens mirror every board, item and account permission of the user who owns them and cannot be scoped down, so least privilege comes from the service user's role and board membership; store the token in a secrets manager and never generate it from an admin's personal login",
+          "vendor_docs_url": "https://developer.monday.com/api-reference/docs/authentication"
+        },
+        {
+          "step": 2,
+          "action": "Pull the daily item snapshot for each in-scope board with a GraphQL POST to https://api.monday.com/v2 (Authorization header set to the token, API-Version header pinned): query boards(ids: [...]) { name state permissions items_page(limit: 500) { cursor items { id name column_values { id text } updates { id body creator { id } created_at } } } } and follow the cursor until it returns null",
+          "permissions_required": "Service user subscribed to each in-scope board",
+          "audit_note": "items_page returns active items only, so archived or deleted items must be fetched with the root items query and the state argument; updates are where approval comments live and the updates field requires the updates:read scope",
+          "vendor_docs_url": "https://developer.monday.com/api-reference/reference/items-page"
+        },
+        {
+          "step": 3,
+          "action": "Pull the daily user inventory: query users(limit: 200, page: n) { id name email kind status is_admin is_guest last_activity teams { id name } } paging until an empty page is returned, and diff each day's result against the previous one to produce joiner, leaver and role-change records",
+          "permissions_required": "Any authenticated user token (results reflect account visibility)",
+          "audit_note": "The kind argument and the is_admin/is_guest/enabled fields are deprecated from API version 2026-07 in favour of user_kind and status, so pin the API-Version header and plan the migration",
+          "vendor_docs_url": "https://developer.monday.com/api-reference/reference/users"
+        },
+        {
+          "step": 4,
+          "action": "Pull board activity daily with boards(ids: [...]) { activity_logs(from: \"<ISO8601>\", to: \"<ISO8601>\", limit: 1000, page: n) { id event data created_at user_id entity } } to capture status transitions and permission changes, converting the 17-digit created_at value to a timestamp by dividing by 10,000",
+          "permissions_required": "Service user subscribed to each in-scope board",
+          "audit_note": "The API returns up to 10,000 logs per query and the underlying retention follows the plan (one week on Basic through five years on Enterprise), so a daily pull is the only way to build a complete archive on lower plans",
+          "vendor_docs_url": "https://developer.monday.com/api-reference/reference/activity-logs"
+        },
+        {
+          "step": 5,
+          "action": "On the Enterprise plan, have an account admin generate the audit token at Administration > Security > Audit > Monitor by API, then poll GET https://<your-account>.monday.com/audit-api/get-logs?page=1&per_page=100&filters={\"start_time\":\"<ISO8601>\"} with a Bearer header, following next_page until it is null, to archive login, export, download and deletion events",
+          "permissions_required": "Account admin (Enterprise plan only) to generate the audit token",
+          "security_note": "The audit token is separate from the GraphQL token and is admin-issued; keep it in the secrets manager, rotate it with the admin access review and stay under the 50 requests per minute limit",
+          "vendor_docs_url": "https://support.monday.com/hc/en-us/articles/4406042650002-Audit-Log-API"
+        },
+        {
+          "step": 6,
+          "action": "Add error handling and validation: respect the complexity budget and the daily call allowance for your plan (1,000 calls on Free, Basic and Standard, 10,000 on Pro, 25,000 on Enterprise, resetting at midnight UTC), back off for retry_in_seconds on 429 responses, alert on 401 or 403 responses or empty result sets, and store every output with a run timestamp and SHA-256 checksum",
+          "audit_note": "Recording run metadata and checksums makes each collected file independently verifiable and turns a daily pull into audit-grade evidence",
+          "vendor_docs_url": "https://developer.monday.com/api-reference/docs/rate-limits"
+        }
+      ]
+    },
+    "L4": {
+      "title": "monday.com Managed Pipeline with Webhooks and Reconciliation",
+      "estimated_time": "4-6 hours initial setup",
+      "frequency": "continuous with weekly reporting",
+      "steps": [
+        {
+          "step": 1,
+          "action": "On each in-scope board click Integrations, open the Create tab, select the Webhooks integration, choose the events to receive (item created, status column changed, any column changed, update created) and enter your collector's HTTPS URL; monday.com POSTs a JSON body containing a challenge field and the endpoint must echo the identical challenge back before the webhook is saved",
+          "permissions_required": "Board owner with permission to create integrations",
+          "security_note": "The challenge only proves you control the URL; the payload is not signed, so restrict the endpoint to monday.com's published public IP addresses, use a long unguessable path and treat every payload as untrusted until reconciled against the API",
+          "vendor_docs_url": "https://support.monday.com/hc/en-us/articles/360003540679-Webhook-integration"
+        },
+        {
+          "step": 2,
+          "action": "Alternatively create the subscriptions programmatically so they are version-controlled: mutation { create_webhook(board_id: ..., url: \"https://collector.example/monday\", event: change_status_column_value) { id board_id } } for each board and event, and store the returned webhook IDs so a daily job can confirm each one still exists",
+          "permissions_required": "Service user with board access and the Create automations / integrations account permission",
+          "audit_note": "Webhook URLs are limited to 255 characters and subitem events must be registered against the parent board ID",
+          "vendor_docs_url": "https://developer.monday.com/api-reference/reference/webhooks"
+        },
+        {
+          "step": 3,
+          "action": "Ingest each event payload (boardId, pulseId, columnId, value, previousValue, userId, triggerTime) into an append-only store keyed on triggerUuid, and use the create_update events to capture approval comments as they are posted",
+          "audit_note": "Deduplicating on triggerUuid protects the record against redelivery while preserving every distinct status transition"
+        },
+        {
+          "step": 4,
+          "action": "Reconcile daily: compare the webhook-derived status history against the activity_logs pull and the items_page snapshot from L3 for the same window, and compare user join and role-change events against the users diff; alert on items whose current status has no matching transition event, on webhooks that have disappeared from the board, and on any hour with zero deliveries from a normally active board",
+          "audit_note": "Completeness metrics from reconciliation are what turn a webhook stream into audit-grade evidence; the API pull remains the source of truth",
+          "vendor_docs_url": "https://developer.monday.com/api-reference/reference/activity-logs"
+        },
+        {
+          "step": 5,
+          "action": "Keep the human checks automation cannot cover: account security settings (Authentication, SSO policy, session duration) and account permissions have no read API, so retain a scheduled admin review of Administration > Security and Administration > Permissions, and quarterly rotate the GraphQL and audit tokens alongside the admin access review while publishing a weekly dashboard of guest count trend, open approvals past SLA and webhook delivery health",
+          "permissions_required": "Account admin",
+          "security_note": "Personal tokens inherit the owning user's full permissions and survive until regenerated, so a token whose owner has been deactivated or changed role must be reissued from the service user",
+          "vendor_docs_url": "https://support.monday.com/hc/en-us/articles/34336185460498-monday-com-secure-configuration-checklist"
+        }
+      ]
+    }
+  }
+}

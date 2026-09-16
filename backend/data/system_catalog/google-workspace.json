@@ -12,7 +12,11 @@
     "google apps",
     "google drive",
     "gmail",
-    "workspace"
+    "workspace",
+    "google mail",
+    "google admin",
+    "google workspace administration",
+    "google workspace admin"
   ],
   "logo_hint": "google-workspace",
   "system_type": "document_management",
