@@ -1,0 +1,183 @@
+{
+  "slug": "teamtailor",
+  "name": "Teamtailor",
+  "vendor": "Teamtailor AB",
+  "category": "Recruitment & Applicant Tracking",
+  "description": "Recruitment and applicant-tracking platform for jobs, candidates and hiring pipelines. Yields candidate-data retention and consent settings (GDPR), user and role listings for hiring teams, hiring-decision and approval records, marketplace integration inventory and audit log exports.",
+  "website": "https://www.teamtailor.com",
+  "aliases": [
+    "teamtailor",
+    "team tailor",
+    "teamtailor ats",
+    "teamtailor recruitment"
+  ],
+  "logo_hint": "teamtailor",
+  "system_type": "hr_system",
+  "version": "1.0",
+  "recipes": {
+    "L1": {
+      "title": "Teamtailor Manual Evidence Collection",
+      "estimated_time": "20 minutes",
+      "frequency": "quarterly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Sign in to Teamtailor as a Company Admin and navigate to Settings > Data & Privacy. Capture the Collect permissions, Manage permissions (consent validity period and renewal requests) and Privacy policy sections as date-stamped screenshots",
+          "permissions_required": "Company Admin",
+          "audit_note": "These screenshots evidence the lawful-basis and consent configuration applied to every candidate who applies",
+          "vendor_docs_url": "https://support.teamtailor.com/en/articles/1909070-data-privacy-settings"
+        },
+        {
+          "step": 2,
+          "action": "In Settings > Data & Privacy > Automatic data deletion, capture each active deletion rule (inactive candidates, rejected applications, missing or expired permissions, removal requests) with its configured time period, and note that flagged candidates are held for a one-week grace period before removal",
+          "permissions_required": "Company Admin",
+          "audit_note": "The configured periods are the retention schedule for candidate personal data — compare them against the documented retention policy",
+          "vendor_docs_url": "https://support.teamtailor.com/en/articles/3924510-automatically-remove-your-candidates-data"
+        },
+        {
+          "step": 3,
+          "action": "Open the Employees tab and capture the full list of users with their assigned role (Company Admin, Recruitment Admin, Recruitment Lead, Hiring Manager, Default User, External Recruiter, No Access), including any deactivated or pending invitations",
+          "permissions_required": "Company Admin",
+          "audit_note": "This is the periodic access review for the recruitment system — record the reviewer and date and flag any Company Admin who no longer needs full access",
+          "vendor_docs_url": "https://support.teamtailor.com/en/articles/113627-teamtailor-user-roles"
+        },
+        {
+          "step": 4,
+          "action": "Navigate to Settings > Integrations > Marketplace activations and capture the list of activated partner integrations, then Settings > Integrations > API keys and capture the list of issued keys with their scope (Public, Internal, Admin) and permission (Read, Write, Read/Write)",
+          "permissions_required": "Company Admin",
+          "security_note": "Admin-scope keys can read all candidate personal data — every issued key should map to a named owner and documented purpose; delete any that do not",
+          "vendor_docs_url": "https://support.teamtailor.com/en/articles/5963369-use-our-teamtailor-api"
+        },
+        {
+          "step": 5,
+          "action": "For a sample of recently filled jobs, open the job's pipeline and capture the hired candidate's application showing stage history (moved to Hired), the recruiter or hiring manager who made the decision and any recorded notes or scorecards; where the requisition feature is in use, also capture the requisition approval chain",
+          "permissions_required": "Recruitment Admin or Company Admin (visibility of the sampled jobs)",
+          "audit_note": "Stage change history with the acting user is the hiring-decision evidence; sample across departments so the evidence is not drawn from a single hiring manager"
+        },
+        {
+          "step": 6,
+          "action": "Upload the screenshots to the evidence repository with the evidence ID reference and the collection date in each filename",
+          "security_note": "Candidate records are personal data and may include special category data (e.g. disability adjustments) — crop or redact candidate names and contact details that are not needed to evidence the control, store only in the approved repository and apply the repository's retention limit"
+        }
+      ]
+    },
+    "L2": {
+      "title": "Teamtailor Recurring Export Cadence",
+      "estimated_time": "30 minutes (setup), then 15 minutes per cycle",
+      "frequency": "monthly deletion check, quarterly full export",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Activate the Audit log add-on (Company Admin, via the Add-on feature center) and in Settings > Data & Privacy > Audit log extend log retention from the default 15 days to the maximum 30 days using the Settings button",
+          "permissions_required": "Company Admin",
+          "audit_note": "Audit log entries are only retained for up to 30 days, so the export cadence must be at least monthly or events are lost",
+          "vendor_docs_url": "https://support.teamtailor.com/en/articles/2668826-audit-log"
+        },
+        {
+          "step": 2,
+          "action": "Monthly, export the full audit log as CSV from Settings > Data & Privacy > Audit log, then filter the candidate database with the Will be deleted filter and capture the count of candidates flagged for deletion alongside the daily digest email received by the Data & Privacy managers",
+          "permissions_required": "Company Admin; Data & Privacy manager for the digest email",
+          "audit_note": "The audit log export plus the deletion digest together evidence that the retention rules are executing, not just configured",
+          "vendor_docs_url": "https://support.teamtailor.com/en/articles/3924510-automatically-remove-your-candidates-data"
+        },
+        {
+          "step": 3,
+          "action": "Quarterly, repeat the L1 captures of Settings > Data & Privacy (consent and automatic deletion settings), the Employees list with roles, and Settings > Integrations (Marketplace activations and API keys) so the access review and retention configuration are evidenced on the same cadence",
+          "permissions_required": "Company Admin",
+          "vendor_docs_url": "https://support.teamtailor.com/en/articles/1909070-data-privacy-settings"
+        },
+        {
+          "step": 4,
+          "action": "File each export in the evidence repository with the run date in the filename and keep a collection log (date run, by whom, record counts) so a missed month is visible before the 30-day audit log window closes",
+          "security_note": "The audit log CSV names users and candidates — treat it as personal data with the same access restriction as the source system"
+        }
+      ]
+    },
+    "L3": {
+      "title": "Teamtailor API-Driven Automated Collection",
+      "estimated_time": "2-3 hours initial setup",
+      "frequency": "automated daily",
+      "steps": [
+        {
+          "step": 1,
+          "action": "As a Company Admin, go to Settings > Integrations > API keys and create a dedicated key with Admin scope and Read permission for the evidence collector; record the key owner and purpose, as keys cannot be edited after creation and must be deleted and re-issued to change",
+          "permissions_required": "Company Admin to create the key; Admin scope is required to read candidates and users",
+          "security_note": "The key grants read access to all candidate personal data — store it in a secrets manager, never in code or plaintext config, and delete it when the owner leaves",
+          "vendor_docs_url": "https://support.teamtailor.com/en/articles/5963369-use-our-teamtailor-api"
+        },
+        {
+          "step": 2,
+          "action": "Authenticate each request with the header Authorization: Token token={api_key} and the mandatory X-Api-Version header (a dated version such as 20240904; using today's date returns the latest). Use https://api.teamtailor.com for the EU data region or https://api.na.teamtailor.com for the North America region",
+          "permissions_required": "Admin-scope Read API key",
+          "audit_note": "Pin X-Api-Version to a fixed date in the collector and review the API changelog before changing it, so evidence field names stay stable between runs",
+          "vendor_docs_url": "https://docs.teamtailor.com/"
+        },
+        {
+          "step": 3,
+          "action": "Pull the users resource (GET /v1/users) daily and store the user list with roles as the access-review dataset; pull GET /v1/job-applications?include=candidate&filter[stage-type]=hired&sort=-changed_stage_at to capture hiring decisions with the date each application moved to Hired",
+          "permissions_required": "Admin-scope Read API key",
+          "audit_note": "A daily user snapshot lets you reconstruct who held Company Admin on any given date; the hired job-applications feed is the hiring-decision record",
+          "vendor_docs_url": "https://docs.teamtailor.com/"
+        },
+        {
+          "step": 4,
+          "action": "Pull the candidates resource (GET /v1/candidates), paginating with page[size] (max 30) and page[after] cursors, and retain only the consent fields (consent-given-future-jobs, consent-future-jobs-at) plus timestamps and candidate ID — do not persist names, contact details or attachments in the evidence store",
+          "permissions_required": "Admin-scope Read API key",
+          "security_note": "Data minimisation: the control needs consent status and dates, not the candidate profile. Keep the collector within the rate limit of 50 requests per 10 seconds (HTTP 429 on breach; honour X-Rate-Limit-Reset)",
+          "vendor_docs_url": "https://docs.teamtailor.com/"
+        },
+        {
+          "step": 5,
+          "action": "Schedule the collector via cron or a CI/CD pipeline to run daily, writing date-stamped JSON or CSV outputs to the evidence repository over HTTPS with encryption at rest",
+          "security_note": "Candidate data falls under UK GDPR — apply the same retention period to the evidence store as configured in Teamtailor's automatic deletion rules so evidence does not outlive the source record without justification"
+        },
+        {
+          "step": 6,
+          "action": "Implement error handling and alerting: treat HTTP 401 as a deleted or revoked key, HTTP 429 as rate limiting (back off), and validate each run against the prior day's user count and hired count, flagging anomalies for human review",
+          "audit_note": "A logged failure-and-recovery trail plus volume validation demonstrates the collection is controlled and complete"
+        }
+      ]
+    },
+    "L4": {
+      "title": "Teamtailor Managed Pipeline with Webhooks and Reconciliation",
+      "estimated_time": "1 day initial setup",
+      "frequency": "continuous with daily reporting",
+      "steps": [
+        {
+          "step": 1,
+          "action": "As a Company Admin, activate Company Webhooks in the Add-on feature center, then go to Settings > Webhooks > New Webhook and subscribe your evidence platform's HTTPS endpoint to candidate, job application and audit events",
+          "permissions_required": "Company Admin",
+          "security_note": "The receiving endpoint will process candidate personal data — restrict it to Teamtailor's traffic, encrypt in transit and at rest, and log every delivery",
+          "vendor_docs_url": "https://support.teamtailor.com/en/articles/8068954-company-webhooks"
+        },
+        {
+          "step": 2,
+          "action": "Store the signature key shown after webhook creation in a secrets manager and verify the HMAC-SHA256 (base64) signature on every delivery before accepting the payload; return HTTP 200 only after the event is durably stored",
+          "security_note": "Reject unsigned or badly signed payloads. Teamtailor retries a delivery up to 3 times on any response of 400 or above, so idempotent handling by event ID is required to avoid duplicate evidence records",
+          "audit_note": "Signature verification preserves the evidentiary integrity of received events",
+          "vendor_docs_url": "https://support.teamtailor.com/en/articles/8068954-company-webhooks"
+        },
+        {
+          "step": 3,
+          "action": "Run a daily reconciliation sweep using the L3 API pulls (users, hired job-applications, candidate consent fields) and diff against the events received by webhook to detect missed or duplicated deliveries",
+          "permissions_required": "Admin-scope Read API key",
+          "audit_note": "Webhooks are fire-and-forget with only 3 retries; the reconciliation sweep is what makes completeness demonstrable",
+          "vendor_docs_url": "https://docs.teamtailor.com/"
+        },
+        {
+          "step": 4,
+          "action": "Monthly, pull the audit log CSV export (Settings > Data & Privacy > Audit log) before the 30-day retention window closes and reconcile user-creation, user-deletion and settings-change entries against the webhook audit events and the daily user snapshots",
+          "permissions_required": "Company Admin",
+          "audit_note": "Cross-checking three independent sources (webhook, API snapshot, audit log) closes the gap left by the short native audit log retention",
+          "vendor_docs_url": "https://support.teamtailor.com/en/articles/2668826-audit-log"
+        },
+        {
+          "step": 5,
+          "action": "Publish a collection health dashboard (events per day, signature failures, reconciliation mismatches, candidates deleted vs flagged) and generate an automated quarterly review report covering alert breaches, API key and webhook signature key rotation and the current Company Admin roster",
+          "security_note": "Rotate the API key and webhook signature key on a defined schedule and after personnel changes — both require delete-and-recreate in Teamtailor",
+          "audit_note": "The dashboard and quarterly report are continuous evidence of a managed collection process"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,195 @@
+{
+  "slug": "clickup",
+  "name": "ClickUp",
+  "vendor": "ClickUp (Mango Technologies, Inc.)",
+  "category": "Work & Project Management",
+  "description": "ClickUp's cloud work-management platform for tasks, projects and change tracking; yields change and incident records with approvals and status history, workspace member and guest listings with roles, workspace security settings such as SSO and 2FA enforcement, and the Enterprise-plan audit log.",
+  "website": "https://clickup.com",
+  "aliases": [
+    "clickup",
+    "click up",
+    "clickup.com",
+    "clickup workspace"
+  ],
+  "logo_hint": "clickup",
+  "system_type": "ticketing",
+  "version": "1.0",
+  "recipes": {
+    "L1": {
+      "title": "ClickUp Manual Evidence Collection",
+      "estimated_time": "25 minutes",
+      "frequency": "weekly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "In the upper-left corner click the Workspace avatar, select Settings, then in the All settings sidebar open Security & Permissions and take dated screenshots of the Two-factor authentication setting (default 'Don't require 2FA'), the Single sign-on (SSO) provider and whether it is required, Session management, and the Advanced permissions toggles such as Block public sharing, Make new Spaces private, Request Access and Private Attachments Links",
+          "permissions_required": "Workspace owner or admin",
+          "audit_note": "These controls are plan-gated: requiring 2FA for the whole Workspace needs the Business Plan or above, Google SSO needs Business or above, Microsoft, Okta and custom SAML SSO need Enterprise, and Session management plus Block public sharing and Make new Spaces private are Enterprise-only; record the Workspace plan against the evidence ID because there is no export of these settings",
+          "vendor_docs_url": "https://help.clickup.com/hc/en-us/articles/21797055143575-Default-security-settings"
+        },
+        {
+          "step": 2,
+          "action": "Click the Workspace avatar and select People to open the Manage people page; screenshot the User role dropdown totals and each of the Full Seats, Guest Seats and View-Only Seats tabs so that every person's Name, Email and Role (owner, admin, member, limited member, guest or Custom Role) is captured, including anyone showing a Pending badge",
+          "permissions_required": "Workspace owner or admin",
+          "audit_note": "The Manage people page is the complete inventory of members and guests; ClickUp documents no CSV export of this page, so the dated screenshots are the primary record",
+          "vendor_docs_url": "https://help.clickup.com/hc/en-us/articles/6310540689047-Manage-the-people-in-your-Workspace"
+        },
+        {
+          "step": 3,
+          "action": "Open the List or Table view that holds your change, incident or access-request tasks, click Customize in the upper-right corner, select Export, choose All columns, pick CSV with the ISO date format, tick the Time in Status option if the Time in Status ClickApp is enabled, and click Download (or use the emailed link, which expires after 1 hour)",
+          "permissions_required": "Member with access to the view (view export is available on the Business Plan and above)",
+          "audit_note": "Choosing All columns captures approver, status, assignee and Custom Field values in one file; the Time in Status columns give status-transition timing that supports change-approval and incident-response time evidence",
+          "vendor_docs_url": "https://help.clickup.com/hc/en-us/articles/6310174308631-Export-List-and-Table-views"
+        },
+        {
+          "step": 4,
+          "action": "For a sampled change or incident task, open the task and screenshot the activity log on the right-hand side, which shows status changes, assignee changes, comments and approvals in chronological order, using the search and filter controls to isolate status and approval events",
+          "permissions_required": "Member with access to the task",
+          "audit_note": "The task activity log is the per-record history auditors ask for when sampling individual changes; capture it alongside the view export so the sample can be traced back to the population",
+          "vendor_docs_url": "https://help.clickup.com/hc/en-us/articles/29723182607127-Task-activity-and-comments"
+        },
+        {
+          "step": 5,
+          "action": "On the Enterprise Plan, click the Workspace avatar, select Settings, open Audit Logs in the All settings sidebar and screenshot the User log (logins, 2FA policy changes, role changes, invites, app connections) and the Task, Fields and Hierarchy logs filtered to the review period; on other plans record that the audit log is unavailable against the evidence ID",
+          "permissions_required": "Workspace owner (Enterprise Plan only; owners can grant admins access via a Custom Role permission)",
+          "audit_note": "Audit log history is retained for 60 days and ClickUp documents no in-app CSV export, so capture screenshots at least monthly or pull the log through the API described in L3",
+          "vendor_docs_url": "https://help.clickup.com/hc/en-us/articles/21929900448535-Workspace-audit-logs"
+        },
+        {
+          "step": 6,
+          "action": "Upload the screenshots and CSV exports to the evidence repository with the evidence ID reference",
+          "security_note": "Task exports and activity screenshots may contain incident detail or personal data; redact where necessary and restrict access to files containing member email addresses"
+        }
+      ]
+    },
+    "L2": {
+      "title": "ClickUp Recurring Export Cadence",
+      "estimated_time": "45 minutes initial setup, then 15 minutes per run",
+      "frequency": "monthly",
+      "steps": [
+        {
+          "step": 1,
+          "action": "ClickUp has no natively scheduled report delivery, so create a recurring monthly task in a compliance List for the evidence run and use an Automation (for example, when status changes, add a comment or send an email to the evidence owner) so that the run is prompted and its completion is itself recorded in ClickUp",
+          "permissions_required": "Member with permission to create Automations in the List",
+          "audit_note": "Because delivery is not automated, the completed recurring task and its activity log are the evidence that the cadence operated",
+          "vendor_docs_url": "https://help.clickup.com/hc/en-us/articles/6312102752791-Intro-to-Automations"
+        },
+        {
+          "step": 2,
+          "action": "Each month export the change, incident and access-request List or Table views via Customize > Export with All columns, CSV, ISO date format and Time in Status included, filtering the view to tasks created or updated in the previous calendar month",
+          "permissions_required": "Member with access to the views (Business Plan and above)",
+          "audit_note": "Monthly exports with ISO dates build a continuous, machine-readable archive of the change population that later API-based collection can be reconciled against",
+          "vendor_docs_url": "https://help.clickup.com/hc/en-us/articles/6310174308631-Export-List-and-Table-views"
+        },
+        {
+          "step": 3,
+          "action": "At the same cadence, take dated screenshots of the Manage people page (Full Seats, Guest Seats and View-Only Seats tabs) and the Security & Permissions page, and compare the people list with the previous month's capture to record joiners, leavers and role changes",
+          "permissions_required": "Workspace owner or admin",
+          "audit_note": "Month-over-month comparison of the people list is the practical leaver and dormant-account check on plans without the audit log",
+          "vendor_docs_url": "https://help.clickup.com/hc/en-us/articles/6310540689047-Manage-the-people-in-your-Workspace"
+        },
+        {
+          "step": 4,
+          "action": "On the Enterprise Plan, review the Audit Logs User log each month for the previous calendar month, capturing 2FA policy changes, SSO and advanced-permission changes, role changes and app connections before they age out of the 60-day retention window",
+          "permissions_required": "Workspace owner (Enterprise Plan only)",
+          "audit_note": "A monthly cadence sits comfortably inside the 60-day retention; anything less frequent risks a gap in the auditable record",
+          "vendor_docs_url": "https://help.clickup.com/hc/en-us/articles/25324213764119-Audit-Logs-feature-availability-and-limits"
+        },
+        {
+          "step": 5,
+          "action": "File each export and screenshot set in the evidence repository with restricted access and a note of the Workspace plan in force during the period",
+          "security_note": "Exports contain member email addresses and may contain incident narratives; limit access to the compliance team"
+        }
+      ]
+    },
+    "L3": {
+      "title": "ClickUp API-Driven Evidence Automation",
+      "estimated_time": "2-4 hours initial setup",
+      "frequency": "automated daily",
+      "steps": [
+        {
+          "step": 1,
+          "action": "From a dedicated service account with the least role needed to read the in-scope Lists, click the account avatar in the upper-right corner, select Settings, open Apps and click Generate under API Token; send the token as the raw value of the Authorization header (personal tokens begin with pk_ and never expire), or register an OAuth 2.0 app if the collector serves multiple Workspaces",
+          "permissions_required": "Service account member (owner or admin only if audit-log or people-management endpoints are required)",
+          "security_note": "Personal API tokens never expire, so store the token in a secrets manager, scope the service account's access to the Lists the collector needs, and schedule a rotation by regenerating the token",
+          "vendor_docs_url": "https://developer.clickup.com/docs/authentication"
+        },
+        {
+          "step": 2,
+          "action": "Run a daily people and plan inventory: GET https://api.clickup.com/api/v2/team (Workspace list with a members array), GET https://api.clickup.com/api/v2/team/{team_id}/seats (filled member and guest seats), GET https://api.clickup.com/api/v2/team/{team_id}/customroles?include_members=true (Custom Roles and their members) and GET https://api.clickup.com/api/v2/team/{team_id}/plan to record the plan that gates the security features",
+          "permissions_required": "Service account token with Workspace access",
+          "audit_note": "The members array from the Workspace endpoint carries identity but not the default role, so keep the Manage people screenshot for role evidence and use the seats and Custom Roles calls to corroborate counts and elevated roles",
+          "vendor_docs_url": "https://developer.clickup.com/reference/getauthorizedteams"
+        },
+        {
+          "step": 3,
+          "action": "Inventory sharing scope daily: GET https://api.clickup.com/api/v2/team/{team_id}/space to record each Space's private flag and features, and GET https://api.clickup.com/api/v2/list/{list_id}/member for each in-scope List to record who has explicit access to change and incident records",
+          "permissions_required": "Service account token with access to the Spaces and Lists",
+          "audit_note": "Member details are only returned for private Spaces, and List members exclude people inheriting access from Teams, Folders or Spaces, so treat these as supplementary to the people inventory rather than a complete access list",
+          "vendor_docs_url": "https://developer.clickup.com/reference/getlistmembers"
+        },
+        {
+          "step": 4,
+          "action": "Pull the change and incident population daily: GET https://api.clickup.com/api/v2/team/{team_id}/task?include_closed=true&date_updated_gt={last_run_ms}&list_ids[]={list_id}&page={n}, iterating page from 0 in steps of 100 tasks until an empty page, and store each task's status, assignees, Custom Fields (such as approver and change type), date_created, date_updated and date_closed",
+          "permissions_required": "Service account token with access to the Lists",
+          "audit_note": "The task endpoints return current state rather than the activity history, so status-transition evidence comes from the exported Time in Status columns in L1/L2 or from the webhook stream in L4",
+          "vendor_docs_url": "https://developer.clickup.com/reference/getfilteredteamtasks"
+        },
+        {
+          "step": 5,
+          "action": "On the Enterprise Plan, pull the audit log: POST https://api.clickup.com/api/v3/workspaces/{workspace_id}/auditlogs with a body selecting the applicability (auth-and-security, user-activity, hierarchy-activity, custom-fields), a startTime and endTime in milliseconds, optional userEmail or event-type filters, and pageRows with pageTimestamp and pageDirection for cursor pagination; run it at least weekly because history is retained for 60 days",
+          "permissions_required": "Workspace owner token (Enterprise Plan only)",
+          "security_note": "This endpoint needs an owner-level token, so hold it in a separate secret from the read-only task collector and restrict who can trigger the job",
+          "audit_note": "The audit log captures USER_LOGIN events, 2FA policy changes, role changes, invites and app connections that no other ClickUp API exposes, making it the primary programmatic source for access-control evidence",
+          "vendor_docs_url": "https://developer.clickup.com/reference/queryauditlog"
+        },
+        {
+          "step": 6,
+          "action": "Add error handling and validation: stay within the per-token rate limit (100 requests per minute on Free, Unlimited and Business, 1,000 on Business Plus, 10,000 on Enterprise), back off on HTTP 429 using the X-RateLimit-Reset header, alert on 401/403 responses or empty result sets, and store every output with a run timestamp and SHA-256 checksum",
+          "audit_note": "Recording run metadata and checksums makes each collected file independently verifiable",
+          "vendor_docs_url": "https://developer.clickup.com/docs/rate-limits"
+        }
+      ]
+    },
+    "L4": {
+      "title": "ClickUp Managed Pipeline with Webhooks and Reconciliation",
+      "estimated_time": "4-6 hours initial setup",
+      "frequency": "continuous with weekly reporting",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Register a webhook per in-scope List: POST https://api.clickup.com/api/v2/team/{team_id}/webhook with your HTTPS collector endpoint, a list_id scope and the events taskCreated, taskStatusUpdated, taskAssigneeUpdated, taskUpdated, taskCommentPosted and taskDeleted; store the webhook id and the secret returned in the response",
+          "permissions_required": "Service account token with access to the Lists",
+          "security_note": "The signing secret is only returned at creation time, so write it straight into the secrets manager and never log the response body",
+          "vendor_docs_url": "https://developer.clickup.com/reference/createwebhook"
+        },
+        {
+          "step": 2,
+          "action": "Verify every delivery before accepting it: compute an HMAC SHA-256 of the raw request body with the stored secret, hex-encode it and compare it in constant time with the X-Signature header, rejecting mismatches and writing accepted events to an append-only store with the receipt timestamp",
+          "security_note": "Signature verification is what makes the webhook stream trustworthy as evidence; without it any party who learns the endpoint URL could inject fake status changes",
+          "vendor_docs_url": "https://developer.clickup.com/docs/webhooksignature"
+        },
+        {
+          "step": 3,
+          "action": "Monitor delivery health hourly: GET https://api.clickup.com/api/v2/team/{team_id}/webhook and alert when any webhook's health.status is failing or health.fail_count is rising, re-registering the webhook and back-filling from the L3 task pull if it has been disabled",
+          "permissions_required": "Service account token",
+          "audit_note": "ClickUp exposes webhook health per registration; recording it alongside the events proves the feed was live for the whole period rather than assumed",
+          "vendor_docs_url": "https://developer.clickup.com/reference/getwebhooks"
+        },
+        {
+          "step": 4,
+          "action": "Reconcile daily: rebuild each task's status history from the taskStatusUpdated events, compare it with the current state returned by the L3 filtered team task pull for the same date_updated window and with the monthly Time in Status export, and alert on tasks present in one source but missing from another or on status transitions with no matching webhook event",
+          "audit_note": "Completeness metrics from reconciliation are what turn a continuous event feed into audit-grade change and incident evidence",
+          "vendor_docs_url": "https://developer.clickup.com/reference/getfilteredteamtasks"
+        },
+        {
+          "step": 5,
+          "action": "Keep the human checks that automation cannot cover: the Security & Permissions page and the Manage people roles have no API export, so retain a scheduled review of both as a recurring control task, and quarterly regenerate the service account API token and re-verify webhook scopes while publishing a weekly dashboard of open changes without approval, webhook health and audit log pull status",
+          "permissions_required": "Workspace owner or admin",
+          "security_note": "Personal API tokens never expire on their own; tying regeneration to the quarterly access review prevents stale credentials from outliving the people who created them",
+          "vendor_docs_url": "https://help.clickup.com/hc/en-us/articles/21797055143575-Default-security-settings"
+        }
+      ]
+    }
+  }
+}
