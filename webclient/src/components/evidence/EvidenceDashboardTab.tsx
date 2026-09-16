@@ -313,6 +313,12 @@ function AssessmentSummaryCard({ organizationId }: { organizationId: string }) {
               <span className="ai-assessment-stat-count">{summary.insufficient_sample_count}</span>
               <span className="ai-assessment-stat-label">Insufficient Sample</span>
             </div>
+            {(summary.unassessable_count ?? 0) > 0 && (
+              <div className="ai-assessment-stat">
+                <span className="ai-assessment-stat-count">{summary.unassessable_count}</span>
+                <span className="ai-assessment-stat-label">Unassessable</span>
+              </div>
+            )}
             {summary.pending_count > 0 && (
               <div className="ai-assessment-stat">
                 <span className="ai-assessment-stat-count">{summary.pending_count}</span>

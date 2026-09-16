@@ -26,13 +26,20 @@ export const ASSESSMENT_STATUS_LABELS: Record<string, string> = {
   partial: 'Partial',
   insufficient: 'Insufficient',
   unassessable: 'Unassessable',
+  /** Window assessments only: too few files in the period to judge the cadence. */
+  insufficient_sample: 'Insufficient sample',
   pending: 'Assessing...',
   processing: 'Assessing...',
   error: 'Error',
 }
 
-/** Statuses that are a verdict about the evidence, rather than a state of the run. */
-export const TERMINAL_STATUSES = ['sufficient', 'partial', 'insufficient', 'unassessable']
+/**
+ * Statuses that are a verdict about the evidence, rather than a state of the
+ * run. ``insufficient_sample`` is a window-only verdict (a fact about how many
+ * files the period held); it never appears on a per-file assessment, so
+ * listing it here costs the per-file surfaces nothing.
+ */
+export const TERMINAL_STATUSES = ['sufficient', 'partial', 'insufficient', 'unassessable', 'insufficient_sample']
 
 /**
  * Deliberately widened to plain ``string``. The wire type is a string and the

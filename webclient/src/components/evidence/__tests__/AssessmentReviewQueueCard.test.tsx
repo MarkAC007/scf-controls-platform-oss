@@ -26,6 +26,15 @@ vi.mock('../../../hooks/useHasOrgRole', () => ({
   useIsOrgEditor: () => editor,
 }))
 
+// The flag decides which layer the queue lists by default. Mocked as a
+// mutable so one file can exercise both settings of a compile-time constant.
+let perWindow = false
+vi.mock('../../../data/featureFlags', () => ({
+  get PER_WINDOW_REVIEW_ENABLED() {
+    return perWindow
+  },
+}))
+
 function item(overrides: Record<string, unknown> = {}) {
   return {
     file_id: 'file_one',
@@ -41,9 +50,31 @@ function item(overrides: Record<string, unknown> = {}) {
   }
 }
 
+function windowItem(overrides: Record<string, unknown> = {}) {
+  return {
+    kind: 'window',
+    file_id: null,
+    filename: null,
+    window_assessment_id: 'ewa_one',
+    evidence_id: 'E-BCD-01',
+    window_start: '2026-08-01T00:00:00Z',
+    window_end: '2026-09-05T00:00:00Z',
+    frequency_used: 'monthly',
+    file_count: 3,
+    status: 'partial',
+    review_decision: null,
+    gap_count: 2,
+    cannot_assess_count: 0,
+    relevance_score: 61,
+    assessed_at: '2026-09-05T00:00:00Z',
+    ...overrides,
+  }
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   editor = true
+  perWindow = false
 })
 afterEach(() => cleanup())
 
@@ -56,7 +87,7 @@ describe('AssessmentReviewQueueCard', () => {
     expect(screen.getByText('AI suggests: Partial')).toBeTruthy()
     expect(screen.getByText('2 gaps')).toBeTruthy()
     expect(screen.getByText('1 unreadable')).toBeTruthy()
-    expect(mockGetQueue).toHaveBeenCalledWith('org_one', { status: 'awaiting', limit: 10 })
+    expect(mockGetQueue).toHaveBeenCalledWith('org_one', { status: 'awaiting', tier: 'file', limit: 10 })
   })
 
   it('keeps the server’s priority order rather than sorting again', async () => {
@@ -123,5 +154,50 @@ describe('AssessmentReviewQueueCard', () => {
     await waitFor(() => expect(screen.getByText('access-review.pdf')).toBeTruthy())
     fireEvent.click(screen.getByText('access-review.pdf'))
     expect(onOpen).toHaveBeenCalledWith('evidence_one', 'file_one')
+  })
+})
+
+describe('AssessmentReviewQueueCard window tier (window parity)', () => {
+  it('lists window verdicts when the per-window review flag is on', async () => {
+    perWindow = true
+    mockGetQueue.mockResolvedValue({ items: [windowItem()], total: 1 })
+    render(<AssessmentReviewQueueCard orgId="org_one" />)
+
+    await waitFor(() => expect(screen.getByTestId('assessment-queue-window')).toBeTruthy())
+    expect(mockGetQueue).toHaveBeenCalledWith('org_one', { status: 'awaiting', tier: 'window', limit: 10 })
+    expect(screen.getByText('AI suggests: Partial')).toBeTruthy()
+    expect(screen.getByText('2 gaps')).toBeTruthy()
+    expect(screen.getByTestId('assessment-queue-window').textContent).toMatch(/3 files/)
+    expect(screen.getByText(/E-BCD-01/)).toBeTruthy()
+  })
+
+  it('keeps listing per-file verdicts while the flag is off', async () => {
+    mockGetQueue.mockResolvedValue({ items: [item()], total: 1 })
+    render(<AssessmentReviewQueueCard orgId="org_one" />)
+    await waitFor(() => expect(screen.getByText('access-review.pdf')).toBeTruthy())
+    expect(mockGetQueue.mock.calls[0][1].tier).toBe('file')
+  })
+
+  it('lets a caller pick the tier explicitly', async () => {
+    mockGetQueue.mockResolvedValue({ items: [windowItem()], total: 1 })
+    render(<AssessmentReviewQueueCard orgId="org_one" tier="window" />)
+    await waitFor(() => expect(screen.getByTestId('assessment-queue-window')).toBeTruthy())
+    expect(mockGetQueue.mock.calls[0][1].tier).toBe('window')
+  })
+
+  it('opens the evidence with no file for a window entry — the period is the subject', async () => {
+    const onOpen = vi.fn()
+    mockGetQueue.mockResolvedValue({ items: [windowItem()], total: 1 })
+    render(<AssessmentReviewQueueCard orgId="org_one" tier="window" onOpenEvidence={onOpen} />)
+
+    await waitFor(() => expect(screen.getByTestId('assessment-queue-window')).toBeTruthy())
+    fireEvent.click(screen.getByRole('button'))
+    expect(onOpen).toHaveBeenCalledWith('E-BCD-01', null)
+  })
+
+  it('words an insufficient sample as a suggestion too', async () => {
+    mockGetQueue.mockResolvedValue({ items: [windowItem({ status: 'insufficient_sample', gap_count: 0 })], total: 1 })
+    render(<AssessmentReviewQueueCard orgId="org_one" tier="window" />)
+    await waitFor(() => expect(screen.getByText('AI suggests: Insufficient sample')).toBeTruthy())
   })
 })

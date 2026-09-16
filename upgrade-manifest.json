@@ -1,11 +1,11 @@
 {
   "schema": 1,
-  "version": "0.36.0",
-  "released": "2026-09-16T12:03:30Z",
+  "version": "0.37.0",
+  "released": "2026-09-16T17:28:42Z",
   "min_upgradable_version": "0.0.0",
   "breaking": false,
   "required_stops": [],
-  "release_url": "https://github.com/MarkAC007/scf-controls-platform-oss/releases/tag/v0.36.0",
+  "release_url": "https://github.com/MarkAC007/scf-controls-platform-oss/releases/tag/v0.37.0",
   "summary": ".",
   "migration_range": [
     "20260119_000000_62bdef86f249_initial_schema",
@@ -93,8 +93,15 @@
     "20260911_120000_audit_log_org_changed_at_index",
     "20260912_000000_integration_secrets",
     "20260912_090000_evidence_storage_configs",
-    "20260914_154351_org_invite_idp_columns"
+    "20260914_154351_org_invite_idp_columns",
+    "20260916_140000_window_assessment_v2_columns",
+    "20260916_150000_window_assessment_versions"
   ],
-  "env_added": [],
+  "env_added": [
+    "ARTIFACT_TYPE_LAZY_EXTRACTION",
+    "WINDOW_ASSESSMENT_INGEST_DEBOUNCE_SECONDS",
+    "WINDOW_ASSESSMENT_ON_INGEST",
+    "WINDOW_ASSESSMENT_TEXT_BUDGET"
+  ],
   "min_compose_action": "rebuild"
 }

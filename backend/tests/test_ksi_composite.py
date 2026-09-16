@@ -2,7 +2,7 @@
 
 Covers ISC-18..19 of the M3 design spec:
 
-* ``ENABLE_COMPOSITE_KSI`` defaults ``false``.
+* ``ENABLE_COMPOSITE_KSI`` defaults ``true`` (window-assessment parity flip).
 * Precedence chain: composite > window > per-file.
 * The two flags (``ENABLE_COMPOSITE_KSI`` and ``ENABLE_WINDOW_ASSESSMENT_KSI``)
   are independent; composite-on-window-off skips straight to per-file as the
@@ -111,14 +111,15 @@ def _row(theme_code: str = "BCD", **overrides) -> SimpleNamespace:
 
 
 # ---------------------------------------------------------------------------
-# Flag default — guarantees no behaviour change on merge.
+# Flag default — on since the window-assessment parity flip; the default
+# lives in api/features.py FLAG_DEFAULTS and is shared with GET /api/features.
 # ---------------------------------------------------------------------------
 
 
 class TestFlagDefault:
-    def test_composite_flag_default_off(self, monkeypatch):
+    def test_composite_flag_default_on(self, monkeypatch):
         monkeypatch.delenv("ENABLE_COMPOSITE_KSI", raising=False)
-        assert _composite_ksi_enabled() is False
+        assert _composite_ksi_enabled() is True
 
     def test_composite_flag_explicit_false(self, monkeypatch):
         monkeypatch.setenv("ENABLE_COMPOSITE_KSI", "false")
@@ -184,9 +185,9 @@ class TestSqlSelectionPrecedence:
 
     @pytest.mark.asyncio
     async def test_c_both_flags_off_uses_legacy_per_file_sql(self, monkeypatch):
-        """Both flags off → legacy per-file SQL (case C, default behaviour)."""
-        monkeypatch.delenv("ENABLE_COMPOSITE_KSI", raising=False)
-        monkeypatch.delenv("ENABLE_WINDOW_ASSESSMENT_KSI", raising=False)
+        """Both flags off → legacy per-file SQL (case C, opt-out behaviour)."""
+        monkeypatch.setenv("ENABLE_COMPOSITE_KSI", "false")
+        monkeypatch.setenv("ENABLE_WINDOW_ASSESSMENT_KSI", "false")
         session = _CapturingSession({
             id(_EVIDENCE_METRICS_SQL): [_row()],
         })
@@ -243,8 +244,8 @@ class TestNoOpOnMerge:
 
     @pytest.mark.asyncio
     async def test_composite_off_window_off_matches_legacy(self, monkeypatch):
-        monkeypatch.delenv("ENABLE_COMPOSITE_KSI", raising=False)
-        monkeypatch.delenv("ENABLE_WINDOW_ASSESSMENT_KSI", raising=False)
+        monkeypatch.setenv("ENABLE_COMPOSITE_KSI", "false")
+        monkeypatch.setenv("ENABLE_WINDOW_ASSESSMENT_KSI", "false")
         session = _CapturingSession()
         await _fetch_evidence_metrics_per_theme(session, ORG_ID)
         assert session.last_sql is _EVIDENCE_METRICS_SQL

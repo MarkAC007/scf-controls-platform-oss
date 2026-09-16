@@ -99,6 +99,9 @@ TENANT_SCOPED_EXCLUDED_TABLES: Dict[str, str] = {
     # deployment. A tenant moved by this export arrives with its current
     # verdicts and without their history.
     "evidence_assessment_versions": "append-only assessment history; captured by scripts/backup.sh",
+    # The window layer's mirror of the above (window-assessment parity):
+    # same append-only trail, same grounds.
+    "evidence_window_assessment_versions": "append-only window assessment history; captured by scripts/backup.sh",
     # Evidence & generated artifacts — the blobs live in MinIO and are captured
     # by scripts/backup.sh; their rows are not part of the migration export.
     "evidence_files": "blob metadata; blobs live in MinIO (scripts/backup.sh)",

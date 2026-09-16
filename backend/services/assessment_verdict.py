@@ -139,6 +139,7 @@ def _parse_effective_date(raw: Any) -> tuple[Optional[date], Optional[str]]:
 def _validate_ao_findings(
     raw: Any,
     prompted_ao_ids: Sequence[str],
+    window_file_ids: Optional[Sequence[str]] = None,
 ) -> List[Dict[str, Any]]:
     """Check the per-objective answers against the objectives actually asked.
 
@@ -146,6 +147,11 @@ def _validate_ao_findings(
     objective is silent under-coverage; an extra one is an answer about
     something nobody asked, which would show up in the UI attributed to an AO
     the file was never assessed against.
+
+    When ``window_file_ids`` is given (the windowed path), every entry must
+    also carry ``evidence_file_ids`` naming only files that were in the
+    window. An id that was not there is an attribution to evidence the model
+    never saw, and is refused for the same reason an unknown ao_id is.
     """
     if not isinstance(raw, list):
         raise AssessmentParseError(
@@ -184,12 +190,17 @@ def _validate_ao_findings(
 
         rationale = entry.get("rationale")
         suggestion = entry.get("suggestion")
-        cleaned.append({
+        item: Dict[str, Any] = {
             "ao_id": ao_id,
             "suggested_designation": designation,
             "rationale": rationale if isinstance(rationale, str) else "",
             "suggestion": suggestion if isinstance(suggestion, str) else "",
-        })
+        }
+        if window_file_ids is not None:
+            item["evidence_file_ids"] = _validate_file_attribution(
+                ao_id, entry.get("evidence_file_ids"), window_file_ids,
+            )
+        cleaned.append(item)
 
     missing = [ao_id for ao_id in expected if ao_id not in seen]
     if missing:
@@ -274,6 +285,173 @@ def parse_assessment_v2(
         findings=findings,
         evidence_effective_date=effective_date,
         effective_date_source=source,
+    )
+
+
+def _validate_file_attribution(
+    ao_id: str,
+    raw: Any,
+    window_file_ids: Sequence[str],
+) -> List[str]:
+    """The files an objective answer rests on, restricted to the window."""
+    if raw is None:
+        raise AssessmentParseError(
+            f"ao_findings for '{ao_id}' has no evidence_file_ids array"
+        )
+    if not isinstance(raw, list):
+        raise AssessmentParseError(
+            f"ao_findings for '{ao_id}' has evidence_file_ids of type "
+            f"{type(raw).__name__}, expected an array"
+        )
+    allowed = {str(fid) for fid in window_file_ids}
+    seen: List[str] = []
+    for value in raw:
+        if not isinstance(value, str) or not value.strip():
+            raise AssessmentParseError(
+                f"ao_findings for '{ao_id}' names a non-string file id {value!r}"
+            )
+        fid = value.strip()
+        if fid not in allowed:
+            raise AssessmentParseError(
+                f"ao_findings for '{ao_id}' cites file '{fid}', which was not in the window"
+            )
+        if fid not in seen:
+            seen.append(fid)
+    return seen
+
+
+@dataclass
+class ParsedWindowAssessment:
+    """A windowed model response that satisfied the v2 window contract."""
+    summary: str
+    relevance_score: Optional[float]
+    model_status: Optional[str]
+    ao_findings: List[Dict[str, Any]]
+    findings: List[Dict[str, Any]]
+    # [{file_id, evidence_effective_date (ISO date string or None),
+    #   effective_date_source}] — only for files the model dated.
+    file_effective_dates: List[Dict[str, Any]]
+
+    @property
+    def designations(self) -> List[str]:
+        return [f["suggested_designation"] for f in self.ao_findings]
+
+
+def _validate_file_effective_dates(
+    raw: Any,
+    window_file_ids: Sequence[str],
+    findings: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Per-file effective dates, restricted to the window and to real dates.
+
+    Absence is fine — a file that states no date is the expected case. A date
+    in the wrong FORMAT degrades to null with a recorded complaint, exactly as
+    the per-file path does. An entry naming a file that was not in the window
+    is refused: it dates a document the model never saw.
+    """
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise AssessmentParseError(
+            f"file_effective_dates must be an array, got {type(raw).__name__}"
+        )
+    allowed = {str(fid) for fid in window_file_ids}
+    out: List[Dict[str, Any]] = []
+    seen: set = set()
+    for index, entry in enumerate(raw):
+        if not isinstance(entry, dict):
+            raise AssessmentParseError(
+                f"file_effective_dates[{index}] must be an object, got {type(entry).__name__}"
+            )
+        fid = entry.get("file_id")
+        if not isinstance(fid, str) or fid.strip() not in allowed:
+            raise AssessmentParseError(
+                f"file_effective_dates[{index}] names file {fid!r}, which was not in the window"
+            )
+        fid = fid.strip()
+        if fid in seen:
+            raise AssessmentParseError(
+                f"file_effective_dates names file '{fid}' more than once"
+            )
+        seen.add(fid)
+        effective_date, complaint = _parse_effective_date(entry.get("evidence_effective_date"))
+        if complaint:
+            findings.append({
+                "category": "quality",
+                "level": "info",
+                "message": f"File {fid}: {complaint}",
+            })
+        source = entry.get("effective_date_source")
+        if effective_date is None or not isinstance(source, str):
+            source = None
+        out.append({
+            "file_id": fid,
+            "evidence_effective_date": effective_date.isoformat() if effective_date else None,
+            "effective_date_source": source,
+        })
+    return out
+
+
+def parse_window_assessment_v2(
+    content: str,
+    stop_reason: Optional[str],
+    prompted_ao_ids: Sequence[str],
+    window_file_ids: Sequence[str],
+) -> ParsedWindowAssessment:
+    """Parse a v2 window response, or raise AssessmentParseError.
+
+    Same contract as ``parse_assessment_v2`` — refuse rather than repair, and
+    validate against what the prompt actually asked — plus two window-only
+    checks: every objective answer names only files that were in the window,
+    and every extracted effective date belongs to a file that was there.
+    """
+    if stop_reason == "max_tokens":
+        raise AssessmentParseError(
+            "Model output was cut off at the token ceiling before the assessment "
+            "was complete — no verdict was returned.",
+            retryable=False,
+        )
+
+    try:
+        parsed = json.loads(_strip_code_fence(content))
+    except json.JSONDecodeError as exc:
+        raise AssessmentParseError(f"Model response was not valid JSON: {exc}") from exc
+
+    if not isinstance(parsed, dict):
+        raise AssessmentParseError(
+            f"Model response was a JSON {type(parsed).__name__}, not an object"
+        )
+
+    ao_findings = _validate_ao_findings(
+        parsed.get("ao_findings"), prompted_ao_ids, window_file_ids=window_file_ids,
+    )
+
+    findings = parsed.get("findings")
+    if not isinstance(findings, list):
+        findings = []
+    findings = [f for f in findings if isinstance(f, dict)]
+
+    file_effective_dates = _validate_file_effective_dates(
+        parsed.get("file_effective_dates"), window_file_ids, findings,
+    )
+
+    model_status = parsed.get("status")
+    if model_status not in MODEL_STATUSES:
+        logger.info(
+            "Dropping off-contract advisory window status %r — the derived status governs",
+            model_status,
+        )
+        model_status = None
+
+    summary = parsed.get("summary")
+
+    return ParsedWindowAssessment(
+        summary=summary if isinstance(summary, str) else "",
+        relevance_score=_clamp_score(parsed.get("relevance_score")),
+        model_status=model_status,
+        ao_findings=ao_findings,
+        findings=findings,
+        file_effective_dates=file_effective_dates,
     )
 
 

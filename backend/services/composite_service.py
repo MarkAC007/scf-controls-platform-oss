@@ -905,6 +905,22 @@ def _before_flush_handler(session: Session, flush_context, instances) -> None:
                 getattr(obj, "status", "review_change") or "review_change",
             ))
 
+        # Verdict confirmation (window parity). An override can move the
+        # window's status between terminal values — partial to sufficient,
+        # say — which the status branch above deliberately ignores
+        # (terminal -> terminal is not a transition it fires on). The
+        # decision itself is the signal: any change to review_decision
+        # recomputes the composites this window feeds.
+        hist_decision = orm_attributes.get_history(obj, "review_decision")
+        if list(getattr(hist_decision, "deleted", None) or []) or list(
+            getattr(hist_decision, "added", None) or []
+        ):
+            pending.append((
+                obj.organization_id,
+                obj.evidence_id,
+                getattr(obj, "status", "verdict_review") or "verdict_review",
+            ))
+
 
 def _after_commit_handler(session: Session) -> None:
     """Enqueue recompute tasks for the (org, scf_id) pairs touched by this commit."""

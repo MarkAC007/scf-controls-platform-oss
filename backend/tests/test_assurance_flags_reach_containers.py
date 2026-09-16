@@ -43,18 +43,55 @@ def test_flag_is_forwarded_to_the_service(compose, service, flag):
 
 
 @pytest.mark.parametrize("flag", FLAGS)
-def test_flag_defaults_to_off_in_compose(compose, flag):
-    # A flag that defaults on when unset would change behaviour for every
-    # existing deployment the moment this file lands.
+def test_flag_defaults_to_on_in_compose(compose, flag):
+    # Window-assessment parity flipped all three on: the windowed assessment
+    # is the primary surface. The compose default, the code default
+    # (api/features.py FLAG_DEFAULTS) and .env.example must say the same.
     for service in ("backend", "celery-worker"):
-        assert compose["services"][service]["environment"][flag].endswith(":-false}")
+        assert compose["services"][service]["environment"][flag].endswith(":-true}")
+
+
+@pytest.mark.parametrize("flag", FLAGS)
+def test_code_default_matches_compose_default(flag):
+    from api.features import FLAG_DEFAULTS
+
+    assert FLAG_DEFAULTS[flag] == "true"
+
+
+def test_frontend_twin_defaults_on_everywhere_it_is_built(compose):
+    # The bundle compiles VITE_ENABLE_PER_WINDOW_REVIEW; a build that leaves
+    # it off against a backend that defaults on has no working review path.
+    args = compose["services"]["frontend"]["build"]["args"]
+    assert args["VITE_ENABLE_PER_WINDOW_REVIEW"] == "${VITE_ENABLE_PER_WINDOW_REVIEW:-true}"
+    dockerfile = (REPO_ROOT / "Dockerfile.frontend").read_text()
+    assert "ARG VITE_ENABLE_PER_WINDOW_REVIEW=true" in dockerfile
+    assert "ENV VITE_ENABLE_PER_WINDOW_REVIEW=$VITE_ENABLE_PER_WINDOW_REVIEW" in dockerfile
+    assert "# VITE_ENABLE_PER_WINDOW_REVIEW=true" in (REPO_ROOT / ".env.example").read_text()
+
+
+# The GHCR publisher workflow is private-only: scripts/prepare-oss.sh drops it
+# from the OSS snapshot because the registry-push credential must never ship.
+# The public repo runs this same test file, so the assertion against it has to
+# skip there rather than fail (v0.37.0's Release OSS run failed on exactly this).
+PUBLISH_IMAGES_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "publish-oss-images.yml"
+
+
+@pytest.mark.skipif(
+    not PUBLISH_IMAGES_WORKFLOW.exists(),
+    reason="publish-oss-images.yml is stripped from the OSS snapshot by scripts/prepare-oss.sh",
+)
+def test_frontend_twin_defaults_on_in_the_image_publisher():
+    # The published image is built by this workflow, not by compose, so the
+    # default has to be stated there too or the GHCR image ships with it off.
+    workflow = PUBLISH_IMAGES_WORKFLOW.read_text()
+    assert "VITE_ENABLE_PER_WINDOW_REVIEW=true" in workflow
 
 
 @pytest.mark.parametrize("flag", FLAGS)
 def test_flag_is_documented_with_its_default(flag):
     # A name appearing somewhere in the prose is not documentation an
     # operator can copy — the commented assignment is.
-    assert f"# {flag}=false" in (REPO_ROOT / ".env.example").read_text()
+    assert f"# {flag}=true" in (REPO_ROOT / ".env.example").read_text()
 
 
 def test_both_services_agree_on_the_expression(compose):

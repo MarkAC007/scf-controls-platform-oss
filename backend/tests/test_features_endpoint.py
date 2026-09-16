@@ -28,7 +28,9 @@ def client():
 
 
 class TestDefaults:
-    def test_all_flags_default_off(self, client, monkeypatch):
+    def test_all_flags_default_on(self, client, monkeypatch):
+        # Window-assessment parity: the windowed assessment is the primary
+        # surface, so an install that never mentions the flags gets it.
         for name in (
             "ENABLE_PER_WINDOW_REVIEW",
             "ENABLE_WINDOW_ASSESSMENT_KSI",
@@ -36,10 +38,16 @@ class TestDefaults:
         ):
             monkeypatch.delenv(name, raising=False)
         assert client.get("/api/features").json() == {
-            "per_window_review": False,
-            "window_assessment_ksi": False,
-            "composite_ksi": False,
+            "per_window_review": True,
+            "window_assessment_ksi": True,
+            "composite_ksi": True,
         }
+
+    def test_empty_value_means_default_not_off(self, client, monkeypatch):
+        # compose forwards `${FLAG:-true}`, but an operator's `FLAG=` line
+        # would forward an empty string; that must not silently disable.
+        monkeypatch.setenv("ENABLE_PER_WINDOW_REVIEW", "")
+        assert client.get("/api/features").json()["per_window_review"] is True
 
 
 class TestReporting:
@@ -60,10 +68,10 @@ class TestReporting:
             "ENABLE_COMPOSITE_KSI",
         ):
             monkeypatch.delenv(name, raising=False)
-        monkeypatch.setenv(env_name, "true")
+        monkeypatch.setenv(env_name, "false")
         body = client.get("/api/features").json()
-        assert body[key] is True
-        assert all(v is False for k, v in body.items() if k != key)
+        assert body[key] is False
+        assert all(v is True for k, v in body.items() if k != key)
 
     def test_value_is_case_insensitive(self, client, monkeypatch):
         monkeypatch.setenv("ENABLE_PER_WINDOW_REVIEW", "TRUE")

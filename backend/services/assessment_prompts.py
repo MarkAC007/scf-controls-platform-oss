@@ -30,6 +30,30 @@ logger = logging.getLogger(__name__)
 # version is how a reader tells them apart.
 PROMPT_VERSION = "2.0.0"
 
+# The windowed (portfolio) prompt has its own version line. Until this constant
+# existed the window prompt was stamped with PROMPT_VERSION, so a window row
+# reading "2.0.0" is a v1-shaped window verdict written in the per-file 2.0.0
+# era. Starting the window line at 2.1.0 keeps that history unambiguous: no
+# window row stamped 2.1.0 or later was produced without assessment objectives.
+WINDOW_PROMPT_VERSION = "2.1.0"
+
+# Shape of the verdict a window row carries. 1 = the original portfolio verdict
+# (status + findings only); 2 = per-objective ao_findings with file attribution,
+# per-file effective dates and a derived status. Pre-existing rows are backfilled
+# to 1 by the migration; the service writes the current value on every verdict.
+WINDOW_SCHEMA_VERSION = 2
+
+# SCF Assessment Rigor (AR), as carried on each assessment objective in the
+# catalog (`SCFCatalogAssessmentObjective.assessment_rigor`, values 1-3). The
+# descriptors follow the SCF Conformity Assessment Program's assessment types;
+# the level is rendered as context for the model (#881 D2 allows catalog rigor
+# as prompt context) and never as a user-facing knob.
+ASSESSMENT_RIGOR_SCALE = {
+    1: ("basic", "examination of documentation is normally enough to show the objective is met"),
+    2: ("focused", "examination plus corroboration, such as records or interviews, is expected"),
+    3: ("comprehensive", "examination, corroboration and evidence that the control operates as described are expected"),
+}
+
 # How many assessment objectives may enter one prompt. Mapped controls can
 # carry a long tail of AOs, and past roughly this many the objective list
 # crowds out the evidence itself — the model reads less of the document to
@@ -206,6 +230,22 @@ class ControlContext:
     # caller discloses this; silently assessing against a subset would present
     # partial coverage as complete.
     objectives_capped: bool = False
+    # SCF Assessment Rigor per ao_id, for the objectives above that carry one.
+    # Deliberately NOT part of context_data / the context hash: rendering rigor
+    # is a prompt-side choice for the window path, and folding it into the hash
+    # would invalidate every cached per-file verdict for a value the per-file
+    # prompt does not even render.
+    objective_rigor: Dict[str, int] = field(default_factory=dict)
+
+
+def _objective_rigor_map(ao_rows) -> Dict[str, int]:
+    """ao_id -> assessment_rigor for the objectives that publish one."""
+    out: Dict[str, int] = {}
+    for ao in ao_rows:
+        rigor = getattr(ao, "assessment_rigor", None)
+        if isinstance(rigor, int) and rigor in ASSESSMENT_RIGOR_SCALE:
+            out[ao.ao_id] = rigor
+    return out
 
 
 def _objective_entry(ao) -> Dict[str, str]:
@@ -293,6 +333,7 @@ async def assemble_control_context(
     control_ids = catalog_entry.control_mappings or []
     controls = []
     objectives: List[Dict[str, str]] = []
+    rigor: Dict[str, int] = {}
 
     if control_ids:
         ctrl_result = await db.execute(
@@ -304,7 +345,9 @@ async def assemble_control_context(
             controls.append(_control_entry(ctrl))
 
         ao_result = await db.execute(_objectives_query(control_ids))
-        objectives = [_objective_entry(ao) for ao in ao_result.scalars().all()]
+        ao_rows = ao_result.scalars().all()
+        objectives = [_objective_entry(ao) for ao in ao_rows]
+        rigor = _objective_rigor_map(ao_rows)
 
     objectives, capped = _cap_objectives(objectives)
 
@@ -318,6 +361,7 @@ async def assemble_control_context(
         framework_version=catalog_entry.catalog_version or "unknown",
         objectives=objectives,
         objectives_capped=capped,
+        objective_rigor=rigor,
     )
 
 
@@ -342,6 +386,7 @@ def assemble_control_context_sync(
     control_ids = catalog_entry.control_mappings or []
     controls = []
     objectives: List[Dict[str, str]] = []
+    rigor: Dict[str, int] = {}
 
     if control_ids:
         ctrl_result = session.execute(
@@ -353,7 +398,9 @@ def assemble_control_context_sync(
             controls.append(_control_entry(ctrl))
 
         ao_result = session.execute(_objectives_query(control_ids))
-        objectives = [_objective_entry(ao) for ao in ao_result.scalars().all()]
+        ao_rows = ao_result.scalars().all()
+        objectives = [_objective_entry(ao) for ao in ao_rows]
+        rigor = _objective_rigor_map(ao_rows)
 
     objectives, capped = _cap_objectives(objectives)
 
@@ -367,6 +414,7 @@ def assemble_control_context_sync(
         framework_version=catalog_entry.catalog_version or "unknown",
         objectives=objectives,
         objectives_capped=capped,
+        objective_rigor=rigor,
     )
 
 
@@ -384,11 +432,16 @@ def _truncation_notice(truncated: bool) -> str:
 def _assessment_objectives_block(
     objectives: List[Dict[str, str]],
     capped: bool,
+    rigor: Optional[Dict[str, int]] = None,
 ) -> str:
     """Render the assessment objectives the model must answer, grouped by control.
 
     Objectives arrive in ao_id order, so grouping preserves that order within
     each control and the block is byte-stable for a given catalog.
+
+    ``rigor`` (ao_id -> SCF Assessment Rigor 1-3) is rendered beside the
+    objective when supplied. The per-file prompt does not pass it; the window
+    prompt does, with the scale explained once in its own section.
     """
     if not objectives:
         return (
@@ -405,7 +458,9 @@ def _assessment_objectives_block(
     for scf_id, group in grouped.items():
         lines.append(f"### {scf_id}")
         for obj in group:
-            lines.append(f"- **{obj['ao_id']}**: {obj['objective_text']}")
+            level = (rigor or {}).get(obj["ao_id"])
+            tag = f" _(AR {level})_" if level is not None else ""
+            lines.append(f"- **{obj['ao_id']}**{tag}: {obj['objective_text']}")
             if obj.get("expected_results"):
                 lines.append(f"  - Expected results: {obj['expected_results']}")
     if capped:
@@ -508,6 +563,11 @@ def hash_prompt(system_prompt: str, user_prompt: str) -> str:
 
 # ---------------------------------------------------------------------------
 # Windowed assessment (portfolio over a time window)
+#
+# v2 (window parity with #881): the portfolio is answered per SCF assessment
+# objective, every objective answer names the files it relied on, each file's
+# own effective date is extracted, and truncation / deduplication / omission
+# are disclosed to the model rather than hidden from it.
 # ---------------------------------------------------------------------------
 
 WINDOW_ASSESSMENT_OUTPUT_SCHEMA = {
@@ -520,14 +580,62 @@ WINDOW_ASSESSMENT_OUTPUT_SCHEMA = {
         "status": {
             "type": "string",
             "enum": ["sufficient", "partial", "insufficient"],
-            "description": "Overall portfolio sufficiency. If the caller pre-computed insufficient_sample, that is authoritative and this value becomes advisory.",
+            "description": "Your overall impression of the portfolio. Advisory: the recorded status is derived server-side from the per-objective designations (or pre-computed as insufficient_sample).",
         },
         "summary": {
             "type": "string",
-            "description": "2-3 sentence summary of the portfolio assessment, explicitly noting any missing expected artifact types or source labels",
+            "description": "2-3 sentence summary of the portfolio assessment, naming any missing expected artifact types or absent sources",
+        },
+        "ao_findings": {
+            "type": "array",
+            "description": "Exactly one entry per assessment objective listed in the prompt, using the AO id verbatim",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "ao_id": {"type": "string"},
+                    "suggested_designation": {
+                        "type": "string",
+                        "enum": list(AO_DESIGNATIONS),
+                    },
+                    "rationale": {
+                        "type": "string",
+                        "description": "What in the named files shows, or fails to show, this objective",
+                    },
+                    "suggestion": {
+                        "type": "string",
+                        "description": "A concrete next step, or an empty string",
+                    },
+                    "evidence_file_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Ids of the files this answer rests on, drawn only from the ids listed in the prompt. Empty when no file speaks to the objective.",
+                    },
+                },
+                "required": ["ao_id", "suggested_designation", "rationale", "evidence_file_ids"],
+            },
+        },
+        "file_effective_dates": {
+            "type": "array",
+            "description": "One entry per file whose content states a date it is effective; omit files that state none",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "file_id": {"type": "string"},
+                    "evidence_effective_date": {
+                        "type": ["string", "null"],
+                        "description": "YYYY-MM-DD from the document itself, or null",
+                    },
+                    "effective_date_source": {
+                        "type": "string",
+                        "description": "Where in the document the date came from",
+                    },
+                },
+                "required": ["file_id", "evidence_effective_date"],
+            },
         },
         "findings": {
             "type": "array",
+            "description": "Portfolio-level observations. Keep objective-specific reasoning in ao_findings.",
             "items": {
                 "type": "object",
                 "properties": {
@@ -551,8 +659,100 @@ WINDOW_ASSESSMENT_OUTPUT_SCHEMA = {
             },
         },
     },
-    "required": ["relevance_score", "status", "summary", "findings"],
+    "required": ["relevance_score", "status", "summary", "ao_findings", "file_effective_dates", "findings"],
 }
+
+
+def _rigor_scale_block() -> str:
+    """Explain the SCF Assessment Rigor levels the objectives are tagged with."""
+    lines = [
+        "Objectives tagged `(AR n)` carry the SCF's Assessment Rigor level for that objective:",
+    ]
+    for level, (name, meaning) in ASSESSMENT_RIGOR_SCALE.items():
+        lines.append(f"- **AR {level} — {name}:** {meaning}.")
+    lines.append(
+        "Higher rigor means an objective needs more direct evidence before "
+        "`appears_satisfied` is warranted. It never changes which four "
+        "designations you may use, and an untagged objective is treated as AR 1."
+    )
+    return "\n".join(lines)
+
+
+def _collection_block(collection: Optional[Dict[str, Optional[str]]]) -> str:
+    """Render how the organisation says this evidence is collected.
+
+    Comes from EvidenceTracking.method_of_collection / collecting_system —
+    a human description of the collection process, shown so the model can
+    judge whether what arrived matches how it was supposed to arrive.
+    """
+    method = ((collection or {}).get("method_of_collection") or "").strip()
+    system = ((collection or {}).get("collecting_system") or "").strip()
+    if not method and not system:
+        return "- Not recorded for this evidence item."
+    lines = []
+    if method:
+        lines.append(f"- **Method of collection:** {method}")
+    if system:
+        lines.append(f"- **Collecting system:** {system}")
+    return "\n".join(lines)
+
+
+def _window_file_block(index: int, f: dict) -> str:
+    """One file's header, provenance lines, content and truncation notice."""
+    file_id = f.get("file_id", "")
+    lines = [
+        f"### File {index} — id={file_id}",
+        f"- **Filename:** {f.get('filename', '')} ({f.get('content_type', '')})",
+        f"- **Source:** {f.get('source', 'unknown')}",
+        f"- **Uploaded at:** {f.get('uploaded_at', '')}",
+    ]
+    start = f.get("effective_period_start")
+    end = f.get("effective_period_end")
+    if start or end:
+        lines.append(
+            f"- **Preparer-asserted effective period:** {start or 'unspecified'} → {end or 'unspecified'} "
+            "(a human assertion supplied as context; it is not a date extracted from the document)"
+        )
+    rule = f.get("membership_rule")
+    if rule == "asserted_period":
+        lines.append("- **In this window because:** its asserted effective period overlaps the window")
+    elif rule == "uploaded_at":
+        lines.append("- **In this window because:** it was uploaded inside the window")
+    represents = [r for r in (f.get("represents") or []) if r and r != file_id]
+    if represents:
+        lines.append(
+            f"- **Identical content was also uploaded as:** {', '.join(represents)} "
+            f"({len(represents)} more file(s); cite this file's id for all of them)"
+        )
+    text_body = (f.get("text") or "").strip()
+    lines.append("```")
+    lines.append(text_body if text_body else "(no extractable text)")
+    lines.append("```")
+    if f.get("truncated"):
+        lines.append(
+            f"**Note:** file {file_id} is shown only in part; its content was cut to fit the "
+            "assessment budget. Judge what you can see and do not treat the absence of later "
+            "material as a gap."
+        )
+    return "\n".join(lines)
+
+
+def _omitted_files_block(omitted_files: Optional[list[dict]]) -> str:
+    if not omitted_files:
+        return ""
+    lines = [
+        "## Files Counted but Not Shown",
+        "These files are part of the window and count toward coverage, but their "
+        "content is not included because the window exceeded the text budget. Do not "
+        "treat their absence here as a gap; if their content would change an answer, "
+        "say so in `findings`.",
+    ]
+    for f in omitted_files:
+        lines.append(
+            f"- id={f.get('file_id', '')} — {f.get('filename', '')} "
+            f"(source={f.get('source', 'unknown')}, uploaded_at={f.get('uploaded_at', '')})"
+        )
+    return "\n".join(lines) + "\n\n"
 
 
 def build_window_assessment_prompt(
@@ -565,25 +765,41 @@ def build_window_assessment_prompt(
     source_coverage: dict,
     artifact_type_coverage: dict,
     assessment_date: str = "",
+    collection: Optional[Dict[str, Optional[str]]] = None,
+    omitted_files: Optional[list[dict]] = None,
 ) -> tuple[str, str]:
-    """Build the windowed assessment prompt.
+    """Build the windowed assessment prompt (v2, WINDOW_PROMPT_VERSION).
 
     Args:
-        control_context: Assembled control context (same as per-file path).
+        control_context: Assembled control context (same as per-file path),
+            including objectives and per-objective rigor.
         window_start / window_end: ISO-8601 timestamps bounding the window.
         frequency_used: Frequency string that drove the window size.
-        files: List of {filename, content_type, source, uploaded_at, text}.
-        expected_artifact_types: Union of required_artifact_types across mapped controls.
+        files: Files whose content is shown, each
+            {file_id, filename, content_type, source, uploaded_at, text,
+             truncated, effective_period_start, effective_period_end,
+             membership_rule, represents}.
+        expected_artifact_types: Union of required_artifact_types across
+            mapped controls. When empty, the artifact-type sections are
+            omitted entirely rather than rendered as "not extracted".
         source_coverage: {source_label: file_count} for files actually present.
         artifact_type_coverage: {artifact_type: {present: bool, file_count: int}}.
         assessment_date: Optional date string to anchor freshness reasoning.
+        collection: {method_of_collection, collecting_system} from tracking.
+        omitted_files: Files in the window whose content was not sent.
 
     Returns (system_prompt, user_prompt).
     """
-    # --- Control requirements block (shared with build_assessment_prompt) ---
     controls_text = _control_requirements_block(control_context.controls)
+    objectives_text = _assessment_objectives_block(
+        control_context.objectives,
+        control_context.objectives_capped,
+        rigor=control_context.objective_rigor,
+    )
+    ao_ids = [obj["ao_id"] for obj in control_context.objectives]
+    file_ids = [f.get("file_id", "") for f in files]
 
-    # --- Expected artifact types block ---
+    # --- Artifact-type sections: only when the catalog says what to expect ---
     if expected_artifact_types:
         atype_lines = []
         for a in expected_artifact_types:
@@ -591,84 +807,107 @@ def build_window_assessment_prompt(
             weight = a.get("weight", "medium")
             desc = a.get("description", "")
             atype_lines.append(f"- `{a['type']}` ({mand}, weight={weight}): {desc}")
-        expected_text = "\n".join(atype_lines)
+        atype_coverage_lines = []
+        for atype in expected_artifact_types:
+            key = atype.get("type", "")
+            cov = artifact_type_coverage.get(key, {})
+            marker = "PRESENT" if cov.get("present", False) else "MISSING"
+            atype_coverage_lines.append(f"- {key}: {marker} ({cov.get('file_count', 0)} file(s))")
+        artifact_sections = (
+            f"## Expected Artifact Types\n{chr(10).join(atype_lines)}\n\n"
+            f"## Artifact Type Coverage\n{chr(10).join(atype_coverage_lines)}\n\n"
+        )
+        coverage_instruction = (
+            "Use category=coverage for expected artifact types that are missing from the "
+            "portfolio; use completeness/quality for weaknesses within files present."
+        )
     else:
-        expected_text = (
-            "Not extracted for the mapped controls. Assess using the control "
-            "descriptions alone; do not penalise for unknown expected types."
+        artifact_sections = ""
+        coverage_instruction = (
+            "No expected artifact types are published for these controls, so judge "
+            "coverage from the assessment objectives and control requirements alone; "
+            "do not invent an artifact-type checklist."
         )
 
-    # --- Coverage tables ---
     present_sources = sorted(source_coverage.items(), key=lambda kv: kv[0])
     sources_text = (
         "\n".join(f"- {src}: {count} file(s)" for src, count in present_sources)
         if present_sources else "- (none)"
     )
 
-    atype_coverage_lines = []
-    for atype in expected_artifact_types:
-        key = atype.get("type", "")
-        cov = artifact_type_coverage.get(key, {})
-        present = cov.get("present", False)
-        count = cov.get("file_count", 0)
-        marker = "PRESENT" if present else "MISSING"
-        atype_coverage_lines.append(f"- {key}: {marker} ({count} file(s))")
-    atype_coverage_text = "\n".join(atype_coverage_lines) if atype_coverage_lines else "- (no expected types)"
-
-    # --- Files block ---
-    file_blocks = []
-    for i, f in enumerate(files, start=1):
-        header = (
-            f"### Artifact {i} — source={f.get('source', 'unknown')}, "
-            f"uploaded_at={f.get('uploaded_at', '')}, "
-            f"filename={f.get('filename', '')} ({f.get('content_type', '')})"
-        )
-        file_blocks.append(f"{header}\n```\n{f.get('text', '').strip()}\n```")
-    files_text = "\n\n".join(file_blocks) if file_blocks else "_No files in window._"
+    file_blocks = [_window_file_block(i, f) for i, f in enumerate(files, start=1)]
+    files_text = "\n\n".join(file_blocks) if file_blocks else "_No file content in window._"
 
     date_line = (
-        f"\n\nToday's date is {assessment_date}. Evaluate freshness relative to this date."
+        f"\n\nToday's date is {assessment_date}. Evaluate all date references relative to this date."
         if assessment_date else ""
     )
 
-    system_prompt = (
-        f"You are a GRC (Governance, Risk, Compliance) evidence assessor for "
-        f"the Secure Controls Framework (SCF).{date_line}\n\n"
-        "You are assessing a PORTFOLIO of evidence files for one evidence "
-        "item over a time window, against the controls it is mapped to. "
-        "Score the set as a whole — not each file in isolation.\n\n"
-        "When an expected artifact type is missing from the portfolio, treat "
-        "it as a coverage gap (not a defect of the files present). When an "
-        "expected source is absent, say so explicitly in findings. When files "
-        "are present but thin, flag quality. Distinguish coverage gaps from "
-        "content quality in your findings.\n\n"
-        "You are advisory only. Respond with valid JSON matching the schema."
-    )
+    system_prompt = f"""You are a GRC (Governance, Risk, Compliance) evidence assessor for the Secure Controls Framework (SCF).{date_line}
 
-    user_prompt = (
-        f"## Evidence Item\n"
-        f"- **Evidence ID:** {control_context.evidence_id}\n"
-        f"- **Artifact Title:** {control_context.artifact_title}\n"
-        f"- **Description:** {control_context.artifact_description}\n"
-        f"- **Area of Focus:** {control_context.area_of_focus}\n\n"
-        f"## Assessment Window\n"
-        f"- **Start:** {window_start}\n"
-        f"- **End:** {window_end}\n"
-        f"- **Frequency driving window size:** {frequency_used}\n"
-        f"- **File count in window:** {len(files)}\n\n"
-        f"## Mapped Control Requirements\n{controls_text}\n\n"
-        f"## Expected Artifact Types\n{expected_text}\n\n"
-        f"## Source Coverage (what actually arrived)\n{sources_text}\n\n"
-        f"## Artifact Type Coverage\n{atype_coverage_text}\n\n"
-        f"## Files in Window\n{files_text}\n\n"
-        f"## Assessment Instructions\n"
-        f"1. Score the portfolio's overall relevance 0-100.\n"
-        f"2. Determine sufficiency at the portfolio level.\n"
-        f"3. For each finding, name the category, and reference a control_id or artifact_type where relevant.\n"
-        f"4. Prefer category=coverage for missing expected types; category=completeness/quality for weaknesses within files present.\n"
-        f"5. Include concrete suggestions (e.g. \"add a RestoreTest collector that ships quarterly\").\n\n"
-        f"Respond with JSON only, matching this schema:\n"
-        f"{json.dumps(WINDOW_ASSESSMENT_OUTPUT_SCHEMA, indent=2)}"
-    )
+You are assessing a PORTFOLIO of evidence files collected for one evidence item over a time window, against the SCF **assessment objectives** of the controls it is mapped to. An assessment objective is a single, testable statement; you answer each one separately, from what the files actually show, and you name the files each answer rests on.
+
+For every objective you return one of exactly four designations:
+
+- `appears_satisfied` — the portfolio shows this objective being met. Say which file shows it and what it shows.
+- `gap_identified` — the portfolio is on topic but does not show this objective being met, or shows it only partly.
+- `not_applicable` — this objective cannot apply to this organisation or this artifact type. Use sparingly and justify it.
+- `cannot_assess` — nothing in this window is the kind of evidence that could demonstrate this objective, or the files do not contain enough to judge. This is not a criticism of the evidence.
+
+`gap_identified` and `cannot_assess` are different answers. A gap means "I looked and it is not here"; cannot_assess means "these files were never going to tell me". Do not use one for the other.
+
+Score the set as a whole, not each file in isolation: one file may satisfy an objective that another does not mention. When an expected artifact type is listed and missing, that is a coverage gap of the portfolio, not a defect of the files present.
+
+You are ADVISORY. You are not an assessor and you do not issue determinations — a human reviewer confirms or overrides everything you say. Never use assessor vocabulary such as "satisfied", "other than satisfied", "finding", "nonconformity", "pass" or "fail". Use only the four designations above.
+
+Be specific. A rationale that could have been written without reading the files is worthless.
+
+Respond with valid JSON matching the required schema. No prose outside the JSON."""
+
+    user_prompt = f"""Assess the following evidence portfolio against the assessment objectives of its mapped controls.
+
+## Evidence Item
+- **Evidence ID:** {control_context.evidence_id}
+- **Artifact Title:** {control_context.artifact_title}
+- **Description:** {control_context.artifact_description}
+- **Area of Focus:** {control_context.area_of_focus}
+- **Assessment Date:** {assessment_date or "Not specified"}
+
+## Assessment Window
+- **Start:** {window_start}
+- **End:** {window_end}
+- **Frequency driving window size:** {frequency_used}
+- **Files in window:** {len(files) + len(omitted_files or [])} ({len(files)} shown below)
+
+## How This Evidence Is Collected
+{_collection_block(collection)}
+
+## Mapped Control Requirements
+{controls_text}
+
+## Assessment Rigor Scale
+{_rigor_scale_block()}
+
+## Assessment Objectives
+{objectives_text}
+
+{artifact_sections}## Source Coverage (what actually arrived)
+{sources_text}
+
+## Files in Window
+{files_text}
+
+{_omitted_files_block(omitted_files)}## Assessment Instructions
+1. Answer EVERY assessment objective listed above — exactly one `ao_findings` entry per AO id, using the id verbatim. Do not invent, merge, split or omit ids, and do not answer an objective that is not listed. There are {len(ao_ids)} to answer.
+2. Give each objective a `suggested_designation` from: {", ".join(f"`{d}`" for d in AO_DESIGNATIONS)}. Cite what the files do or do not show in `rationale`. Put a concrete next step in `suggestion`, or an empty string when there is nothing useful to add.
+3. In `evidence_file_ids`, list the ids of the files each answer rests on. Use only these ids: {", ".join(file_ids) if file_ids else "(none)"}. Leave the array empty when no file speaks to the objective.
+4. In `file_effective_dates`, give each file the date its CONTENT is effective — the approval or issue date of a policy, the period end of a report, the capture date of a screenshot or export. It is not the upload date, and it is not today. A preparer-asserted effective period shown beside a file is a human's claim supplied as context: do not copy it as the extracted date unless the document itself states that date. If a file states no date you can rely on, return null for it or omit it. Do not estimate, infer from context, or guess. When you do return one, say where it came from in `effective_date_source`.
+5. Evidence supporting an assessment is normally expected to be no more than 12 months old at the time of assessment. If a file's effective date is older than that, add a `quality` finding saying so and recommending refreshed evidence — but do NOT downgrade the objective designations for age alone.
+6. Score `relevance_score` 0-100: how well the portfolio as a whole addresses the mapped controls.
+7. Set `status` to your overall impression. It is advisory — the recorded status is derived by the server from your per-objective designations — so spend your effort on the objectives, not on this field.
+8. Use `findings` for observations about the portfolio as a whole (absent sources, thin or placeholder files, wrong documents, currency). {coverage_instruction} Keep objective-specific reasoning in `ao_findings`.
+
+Respond with JSON only, matching this schema:
+{json.dumps(WINDOW_ASSESSMENT_OUTPUT_SCHEMA, indent=2)}"""
 
     return system_prompt, user_prompt

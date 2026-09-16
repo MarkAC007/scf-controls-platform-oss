@@ -3619,6 +3619,12 @@ export interface AOFinding {
   /** Set client-side by the backend when a reviewer re-designated this objective. */
   overridden_by_human?: boolean
   override_note?: string
+  /**
+   * Window assessments only: the files in the window this answer relied on.
+   * Empty means the objective was answered from the window as a whole (or
+   * could not be answered from any file).
+   */
+  evidence_file_ids?: string[]
 }
 
 /** A recorded disagreement: what the AI said, and what the human said instead. */
@@ -3659,11 +3665,20 @@ export interface AssessmentVersion {
 }
 
 export interface AssessmentReviewQueueItem {
-  file_id: string
+  /** Which layer this entry belongs to. Absent on older backends = 'file'. */
+  kind?: 'file' | 'window'
+  /** Set for kind='file'. */
+  file_id: string | null
   evidence_id: string
   filename: string | null
   uploaded_at: string | null
   uploaded_by_user_id: string | null
+  /** Set for kind='window'. */
+  window_assessment_id?: string | null
+  window_start?: string | null
+  window_end?: string | null
+  frequency_used?: string | null
+  file_count?: number | null
   status: string
   relevance_score: number | null
   gap_count: number
@@ -3842,13 +3857,20 @@ export async function listAssessmentVersions(
   )
 }
 
-/** Files whose AI verdict is waiting for a human decision, worst first. */
+/**
+ * AI verdicts waiting for a human decision, worst first.
+ *
+ * ``tier`` picks the layer: 'file' (the default, and what older backends
+ * serve) lists per-file verdicts; 'window' lists window verdicts, each entry
+ * carrying ``window_assessment_id`` instead of ``file_id``.
+ */
 export async function getAssessmentReviewQueue(
   orgId: string,
-  params: { status?: string; limit?: number; offset?: number } = {},
+  params: { status?: string; tier?: 'file' | 'window'; limit?: number; offset?: number } = {},
 ): Promise<AssessmentReviewQueueResponse> {
   const query = new URLSearchParams()
   query.set('status', params.status ?? 'awaiting')
+  if (params.tier !== undefined) query.set('tier', params.tier)
   if (params.limit !== undefined) query.set('limit', String(params.limit))
   if (params.offset !== undefined) query.set('offset', String(params.offset))
   return apiFetch<AssessmentReviewQueueResponse>(
@@ -3961,6 +3983,71 @@ export async function reviewWindowAssessment(
       method: 'PUT',
       body: JSON.stringify(body),
     },
+  )
+}
+
+/** One frozen verdict from a window's assessment history (window parity). */
+export interface WindowAssessmentVersion {
+  id: string
+  window_assessment_id: string
+  version_number: number
+  /** 1 = pre-objective verdict, 2 = objective-grounded. */
+  schema_version: number
+  window_start: string
+  window_end: string
+  frequency_used: string | null
+  file_ids: string[]
+  file_membership: Record<string, unknown>
+  status: string
+  relevance_score: number | null
+  summary: string | null
+  findings: Array<Record<string, unknown>>
+  ao_findings: AOFinding[]
+  gap_count: number
+  cannot_assess_count: number
+  file_effective_dates: Array<Record<string, unknown>>
+  unassessable_reason: string | null
+  model_id: string | null
+  prompt_version: string | null
+  assessment_source: string | null
+  assessed_at: string | null
+  created_at: string
+  review_decision: string | null
+  review_reason: string | null
+  reviewed_by_user_id: string | null
+  reviewed_at: string | null
+  ao_overrides: AOOverride[] | null
+}
+
+/**
+ * Record a human decision on the current AI verdict for a window.
+ *
+ * Not the same call as ``reviewWindowAssessment``. That one says what the
+ * organisation decided to do with the evidence (approve / reject / revise);
+ * this one says whether a person stands behind the machine's reading of it,
+ * objective by objective. Same request shape as the per-file
+ * ``reviewAssessment``.
+ *
+ * Backend route: ``POST /organizations/{org_id}/evidence/window-assessments/{ewa_id}/verdict/review``
+ */
+export async function reviewWindowVerdict(
+  orgId: string,
+  ewaId: string,
+  body: AssessmentReviewRequest,
+): Promise<EvidenceWindowAssessment> {
+  return apiFetch<EvidenceWindowAssessment>(
+    `/organizations/${orgId}/evidence/window-assessments/${ewaId}/verdict/review`,
+    { method: 'POST', body: JSON.stringify(body) },
+  )
+}
+
+/** Every verdict this window has received, newest first. */
+export async function listWindowAssessmentVersions(
+  orgId: string,
+  ewaId: string,
+): Promise<WindowAssessmentVersion[]> {
+  return apiFetch<WindowAssessmentVersion[]>(
+    `/organizations/${orgId}/evidence/window-assessments/${ewaId}/versions`,
   )
 }
 

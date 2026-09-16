@@ -33,6 +33,7 @@ from services.audit_service import create_audit_entry
 from services.validation_service import run_validation
 from services.evidence_integrity_service import compute_sha256
 from services.collection_date import advance_last_collection_date, collection_date_from
+from services.window_assessment_trigger import schedule_window_assessment_on_ingest
 from services.evidence_quarantine import (
     enqueue_integrity_verification,
     quarantine_evidence_file,
@@ -650,6 +651,13 @@ async def ingest_evidence(
             "Webhook delivery %s: delivery_id=%s, endpoint=%s, evidence=%s, org=%s",
             delivery.status, delivery.id, endpoint.id, evidence_id, org_id,
         )
+
+        # Record-level verdict: a stored, tracked delivery schedules the window
+        # assessment (debounced per evidence item, after the commit above so
+        # the worker sees the file). Rejected or untracked deliveries do not —
+        # there is nothing new in the window to assess.
+        if tracker is not None and evidence_file is not None and delivery.status == "processed":
+            await schedule_window_assessment_on_ingest(org_id, evidence_id, trigger="webhook")
 
         return WebhookIngestResponse(
             delivery_id=delivery.id,

@@ -20,13 +20,14 @@ import json
 import logging
 import os
 import time
+import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import select, text
+from sqlalchemy import and_, or_, select, text
 from sqlalchemy.orm import Session
 
 from catalog_models import SCFCatalogControl, SCFCatalogEvidence
@@ -35,7 +36,15 @@ from services.assessment_prompts import (
     assemble_control_context_sync,
     build_window_assessment_prompt,
     hash_prompt,
-    PROMPT_VERSION,
+    WINDOW_PROMPT_VERSION,
+    WINDOW_SCHEMA_VERSION,
+)
+from services.assessment_verdict import (
+    AssessmentParseError,
+    ParsedWindowAssessment,
+    derive_assessment_status,
+    parse_window_assessment_v2,
+    status_coercion_finding,
 )
 from services.text_extraction_service import (
     download_evidence_bytes,
@@ -44,6 +53,7 @@ from services.text_extraction_service import (
 from services.validation_service import STALENESS_THRESHOLDS
 from services.frequency_vocabulary import UI_OPTIONS, normalize as normalize_frequency
 from services.anthropic_response import extract_text
+from services.artifact_type_extraction_service import extract_for_control
 from services.model_registry import cost_cents as model_cost_cents, resolve as resolve_model
 
 from services.llm_client import build_anthropic_client
@@ -67,6 +77,71 @@ MODEL_ROLE = "evidence_assessment"
 # Upper bound on extracted text per file (characters) so the prompt stays
 # within a reasonable token budget when a window has many files.
 PER_FILE_TEXT_CAP = 20_000
+
+# Upper bound on extracted text across the whole window (characters). A
+# monthly window on a daily collector held 22 files in production (#569);
+# at the per-file cap alone that is 440k characters, past what one prompt
+# should carry. Identical payloads are collapsed first (see
+# _plan_prompt_content), then representatives are admitted newest-first
+# until this budget is spent, and whatever was not shown is disclosed on the
+# row. Roughly 40k tokens; comfortably inside the model's context beside a
+# 60-objective prompt and MAX_OUTPUT_TOKENS of thinking + answer.
+WINDOW_TEXT_BUDGET = int(os.getenv("WINDOW_ASSESSMENT_TEXT_BUDGET") or "150000")
+
+# Self-hosted installs ship the catalog with `required_artifact_types` empty:
+# the shipped catalog data carries no artifact-type extraction, and the
+# one-off CLI (backend/scripts/extract_artifact_types.py) is not part of the
+# install path. Rather than seeding every control up front (an LLM call per
+# control against a catalog most tenants never touch), the window assessor
+# extracts lazily: the first window assessment that needs a control's artifact
+# types runs the extraction once and caches the result on the control row
+# (`required_artifact_types` + `required_artifact_types_extracted_at`).
+# Controls that were attempted and produced an empty list are stamped too, so
+# they are never re-tried by the assessor; the CLI's --force remains the way
+# to re-extract. Extraction is fail-open: any failure logs and the assessment
+# proceeds without an artifact-type coverage section, exactly as before.
+# Set ARTIFACT_TYPE_LAZY_EXTRACTION=false to opt out (assessments then only
+# see whatever the CLI populated).
+_TRUTHY = ("1", "true", "yes", "on")
+
+
+def _lazy_artifact_type_extraction_enabled() -> bool:
+    return (os.getenv("ARTIFACT_TYPE_LAZY_EXTRACTION") or "true").strip().lower() in _TRUTHY
+
+
+def _artifact_types_for_control(session: Session, ctrl: SCFCatalogControl) -> list:
+    """Return a control's required_artifact_types, extracting lazily if unset.
+
+    Only controls that have never been attempted (empty list AND no
+    `required_artifact_types_extracted_at` stamp) trigger an extraction.
+    Failures never propagate: the caller gets an empty list and the
+    assessment continues.
+    """
+    existing = ctrl.required_artifact_types or []
+    if existing:
+        return existing
+    if ctrl.required_artifact_types_extracted_at is not None:
+        return []
+    if not _lazy_artifact_type_extraction_enabled():
+        return []
+    try:
+        result = extract_for_control(session, ctrl.scf_id)
+    except Exception as exc:  # noqa: BLE001 — fail-open by design
+        logger.warning(
+            "Lazy artifact-type extraction failed for %s: %s", ctrl.scf_id, exc,
+        )
+        return []
+    if result.error:
+        logger.warning(
+            "Lazy artifact-type extraction for %s returned no result: %s",
+            ctrl.scf_id, result.error,
+        )
+        return []
+    logger.info(
+        "Lazily extracted %d artifact type(s) for %s on first window assessment",
+        len(result.artifact_types or []), ctrl.scf_id,
+    )
+    return result.artifact_types or []
 
 # Fallback window when tracking.frequency is missing/unknown. Conservative
 # (monthly) — also captured in findings as a warning for the user.
@@ -104,6 +179,16 @@ class _FileInWindow:
     # collectors.registry.resolve_artifact_types as the top-of-chain input.
     collector_id: Optional[str] = None
     declared_artifact_types: Optional[list[str]] = None
+    # Window parity (WS2/WS3): preparer assertions, why the file is in the
+    # window, and how its content was used in the prompt.
+    effective_period_start: Optional[date] = None
+    effective_period_end: Optional[date] = None
+    membership_rule: str = "uploaded_at"
+    storage_config_id: Optional[str] = None
+    content_hash: Optional[str] = None
+    truncated: bool = False
+    represented_by: Optional[UUID] = None
+    omitted_reason: Optional[str] = None
 
 
 def _resolve_frequency(tracking: Optional[EvidenceTracking]) -> tuple[str, bool]:
@@ -197,6 +282,8 @@ def _fetch_webhook_sources_for_files(session: Session, file_ids: list[UUID]) -> 
 def _build_expected_artifact_types(session: Session, evidence_id: str) -> list[dict]:
     """Union required_artifact_types across all controls mapped to the evidence.
 
+    Controls whose artifact types were never extracted are extracted lazily
+    here and cached on the control row (see _artifact_types_for_control).
     Deduplicates by `type`. If a type appears in multiple controls, the
     most-demanding metadata wins (mandatory=True sticks, highest weight sticks).
     """
@@ -217,7 +304,7 @@ def _build_expected_artifact_types(session: Session, evidence_id: str) -> list[d
     weight_rank = {"low": 0, "medium": 1, "high": 2}
     merged: dict[str, dict] = {}
     for ctrl in ctrls:
-        for entry in (ctrl.required_artifact_types or []):
+        for entry in _artifact_types_for_control(session, ctrl):
             if not isinstance(entry, dict):
                 continue
             atype = entry.get("type")
@@ -404,11 +491,286 @@ def _compute_window_hash(
     window_end: datetime,
     files: list[_FileInWindow],
 ) -> str:
-    """SHA-256 fingerprint of the window's file set for cache invalidation."""
-    parts = [evidence_id, window_start.isoformat(), window_end.isoformat(), PROMPT_VERSION]
+    """SHA-256 fingerprint of the window's file set for cache invalidation.
+
+    Salted with WINDOW_PROMPT_VERSION (not the per-file PROMPT_VERSION) so a
+    window prompt change re-assesses windows without disturbing per-file
+    caches, and vice versa. The membership rule rides along with each file:
+    the same file selected for a different reason is rendered differently.
+    """
+    parts = [evidence_id, window_start.isoformat(), window_end.isoformat(), WINDOW_PROMPT_VERSION]
     for f in sorted(files, key=lambda x: str(x.id)):
-        parts.append(f.sha256_hash or str(f.id))
+        parts.append(f"{f.sha256_hash or f.id}:{f.membership_rule}")
     return hashlib.sha256("|".join(parts).encode()).hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# Membership (WS2): asserted effective period first, upload date as fallback
+# ---------------------------------------------------------------------------
+
+MEMBERSHIP_ASSERTED_PERIOD = "asserted_period"
+MEMBERSHIP_UPLOADED_AT = "uploaded_at"
+
+
+def _membership_rule(
+    *,
+    uploaded_at: Optional[datetime],
+    effective_period_start: Optional[date],
+    effective_period_end: Optional[date],
+    window_start: datetime,
+    window_end: datetime,
+) -> Optional[str]:
+    """Which rule puts a file in this window, or None when it is not a member.
+
+    A preparer who asserted an effective period has said what time the
+    document speaks for, and that assertion governs: the file is in the
+    window when the asserted period overlaps it, wherever the upload landed.
+    An open-ended assertion (only a start, or only an end) extends to
+    infinity on the unspecified side. Only an unasserted file falls back to
+    when it was uploaded.
+    """
+    if effective_period_start is not None or effective_period_end is not None:
+        ws, we = window_start.date(), window_end.date()
+        starts_before_window_ends = effective_period_start is None or effective_period_start <= we
+        ends_after_window_starts = effective_period_end is None or effective_period_end >= ws
+        if starts_before_window_ends and ends_after_window_starts:
+            return MEMBERSHIP_ASSERTED_PERIOD
+        return None
+    if uploaded_at is not None and window_start <= uploaded_at <= window_end:
+        return MEMBERSHIP_UPLOADED_AT
+    return None
+
+
+def _select_files_for_window(
+    session: Session,
+    organization_id: UUID,
+    evidence_id: str,
+    window_start: datetime,
+    window_end: datetime,
+) -> list[tuple[EvidenceFile, str]]:
+    """Files in the window with the rule that selected each, newest first."""
+    candidates = session.execute(
+        select(EvidenceFile).where(
+            EvidenceFile.organization_id == organization_id,
+            EvidenceFile.evidence_id == evidence_id,
+            EvidenceFile.is_deleted.is_(False),
+            or_(
+                and_(
+                    EvidenceFile.uploaded_at >= window_start,
+                    EvidenceFile.uploaded_at <= window_end,
+                ),
+                EvidenceFile.effective_period_start.isnot(None),
+                EvidenceFile.effective_period_end.isnot(None),
+            ),
+        ).order_by(EvidenceFile.uploaded_at.desc())
+    ).scalars().all()
+
+    selected: list[tuple[EvidenceFile, str]] = []
+    for f in candidates:
+        rule = _membership_rule(
+            uploaded_at=f.uploaded_at,
+            effective_period_start=f.effective_period_start,
+            effective_period_end=f.effective_period_end,
+            window_start=window_start,
+            window_end=window_end,
+        )
+        if rule is not None:
+            selected.append((f, rule))
+    return selected
+
+
+# ---------------------------------------------------------------------------
+# Text budget (WS3): dedupe identical payloads, cap the window's characters
+# ---------------------------------------------------------------------------
+
+def _plan_prompt_content(files: list[_FileInWindow]) -> None:
+    """Decide which files' text goes to the model. Mutates the entries.
+
+    1. Files with identical content (same sha256) collapse to one
+       representative — the newest — and the rest point at it via
+       ``represented_by``. A daily collector that ships the same payload 22
+       times is one document, not 22.
+    2. Representatives are then admitted newest-first until the window's
+       text budget is spent; the remainder are marked ``omitted_reason``
+       and still count for coverage and sample size.
+
+    Files must arrive newest-first. Nothing is downloaded here; the caller
+    extracts text only for entries left with neither marker set.
+    """
+    seen_hash: dict[str, _FileInWindow] = {}
+    for f in files:
+        key = f.content_hash or f.sha256_hash
+        if not key:
+            continue
+        if key in seen_hash:
+            f.represented_by = seen_hash[key].id
+        else:
+            seen_hash[key] = f
+
+
+def _apply_text_budget(f: _FileInWindow, text_value: str, budget_left: int) -> tuple[str, int]:
+    """Cut one file's text to the per-file cap and the remaining budget."""
+    allowed = min(PER_FILE_TEXT_CAP, max(budget_left, 0))
+    cut = text_value[:allowed]
+    f.truncated = len(text_value) > len(cut)
+    return cut, budget_left - len(cut)
+
+
+def _text_budget_finding(files: list[_FileInWindow]) -> Optional[dict]:
+    """Disclose, as a coverage finding, what the model was not shown."""
+    duplicates = [f for f in files if f.represented_by is not None]
+    omitted = [f for f in files if f.omitted_reason is not None]
+    if not duplicates and not omitted:
+        return None
+    parts: list[str] = []
+    if duplicates:
+        parts.append(
+            f"{len(duplicates)} file(s) had content identical to another file in the "
+            f"window and were sent to the model once, under the representative file's id: "
+            f"{', '.join(str(f.id) for f in duplicates)}."
+        )
+    if omitted:
+        parts.append(
+            f"{len(omitted)} file(s) were counted for coverage but their content was not "
+            f"sent to the model because the window exceeded the text budget of "
+            f"{WINDOW_TEXT_BUDGET:,} characters: {', '.join(str(f.id) for f in omitted)}."
+        )
+    return {
+        "category": "coverage",
+        "level": "info",
+        "message": " ".join(parts),
+        "suggestion": (
+            "Objective answers cite the representative file for duplicated content. "
+            "If the omitted files could change an answer, review them directly."
+        ),
+        "duplicate_file_ids": [str(f.id) for f in duplicates],
+        "omitted_file_ids": [str(f.id) for f in omitted],
+    }
+
+
+def _membership_snapshot(files: list[_FileInWindow]) -> dict:
+    """Per-file record of why each file is in the window and how it was used."""
+    out: dict = {}
+    for f in files:
+        out[str(f.id)] = {
+            "rule": f.membership_rule,
+            "uploaded_at": f.uploaded_at.isoformat() if f.uploaded_at else None,
+            "effective_period_start": (
+                f.effective_period_start.isoformat() if f.effective_period_start else None
+            ),
+            "effective_period_end": (
+                f.effective_period_end.isoformat() if f.effective_period_end else None
+            ),
+            "in_prompt": f.represented_by is None and f.omitted_reason is None,
+            "represented_by": str(f.represented_by) if f.represented_by else None,
+            "omitted_reason": f.omitted_reason,
+            "truncated": f.truncated,
+        }
+    return out
+
+
+def _collection_context(tracking: Optional[EvidenceTracking]) -> Optional[dict]:
+    if tracking is None:
+        return None
+    return {
+        "method_of_collection": tracking.method_of_collection,
+        "collecting_system": tracking.collecting_system,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Append-only history (parity with tasks_assessment._write_terminal_verdict)
+# ---------------------------------------------------------------------------
+
+#: The version row is copied FROM the parent row inside the database, so the
+#: two cannot drift: whatever the parent says at the moment of the write is
+#: what the history says forever. version_number is computed in SQL from the
+#: parent's own counter, under the row lock the preceding flush took, so two
+#: workers finishing the same window serialise on it — and if they race past
+#: it anyway the unique constraint on (window_assessment_id, version_number)
+#: refuses the second rather than admitting a duplicate.
+_INSERT_WINDOW_VERSION_SQL = text("""
+    INSERT INTO evidence_window_assessment_versions (
+        id, window_assessment_id, organization_id, evidence_id,
+        version_number, schema_version,
+        window_start, window_end, frequency_used, file_ids, file_membership,
+        status, relevance_score, summary, findings, ao_findings,
+        gap_count, cannot_assess_count, file_effective_dates, unassessable_reason,
+        model_id, prompt_hash, prompt_version, control_context_hash,
+        framework_version, window_hash, input_token_count, output_token_count,
+        cost_cents, processing_time_ms,
+        assessment_source, requested_by_user_id, assessed_at
+    )
+    SELECT
+        :version_id, ewa.id, ewa.organization_id, ewa.evidence_id,
+        COALESCE(ewa.version_number, 0) + 1, COALESCE(ewa.schema_version, 2),
+        ewa.window_start, ewa.window_end, ewa.frequency_used,
+        COALESCE(ewa.file_ids, '[]'::jsonb), COALESCE(ewa.file_membership, '{}'::jsonb),
+        ewa.status, ewa.relevance_score, ewa.summary,
+        COALESCE(ewa.findings, '[]'::jsonb), COALESCE(ewa.ao_findings, '[]'::jsonb),
+        COALESCE(ewa.gap_count, 0), COALESCE(ewa.cannot_assess_count, 0),
+        COALESCE(ewa.file_effective_dates, '[]'::jsonb), ewa.unassessable_reason,
+        ewa.model_id, ewa.prompt_hash, ewa.prompt_version, ewa.control_context_hash,
+        ewa.framework_version, ewa.window_hash, ewa.input_token_count, ewa.output_token_count,
+        ewa.cost_cents, ewa.processing_time_ms,
+        ewa.assessment_source, ewa.requested_by_user_id, ewa.assessed_at
+    FROM evidence_window_assessments ewa
+    WHERE ewa.id = :assessment_id
+    RETURNING version_number
+""")
+
+_POINT_CURRENT_VERSION_SQL = text("""
+    UPDATE evidence_window_assessments SET
+        current_version_id = :version_id,
+        version_number = :version_number,
+        -- A new verdict has not been reviewed. Carrying the previous decision
+        -- forward would show a reviewer's name against findings they never saw.
+        review_decision = NULL,
+        review_reason = NULL,
+        verdict_reviewed_by_user_id = NULL,
+        verdict_reviewed_at = NULL
+    WHERE id = :assessment_id
+""")
+
+_VERSION_POINTER_FIELDS = (
+    "current_version_id", "version_number",
+    "review_decision", "review_reason",
+    "verdict_reviewed_by_user_id", "verdict_reviewed_at",
+)
+
+
+def _write_window_terminal_verdict(session: Session, assessment: EvidenceWindowAssessment) -> Optional[int]:
+    """Persist the verdict on the parent row, freeze it as a new version, repoint the parent.
+
+    One transaction, committed once. Called at every terminal outcome —
+    success, no-files, error — so the history is complete rather than a
+    record of the happy path. Returns the new version number.
+    """
+    session.flush()
+    version_id = uuid.uuid4()
+    row = session.execute(
+        _INSERT_WINDOW_VERSION_SQL,
+        {"version_id": version_id, "assessment_id": assessment.id},
+    ).first()
+    if row is None:
+        # The parent vanished between the flush and the insert (deleted
+        # mid-flight). Nothing to record a history against; keep the
+        # commit so the parent write, if any, is not lost.
+        logger.warning(
+            "No evidence_window_assessments row id=%s — verdict not versioned", assessment.id,
+        )
+        session.commit()
+        return None
+    version_number = int(row[0])
+    session.execute(
+        _POINT_CURRENT_VERSION_SQL,
+        {"version_id": version_id, "version_number": version_number, "assessment_id": assessment.id},
+    )
+    session.commit()
+    # The pointer and the review reset were written in SQL, not through the
+    # ORM; make sure the object reloads them instead of serving stale values.
+    session.expire(assessment, list(_VERSION_POINTER_FIELDS))
+    return version_number
 
 
 def _call_llm(system_prompt: str, user_prompt: str) -> Optional[dict]:
@@ -441,52 +803,44 @@ def _call_llm(system_prompt: str, user_prompt: str) -> Optional[dict]:
             "model": message.model,
             "input_tokens": message.usage.input_tokens,
             "output_tokens": message.usage.output_tokens,
+            # Needed to tell a complete answer from one cut off at the token
+            # ceiling; the parser refuses the latter rather than reading the
+            # fragment as a verdict.
+            "stop_reason": getattr(message, "stop_reason", None),
         }
     except Exception as exc:
         logger.error("Claude API call failed during window assessment: %s", exc, exc_info=True)
         return None
 
 
-def _parse_llm_response(content: str) -> dict:
-    """Parse the windowed-assessment LLM JSON response with safe defaults."""
-    body = content.strip()
-    if body.startswith("```"):
-        lines = body.split("\n")
-        if lines and lines[0].strip().startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
-        body = "\n".join(lines).strip()
+def _derive_window_status(
+    parsed: ParsedWindowAssessment,
+    sample_insufficient: bool,
+) -> tuple[str, Optional[str], Optional[dict]]:
+    """(status, unassessable_reason, coercion_finding) for a parsed verdict.
 
-    try:
-        parsed = json.loads(body)
-    except (json.JSONDecodeError, ValueError) as exc:
-        logger.warning("Failed to parse window assessment LLM response: %s", exc)
-        return {
-            "status": "error",
-            "relevance_score": None,
-            "summary": "AI response could not be parsed",
-            "findings": [{
-                "category": "error",
-                "level": "info",
-                "message": f"LLM response was not valid JSON: {content[:200]}",
-            }],
-        }
-
-    status = parsed.get("status")
-    if status not in ("sufficient", "partial", "insufficient"):
-        parsed["status"] = "partial"
-    score = parsed.get("relevance_score")
-    if score is not None:
-        try:
-            parsed["relevance_score"] = max(0.0, min(100.0, float(score)))
-        except (TypeError, ValueError):
-            parsed["relevance_score"] = None
-    if not isinstance(parsed.get("findings"), list):
-        parsed["findings"] = []
-    if not isinstance(parsed.get("summary"), str):
-        parsed["summary"] = ""
-    return parsed
+    insufficient_sample, decided before the model was asked, still wins.
+    Otherwise the status is derived from the per-objective designations. Only
+    when the mapped controls publish no objectives at all does the model's
+    advisory status stand, and if that is off-contract too the window is
+    recorded partial with a finding saying why.
+    """
+    if sample_insufficient:
+        return "insufficient_sample", None, None
+    derived, reason = derive_assessment_status(parsed.designations)
+    if derived is not None:
+        return derived, reason, status_coercion_finding(parsed.model_status, derived)
+    if parsed.model_status is not None:
+        return parsed.model_status, None, None
+    return "partial", None, {
+        "category": "quality",
+        "level": "info",
+        "message": (
+            "The mapped controls publish no assessment objectives and the model "
+            "returned no usable overall status, so the window is recorded as "
+            "'partial' pending human review."
+        ),
+    }
 
 
 def assess_window(
@@ -503,7 +857,8 @@ def assess_window(
 
     Raises WindowAssessmentError on hard failures (e.g. no evidence tracking).
     Soft failures (LLM unavailable, parse errors) are recorded on the
-    assessment row with status="error" and the record is returned.
+    assessment row with status="error" and the record is returned. No path
+    manufactures a verdict the model did not return.
     """
     start_time = time.monotonic()
 
@@ -519,47 +874,26 @@ def assess_window(
     window_end = datetime.utcnow()
     window_start = window_end - timedelta(days=window_days)
 
-    # Fetch files in window
-    file_rows = session.execute(
-        select(EvidenceFile).where(
-            EvidenceFile.organization_id == organization_id,
-            EvidenceFile.evidence_id == evidence_id,
-            EvidenceFile.is_deleted.is_(False),
-            EvidenceFile.uploaded_at >= window_start,
-            EvidenceFile.uploaded_at <= window_end,
-        ).order_by(EvidenceFile.uploaded_at.desc())
-    ).scalars().all()
+    # Membership: asserted effective period first, upload date as fallback.
+    member_rows = _select_files_for_window(
+        session, organization_id, evidence_id, window_start, window_end,
+    )
 
     # Expected artifact types (union across mapped controls)
     expected_types = _build_expected_artifact_types(session, evidence_id)
 
     # Look up webhook-payload sources in one batch
     webhook_sources = _fetch_webhook_sources_for_files(
-        session, [f.id for f in file_rows]
+        session, [f.id for f, _rule in member_rows]
     )
 
     files_in_window: list[_FileInWindow] = []
-    for f in file_rows:
+    for f, rule in member_rows:
         source_label = _infer_source_label(
             filename=f.filename,
             webhook_source_by_file=webhook_sources,
             file_id=f.id,
         )
-        # Extract text (best-effort; empty extraction still keeps the file as a source signal)
-        raw = download_evidence_bytes(
-            f.s3_key,
-            org_id=str(f.organization_id),
-            storage_config_id=(
-                str(f.storage_config_id) if f.storage_config_id else None
-            ),
-        )
-        extracted_text = ""
-        if raw:
-            extracted = extract_text_from_bytes(
-                data=raw, content_type=f.content_type, filename=f.filename
-            )
-            extracted_text = (extracted.text or "")[:PER_FILE_TEXT_CAP]
-
         webhook_entry = webhook_sources.get(f.id) if isinstance(webhook_sources, dict) else None
         collector_id: Optional[str] = None
         declared_artifact_types: Optional[list[str]] = None
@@ -578,13 +912,43 @@ def assess_window(
             content_type=f.content_type,
             uploaded_at=f.uploaded_at,
             source_label=source_label,
-            extracted_text=extracted_text,
+            extracted_text="",
             sha256_hash=f.sha256_hash,
             collector_id=collector_id,
             declared_artifact_types=declared_artifact_types,
+            effective_period_start=f.effective_period_start,
+            effective_period_end=f.effective_period_end,
+            membership_rule=rule,
+            storage_config_id=str(f.storage_config_id) if f.storage_config_id else None,
+            # Prefer the digest the platform measured over the uploader's claim
+            # when both exist; either identifies identical payloads.
+            content_hash=getattr(f, "computed_sha256", None) or f.sha256_hash,
         ))
 
-    # Coverage
+    # Collapse identical payloads before touching storage, then extract text
+    # for the representatives until the window's text budget is spent.
+    _plan_prompt_content(files_in_window)
+    budget_left = WINDOW_TEXT_BUDGET
+    for f in files_in_window:
+        if f.represented_by is not None:
+            continue
+        if budget_left <= 0:
+            f.omitted_reason = "text_budget"
+            continue
+        raw = download_evidence_bytes(
+            f.s3_key,
+            org_id=str(organization_id),
+            storage_config_id=f.storage_config_id,
+        )
+        extracted_text = ""
+        if raw:
+            extracted = extract_text_from_bytes(
+                data=raw, content_type=f.content_type, filename=f.filename
+            )
+            extracted_text = extracted.text or ""
+        f.extracted_text, budget_left = _apply_text_budget(f, extracted_text, budget_left)
+
+    # Coverage counts every member file, shown or not.
     source_coverage, artifact_type_coverage = _compute_coverage(files_in_window, expected_types)
 
     # Compute window hash for cache lookup
@@ -600,11 +964,11 @@ def assess_window(
         )
     ).scalar_one_or_none()
 
-    # Cache hit? Same window_hash + non-terminal previous run → return it.
+    # Cache hit? Same window_hash + terminal previous run → return it.
     if (
         assessment
         and assessment.window_hash == window_hash
-        and assessment.status in ("sufficient", "partial", "insufficient", "insufficient_sample")
+        and assessment.status in ("sufficient", "partial", "insufficient", "insufficient_sample", "unassessable")
     ):
         logger.info(
             "Window assessment cache hit for org=%s evidence=%s hash=%s",
@@ -612,6 +976,7 @@ def assess_window(
         )
         return assessment
 
+    file_membership = _membership_snapshot(files_in_window)
     prior_review_note: Optional[dict] = None
     if assessment is None:
         assessment = EvidenceWindowAssessment(
@@ -621,6 +986,7 @@ def assess_window(
             window_end=window_end,
             frequency_used=frequency_used,
             file_ids=[str(f.id) for f in files_in_window],
+            file_membership=file_membership,
             source_coverage=source_coverage,
             artifact_type_coverage=artifact_type_coverage,
             expected_artifact_types=expected_types,
@@ -628,6 +994,7 @@ def assess_window(
             assessment_source=assessment_source,
             requested_by_user_id=requested_by_user_id,
             window_hash=window_hash,
+            schema_version=WINDOW_SCHEMA_VERSION,
         )
 
         # A new window starts unreviewed. The prior human disposition is
@@ -641,6 +1008,7 @@ def assess_window(
     else:
         assessment.frequency_used = frequency_used
         assessment.file_ids = [str(f.id) for f in files_in_window]
+        assessment.file_membership = file_membership
         assessment.source_coverage = source_coverage
         assessment.artifact_type_coverage = artifact_type_coverage
         assessment.expected_artifact_types = expected_types
@@ -648,9 +1016,24 @@ def assess_window(
         assessment.assessment_source = assessment_source
         assessment.requested_by_user_id = requested_by_user_id
         assessment.window_hash = window_hash
+        assessment.schema_version = WINDOW_SCHEMA_VERSION
+        # A re-run replaces the verdict; nothing from the previous answer may
+        # linger beside the new one.
+        assessment.ao_findings = []
+        assessment.gap_count = 0
+        assessment.cannot_assess_count = 0
+        assessment.unassessable_reason = None
+        assessment.file_effective_dates = []
+        # The verdict those columns held is gone, so a decision recorded
+        # against it must not sit on the row beside a blank. The terminal
+        # write resets it again; this keeps the in-flight row honest.
+        assessment.review_decision = None
+        assessment.review_reason = None
+        assessment.verdict_reviewed_by_user_id = None
+        assessment.verdict_reviewed_at = None
     session.commit()
 
-    # Build pre-findings: fallback frequency + insufficient sample
+    # Build pre-findings: fallback frequency + insufficient sample + budget
     pre_findings: list[dict] = []
 
     if frequency_is_fallback:
@@ -679,6 +1062,10 @@ def assess_window(
             "suggestion": "Verify the collector is running on schedule and shipping to this evidence ID.",
         })
 
+    budget_note = _text_budget_finding(files_in_window)
+    if budget_note is not None:
+        pre_findings.append(budget_note)
+
     # Build control context & prompt
     control_context = assemble_control_context_sync(session, evidence_id)
     if control_context is None:
@@ -688,6 +1075,15 @@ def assess_window(
         )
         return assessment
 
+    shown_files = [
+        f for f in files_in_window
+        if f.represented_by is None and f.omitted_reason is None
+    ]
+    represented: dict[UUID, list[str]] = {}
+    for f in files_in_window:
+        if f.represented_by is not None:
+            represented.setdefault(f.represented_by, []).append(str(f.id))
+
     assessment_date = datetime.utcnow().strftime("%Y-%m-%d")
     system_prompt, user_prompt = build_window_assessment_prompt(
         control_context=control_context,
@@ -696,18 +1092,39 @@ def assess_window(
         frequency_used=frequency_used,
         files=[
             {
+                "file_id": str(f.id),
                 "filename": f.filename,
                 "content_type": f.content_type,
                 "source": f.source_label,
                 "uploaded_at": f.uploaded_at.isoformat() if f.uploaded_at else "",
                 "text": f.extracted_text,
+                "truncated": f.truncated,
+                "effective_period_start": (
+                    f.effective_period_start.isoformat() if f.effective_period_start else None
+                ),
+                "effective_period_end": (
+                    f.effective_period_end.isoformat() if f.effective_period_end else None
+                ),
+                "membership_rule": f.membership_rule,
+                "represents": represented.get(f.id, []),
             }
-            for f in files_in_window
+            for f in shown_files
         ],
         expected_artifact_types=expected_types,
         source_coverage=source_coverage,
         artifact_type_coverage=artifact_type_coverage,
         assessment_date=assessment_date,
+        collection=_collection_context(tracking),
+        omitted_files=[
+            {
+                "file_id": str(f.id),
+                "filename": f.filename,
+                "source": f.source_label,
+                "uploaded_at": f.uploaded_at.isoformat() if f.uploaded_at else "",
+            }
+            for f in files_in_window
+            if f.omitted_reason is not None
+        ],
     )
     prompt_hash_value = hash_prompt(system_prompt, user_prompt)
 
@@ -728,7 +1145,7 @@ def assess_window(
         )
         assessment.summary = "No files in window — nothing to assess."
         assessment.prompt_hash = prompt_hash_value
-        assessment.prompt_version = PROMPT_VERSION
+        assessment.prompt_version = WINDOW_PROMPT_VERSION
         assessment.control_context_hash = control_context.context_hash
         assessment.framework_version = control_context.framework_version
         assessment.model_id = None
@@ -737,7 +1154,7 @@ def assess_window(
         assessment.cost_cents = Decimal("0.0000")
         assessment.processing_time_ms = int((time.monotonic() - start_time) * 1000)
         assessment.assessed_at = datetime.utcnow()
-        session.commit()
+        _write_window_terminal_verdict(session, assessment)
         return assessment
 
     llm = _call_llm(system_prompt, user_prompt)
@@ -751,16 +1168,35 @@ def assess_window(
         )
         return assessment
 
-    parsed = _parse_llm_response(llm["content"])
+    prompted_ao_ids = [obj["ao_id"] for obj in control_context.objectives]
+    try:
+        parsed = parse_window_assessment_v2(
+            llm.get("content") or "",
+            llm.get("stop_reason"),
+            prompted_ao_ids,
+            [str(f.id) for f in shown_files],
+        )
+    except AssessmentParseError as exc:
+        # An answer that cannot be read is recorded as exactly that. The row
+        # says error and why; it does not carry a status the model never gave.
+        _finalise_error(
+            session, assessment, start_time,
+            f"AI response could not be used: {exc.reason}",
+            prompt_hash=prompt_hash_value,
+            control_context_hash=control_context.context_hash,
+            framework_version=control_context.framework_version,
+            model_id=llm.get("model"),
+            input_tokens=llm.get("input_tokens"),
+            output_tokens=llm.get("output_tokens"),
+        )
+        return assessment
 
-    # Merge pre_findings (coverage-level) with LLM findings
-    findings = _compose_findings(
-        pre_findings, prior_review_note, list(parsed.get("findings") or []),
-    )
+    status, unassessable_reason, coercion_note = _derive_window_status(parsed, sample_insufficient)
 
-    # Window-level status: insufficient_sample wins if we set it upfront;
-    # otherwise take the LLM's verdict.
-    status = "insufficient_sample" if sample_insufficient else parsed.get("status", "error")
+    llm_findings = list(parsed.findings)
+    if coercion_note is not None:
+        llm_findings.append(coercion_note)
+    findings = _compose_findings(pre_findings, prior_review_note, llm_findings)
 
     input_tokens = llm.get("input_tokens", 0)
     output_tokens = llm.get("output_tokens", 0)
@@ -772,14 +1208,22 @@ def assess_window(
     model_id = llm.get("model") or resolve_model(MODEL_ROLE)
     cost = model_cost_cents(model_id, input_tokens, output_tokens)
 
+    designations = parsed.designations
     assessment.status = status
-    rel = parsed.get("relevance_score")
-    assessment.relevance_score = Decimal(str(rel)) if rel is not None else None
+    assessment.unassessable_reason = unassessable_reason
+    assessment.relevance_score = (
+        Decimal(str(parsed.relevance_score)) if parsed.relevance_score is not None else None
+    )
     assessment.findings = findings
-    assessment.summary = parsed.get("summary", "")
+    assessment.ao_findings = parsed.ao_findings
+    assessment.gap_count = designations.count("gap_identified")
+    assessment.cannot_assess_count = designations.count("cannot_assess")
+    assessment.file_effective_dates = parsed.file_effective_dates
+    assessment.summary = parsed.summary
+    assessment.schema_version = WINDOW_SCHEMA_VERSION
     assessment.model_id = model_id
     assessment.prompt_hash = prompt_hash_value
-    assessment.prompt_version = PROMPT_VERSION
+    assessment.prompt_version = WINDOW_PROMPT_VERSION
     assessment.control_context_hash = control_context.context_hash
     assessment.framework_version = control_context.framework_version
     assessment.input_token_count = input_tokens
@@ -787,13 +1231,13 @@ def assess_window(
     assessment.cost_cents = Decimal(str(cost)) if cost is not None else None
     assessment.processing_time_ms = int((time.monotonic() - start_time) * 1000)
     assessment.assessed_at = datetime.utcnow()
-    session.commit()
+    _write_window_terminal_verdict(session, assessment)
 
     logger.info(
-        "Window assessment complete org=%s evidence=%s status=%s score=%s files=%d "
-        "model=%s cost=%s",
+        "Window assessment complete org=%s evidence=%s status=%s score=%s files=%d shown=%d "
+        "objectives=%d model=%s cost=%s",
         organization_id, evidence_id, assessment.status, assessment.relevance_score,
-        len(files_in_window), model_id,
+        len(files_in_window), len(shown_files), len(prompted_ao_ids), model_id,
         f"{cost:.4f}c" if cost is not None else "unknown (model not priced)",
     )
     return assessment
@@ -808,6 +1252,9 @@ def _finalise_error(
     prompt_hash: Optional[str] = None,
     control_context_hash: Optional[str] = None,
     framework_version: Optional[str] = None,
+    model_id: Optional[str] = None,
+    input_tokens: Optional[int] = None,
+    output_tokens: Optional[int] = None,
 ) -> None:
     assessment.status = "error"
     assessment.findings = [{
@@ -815,16 +1262,31 @@ def _finalise_error(
         "level": "info",
         "message": message,
     }]
+    assessment.ao_findings = []
+    assessment.gap_count = 0
+    assessment.cannot_assess_count = 0
+    assessment.unassessable_reason = None
+    assessment.file_effective_dates = []
     assessment.summary = message
+    assessment.schema_version = WINDOW_SCHEMA_VERSION
     assessment.processing_time_ms = int((time.monotonic() - start_time) * 1000)
     assessment.assessed_at = datetime.utcnow()
     if prompt_hash:
         assessment.prompt_hash = prompt_hash
         # The version travels with the hash: recording one without the other
         # leaves a verdict whose provenance is half-known.
-        assessment.prompt_version = PROMPT_VERSION
+        assessment.prompt_version = WINDOW_PROMPT_VERSION
     if control_context_hash:
         assessment.control_context_hash = control_context_hash
     if framework_version:
         assessment.framework_version = framework_version
-    session.commit()
+    if model_id:
+        # The call happened and was paid for even though its answer was
+        # unusable; the row says which model answered.
+        assessment.model_id = model_id
+        assessment.input_token_count = input_tokens
+        assessment.output_token_count = output_tokens
+    # An error is a terminal outcome and goes into the history like any
+    # other: a re-run that succeeds must not erase the record that this one
+    # did not.
+    _write_window_terminal_verdict(session, assessment)

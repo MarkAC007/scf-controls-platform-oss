@@ -18,6 +18,8 @@ import {
   reviewWindowAssessment,
 } from '../../data/apiClient'
 import type { EvidenceWindowAssessment } from '../../types'
+import { WindowVerdictReviewPanel } from './WindowVerdictReviewPanel'
+import { verdictPresentation } from './assessmentVerdict'
 
 interface WindowReviewPanelProps {
   orgId: string
@@ -42,6 +44,7 @@ const ASSESSMENT_STATUS_LABELS: Record<string, string> = {
   partial: 'Partial',
   insufficient: 'Insufficient',
   insufficient_sample: 'Insufficient sample',
+  unassessable: 'Unassessable',
   error: 'Error',
   processing: 'Processing',
   pending: 'Pending',
@@ -197,6 +200,7 @@ export function WindowReviewPanel({
   const coverageEntries = Object.entries(coverage)
   const fileCount = ewa.file_ids?.length ?? 0
   const frequency = ewa.frequency_used ?? null
+  const verdictChip = verdictPresentation(assessmentStatus, ewa.review_decision)
 
   return (
     <div
@@ -235,11 +239,13 @@ export function WindowReviewPanel({
             {assessmentLabel && (
               <div className="window-review-context-header">
                 <span className="window-review-context-label">AI Assessment</span>
+                {/* The status word carries who stands behind it: "AI suggests"
+                    until a person confirms or corrects the verdict below. */}
                 <span
-                  className={`assessment-status-badge assessment-status-badge-${assessmentStatus}`}
+                  className={`assessment-status-badge assessment-status-badge-${assessmentStatus} ${verdictChip.className}`}
                   data-testid="window-review-status-assessment-badge"
                 >
-                  {assessmentLabel}
+                  {verdictChip.qualifier ? verdictChip.text : assessmentLabel}
                 </span>
                 {frequency && (
                   <span className="window-review-files-caption">
@@ -255,6 +261,12 @@ export function WindowReviewPanel({
                 data-testid="window-review-summary"
               >
                 {ewa.summary}
+              </p>
+            )}
+
+            {assessmentStatus === 'unassessable' && ewa.unassessable_reason && (
+              <p className="window-review-summary" data-testid="window-review-unassessable-reason">
+                {ewa.unassessable_reason}
               </p>
             )}
 
@@ -338,6 +350,15 @@ export function WindowReviewPanel({
                 })}
               </ul>
             )}
+
+            {/* Objective-by-objective confirmation of the AI's reading. Sits
+                inside the AI context because it answers that context; the
+                acceptance buttons below answer the evidence. */}
+            <WindowVerdictReviewPanel
+              orgId={orgId}
+              assessment={ewa}
+              onReviewed={(updated) => setEwa(updated)}
+            />
           </div>
         )}
 

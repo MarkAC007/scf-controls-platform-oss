@@ -10,7 +10,6 @@ import sys
 from datetime import datetime
 from uuid import uuid4
 
-import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -23,7 +22,6 @@ from services.window_assessment_service import (
     _compute_window_hash,
     _guess_artifact_type_for_source,
     _infer_source_label,
-    _parse_llm_response,
     _resolve_frequency,
 )
 
@@ -262,59 +260,6 @@ class TestComputeWindowHash:
         assert h1 != h2
 
 
-# ---------------------------------------------------------------------------
-# _parse_llm_response
-# ---------------------------------------------------------------------------
-
-class TestParseLLMResponse:
-    def test_valid_json_passes_through(self):
-        raw = '{"status": "sufficient", "relevance_score": 87.5, "summary": "ok", "findings": []}'
-        parsed = _parse_llm_response(raw)
-        assert parsed["status"] == "sufficient"
-        assert parsed["relevance_score"] == 87.5
-        assert parsed["summary"] == "ok"
-        assert parsed["findings"] == []
-
-    def test_code_fence_stripped(self):
-        raw = '```json\n{"status": "partial", "relevance_score": 50, "summary": "s", "findings": []}\n```'
-        parsed = _parse_llm_response(raw)
-        assert parsed["status"] == "partial"
-        assert parsed["relevance_score"] == 50.0
-
-    def test_invalid_json_returns_error(self):
-        parsed = _parse_llm_response("not-json {[")
-        assert parsed["status"] == "error"
-        assert parsed["relevance_score"] is None
-        assert len(parsed["findings"]) == 1
-
-    def test_unknown_status_defaulted_to_partial(self):
-        raw = '{"status": "banana", "relevance_score": 50, "summary": "s", "findings": []}'
-        parsed = _parse_llm_response(raw)
-        assert parsed["status"] == "partial"
-
-    def test_relevance_score_clamped(self):
-        raw = '{"status": "sufficient", "relevance_score": 500, "summary": "", "findings": []}'
-        parsed = _parse_llm_response(raw)
-        assert parsed["relevance_score"] == 100.0
-
-    def test_relevance_score_clamped_negative(self):
-        raw = '{"status": "sufficient", "relevance_score": -20, "summary": "", "findings": []}'
-        parsed = _parse_llm_response(raw)
-        assert parsed["relevance_score"] == 0.0
-
-    def test_missing_findings_replaced_with_empty_list(self):
-        raw = '{"status": "sufficient", "relevance_score": 80, "summary": ""}'
-        parsed = _parse_llm_response(raw)
-        assert parsed["findings"] == []
-
-    def test_non_string_summary_replaced(self):
-        raw = '{"status": "sufficient", "relevance_score": 80, "summary": 42, "findings": []}'
-        parsed = _parse_llm_response(raw)
-        assert parsed["summary"] == ""
-
-
-# ---------------------------------------------------------------------------
-# Prior-review pointer (#789 audit lane, PR-1) — replaces the M4 PR 3 carryover
 # ---------------------------------------------------------------------------
 
 class TestPriorReviewReference:

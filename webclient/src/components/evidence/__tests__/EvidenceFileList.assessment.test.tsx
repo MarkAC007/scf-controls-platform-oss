@@ -8,6 +8,10 @@
  *    passed neither — so Approve/Reject existed in the source and for nobody
  *    else. A test that only proves they hide would have passed the whole time
  *    they were dead, so the one that matters is the one proving they appear.
+ *    Since the window layer became primary (window parity) the per-file
+ *    document buttons are also gated on the per-window review flag being
+ *    off — on by default now — so the appearing tests run with the flag
+ *    stubbed off, and one test pins that the default build hides them.
  *
  * 2. `unassessable`. It must not read as `error`: one says the run failed, the
  *    other says there was never anything to run on, and only the second is
@@ -22,6 +26,13 @@ import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/re
 import { EvidenceFileList } from '../EvidenceFileList'
 import type { EvidenceFileResponse } from '../../../data/apiClient'
 import { makeEvidenceFile as makeFile } from './evidenceFileFixture'
+
+const flags = vi.hoisted(() => ({ perWindowReview: false }))
+vi.mock('../../../data/featureFlags', () => ({
+  get PER_WINDOW_REVIEW_ENABLED() {
+    return flags.perWindowReview
+  },
+}))
 
 vi.mock('../../../data/apiClient', () => ({
   listEvidenceFiles: vi.fn(),
@@ -48,8 +59,21 @@ describe('EvidenceFileList review gating', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(getAssessment).mockResolvedValue(null)
+    // Per-file document review is the pre-parity path: only reachable with
+    // the per-window review flag off.
+    flags.perWindowReview = false
   })
-  afterEach(() => cleanup())
+  afterEach(() => {
+    cleanup()
+    flags.perWindowReview = true
+  })
+
+  it('hides Approve and Reject when per-window review is on (the default build)', async () => {
+    flags.perWindowReview = true
+    await renderList([makeFile({ review_status: 'not_reviewed' })], { canReview: true })
+    expect(screen.queryByText('Approve')).toBeNull()
+    expect(screen.queryByText('Reject')).toBeNull()
+  })
 
   it('shows Approve and Reject to a user who may review', async () => {
     await renderList([makeFile({ review_status: 'not_reviewed' })], { canReview: true })
