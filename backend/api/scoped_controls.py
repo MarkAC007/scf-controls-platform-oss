@@ -19,6 +19,7 @@ from schemas import (
     ScopedControlCreate,
     ScopedControlUpdate,
     ScopedControlStats,
+    ScopedControlsPaginatedResponse,
     SuccessResponse,
     BulkScopeFrameworkRequest,
     BulkScopeFrameworkResponse,
@@ -138,7 +139,10 @@ async def get_scoped_control_stats(
     )
 
 
-@router.get("/organizations/{org_id}/scoped-controls-paginated")
+@router.get(
+    "/organizations/{org_id}/scoped-controls-paginated",
+    response_model=ScopedControlsPaginatedResponse,
+)
 async def list_scoped_controls_paginated(
     org_id: UUID,
     membership: OrgMembership = Depends(require_org_role("viewer")),
@@ -177,6 +181,9 @@ async def list_scoped_controls_paginated(
             ScopedControl.selected,
             ScopedControl.implementation_status,
             ScopedControl.selection_reason,
+            # The ORG's own maturity setting. NOT the catalogue's recommended
+            # levels (those are the cmm_* columns, emitted as `cmm_maturity`).
+            ScopedControl.maturity_level,
         )
         .outerjoin(
             ScopedControl,
@@ -300,6 +307,7 @@ async def list_scoped_controls_paginated(
         selected = row[1]  # ScopedControl.selected or None
         impl_status = row[2]  # ScopedControl.implementation_status or None
         selection_reason = row[3]  # ScopedControl.selection_reason or None
+        maturity_level = row[4]  # ScopedControl.maturity_level or None
 
         controls.append({
             "scf_id": catalog.scf_id,
@@ -321,6 +329,9 @@ async def list_scoped_controls_paginated(
             "selected": selected or False,
             "implementation_status": impl_status,
             "selection_reason": selection_reason,
+            # The org's own maturity setting — the scoping list renders this
+            # column, so omitting it left the UI hardcoding an em dash.
+            "maturity_level": maturity_level,
             # Extended data for detail view
             "pptdf_applicability": {
                 "people": catalog.pptdf_people,

@@ -363,6 +363,103 @@ def get_celery_app() -> Celery:
     return celery_app
 
 
+# ---------------------------------------------------------------------------
+# "No exception escaped" is not "the work succeeded" (#1001).
+#
+# The convention throughout this codebase is for a task to catch its own
+# exception, record the failure where the UI can see it, and RETURN a payload
+# that says what happened:
+#
+#     except Exception as exc:
+#         _update_assessment_status(job_id, "failed", ...)
+#         return {"job_id": job_id, "status": "failed", "error": str(exc)[:500]}
+#
+# Celery calls on_success for that, because nothing was raised. Combined with
+# `celery_app.Task = BaseTask` below — which makes this the base class for
+# every task in the application, both @shared_task and @celery_app.task — a
+# handler that logs "succeeded" without reading `retval` means the worker log
+# cannot be trusted to say whether the work was done. That is platform-wide,
+# not a bug in the two vendor tasks that surfaced it.
+#
+# The alternative fix was to stop swallowing the exceptions and let Celery's
+# native failure path run. It is cleaner, but it changes retry behaviour and
+# whether a payload reaches the result backend at all, across every task whose
+# own error handling already writes the user-visible record. Reading the
+# payload keeps the fix in one place and changes no task's control flow.
+# ---------------------------------------------------------------------------
+
+#: Status values in a returned payload that mean the work did not get done.
+#:
+#: Deliberately narrow, and paired with ``PARTIAL_STATUSES`` below: a status is
+#: a failure (ERROR), a partial success (WARNING), or neither. Vocabularies
+#: like "blocked", "rate_limited", "not_found" and "skipped_deleted" remain
+#: neither, because they describe an outcome rather than a run that fell short.
+#: Adding a value here turns every task that returns it into a logged failure,
+#: so add one only for a status that genuinely means "this did not work".
+FAILURE_STATUSES = frozenset({"failed", "error"})
+
+#: There is deliberately NO module-level set of partial-success statuses
+#: (#1018). "partial" is not one vocabulary: for ``tasks_research`` it means
+#: "some sources answered, some did not", but for ``tasks_assessment`` and
+#: ``tasks_window_assessment`` it is the evidence VERDICT ("some objectives
+#: satisfied") on a run that fully succeeded. A global set would turn every
+#: partially-sufficient assessment into a WARNING. So each task declares the
+#: status values that mean "finished but fell short" for ITSELF, through the
+#: ``partial_statuses`` option on its decorator — see ``BaseTask``.
+
+
+def _payload_status(retval) -> str:
+    """The normalised ``status`` of a task's return value, or ``""``.
+
+    Tolerant by design: tasks return lists, strings, ``None`` and dicts with no
+    ``status`` at all, and a ``status`` that is a count or a nested object is
+    not a verdict either. Anything that is not an explicit, string-valued
+    status normalises to the empty string, which is in no status set.
+    """
+    if not isinstance(retval, dict):
+        return ""
+    status = retval.get("status")
+    if not isinstance(status, str):
+        return ""
+    return status.strip().lower()
+
+
+def payload_reports_failure(retval) -> bool:
+    """True when a task's RETURN VALUE says the work failed."""
+    return _payload_status(retval) in FAILURE_STATUSES
+
+
+def payload_reports_partial(retval, partial_statuses) -> bool:
+    """True when a task's RETURN VALUE says the work only partly succeeded.
+
+    ``partial_statuses`` is the task's OWN declaration (see
+    ``BaseTask.partial_statuses``); an empty one never matches.
+    """
+    return _payload_status(retval) in partial_statuses
+
+
+def _partial_detail(retval: dict) -> str:
+    """The first non-empty human-readable field a partial payload carries."""
+    for key in ("message", "error", "summary"):
+        value = retval.get(key)
+        if isinstance(value, str) and value.strip():
+            return value[:500]
+    return ""
+
+
+def _partial_counts(retval: dict) -> str:
+    """Top-level integer values rendered as ``k=v``, sorted, or ``""``.
+
+    ``bool`` is excluded on purpose: ``isinstance(True, int)`` is true, and
+    ``source_retired=True`` is a flag, not a count.
+    """
+    return " ".join(
+        f"{key}={value}"
+        for key, value in sorted(retval.items())
+        if isinstance(value, int) and not isinstance(value, bool)
+    )
+
+
 # Task base class with common functionality
 class BaseTask(celery_app.Task):
     """
@@ -370,8 +467,46 @@ class BaseTask(celery_app.Task):
     """
     abstract = True
 
+    #: Status values in THIS task's return payload that mean it finished but
+    #: did not fully succeed (#1018). Empty by default, so a task that says
+    #: nothing keeps the plain ``succeeded`` line whatever word its payload
+    #: carries. A task opts in on its decorator, e.g.
+    #: ``@shared_task(..., partial_statuses=frozenset({"partial"}))`` —
+    #: Celery turns unknown decorator options into attributes of the task
+    #: class, so the handler reads it back as ``self.partial_statuses``.
+    #: Two shipped tasks declare one: ``tasks_research.research_aggregator``
+    #: ("partial") and ``tasks_evidence_storage_copy.copy_evidence_store``
+    #: ("completed_with_errors").
+    partial_statuses: frozenset = frozenset()
+
     def on_success(self, retval, task_id, args, kwargs):
-        """Called when task succeeds."""
+        """Called when the task body returned without raising.
+
+        Which is not the same as succeeding — see the note above. A payload
+        that reports its own failure is logged as a failure, one that reports a
+        partial success is logged as a WARNING carrying the task's own message
+        and counts (#1018), and everything else keeps the original success
+        line, byte for byte, so anything grepping for it still works.
+        """
+        if payload_reports_failure(retval):
+            detail = retval.get("error") or retval.get("message") or ""
+            logger.error(
+                f"Task {self.name}[{task_id}] returned a failure payload: "
+                f"status={retval.get('status')} {str(detail)[:500]}".rstrip()
+            )
+            return
+        if payload_reports_partial(retval, self.partial_statuses):
+            # Joined rather than interpolated so an absent detail or an
+            # absent counts segment leaves no double space behind.
+            segments = [f"status={retval.get('status')}"]
+            segments.extend(
+                seg for seg in (_partial_detail(retval), _partial_counts(retval)) if seg
+            )
+            logger.warning(
+                f"Task {self.name}[{task_id}] returned a partial-success "
+                f"payload: {' '.join(segments)}"
+            )
+            return
         logger.info(f"Task {self.name}[{task_id}] succeeded")
 
     def on_failure(self, exc, task_id, args, kwargs, einfo):

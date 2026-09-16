@@ -19,7 +19,6 @@ import type {
   EvidenceTemplatesFile,
 } from '../types'
 import {
-  saveScopedControls,
   getScopedControl,
   getEvidenceTracking,
   updateEvidenceTracking as updateEvidenceTrackingInData
@@ -27,7 +26,7 @@ import {
 import { getSystems, getEvidenceSuggestions, submitRecipeFeedback, getOrgMembers } from '../data/apiClient'
 import type { System, EvidenceSuggestionsResponse, UserSimple, Team } from '../types'
 import TeamListFilters, { ALL as ALL_TEAMS } from './TeamListFilters'
-import { useOrgMemberTypes } from '../hooks/useOrgMemberTypes'
+import { domainFilterLabel, useDomainIdentifiers } from '../hooks/useCatalogFilters'
 import AccountableOwnerTypeFilter, {
   ALL_OWNER_TYPES,
   type AccountableOwnerTypeValue,
@@ -35,12 +34,10 @@ import AccountableOwnerTypeFilter, {
 import { useTeamAssignments, matchesTeamFilters, accountableTeamLabel } from '../hooks/useTeamAssignments'
 import { useIsOrgAdmin } from '../hooks/useIsOrgAdmin'
 import { useTeamFilteredEvidence } from '../hooks/useTeamFilteredEvidence'
-import { CollectionWizard, EvidenceAssigneeSelect, EvidenceBulkActionsBar } from './evidence'
+import { CollectionWizard, EvidenceBulkActionsBar } from './evidence'
 import type { BulkActionResult } from './evidence/EvidenceBulkActionsBar'
 import { batchUpdateEvidenceTracking, listTeams, batchAssignTeamToItems } from '../data/apiClient'
 import type { BatchEvidenceTrackingOperation } from '../data/apiClient'
-import { ScfReference } from './provenance/ScfReference'
-import { frequencyOptionsFor } from '../data/frequencyVocabulary'
 import EvidenceDetailPage from './evidence/EvidenceDetailPage'
 
 interface EvidenceReviewProps {
@@ -51,13 +48,17 @@ interface EvidenceReviewProps {
   evidenceTemplates?: EvidenceTemplatesFile
   /** Opens the Systems Registry. Optional — see `SystemSelectStep`. */
   onNavigateToSystems?: () => void
+  /**
+   * Opens a control in Control Scoping. The evidence detail's "Required by
+   * Controls" strip is the only caller: the screen used to answer that click
+   * with its own control-first view mode, and since that mode was removed the
+   * only remaining destination is the one every other control link in the app
+   * already uses.
+   */
+  onNavigateToControl?: (scfId: string) => void
 }
 
-type ViewMode = 'control' | 'evidence'
-
-export default function EvidenceReview({ controls, scopingData, onScopingDataChange, erlData = {}, evidenceTemplates = {}, onNavigateToSystems }: EvidenceReviewProps) {
-  const [viewMode, setViewMode] = useState<ViewMode>('evidence')
-  const [selectedId, setSelectedId] = useState<string | undefined>(undefined)
+export default function EvidenceReview({ controls, scopingData, onScopingDataChange, erlData = {}, evidenceTemplates = {}, onNavigateToSystems, onNavigateToControl }: EvidenceReviewProps) {
   // Seeded from the URL in the initialiser, not corrected in an effect (#785).
   // That ordering is the whole trick: the "select the first item" effect below
   // only fires when nothing is selected, so a deep-linked item wins simply by
@@ -81,23 +82,23 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
   const [ownerTypeFilter, setOwnerTypeFilter] =
     useState<AccountableOwnerTypeValue>(ALL_OWNER_TYPES)
   const [saving, setSaving] = useState(false)
-  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  // Evidence-tracking saves debounce PER EVIDENCE ITEM. They used to share
-  // `saveTimeoutRef` with the control-level save, so picking an assignee on one
-  // evidence row and touching any field on another within 300 ms cancelled the
-  // first save outright — while local state already showed it applied, and the
-  // sync effect's `!saving` gate stopped the server value correcting it. That
-  // was tolerable for debounced typing; it is not tolerable for a dropdown
-  // whose value decides who a collection task belongs to (#781).
+  // Evidence-tracking saves debounce PER EVIDENCE ITEM. They used to share one
+  // timer with a control-level save that no longer exists, so picking an
+  // assignee on one evidence row and touching any field on another within
+  // 300 ms cancelled the first save outright — while local state already
+  // showed it applied, and the sync effect's `!saving` gate stopped the server
+  // value correcting it. That was tolerable for debounced typing; it is not
+  // tolerable for a dropdown whose value decides who a collection task belongs
+  // to (#781).
   const evidenceSaveTimeoutsRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
   const pendingEvidenceSavesRef = useRef(0)
   const [localEvidenceState, setLocalEvidenceState] = useState<Record<EvidenceId, EvidenceTracking>>({})
   const [systems, setSystems] = useState<System[]>([]) // Systems from registry for picker
   const [orgMembers, setOrgMembers] = useState<UserSimple[]>([]) // Org members for the assignee picker (#781)
-  // Internal / contractor labels for those same members (#822 phase 2). One
-  // request for the screen, shared by the bulk bar and both assignee pickers,
-  // rather than each control resolving the membership list for itself.
-  const { memberTypeOf } = useOrgMemberTypes(scopingData.organizationId)
+  // Domain NAME -> abbreviation, so the domain filter reads `ABBR - Name (count)`
+  // like Control Scoping and the Library do. Called up here, not beside the
+  // option build: that sits below an early return.
+  const domainIdentifiers = useDomainIdentifiers()
   const [suggestions, setSuggestions] = useState<EvidenceSuggestionsResponse | null>(null)
   const [loadingSuggestions, setLoadingSuggestions] = useState(false)
   const [collectionGuidance, setCollectionGuidance] = useState<CollectionGuidanceResponse | null>(null)
@@ -256,10 +257,8 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
         setLoadingSuggestions(false)
       }
     }
-    if (viewMode === 'evidence') {
-      loadSuggestions()
-    }
-  }, [selectedEvidenceId, scopingData.organizationId, viewMode])
+    loadSuggestions()
+  }, [selectedEvidenceId, scopingData.organizationId])
 
   // Derived tracking values for the selected evidence — used as explicit useEffect dependencies
   const currentCollectingSystem = selectedEvidenceId ? localEvidenceState[selectedEvidenceId]?.collecting_system : undefined
@@ -294,10 +293,8 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
         setLoadingGuidance(false)
       }
     }
-    if (viewMode === 'evidence') {
-      loadGuidance()
-    }
-  }, [selectedEvidenceId, scopingData.organizationId, viewMode, currentCollectingSystem, currentMaturityLevel, systems])
+    loadGuidance()
+  }, [selectedEvidenceId, scopingData.organizationId, currentCollectingSystem, currentMaturityLevel, systems])
 
   // Handle recipe feedback submission
   const handleRecipeFeedback = useCallback(async (feedbackType: 'helpful' | 'not_matching') => {
@@ -315,16 +312,11 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
     }
   }, [collectionGuidance, scopingData.organizationId, selectedEvidenceId])
 
-  // Select first control on mount (control view still fills a side panel).
-  // The evidence view deliberately does NOT auto-select: since the detail
-  // became a full page, a bare list landing stays a bare list — no phantom
-  // "active" row, no silent ?item= rewrite of a shareable URL.
+  // The list deliberately does NOT auto-select: since the detail became a full
+  // page, a bare list landing stays a bare list — no phantom "active" row, no
+  // silent ?item= rewrite of a shareable URL.
   useEffect(() => {
-    if (viewMode === 'control') {
-      if (!selectedId && selectedControls.length > 0) {
-        setSelectedId(selectedControls[0].scf_id)
-      }
-    } else if (uniqueEvidenceItems.length > 0 && selectedEvidenceId) {
+    if (uniqueEvidenceItems.length > 0 && selectedEvidenceId) {
       // A URL can name an item this organisation does not have: a stale
       // bookmark, a typo, an id copied from another tenant. Clearing beats
       // opening a detail page about nothing, and `replaceSearch` keeps the
@@ -336,42 +328,7 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
         replaceSearch(withEvidenceItem(window.location.search, null))
       }
     }
-  }, [viewMode, selectedControls, selectedId, uniqueEvidenceItems, selectedEvidenceId])
-
-  // Get all unique domains from selected controls
-  const domains = useMemo(() => {
-    const domainSet = new Set<string>()
-    selectedControls.forEach(control => {
-      domainSet.add(control.scf_domain)
-    })
-    return Array.from(domainSet).sort()
-  }, [selectedControls])
-
-  // Filter controls based on search and domain
-  const filteredControls = useMemo(() => {
-    let filtered = selectedControls
-
-    // Domain filter
-    if (domainFilter !== 'all') {
-      filtered = filtered.filter(c => c.scf_domain === domainFilter)
-    }
-
-    // Search filter
-    if (query) {
-      const q = query.toLowerCase()
-      filtered = filtered.filter(c =>
-        c.scf_id.toLowerCase().includes(q) ||
-        c.control_name.toLowerCase().includes(q) ||
-        c.scf_domain.toLowerCase().includes(q) ||
-        c.artifactsResolved.some(a =>
-          a.title.toLowerCase().includes(q) ||
-          a.domain.toLowerCase().includes(q)
-        )
-      )
-    }
-
-    return filtered
-  }, [selectedControls, query, domainFilter])
+  }, [uniqueEvidenceItems, selectedEvidenceId])
 
   // Team ownership for the whole evidence list, in ONE request (#822). Rows
   // read this map; none of them fetches. The map is keyed by the evidence
@@ -523,29 +480,10 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
     return { tracked, total }
   }, [scopingData, selectedControls])
 
-  // Auto-save helper with debounce
-  const saveData = async (data: ScopedControlsFile) => {
-    // Clear any existing timeout
-    if (saveTimeoutRef.current) {
-      clearTimeout(saveTimeoutRef.current)
-    }
-
-    // Debounce both the file save and parent state update
-    setSaving(true)
-    saveTimeoutRef.current = setTimeout(async () => {
-      await saveScopedControls(data)
-      onScopingDataChange(data)
-      setSaving(false)
-    }, 300)
-  }
-
   // Cleanup timeout on unmount
   useEffect(() => {
     const evidenceTimeouts = evidenceSaveTimeoutsRef.current
     return () => {
-      if (saveTimeoutRef.current) {
-        clearTimeout(saveTimeoutRef.current)
-      }
       Object.values(evidenceTimeouts).forEach(clearTimeout)
     }
   }, [])
@@ -557,12 +495,6 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
       setLocalEvidenceState(scopingData.evidence_tracking)
     }
   }, [scopingData.evidence_tracking, saving])
-
-  // Get current selected control details
-  const selectedControl = useMemo(
-    () => controls.find(c => c.scf_id === selectedId),
-    [controls, selectedId]
-  )
 
   // Update evidence tracking for a specific artifact
   const updateEvidenceTracking = async (evidenceId: EvidenceId, field: keyof EvidenceTracking, value: string | boolean) => {
@@ -775,29 +707,28 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
     )
   }
 
-  // Determine which domains/filters to use based on view mode
-  const activedomains = viewMode === 'control' ? domains : evidenceDomains
-  const activeFilteredItems = viewMode === 'control' ? filteredControls : filteredEvidenceItems
-
   // Domain options for FilterSelect
   const domainOptions = useMemo(() => [
-    { value: 'all', label: `All Domains (${activeFilteredItems.length})` },
-    ...activedomains.map(domain => {
-      const count = viewMode === 'control'
-        ? selectedControls.filter(c => c.scf_domain === domain).length
-        : uniqueEvidenceItems.filter(item => item.domain === domain).length
-      return { value: domain, label: `${domain} (${count})` }
+    { value: 'all', label: `All Domains (${filteredEvidenceItems.length})` },
+    ...evidenceDomains.map(domain => {
+      const count = uniqueEvidenceItems.filter(item => item.domain === domain).length
+      // `domain` is a name, not an abbreviation. Evidence names come from the
+      // ERL's `area_of_focus`, which is its own vocabulary — about half of
+      // them have no catalog domain — so an unmatched name keeps today's label.
+      const abbr = domainIdentifiers.get(domain)
+      const label = abbr ? domainFilterLabel(abbr, domain) : domain
+      return { value: domain, label: `${label} (${count})` }
     }),
-  ], [activedomains, activeFilteredItems.length, viewMode, selectedControls, uniqueEvidenceItems])
+  ], [evidenceDomains, filteredEvidenceItems.length, uniqueEvidenceItems, domainIdentifiers])
 
   // ── Evidence detail position in the CURRENT filtered list ────────────────────
   const evidenceDetailPosition = useMemo<{ index: number | null; total: number } | null>(() => {
-    if (!selectedEvidenceId || viewMode !== 'evidence') return null
+    if (!selectedEvidenceId) return null
     const total = filteredEvidenceItems.length
     if (total === 0) return null
     const idx = filteredEvidenceItems.findIndex(item => item.id === selectedEvidenceId)
     return { index: idx < 0 ? null : idx, total }
-  }, [selectedEvidenceId, viewMode, filteredEvidenceItems])
+  }, [selectedEvidenceId, filteredEvidenceItems])
 
   const handleEvidencePrev = useCallback(() => {
     if (!evidenceDetailPosition || evidenceDetailPosition.index === null || evidenceDetailPosition.index <= 0) return
@@ -818,15 +749,19 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
     replaceSearch(withEvidenceItem(window.location.search, null))
   }, [])
 
+  // Leaves the Evidence tab entirely, so the open item is closed and `?item=`
+  // dropped first — otherwise coming back later reopens a detail the user
+  // navigated away from, and Scoping renders under a URL naming an evidence
+  // item it knows nothing about.
   const handleNavigateToControl = useCallback((controlId: string) => {
-    setViewMode('control')
-    setSelectedId(controlId)
+    setEvidenceDetailOpen(false)
     setSelectedEvidenceId(undefined)
     replaceSearch(withEvidenceItem(window.location.search, null))
-  }, [])
+    onNavigateToControl?.(controlId)
+  }, [onNavigateToControl])
 
   // Resolve the active evidence item data for EvidenceDetailPage.
-  const activeEvidenceItem = viewMode === 'evidence' && selectedEvidenceId
+  const activeEvidenceItem = selectedEvidenceId
     ? uniqueEvidenceItems.find(item => item.id === selectedEvidenceId) ?? null
     : null
   const activeEvidenceTracking = activeEvidenceItem
@@ -836,11 +771,10 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
     ? getControlsRequiringEvidence(activeEvidenceItem.id)
     : []
 
-  // ── Evidence-first detail: full-width page (list state preserved in component) ─
+  // ── Evidence detail: full-width page (list state preserved in component) ─────
   // evidenceDetailOpen is only true when the user explicitly requested a detail
-  // view (row click or deep-link). Bare workspace arrival auto-selects an item
-  // but leaves evidenceDetailOpen false, so the list renders as intended.
-  if (viewMode === 'evidence' && evidenceDetailOpen && activeEvidenceItem) {
+  // view (row click or deep-link), so a bare workspace arrival renders the list.
+  if (evidenceDetailOpen && activeEvidenceItem) {
     return (
       <>
         <EvidenceDetailPage
@@ -854,7 +788,6 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
           scopingData={scopingData}
           systems={systems}
           orgMembers={orgMembers}
-          memberTypeOf={memberTypeOf}
           suggestions={suggestions}
           loadingSuggestions={loadingSuggestions}
           collectionGuidance={collectionGuidance}
@@ -882,34 +815,16 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
     )
   }
 
-  // ── List mode: evidence list (full-width) or control-first split layout ───────
+  // ── List mode: the evidence list, full-width ──────────────────────────────────
   return (
     <div className="evidence-review-layout">
-      {/* Left Panel — filter sidebar + list */}
-      <div className={viewMode === 'evidence' ? 'evidence-review-panel evidence-review-panel--full' : 'evidence-review-panel'}>
+      {/* Filter sidebar + list */}
+      <div className="evidence-review-panel evidence-review-panel--full">
         <FilterSidebar
           collapsed={filterSidebarCollapsed}
           onToggleCollapsed={() => setFilterSidebarCollapsed(c => !c)}
           aria-label="Evidence filters"
         >
-          {/* View-by toggle */}
-          <FilterGroup label="VIEW BY">
-            <div className="evidence-view-toggle">
-              <button
-                className={`toggle-option ${viewMode === 'evidence' ? 'active' : ''}`}
-                onClick={() => setViewMode('evidence')}
-              >
-                Evidence
-              </button>
-              <button
-                className={`toggle-option ${viewMode === 'control' ? 'active' : ''}`}
-                onClick={() => setViewMode('control')}
-              >
-                Control
-              </button>
-            </div>
-          </FilterGroup>
-
           {/* Domain */}
           <FilterGroup label="DOMAIN">
             <FilterSelect
@@ -919,8 +834,8 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
             />
           </FilterGroup>
 
-          {/* Team / function — evidence view only */}
-          {viewMode === 'evidence' && scopingData.organizationId && (
+          {/* Team / function */}
+          {scopingData.organizationId && (
             <FilterGroup label="TEAM">
               <TeamListFilters
                 organizationId={scopingData.organizationId}
@@ -932,8 +847,8 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
             </FilterGroup>
           )}
 
-          {/* Accountable owner type — evidence view only */}
-          {viewMode === 'evidence' && scopingData.organizationId && (
+          {/* Accountable owner type */}
+          {scopingData.organizationId && (
             <FilterGroup label="ACCOUNTABLE OWNER">
               <AccountableOwnerTypeFilter
                 value={ownerTypeFilter}
@@ -974,12 +889,8 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
         <ListToolbar
           search={query}
           onSearchChange={setQuery}
-          searchPlaceholder="Search controls or evidence…"
-          count={
-            viewMode === 'evidence'
-              ? `${stats.tracked} tracked · ${activeFilteredItems.length} evidence items`
-              : `${activeFilteredItems.length} controls`
-          }
+          searchPlaceholder="Search evidence…"
+          count={`${stats.tracked} tracked · ${filteredEvidenceItems.length} evidence items`}
           actions={
             <button
               className="btn-secondary btn-sm"
@@ -991,121 +902,93 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
           }
         />
 
-        {/* Bulk actions bar (evidence view only) */}
-        {viewMode === 'evidence' && (
-          <EvidenceBulkActionsBar
-            selectedCount={bulkSelection.size}
-            visibleCount={filteredEvidenceItems.length}
-            allVisibleSelected={
-              filteredEvidenceItems.length > 0 &&
-              filteredEvidenceItems.every(item => bulkSelection.has(item.id))
-            }
-            teamOptions={canManageTeams ? teamOptions : null}
-            busy={bulkBusy}
-            result={bulkResult}
-            onSelectAllVisible={() =>
-              setBulkSelection(new Set(filteredEvidenceItems.map(item => item.id)))
-            }
-            onClear={() => setBulkSelection(new Set())}
-            onDismissResult={() => setBulkResult(null)}
-            onSetTracked={(tracked: boolean) => applyBulk({ is_tracked: tracked })}
-            onSetFrequency={(frequency: string) => applyBulk({ frequency })}
-            onAssignTeam={assignOwnerTeamBulk}
-          />
-        )}
+        {/* Bulk actions bar */}
+        <EvidenceBulkActionsBar
+          selectedCount={bulkSelection.size}
+          visibleCount={filteredEvidenceItems.length}
+          allVisibleSelected={
+            filteredEvidenceItems.length > 0 &&
+            filteredEvidenceItems.every(item => bulkSelection.has(item.id))
+          }
+          teamOptions={canManageTeams ? teamOptions : null}
+          busy={bulkBusy}
+          result={bulkResult}
+          onSelectAllVisible={() =>
+            setBulkSelection(new Set(filteredEvidenceItems.map(item => item.id)))
+          }
+          onClear={() => setBulkSelection(new Set())}
+          onDismissResult={() => setBulkResult(null)}
+          onSetTracked={(tracked: boolean) => applyBulk({ is_tracked: tracked })}
+          onSetFrequency={(frequency: string) => applyBulk({ frequency })}
+          onAssignTeam={assignOwnerTeamBulk}
+        />
 
         <div className="list">
-          {viewMode === 'control' ? (
-            /* Control-First View */
-            filteredControls.map(control => {
-              const trackedCount = control.artifactsResolved.filter(a =>
-                getEvidenceTracking(scopingData, a.id)?.is_tracked
-              ).length
+          {filteredEvidenceItems.map(evidenceItem => {
+            const tracking = localEvidenceState[evidenceItem.id] || {}
+            const isTracked = tracking.is_tracked || false
+            const bulkSelected = bulkSelection.has(evidenceItem.id)
 
-              return (
-                <div key={control.scf_id} className="evidence-card-select-row">
+            return (
+              /*
+                The checkbox sits OUTSIDE the card, not inside it. The card
+                takes a button role from the shared helper, and a checkbox
+                nested inside that role is both invalid and unreachable — the
+                outer role swallows it. Two siblings keep both operable.
+
+                (The role is not spelled out literally: interactiveRow.usage
+                asserts on this file's source and would read a comment as a
+                hand-rolled contract.)
+              */
+              <div key={evidenceItem.id} className="evidence-card-select-row">
+                <input
+                  type="checkbox"
+                  className="evidence-card-select"
+                  checked={bulkSelected}
+                  onChange={() => toggleBulkSelection(evidenceItem.id)}
+                  aria-label={`Select ${evidenceItem.id} for bulk actions`}
+                />
+                <div
+                  data-evidence-id={evidenceItem.id}
+                  className={`evidence-card-modern ${selectedEvidenceId === evidenceItem.id ? 'active' : ''} ${bulkSelected ? 'bulk-selected' : ''}`}
+                >
                   <ExplorerListRow
-                    monoId={control.scf_id}
-                    title={control.control_name}
-                    description={control.scf_domain}
-                    highlighted={selectedId === control.scf_id}
-                    onClick={() => setSelectedId(control.scf_id)}
+                    monoId={evidenceItem.id}
+                    title={evidenceItem.title}
+                    highlighted={selectedEvidenceId === evidenceItem.id}
+                    onClick={() => selectEvidence(evidenceItem.id)}
                   >
                     <RowChip>
-                      {trackedCount}/{control.artifactsResolved.length} tracked
+                      {(() => {
+                        const dbId = trackingDbIdFor(evidenceItem.id)
+                        const label = accountableTeamLabel(dbId ? accountableTeamFor(dbId) : null)
+                        return label ?? (
+                          <span className="evidence-card-team-empty">No accountable team</span>
+                        )
+                      })()}
                     </RowChip>
+                    <RowChip>
+                      {isTracked ? (
+                        <span className="evidence-tracked-pill">Tracked</span>
+                      ) : (
+                        <span className="evidence-untracked-pill">Not Tracked</span>
+                      )}
+                    </RowChip>
+                    <RowChip>
+                      {evidenceItem.controlCount} ctrl{evidenceItem.controlCount !== 1 ? 's' : ''}
+                    </RowChip>
+                    {(tracking.method_of_collection || tracking.frequency) && (
+                      <RowMeta>
+                        {[tracking.method_of_collection, tracking.frequency]
+                          .filter(Boolean)
+                          .join(' · ')}
+                      </RowMeta>
+                    )}
                   </ExplorerListRow>
                 </div>
-              )
-            })
-          ) : (
-            /* Evidence-First View */
-            filteredEvidenceItems.map(evidenceItem => {
-              const tracking = localEvidenceState[evidenceItem.id] || {}
-              const isTracked = tracking.is_tracked || false
-              const bulkSelected = bulkSelection.has(evidenceItem.id)
-
-              return (
-                /*
-                  The checkbox sits OUTSIDE the card, not inside it. The card
-                  takes a button role from the shared helper, and a checkbox
-                  nested inside that role is both invalid and unreachable — the
-                  outer role swallows it. Two siblings keep both operable.
-
-                  (The role is not spelled out literally: interactiveRow.usage
-                  asserts on this file's source and would read a comment as a
-                  hand-rolled contract.)
-                */
-                <div key={evidenceItem.id} className="evidence-card-select-row">
-                  <input
-                    type="checkbox"
-                    className="evidence-card-select"
-                    checked={bulkSelected}
-                    onChange={() => toggleBulkSelection(evidenceItem.id)}
-                    aria-label={`Select ${evidenceItem.id} for bulk actions`}
-                  />
-                  <div
-                    data-evidence-id={evidenceItem.id}
-                    className={`evidence-card-modern ${selectedEvidenceId === evidenceItem.id ? 'active' : ''} ${bulkSelected ? 'bulk-selected' : ''}`}
-                  >
-                    <ExplorerListRow
-                      monoId={evidenceItem.id}
-                      title={evidenceItem.title}
-                      highlighted={selectedEvidenceId === evidenceItem.id}
-                      onClick={() => selectEvidence(evidenceItem.id)}
-                    >
-                      <RowChip>
-                        {(() => {
-                          const dbId = trackingDbIdFor(evidenceItem.id)
-                          const label = accountableTeamLabel(dbId ? accountableTeamFor(dbId) : null)
-                          return label ?? (
-                            <span className="evidence-card-team-empty">No accountable team</span>
-                          )
-                        })()}
-                      </RowChip>
-                      <RowChip>
-                        {isTracked ? (
-                          <span className="evidence-tracked-pill">Tracked</span>
-                        ) : (
-                          <span className="evidence-untracked-pill">Not Tracked</span>
-                        )}
-                      </RowChip>
-                      <RowChip>
-                        {evidenceItem.controlCount} ctrl{evidenceItem.controlCount !== 1 ? 's' : ''}
-                      </RowChip>
-                      {(tracking.method_of_collection || tracking.frequency) && (
-                        <RowMeta>
-                          {[tracking.method_of_collection, tracking.frequency]
-                            .filter(Boolean)
-                            .join(' · ')}
-                        </RowMeta>
-                      )}
-                    </ExplorerListRow>
-                  </div>
-                </div>
-              )
-            })
-          )}
+              </div>
+            )
+          })}
         </div>
 
         {saving && (
@@ -1113,333 +996,6 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
         )}
       </div>
       </div>
-
-      {/* Right Panel — Control detail (control-first view only) */}
-      {viewMode === 'control' && (
-        <div className="evidence-review-detail">
-          {selectedControl ? (
-          <>
-            <div className="detail-header-compact">
-              <div className="detail-header-main surface-bedrock" data-source="SCF Reference">
-                <span className="scf-source-tag">SCF Catalog</span>
-                <div className="detail-id-compact">{selectedControl.scf_id}</div>
-                <h2 className="detail-name-compact">{selectedControl.control_name}</h2>
-                <div className="detail-meta-row">
-                  <span className="detail-domain-compact">{selectedControl.scf_domain}</span>
-                  <div className="detail-badges">
-                    <span className={`badge-theme theme-${(selectedControl.nist_csf_function || selectedControl.control_theme || 'unknown').toLowerCase().replace(/\s+/g, '-')}`}>
-                      {selectedControl.nist_csf_function || selectedControl.control_theme || 'N/A'}
-                    </span>
-                    {selectedControl.control_type && (
-                      <span className={`badge-type type-${selectedControl.control_type.toLowerCase().replace(/\s+/g, '-')}`}>
-                        {selectedControl.control_type}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="detail-content-compact">
-              {/* Control Details — SCF reference content, rendered flat */}
-              <ScfReference>
-              <div className="detail-section-container">
-                <div className="container-header">
-                  <span className="container-icon">📄</span>
-                  <span className="container-title">Control Details</span>
-                </div>
-                <div className="container-content">
-                  <div className="detail-field">
-                    <div className="field-label">
-                      <span className="field-icon">📝</span>
-                      Description
-                    </div>
-                    <div className="field-content">
-                      {selectedControl.control_description}
-                    </div>
-                  </div>
-
-                  <div className="detail-field">
-                    <div className="field-label">
-                      <span className="field-icon">📜</span>
-                      Policy Standard
-                    </div>
-                    <div className="field-content">
-                      {selectedControl.policy_standard}
-                    </div>
-                  </div>
-
-                  <div className="detail-field">
-                    <div className="field-label">
-                      <span className="field-icon">💡</span>
-                      Implementation Guidance
-                    </div>
-                    <div className="field-content prewrap">
-                      {selectedControl.implementation_guidance}
-                    </div>
-                  </div>
-
-                  <div className="detail-field">
-                    <div className="field-label">
-                      <span className="field-icon">🔍</span>
-                      Testing Procedure
-                    </div>
-                    <div className="field-content prewrap">
-                      {selectedControl.testing_procedure}
-                    </div>
-                  </div>
-                </div>
-              </div>
-              </ScfReference>
-
-              {/* Evidence & Audit Artifacts */}
-              <div className="evidence-section-wrapper">
-                <div className="evidence-section-title">
-                  <span className="section-icon">📋</span>
-                  <h3>Evidence & Audit Artifacts</h3>
-                  <span className="evidence-section-count">{selectedControl.artifactsResolved.length} items</span>
-                </div>
-
-                {selectedControl.artifactsResolved.length === 0 ? (
-                  <p className="muted">No audit artifacts defined for this control.</p>
-                ) : (
-                  <div className="evidence-list">
-                  {selectedControl.artifactsResolved.map(artifact => {
-                    const tracking = localEvidenceState[artifact.id] || {}
-                    const isTracked = tracking.is_tracked || false
-                    const requiringControls = getControlsRequiringEvidence(artifact.id)
-
-                    return (
-                      <details key={artifact.id} className="evidence-item-modern" open={isTracked}>
-                        <summary>
-                          <div className="evidence-summary-modern">
-                            <div className="evidence-summary-left">
-                              <div className="evidence-id-badge">{artifact.id}</div>
-                              <div className="evidence-info">
-                                <div className="evidence-title-modern">{artifact.title}</div>
-                                <div className="evidence-domain-tag">{artifact.domain}</div>
-                              </div>
-                            </div>
-                            <div className="evidence-summary-right">
-                              {isTracked ? (
-                                <span className="tracked-badge-modern">✓ Tracked</span>
-                              ) : (
-                                <span className="untracked-badge-modern">Not Tracked</span>
-                              )}
-                            </div>
-                          </div>
-                        </summary>
-
-                        <div className="evidence-form-modern surface-bench">
-                          {requiringControls.length > 0 && (
-                            <div className="evidence-context-modern">
-                              <div className="context-header">
-                                <span className="context-icon">🔗</span>
-                                <span className="context-title">
-                                  {requiringControls.length === 1
-                                    ? 'Required by 1 control'
-                                    : `Required by ${requiringControls.length} controls`}
-                                </span>
-                              </div>
-                              <div className="requiring-controls-pills">
-                                {requiringControls.map(ctrl => {
-                                  const tooltipId = `tooltip-${artifact.id}-${ctrl.scf_id}`
-                                  const isCurrentControl = ctrl.scf_id === selectedControl?.scf_id
-                                  const ctrlScopedData = getScopedControl(scopingData, ctrl.scf_id)
-                                  const implStatus = ctrlScopedData?.implementation_status || 'not_started'
-
-                                  // Status display helpers
-                                  const statusConfig = {
-                                    implemented: { label: 'IMPLEMENTED', icon: '✅', class: 'status-implemented' },
-                                    in_progress: { label: 'IN PROGRESS', icon: '🔄', class: 'status-in-progress' },
-                                    not_started: { label: 'NOT STARTED', icon: '⭕', class: 'status-not-started' },
-                                    at_risk: { label: 'AT RISK', icon: '⚠️', class: 'status-at-risk' },
-                                    not_applicable: { label: 'NOT APPLICABLE', icon: '❌', class: 'status-not-applicable' },
-                                    deferred: { label: 'DEFERRED', icon: '⏸️', class: 'status-deferred' }
-                                  }
-
-                                  const status = statusConfig[implStatus as keyof typeof statusConfig] || statusConfig.not_started
-                                  const pillStatusClass = implStatus === 'not_applicable' ? 'pill-not-applicable' :
-                                                         implStatus === 'deferred' ? 'pill-deferred' :
-                                                         implStatus === 'at_risk' ? 'pill-at-risk' : ''
-
-                                  return (
-                                    <div key={ctrl.scf_id} className="control-pill-wrapper">
-                                      <button
-                                        className={`control-pill ${isCurrentControl ? 'current-control' : ''} ${pillStatusClass}`}
-                                        onClick={() => setSelectedId(ctrl.scf_id)}
-                                        onMouseEnter={(e) => {
-                                          const tooltip = document.getElementById(tooltipId)
-                                          if (tooltip) {
-                                            const rect = e.currentTarget.getBoundingClientRect()
-                                            tooltip.style.top = `${rect.top - tooltip.offsetHeight - 8}px`
-                                            tooltip.style.left = `${Math.max(10, rect.left + rect.width / 2 - 200)}px`
-                                          }
-                                        }}
-                                      >
-                                        {ctrl.scf_id} — {ctrl.control_name}
-                                        {isCurrentControl && ' (current)'}
-                                      </button>
-                                      <div id={tooltipId} className="control-tooltip">
-                                        <div className="tooltip-header">
-                                          <strong>{ctrl.scf_id}</strong> — {ctrl.control_name}
-                                        </div>
-                                        <div className="tooltip-domain">{ctrl.scf_domain}</div>
-
-                                        {ctrlScopedData && status && (
-                                          <div className={`tooltip-status-box ${status.class}`}>
-                                            <div className="status-row">
-                                              <span className="status-label">Status:</span>
-                                              <span className="status-value">
-                                                {status.icon} {status.label}
-                                              </span>
-                                            </div>
-                                            {ctrlScopedData.owner && (
-                                              <div className="status-row">
-                                                <span className="status-label">Owner:</span>
-                                                <span className="status-value">{ctrlScopedData.owner}</span>
-                                              </div>
-                                            )}
-                                            {ctrlScopedData.completion_date && (
-                                              <div className="status-row">
-                                                <span className="status-label">Target Date:</span>
-                                                <span className="status-value">{ctrlScopedData.completion_date}</span>
-                                              </div>
-                                            )}
-                                            {ctrlScopedData.maturity_level && (
-                                              <div className="status-row">
-                                                <span className="status-label">Maturity:</span>
-                                                <span className="status-value">
-                                                  {ctrlScopedData.maturity_level.charAt(0).toUpperCase() + ctrlScopedData.maturity_level.slice(1)}
-                                                </span>
-                                              </div>
-                                            )}
-                                          </div>
-                                        )}
-
-                                        {ctrlScopedData?.selection_reason && (
-                                          <div className="tooltip-section">
-                                            <strong>Selection Reason:</strong>
-                                            <p>{ctrlScopedData.selection_reason}</p>
-                                          </div>
-                                        )}
-
-                                        <div className="tooltip-section">
-                                          <strong>Description:</strong>
-                                          <p>{ctrl.control_description}</p>
-                                        </div>
-                                        <div className="tooltip-section">
-                                          <strong>Testing Procedure:</strong>
-                                          <p>{ctrl.testing_procedure || 'No testing procedure defined'}</p>
-                                        </div>
-                                      </div>
-                                    </div>
-                                  )
-                                })}
-                              </div>
-                            </div>
-                          )}
-
-                          <div className="tracking-toggle-section">
-                            <label className="tracking-toggle-label">
-                              <input
-                                type="checkbox"
-                                checked={isTracked}
-                                onChange={e => updateEvidenceTracking(artifact.id, 'is_tracked', e.target.checked)}
-                                className="tracking-checkbox"
-                              />
-                              <div className="tracking-toggle-content">
-                                <div className="tracking-toggle-title">Evidence Collection Active</div>
-                                <div className="tracking-toggle-hint">Mark this evidence as being actively collected for compliance</div>
-                              </div>
-                            </label>
-                          </div>
-
-                          <div className="form-group">
-                            <label>Method of Collection</label>
-                            <input
-                              type="text"
-                              value={tracking.method_of_collection || ''}
-                              onChange={e => updateEvidenceTracking(artifact.id, 'method_of_collection', e.target.value)}
-                              placeholder="e.g., Automated export, Manual review, Screenshot"
-                              className="form-control"
-                            />
-                          </div>
-
-                          <div className="form-group">
-                            <label>Collecting System</label>
-                            <select
-                              value={tracking.collecting_system || ''}
-                              onChange={e => updateEvidenceTracking(artifact.id, 'collecting_system', e.target.value)}
-                              className="form-control"
-                            >
-                              <option value="">Select System...</option>
-                              {systems.map(system => (
-                                <option key={system.id} value={system.name}>
-                                  {system.name} ({system.vendor || system.system_type})
-                                </option>
-                              ))}
-                              <option value="__other__" disabled>───────────────</option>
-                              <option value="Manual">Manual / Not Automated</option>
-                            </select>
-                          </div>
-
-                          <div className="form-row">
-                            <div className="form-group">
-                              <label>Frequency</label>
-                              <select
-                                value={tracking.frequency || ''}
-                                onChange={e => updateEvidenceTracking(artifact.id, 'frequency', e.target.value)}
-                                className="form-control"
-                              >
-                                <option value="">Not set</option>
-                                {frequencyOptionsFor(tracking.frequency).map(opt => (
-                                  <option key={opt.value} value={opt.value}>{opt.label}</option>
-                                ))}
-                              </select>
-                            </div>
-                          </div>
-
-                          {/* #781 — the assignee the task generator actually reads. The
-                              free-text "Owner Team" dropdown that used to sit
-                              above this is gone: one concept, one control. */}
-                          <div className="form-row">
-                            <EvidenceAssigneeSelect
-                              id={`assignee-${artifact.id}`}
-                              value={tracking.assigned_user_id}
-                              resolved={tracking.assigned_user}
-                              members={orgMembers}
-                              memberTypeOf={memberTypeOf}
-                              onChange={userId =>
-                                updateEvidenceTracking(artifact.id, 'assigned_user_id', userId)
-                              }
-                            />
-                          </div>
-
-                          <div className="form-group">
-                            <label>Comments</label>
-                            <textarea
-                              value={tracking.comments || ''}
-                              onChange={e => updateEvidenceTracking(artifact.id, 'comments', e.target.value)}
-                              placeholder="Additional notes about evidence collection..."
-                              className="form-control"
-                              rows={3}
-                            />
-                          </div>
-                        </div>
-                      </details>
-                    )
-                  })}
-                </div>
-              )}
-              </div>
-            </div>
-          </>
-          ) : (
-            <div className="empty">Select a control to review evidence</div>
-          )}
-        </div>
-      )}
 
       {/* Collection Wizard Modal */}
       {showCollectionWizard && scopingData.organizationId && (

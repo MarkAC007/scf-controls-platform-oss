@@ -969,9 +969,9 @@ def _call_anthropic_for_report(
     An invalid submission (bad enums / missing fields) is retried exactly once
     by returning the validation errors as an error tool_result.
     """
-    import anthropic
+    from services.llm_client import build_anthropic_client
 
-    client = anthropic.Anthropic(timeout=540.0)
+    client = build_anthropic_client(timeout=540.0)
     messages: List[Dict[str, Any]] = [{"role": "user", "content": user_prompt}]
     tools = [WEB_SEARCH_TOOL, SUBMIT_ASSESSMENT_TOOL]
     invalid_attempts = 0

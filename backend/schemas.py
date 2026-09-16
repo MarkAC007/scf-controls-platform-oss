@@ -193,6 +193,94 @@ class ScopedControlResponse(ScopedControlBase):
     model_config = ConfigDict(from_attributes=True)
 
 
+class CMMMaturityGuidance(BaseModel):
+    """SCF catalogue's *recommended* CMM level descriptions, L0 through L5.
+
+    Catalogue guidance, NOT the organisation's own setting — that is
+    ``maturity_level`` on the scoped control. The two are distinct: writing
+    one where the other is meant corrupts data while appearing to work.
+    """
+    level_0: Optional[str] = None
+    level_1: Optional[str] = None
+    level_2: Optional[str] = None
+    level_3: Optional[str] = None
+    level_4: Optional[str] = None
+    level_5: Optional[str] = None
+
+
+class BusinessSizeGuidance(BaseModel):
+    """Catalogue guidance keyed by organisation size."""
+    micro_small: Optional[str] = None
+    small: Optional[str] = None
+    medium: Optional[str] = None
+    large: Optional[str] = None
+    enterprise: Optional[str] = None
+
+
+class SCRMFocus(BaseModel):
+    """Supply-chain risk-management tier flags from the catalogue."""
+    tier1_strategic: Optional[Any] = None
+    tier2_operational: Optional[Any] = None
+    tier3_tactical: Optional[Any] = None
+
+
+class RiskThreatMapping(BaseModel):
+    """Catalogue risk/threat code mappings."""
+    risk_codes: List[str] = Field(default_factory=list)
+    threat_codes: List[str] = Field(default_factory=list)
+
+
+class ScopedControlListItem(BaseModel):
+    """One row of the paginated Control Scoping listing.
+
+    Catalogue data LEFT JOINed with the organisation's scoping row. The
+    endpoint hand-builds these dicts; declaring them here is what stops a
+    field being silently dropped from the payload. Every key the serializer
+    emits must appear below — a response model deletes what it does not
+    declare.
+    """
+    # Catalogue
+    scf_id: str
+    scf_domain: Optional[str] = None
+    control_name: Optional[str] = None
+    control_description: Optional[str] = None
+    control_question: Optional[str] = None
+    validation_cadence: Optional[str] = None
+    control_weighting: Optional[int] = None
+    nist_csf_function: Optional[str] = None
+    evidence_requests: List[Any] = Field(default_factory=list)
+    framework_mappings: Dict[str, Any] = Field(default_factory=dict)
+
+    # Catalogue lifecycle badge
+    catalog_status: Optional[str] = None
+    retired_in_version: Optional[str] = None
+    superseded_by: Optional[str] = None
+
+    # Scoping status (the org's own data)
+    is_scoped: bool = False
+    selected: bool = False
+    implementation_status: Optional[str] = None
+    selection_reason: Optional[str] = None
+    # The ORG's own CMM level for this control. Distinct from ``cmm_maturity``
+    # below, which is the catalogue's recommendation.
+    maturity_level: Optional[str] = None
+
+    # Extended catalogue data for the detail view
+    pptdf_applicability: PPTDFApplicability = Field(default_factory=PPTDFApplicability)
+    cmm_maturity: CMMMaturityGuidance = Field(default_factory=CMMMaturityGuidance)
+    business_size_guidance: BusinessSizeGuidance = Field(default_factory=BusinessSizeGuidance)
+    scrm_focus: SCRMFocus = Field(default_factory=SCRMFocus)
+    risk_threat_mapping: RiskThreatMapping = Field(default_factory=RiskThreatMapping)
+
+
+class ScopedControlsPaginatedResponse(BaseModel):
+    """Envelope for the paginated scoped-controls listing."""
+    total: int
+    limit: int
+    offset: int
+    controls: List[ScopedControlListItem] = Field(default_factory=list)
+
+
 class ScopedControlStats(BaseModel):
     """Server-side aggregated stats for the Control Scoping stats bar."""
     total_controls: int = 0

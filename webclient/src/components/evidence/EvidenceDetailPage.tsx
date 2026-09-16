@@ -19,7 +19,6 @@ import type {
   RecipeConfidence,
   EvidenceTemplatesFile,
   ERLFile,
-  MemberType,
 } from '../../types'
 import type { System, EvidenceSuggestionsResponse, UserSimple } from '../../types'
 import type { EnrichedControl } from '../../types'
@@ -31,16 +30,15 @@ import {
   EvidenceTemplateGuidance,
   EvidenceFileUpload,
   EvidenceFileList,
-  EvidenceAssigneeSelect,
   UntrackedUploadNotice,
 } from '../evidence'
 import { WindowReviewPanel } from '../evidence/WindowReviewPanel'
-import { AssignmentPicker } from '../AssignmentPicker'
 import OwningTeams from '../OwningTeams'
 import { ModernCommentThread } from '../ModernCommentThread'
 import { EvidenceTaskList } from '../EvidenceTaskList'
 import { ScfReference } from '../provenance/ScfReference'
 import { frequencyOptionsFor } from '../../data/frequencyVocabulary'
+import { userLabel } from '../../data/userDisplay'
 import { PER_WINDOW_REVIEW_ENABLED } from '../../data/featureFlags'
 import { getEvidenceTracking } from '../../data/scopingService'
 import { useIsOrgEditor } from '../../hooks/useHasOrgRole'
@@ -69,7 +67,11 @@ export interface EvidenceDetailPageProps {
   scopingData: ScopedControlsFile
   systems: System[]
   orgMembers: UserSimple[]
-  memberTypeOf: (userId: string | null | undefined) => MemberType | undefined
+  /**
+   * Retained for the shared prop shape with `EvidenceReview`'s own assignee
+   * picker. This page no longer offers a way to *set* an assignee (C3), so it
+   * has nobody's member type to badge — see the legacy-assignee note below.
+   */
   suggestions: EvidenceSuggestionsResponse | null
   loadingSuggestions: boolean
   collectionGuidance: CollectionGuidanceResponse | null
@@ -86,7 +88,7 @@ export interface EvidenceDetailPageProps {
   onRecipeFeedback: (feedbackType: 'helpful' | 'not_matching') => void
   onFileUploaded: () => void
   onReloadTeamAssignments: () => void
-  /** Navigate to a control in control-first view mode. */
+  /** Open the control in Control Scoping — see `EvidenceReview`. */
   onNavigateToControl: (controlId: string) => void
 }
 
@@ -116,7 +118,6 @@ export default function EvidenceDetailPage({
   scopingData,
   systems,
   orgMembers,
-  memberTypeOf,
   suggestions,
   collectionGuidance,
   loadingGuidance,
@@ -185,6 +186,23 @@ export default function EvidenceDetailPage({
 
   const evidenceTracking = getEvidenceTracking(scopingData, evidenceItem.id)
   const evidenceDbId = evidenceTracking?.id
+
+  // ── Legacy assignee (C3) ────────────────────────────────────────────────────
+  // Ownership is now expressed through owning teams, and there is no longer any
+  // way to *set* `evidence_tracking.assigned_user_id` from this page. The column
+  // is not inert, though: it is tier 1 of the notification escalation chain
+  // (`backend/services/notifications.py`) and it feeds the "my work" queries in
+  // `backend/services/responsibility.py`. So an item that already carries one
+  // still shows it, read-only, with the escape hatch that removing the picker
+  // would otherwise have taken away — otherwise an assignee who leaves the
+  // organisation can only be detached with SQL. Nothing renders when the column
+  // is null, which is the ordinary case and the one every new item is in.
+  const legacyAssigneeId = tracking.assigned_user_id || null
+  const legacyAssignee =
+    tracking.assigned_user ||
+    orgMembers.find(m => String(m.id) === String(legacyAssigneeId)) ||
+    null
+  const legacyAssigneeName = legacyAssignee ? userLabel(legacyAssignee) : legacyAssigneeId
 
   // ── Render ───────────────────────────────────────────────────────────────────
   return (
@@ -389,7 +407,7 @@ export default function EvidenceDetailPage({
           </ScfReference>
 
           {/* ── Collection Record Form ─────────────────────────────────────────── */}
-          <div className="detail-section-container surface-bench">
+          <div className="detail-section-container surface-bench" data-testid="evidence-collection-record">
             <div className="container-header bench-header">
               <span className="container-icon">📋</span>
               <span className="container-title">Your Collection Record</span>
@@ -562,19 +580,52 @@ export default function EvidenceDetailPage({
                 </div>
               </div>
 
-              {/* Assignee */}
-              <div className="form-row">
-                <EvidenceAssigneeSelect
-                  id={`assignee-${evidenceItem.id}`}
-                  value={tracking.assigned_user_id}
-                  resolved={tracking.assigned_user}
-                  members={orgMembers}
-                  memberTypeOf={memberTypeOf}
-                  onChange={userId =>
-                    onUpdateTracking(evidenceItem.id, 'assigned_user_id', userId)
-                  }
-                />
-              </div>
+              {/*
+                Owning teams, promoted out of the collaboration block at the
+                foot of the page (C3). Who is answerable for this evidence
+                belongs with how it is collected, not below the comment thread.
+                The gate comes up with it: OwningTeams addresses the tracking
+                row by its database id, so an item that has never been saved has
+                nothing for it to read.
+              */}
+              {evidenceDbId && scopingData.organizationId && (
+                <div className="form-group">
+                  <OwningTeams
+                    organizationId={scopingData.organizationId}
+                    assignableType="evidence"
+                    assignableId={evidenceDbId}
+                    canManage={canManageTeams}
+                    onChange={() => { void onReloadTeamAssignments() }}
+                  />
+                </div>
+              )}
+
+              {/* Legacy assignee — read-only, clearable, never settable. */}
+              {legacyAssigneeId && (
+                <div
+                  className="form-group evidence-legacy-assignee"
+                  data-testid="evidence-legacy-assignee"
+                >
+                  <label>Legacy assignee</label>
+                  <div className="evidence-legacy-assignee-row">
+                    <span className="evidence-legacy-assignee-name">{legacyAssigneeName}</span>
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-secondary"
+                      onClick={() =>
+                        onUpdateTracking(evidenceItem.id, 'assigned_user_id', '')
+                      }
+                    >
+                      Clear
+                    </button>
+                  </div>
+                  <p className="form-hint evidence-legacy-assignee-hint">
+                    This item was assigned to a person before ownership moved to
+                    owning teams. The first reminder for it keeps going to them,
+                    and not to the owning teams above, until you clear this.
+                  </p>
+                </div>
+              )}
 
               {/* Comments */}
               <div className="form-group">
@@ -644,31 +695,9 @@ export default function EvidenceDetailPage({
             />
           )}
 
-          {/* ── Assignments, Teams, Comments ─────────────────────────────────── */}
+          {/* ── Comments ─────────────────────────────────────────────────────── */}
           {evidenceDbId && scopingData.organizationId ? (
             <div className="evidence-collaboration-container">
-              {/* Assignments */}
-              <div className="evidence-collaboration-section">
-                <AssignmentPicker
-                  organizationId={scopingData.organizationId}
-                  assignableType="evidence"
-                  assignableId={evidenceDbId}
-                  label="Collaborators"
-                  onAssignmentChange={() => {}}
-                />
-              </div>
-
-              {/* Owning teams */}
-              <div className="evidence-collaboration-section">
-                <OwningTeams
-                  organizationId={scopingData.organizationId}
-                  assignableType="evidence"
-                  assignableId={evidenceDbId}
-                  canManage={canManageTeams}
-                  onChange={() => { void onReloadTeamAssignments() }}
-                />
-              </div>
-
               {/* Comment thread */}
               <div className="evidence-collaboration-section">
                 <ModernCommentThread
@@ -681,7 +710,7 @@ export default function EvidenceDetailPage({
           ) : (
             <div className="evidence-save-hint">
               <p>
-                Save this evidence tracking to enable tasks, assignments and comments
+                Save this evidence tracking to enable owning teams and comments
               </p>
             </div>
           )}

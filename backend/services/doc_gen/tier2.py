@@ -29,16 +29,8 @@ from .tier1 import status_label
 
 from services.model_registry import resolve as registry_resolve
 
+from services.llm_client import build_anthropic_client
 from services.secrets import get_secret
-
-
-def _anthropic_key() -> str:
-    """The Anthropic key, resolved per call. Raises the same KeyError-shaped
-    failure as before when nothing is configured; `is_mock_mode` guards it."""
-    key = get_secret("ANTHROPIC_API_KEY")
-    if not key:
-        raise KeyError("ANTHROPIC_API_KEY")
-    return key
 
 
 logger = logging.getLogger(__name__)
@@ -382,14 +374,9 @@ def generate_document(
             mocked=True,
         )
 
-    # Imported lazily: the SDK is not needed on the API process, only in the
-    # worker, and only when a key is present.
-    from anthropic import Anthropic
-
-    client = Anthropic(
-        api_key=_anthropic_key(),
-        timeout=MODEL_CALL_TIMEOUT_SECONDS,
-    )
+    # `build_anthropic_client` imports the SDK lazily for us: it is needed in
+    # the worker, not on the API process, and only when a key is present.
+    client = build_anthropic_client(timeout=MODEL_CALL_TIMEOUT_SECONDS)
     try:
         response = client.messages.create(
             model=model_id,

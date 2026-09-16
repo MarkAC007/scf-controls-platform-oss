@@ -39,13 +39,9 @@ vi.mock('../../data/apiClient', () => ({
   }),
 }))
 vi.mock('../../data/scopingService', () => ({
-  saveScopedControls: vi.fn().mockResolvedValue(undefined),
   getScopedControl: vi.fn().mockReturnValue({ selected: true }),
   getEvidenceTracking: vi.fn().mockReturnValue(null),
   updateEvidenceTracking: vi.fn().mockResolvedValue({}),
-}))
-vi.mock('../../hooks/useOrgMemberTypes', () => ({
-  useOrgMemberTypes: () => ({ memberTypeOf: () => undefined }),
 }))
 vi.mock('../../hooks/useTeamAssignments', () => ({
   useTeamAssignments: () => ({
@@ -58,6 +54,12 @@ vi.mock('../../hooks/useTeamAssignments', () => ({
 }))
 vi.mock('../../hooks/useIsOrgAdmin', () => ({
   useIsOrgAdmin: () => false,
+}))
+// The domain filter looks abbreviations up through react-query; this file
+// renders without a QueryClientProvider and is not about labels.
+vi.mock('../../hooks/useCatalogFilters', () => ({
+  useDomainIdentifiers: () => new Map<string, string>(),
+  domainFilterLabel: (identifier: string, name: string) => `${identifier} - ${name}`,
 }))
 vi.mock('../../hooks/useTeamFilteredEvidence', () => ({
   useTeamFilteredEvidence: () => ({ trackingIds: null, loading: false, error: null }),

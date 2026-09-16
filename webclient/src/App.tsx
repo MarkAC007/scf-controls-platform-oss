@@ -799,6 +799,7 @@ function AppContent() {
               evidenceTemplates={evidenceTemplates}
               organizationId={scopingData.organizationId!}
               onNavigateToSystems={() => setActiveTab('systems')}
+              onNavigateToControl={handleNavigateToControl}
             />
           )}
           {activeTab === 'mapping-matrix' && (

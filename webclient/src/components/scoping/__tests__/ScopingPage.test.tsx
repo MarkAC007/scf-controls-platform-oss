@@ -4,14 +4,15 @@
  * Tests the four core behaviors the task brief requires:
  *   1. list↔detail switch (selecting a control opens detail; back returns to list)
  *   2. navigateToId opens detail + consumes (onNavigationConsumed fires)
- *   3. bulk loop calls updateScopedControl n times + refetches
+ *   3. bulk field updates issue ONE batchUpdateScopedControls request + refetch
  *   4. Scope-by-Framework modal opens
  *
  * Mocks strategy:
  *   - ScopingList, ScopingBulkBar, ScopingDetailPage — lightweight stubs
  *   - ScopeByFrameworkModal — stub that records calls
  *   - loadScopedControls — returns minimal scoping file
- *   - updateScopedControl — vi.fn() so we can count calls
+ *   - updateScopedControl — vi.fn(); the bulk path must NOT reach it any more
+ *   - batchUpdateScopedControls — vi.fn() so we can assert the call COUNT is 1
  *   - useScopedControlsQuery / useScopedControlsStats — minimal returns
  *   - useOrganizationSettings, useTeamAssignments, useIsOrgAdmin — minimal stubs
  *   - react-hot-toast — vi.fn() stubs so we can assert toast calls
@@ -87,16 +88,16 @@ vi.mock('../ScopingDetailPage', () => ({
 vi.mock('../ScopingBulkBar', () => ({
   default: ({
     selectedCount,
-    onSetApplicable,
-    onSetNA,
+    onSetMaturity,
+    onSetStatus,
     onAssignOwner,
     onClear,
     busy,
     progressText,
   }: {
     selectedCount: number
-    onSetApplicable: () => void
-    onSetNA: () => void
+    onSetMaturity: (level: string) => void
+    onSetStatus: (status: string) => void
     onAssignOwner: (owner: string) => void
     onClear: () => void
     busy?: boolean
@@ -105,11 +106,11 @@ vi.mock('../ScopingBulkBar', () => ({
     selectedCount > 0 ? (
       <div data-testid="bulk-bar">
         <span data-testid="bulk-count">{selectedCount}</span>
-        <button onClick={onSetApplicable} disabled={busy}>
-          set-applicable
+        <button onClick={() => onSetMaturity('L3')} disabled={busy}>
+          set-maturity
         </button>
-        <button onClick={onSetNA} disabled={busy}>
-          set-na
+        <button onClick={() => onSetStatus('implemented')} disabled={busy}>
+          set-status
         </button>
         <button onClick={() => onAssignOwner('team-1')} disabled={busy}>
           assign-owner
@@ -235,10 +236,18 @@ const mockBatchAssignTeamToItems = vi.fn().mockResolvedValue({
   demoted: 0,
   notified: 1,
 })
+const mockBatchUpdateScopedControls = vi.fn().mockResolvedValue({
+  updated: 2,
+  created: 0,
+  failed: 0,
+  errors: [],
+  controls: [],
+})
 vi.mock('../../../data/apiClient', () => ({
   listTeams: vi.fn().mockResolvedValue([{ id: 'team-1', name: 'Security Operations' }]),
   listFunctions: vi.fn().mockResolvedValue([]),
   batchAssignTeamToItems: (...args: unknown[]) => mockBatchAssignTeamToItems(...args),
+  batchUpdateScopedControls: (...args: unknown[]) => mockBatchUpdateScopedControls(...args),
 }))
 
 const mockToastSuccess = vi.fn()
@@ -301,6 +310,14 @@ describe('ScopingPage', () => {
         c.scf_id === control.scf_id ? { ...c, ...control } : c,
       ),
     }))
+    // Re-declared each test: the partial-failure case overrides it.
+    mockBatchUpdateScopedControls.mockResolvedValue({
+      updated: 2,
+      created: 0,
+      failed: 0,
+      errors: [],
+      controls: [],
+    })
   })
 
   // ── 1. list↔detail switch ────────────────────────────────────────────────
@@ -369,55 +386,66 @@ describe('ScopingPage', () => {
     })
   })
 
-  // ── 3. bulk loop ─────────────────────────────────────────────────────────
+  // ── 3. bulk field updates ────────────────────────────────────────────────
 
-  describe('bulk actions loop', () => {
-    it('calls updateScopedControl for each selected control (set applicable)', async () => {
+  describe('bulk field updates', () => {
+    it('sets maturity through ONE batch request, not a per-control loop', async () => {
       renderPage({})
       // Select 2 controls
       fireEvent.click(screen.getByText('select-two'))
       await waitFor(() => expect(screen.getByTestId('bulk-bar')).toBeInTheDocument())
 
       await act(async () => {
-        fireEvent.click(screen.getByText('set-applicable'))
+        fireEvent.click(screen.getByText('set-maturity'))
       })
 
       await waitFor(() => {
-        // Called once per selected control (2)
-        expect(mockUpdateScopedControl).toHaveBeenCalledTimes(2)
+        // EXACTLY one request for the whole selection. The predecessor fired
+        // one per control; the count is the assertion that matters here.
+        expect(mockBatchUpdateScopedControls).toHaveBeenCalledTimes(1)
       })
+      // And the N+1 path is not merely quieter — it is gone.
+      expect(mockUpdateScopedControl).not.toHaveBeenCalled()
     })
 
-    it('calls updateScopedControl with selected=true for set applicable', async () => {
+    it('sends one {scf_id, maturity_level} operation per selected row', async () => {
       renderPage({})
       fireEvent.click(screen.getByText('select-two'))
       await waitFor(() => screen.getByTestId('bulk-bar'))
 
       await act(async () => {
-        fireEvent.click(screen.getByText('set-applicable'))
+        fireEvent.click(screen.getByText('set-maturity'))
       })
 
-      await waitFor(() => {
-        const calls = mockUpdateScopedControl.mock.calls
-        expect(calls.length).toBeGreaterThan(0)
-        expect(calls[0][1]).toMatchObject({ selected: true })
-      })
+      await waitFor(() => expect(mockBatchUpdateScopedControls).toHaveBeenCalledTimes(1))
+      const [operations, orgId] = mockBatchUpdateScopedControls.mock.calls[0]
+      // PIN THE FIELD: maturity_level (the org's own level), never cmm_maturity.
+      expect(operations).toEqual([
+        { scf_id: 'SCF-ABC-1.1', maturity_level: 'L3' },
+        { scf_id: 'SCF-ABC-1.2', maturity_level: 'L3' },
+      ])
+      expect(orgId).toBe('org-1')
     })
 
-    it('calls updateScopedControl with selected=false for set N/A', async () => {
+    it('sends one {scf_id, implementation_status} operation per selected row', async () => {
       renderPage({})
       fireEvent.click(screen.getByText('select-two'))
       await waitFor(() => screen.getByTestId('bulk-bar'))
 
       await act(async () => {
-        fireEvent.click(screen.getByText('set-na'))
+        fireEvent.click(screen.getByText('set-status'))
       })
 
-      await waitFor(() => {
-        const calls = mockUpdateScopedControl.mock.calls
-        expect(calls.length).toBeGreaterThan(0)
-        expect(calls[0][1]).toMatchObject({ selected: false })
-      })
+      await waitFor(() => expect(mockBatchUpdateScopedControls).toHaveBeenCalledTimes(1))
+      const [operations] = mockBatchUpdateScopedControls.mock.calls[0]
+      expect(operations).toEqual([
+        { scf_id: 'SCF-ABC-1.1', implementation_status: 'implemented' },
+        { scf_id: 'SCF-ABC-1.2', implementation_status: 'implemented' },
+      ])
+      // Status is an implementation judgement; it must never write `selected`.
+      for (const op of operations as Array<Record<string, unknown>>) {
+        expect(op).not.toHaveProperty('selected')
+      }
     })
 
     it('assigns the owner team through ONE batch team-assignment call, not the scoped-control loop', async () => {
@@ -452,7 +480,7 @@ describe('ScopingPage', () => {
       await waitFor(() => screen.getByTestId('bulk-bar'))
 
       await act(async () => {
-        fireEvent.click(screen.getByText('set-applicable'))
+        fireEvent.click(screen.getByText('set-maturity'))
       })
 
       await waitFor(() => {
@@ -467,11 +495,11 @@ describe('ScopingPage', () => {
       await waitFor(() => screen.getByTestId('bulk-bar'))
 
       await act(async () => {
-        fireEvent.click(screen.getByText('set-applicable'))
+        fireEvent.click(screen.getByText('set-maturity'))
       })
 
       await waitFor(() => {
-        expect(mockToastSuccess).toHaveBeenCalled()
+        expect(mockToastSuccess).toHaveBeenCalledWith('2 controls updated')
       })
     })
 
@@ -481,7 +509,7 @@ describe('ScopingPage', () => {
       await waitFor(() => expect(screen.getByTestId('selection-count')).toHaveTextContent('2'))
 
       await act(async () => {
-        fireEvent.click(screen.getByText('set-applicable'))
+        fireEvent.click(screen.getByText('set-maturity'))
       })
 
       await waitFor(() => {
@@ -489,35 +517,52 @@ describe('ScopingPage', () => {
       })
     })
 
-    it('handles partial failure: continues after error, shows error toast, and refetches', async () => {
-      // Make updateScopedControl reject for the first control, resolve for the second
-      mockUpdateScopedControl
-        .mockRejectedValueOnce(new Error('Update failed'))
-        .mockResolvedValueOnce({
-          ...mockScopingData,
-          scoped_controls: mockScopingData.scoped_controls.map((c) =>
-            c.scf_id === 'SCF-ABC-1.2' ? { ...c, selected: true } : c,
-          ),
-        })
+    it('reports a partial failure from the batch response rather than claiming success', async () => {
+      // The endpoint records per-operation failures instead of aborting, so a
+      // 200 with failed > 0 must NOT produce a success toast.
+      mockBatchUpdateScopedControls.mockResolvedValue({
+        updated: 1,
+        created: 0,
+        failed: 1,
+        errors: ['SCF-ABC-1.2: not found'],
+        controls: [],
+      })
 
       renderPage({})
       fireEvent.click(screen.getByText('select-two'))
       await waitFor(() => expect(screen.getByTestId('bulk-bar')).toBeInTheDocument())
 
       await act(async () => {
-        fireEvent.click(screen.getByText('set-applicable'))
+        fireEvent.click(screen.getByText('set-maturity'))
       })
 
       await waitFor(() => {
-        // Error toast should fire with message matching "1 updated · 1 failed"
         expect(mockToastError).toHaveBeenCalledWith(expect.stringMatching(/1 updated.*1 failed/))
-        // updateScopedControl called twice (once per control, despite first failure)
-        expect(mockUpdateScopedControl).toHaveBeenCalledTimes(2)
+        // Still one request — a partial failure is not a retry loop.
+        expect(mockBatchUpdateScopedControls).toHaveBeenCalledTimes(1)
+        expect(mockToastSuccess).not.toHaveBeenCalled()
         // Selection cleared and refetch happened
         expect(screen.queryByTestId('bulk-bar')).not.toBeInTheDocument()
         expect(mockRefetch).toHaveBeenCalled()
         expect(mockRefetchStats).toHaveBeenCalled()
       })
+    })
+
+    it('shows an error toast and stops when the batch request itself rejects', async () => {
+      mockBatchUpdateScopedControls.mockRejectedValue(new Error('500'))
+
+      renderPage({})
+      fireEvent.click(screen.getByText('select-two'))
+      await waitFor(() => expect(screen.getByTestId('bulk-bar')).toBeInTheDocument())
+
+      await act(async () => {
+        fireEvent.click(screen.getByText('set-maturity'))
+      })
+
+      await waitFor(() => {
+        expect(mockToastError).toHaveBeenCalledWith('Bulk update failed')
+      })
+      expect(mockToastSuccess).not.toHaveBeenCalled()
     })
   })
 

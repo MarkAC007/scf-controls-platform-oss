@@ -512,7 +512,13 @@ def research_regulatory(self, vendor_name: str) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 # 6. Aggregator (chord callback)
 # ---------------------------------------------------------------------------
-@shared_task(bind=True, name=f"{TASK_PREFIX}.research_aggregator")
+@shared_task(
+    bind=True,
+    name=f"{TASK_PREFIX}.research_aggregator",
+    # "partial" here means some sources answered and some did not; the worker
+    # log calls it out at WARNING instead of "succeeded" (#1018).
+    partial_statuses=frozenset({"partial"}),
+)
 def research_aggregator(
     self,
     source_results: List[Dict[str, Any]],

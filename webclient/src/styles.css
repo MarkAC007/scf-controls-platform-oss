@@ -1640,11 +1640,6 @@ button.footer-version:disabled {
   background: var(--secondary);
   border-bottom:1px solid var(--border);
 }
-.section-icon{
-  font-size:18px;
-  line-height:1;
-  flex-shrink:0;
-}
 .section-title{
   flex:1;
 }
@@ -2183,7 +2178,6 @@ summary{
   background:var(--card);
   color:var(--text);
   border:1px solid var(--border);
-  flex:1;
 }
 .btn-secondary:hover{
   background:var(--secondary);
@@ -2462,6 +2456,17 @@ summary{
   outline:none;
   border-color:var(--accent);
 }
+/* Compact variant for the selects that sit inline in a bulk-action bar. It
+   sizes to its content instead of the full width the base rule assumes, and
+   uses the visible border so it still reads as a control on the bar's tinted
+   ground in both themes (#1014). */
+.form-control-sm{
+  width:auto;
+  min-width:9.5rem;
+  padding:4px 8px;
+  font-size:0.8125rem;
+  border-color:var(--border-visible);
+}
 textarea.form-control{
   resize:vertical;
   min-height:60px;
@@ -2506,18 +2511,6 @@ textarea.form-control{
 }
 .evidence-card.active{
   outline:2px solid var(--accent);
-}
-.evidence-count{
-  font-size:11px;
-  color:var(--muted);
-  background: var(--secondary);
-  padding:2px 6px;
-  border-radius:4px;
-}
-.evidence-list{
-  display:flex;
-  flex-direction:column;
-  gap:12px;
 }
 .evidence-item{
   border:1px solid var(--border);
@@ -2629,16 +2622,6 @@ textarea.form-control{
   border-color:var(--accent);
   transform:translateY(-2px);
   box-shadow:0 4px 6px rgba(37,99,235,0.2);
-}
-.control-pill.current-control{
-  background:#f0f9ff;
-  border-color:var(--accent);
-  color:var(--accent);
-  font-weight:600;
-}
-.control-pill.current-control:hover{
-  background:var(--accent);
-  color:#fff;
 }
 .control-pill.pill-not-applicable{
   color: var(--muted);
@@ -3565,155 +3548,6 @@ textarea.form-control{
   background:linear-gradient(90deg,#10b981 0%,#059669 100%);
   border-radius:999px;
   transition:width 0.5s;
-}
-.evidence-section-wrapper{
-  margin-top:16px;
-}
-.evidence-section-title{
-  display:flex;
-  align-items:center;
-  gap:10px;
-  margin-bottom:16px;
-}
-.evidence-section-title h3{
-  margin:0;
-  flex:1;
-  font-size:16px;
-  font-weight:600;
-}
-.evidence-section-title .section-icon{
-  font-size:20px;
-}
-.evidence-section-header{
-  display:flex;
-  justify-content:space-between;
-  align-items:center;
-  margin-bottom:16px;
-}
-.evidence-section-header h3{
-  margin:0;
-}
-.evidence-section-count{
-  padding:4px 12px;
-  background: var(--secondary);
-  border:1px solid var(--border);
-  border-radius:999px;
-  font-size:12px;
-  font-weight:600;
-  color:var(--muted);
-}
-.evidence-item-modern{
-  background: var(--card);
-  border:1px solid var(--border);
-  border-radius:12px;
-  margin-bottom:16px;
-  overflow:hidden;
-  box-shadow:0 1px 3px rgba(0,0,0,0.05);
-  transition:all 0.2s;
-}
-.evidence-item-modern:hover{
-  box-shadow:0 4px 8px rgba(0,0,0,0.1);
-}
-.evidence-item-modern summary{
-  cursor:pointer;
-  padding:20px;
-  margin:0;
-  list-style:none;
-}
-.evidence-item-modern summary::-webkit-details-marker{
-  display:none;
-}
-.evidence-summary-modern{
-  display:flex;
-  justify-content:space-between;
-  align-items:center;
-  gap:16px;
-}
-.evidence-summary-left{
-  display:flex;
-  align-items:center;
-  gap:16px;
-  flex:1;
-  min-width:0;
-}
-.evidence-id-badge{
-  padding:8px 12px;
-  background:linear-gradient(135deg,#8b5cf6 0%,#7c3aed 100%);
-  color:#fff;
-  border-radius:8px;
-  font-size:12px;
-  font-weight:700;
-  flex-shrink:0;
-  box-shadow:0 2px 4px rgba(139,92,246,0.2);
-}
-.evidence-info{
-  flex:1;
-  min-width:0;
-}
-.evidence-title-modern{
-  font-size:15px;
-  font-weight:600;
-  color:var(--text);
-  margin-bottom:4px;
-  line-height:1.3;
-}
-.evidence-domain-tag{
-  font-size:11px;
-  color:var(--muted);
-  font-weight:500;
-  text-transform:uppercase;
-  letter-spacing:0.3px;
-}
-.evidence-summary-right{
-  flex-shrink:0;
-}
-.tracked-badge-modern{
-  padding:6px 12px;
-  background:#dcfce7;
-  color:#166534;
-  border-radius:999px;
-  font-size:12px;
-  font-weight:700;
-  display:inline-flex;
-  align-items:center;
-  gap:4px;
-}
-.untracked-badge-modern{
-  padding:6px 12px;
-  background: var(--secondary);
-  color: var(--muted);
-  border-radius:999px;
-  font-size:12px;
-  font-weight:600;
-}
-.evidence-form-modern{
-  padding:24px;
-  background: var(--secondary);
-  border-top:1px solid var(--border);
-}
-.evidence-context-modern{
-  background: var(--card);
-  border:1px solid var(--border);
-  border-radius:10px;
-  padding:16px;
-  margin-bottom:20px;
-}
-.context-header{
-  display:flex;
-  align-items:center;
-  gap:8px;
-  margin-bottom:12px;
-}
-.context-icon{
-  font-size:18px;
-  line-height:1;
-}
-.context-title{
-  font-size:13px;
-  font-weight:600;
-  color:var(--text);
-  text-transform:uppercase;
-  letter-spacing:0.3px;
 }
 .tracking-toggle-section{
   background: var(--card);
@@ -5058,46 +4892,6 @@ textarea.form-control{
   color:var(--muted);
   text-align:center;
   font-weight:500;
-}
-/* Evidence View Toggle — Sentinel Slate (Stitch aligned) */
-.evidence-view-toggle{
-  display:flex;
-  align-items:center;
-  gap:8px;
-  padding:8px 12px;
-  background: transparent;
-  border:none;
-  margin-bottom:16px;
-}
-.evidence-view-toggle .toggle-label{
-  font-size:10px;
-  font-weight:700;
-  color:var(--muted);
-  text-transform:uppercase;
-  letter-spacing:0.06em;
-  flex-shrink:0;
-  margin-right:4px;
-}
-.evidence-view-toggle .toggle-option{
-  padding:6px 12px;
-  background:transparent;
-  border:none;
-  border-radius:6px;
-  color:var(--muted);
-  font-size:10px;
-  font-weight:700;
-  cursor:pointer;
-  transition:all 0.15s;
-  font-family:inherit;
-  text-align:center;
-  text-transform:uppercase;
-}
-.evidence-view-toggle .toggle-option:hover{
-  color:var(--text);
-}
-.evidence-view-toggle .toggle-option.active{
-  background:var(--secondary);
-  color:var(--text);
 }
 .evidence-tracking-badge .tracking-count{
   font-size:11px;
@@ -10161,15 +9955,13 @@ textarea.form-control{
      ============================================ */
 
   .tracking-label.tracked,
-  .artifact-tracking-label.label-tracked,
-  .tracked-badge-modern {
+  .artifact-tracking-label.label-tracked {
     background: rgba(34, 197, 94, 0.2) !important;
     color: #86efac !important;
   }
 
   .tracking-label.not-tracked,
-  .artifact-tracking-label.label-not-tracked,
-  .untracked-badge-modern {
+  .artifact-tracking-label.label-not-tracked {
     background: var(--secondary) !important;
     color: var(--muted) !important;
   }
@@ -10339,7 +10131,6 @@ textarea.form-control{
     border-color: var(--border) !important;
   }
 
-  .evidence-section-header,
   .artifact-section-header {
     background: var(--secondary) !important;
     color: var(--text) !important;
@@ -12337,31 +12128,6 @@ textarea.form-control{
      Phase 35: Evidence Review / Control Scoping Page
      ---------------------------------------- */
 
-  /* Evidence View Toggle */
-  .evidence-view-toggle {
-    background-color: var(--card) !important;
-    border-color: var(--border) !important;
-  }
-
-  .evidence-view-toggle .toggle-label {
-    color: var(--muted) !important;
-  }
-
-  .evidence-view-toggle .toggle-option {
-    background-color: var(--panel) !important;
-    color: var(--text) !important;
-    border-color: var(--border) !important;
-  }
-
-  .evidence-view-toggle .toggle-option:hover {
-    background-color: var(--secondary) !important;
-  }
-
-  .evidence-view-toggle .toggle-option.active {
-    background-color: #2563eb !important;
-    color: white !important;
-  }
-
   /* Evidence Cards in Sidebar */
   .evidence-card-modern {
     background-color: var(--card) !important;
@@ -12400,22 +12166,6 @@ textarea.form-control{
     color: #86efac !important;
   }
 
-  /* Evidence Form */
-  .evidence-form-modern {
-    background-color: var(--panel) !important;
-    border-top-color: var(--border) !important;
-  }
-
-  /* Evidence Context Section (Required by Controls) */
-  .evidence-context-modern {
-    background-color: var(--card) !important;
-    border-color: var(--border) !important;
-  }
-
-  .context-title {
-    color: var(--text) !important;
-  }
-
   /* Requiring Controls Pills */
   .requiring-controls-pills {
     background-color: var(--panel) !important;
@@ -12429,11 +12179,6 @@ textarea.form-control{
 
   .control-pill:hover {
     background-color: rgba(59, 130, 246, 0.2) !important;
-    border-color: #3b82f6 !important;
-  }
-
-  .control-pill.current-control {
-    background-color: rgba(59, 130, 246, 0.3) !important;
     border-color: #3b82f6 !important;
   }
 
@@ -12471,26 +12216,6 @@ textarea.form-control{
     color: #fbbf24 !important;
   }
 
-  /* Form Controls in Evidence Section */
-  .evidence-form-modern .form-control,
-  .evidence-form-modern input,
-  .evidence-form-modern select,
-  .evidence-form-modern textarea {
-    background-color: var(--card) !important;
-    border-color: var(--border) !important;
-    color: var(--text) !important;
-  }
-
-  .evidence-form-modern .form-control::placeholder,
-  .evidence-form-modern input::placeholder,
-  .evidence-form-modern textarea::placeholder {
-    color: var(--muted) !important;
-  }
-
-  .evidence-form-modern label {
-    color: var(--text) !important;
-  }
-
   /* Detail Section Containers */
   .detail-section-container {
     background-color: var(--card) !important;
@@ -12507,65 +12232,6 @@ textarea.form-control{
 
   .container-content {
     color: var(--text) !important;
-  }
-
-  /* Evidence Item Modern */
-  .evidence-item-modern {
-    background-color: var(--card) !important;
-    border-color: var(--border) !important;
-  }
-
-  .evidence-item-modern summary {
-    background-color: var(--card) !important;
-  }
-
-  .evidence-item-modern[open] summary {
-    border-bottom-color: var(--border) !important;
-  }
-
-  .evidence-summary-modern {
-    background-color: var(--card) !important;
-  }
-
-  .evidence-title-modern {
-    color: var(--text) !important;
-  }
-
-  .evidence-domain-tag {
-    background-color: var(--secondary) !important;
-    color: var(--muted) !important;
-  }
-
-  /* Evidence ID Badge */
-  .evidence-id-badge {
-    background-color: rgba(59, 130, 246, 0.2) !important;
-    color: #93c5fd !important;
-  }
-
-  /* Tracked/Untracked Badges */
-  .tracked-badge-modern {
-    background-color: rgba(34, 197, 94, 0.2) !important;
-    color: #86efac !important;
-  }
-
-  .untracked-badge-modern {
-    background-color: var(--secondary) !important;
-    color: var(--muted) !important;
-  }
-
-  /* Evidence Section Wrapper */
-  .evidence-section-wrapper {
-    background-color: var(--card) !important;
-    border-color: var(--border) !important;
-  }
-
-  .evidence-section-title h3 {
-    color: var(--text) !important;
-  }
-
-  .evidence-section-count {
-    background-color: var(--secondary) !important;
-    color: var(--muted) !important;
   }
 
   /* Collection Methods Section */
@@ -13306,6 +12972,9 @@ textarea.form-control{
   background: var(--card);
   border: 1px solid var(--border);
   color: var(--text);
+  /* The stretch used to come from the global .btn-secondary rule; it is
+     wanted here, so it lives here (#1015). */
+  flex: 1;
 }
 
 .modal-footer .btn-secondary:hover:not(:disabled) {
@@ -18660,6 +18329,7 @@ textarea.form-control{
   align-items: center;
   justify-content: center;
   gap: 8px;
+  flex: 1; /* was inherited from the global .btn-secondary rule (#1015) */
   padding: 10px 24px;
   border-radius: 8px;
   font-size: 14px;
@@ -24760,8 +24430,7 @@ button.assessment-queue-link:hover {
 
 /* Dark-mode overrides elsewhere force panel/card backgrounds with higher
    specificity; the bench must win wherever it is declared. */
-[data-theme="dark"] .surface-bench,
-[data-theme="dark"] .evidence-form-modern.surface-bench {
+[data-theme="dark"] .surface-bench {
   background: var(--bench-bg) !important;
   border-color: transparent !important;
 }
@@ -25892,13 +25561,6 @@ button.assessment-queue-link:hover {
   flex-wrap: wrap;
 }
 
-/* The shared `.btn-secondary` rule carries `flex: 1` (styles.css:2119), so every
-   secondary button stretches inside any flex row. In this topbar that turned the
-   back button into a 383px slab. Overridden here rather than at `.btn-secondary`
-   because 88 callsites across the app currently sit on that declaration and some
-   modal footers rely on it — narrowing it app-wide is its own change. */
-.doc-editor-topbar > .btn-secondary { flex: 0 0 auto; }
-
 .doc-editor-title { flex: 1 1 260px; }
 .doc-editor-title h1 { margin: 0; font-size: 1.3rem; }
 
@@ -26446,11 +26108,7 @@ button.assessment-queue-link:hover {
 
 .docr-preamble { color: var(--muted); font-size: 0.85rem; margin-bottom: 1.5rem; }
 
-/* The app-wide `.btn-secondary { flex: 1 }` makes sense inside the form
-   footers it was written for, but here it stretches the back button across the
-   masthead. Neutralised locally rather than globally — that rule reaches 88
-   call sites and is not this feature's to change. */
-.doc-reader-head-top > .btn-secondary,
+/* Buttons in the reader's action row size to their label. */
 .doc-reader-actions > button { flex: none; }
 
 /* ── Alerts strip ────────────────────────────────────────────────────────── */
@@ -27467,6 +27125,84 @@ button.assessment-queue-link:hover {
 .team-add-hint {
   font-size: 12px;
   color: var(--muted);
+}
+
+/* ---- Business function chips (team create + team edit) ----
+   Replaces the native <select multiple> on both team forms. Scoped entirely
+   to team-function-chip* so nothing here can repaint .chip, .btn-* or the
+   explorer row chips, which other screens rely on. Colours are theme tokens
+   only — a hardcoded value here would be invisible in one of the two themes. */
+
+.team-function-chips {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.team-function-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.team-function-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 4px 3px 10px;
+  background: var(--surface-lowest);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.team-function-chip--inactive {
+  border-style: dashed;
+  color: var(--muted);
+}
+
+.team-function-chip-label {
+  white-space: nowrap;
+}
+
+.team-function-chip-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.team-function-chip-remove:hover:not(:disabled) {
+  background: var(--border);
+  color: var(--text);
+}
+
+.team-function-chip-remove:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.team-function-chip-add {
+  align-self: flex-start;
+  min-width: 220px;
+}
+
+.team-function-chip-actions {
+  display: flex;
+  gap: 8px;
 }
 
 .team-empty-state {
@@ -28963,7 +28699,64 @@ button.assessment-queue-link:hover {
 }
 
 .scoping-bulk-clear {
-  /* margin-left: auto pushes "Clear" to the far right, mirroring the mockup */
+  /* Clear now sits inside .scoping-bulk-selection-group, which is sized to its
+     content, so the old `margin-left: auto` had no free space to consume and
+     the actions group carries the push-right instead. Kept at 0 explicitly so
+     the intent is not re-inferred from an inherited auto. */
+  margin-left: 0;
+}
+
+/* ── C6a affordance ────────────────────────────────────────────────────────
+   The bar's ground is var(--success-bg) — pale green in light, a translucent
+   green wash in dark. Plain .btn-secondary is var(--card) on a 1px var(--border)
+   (near-white in light; a 15%-opacity ghost in dark), so on this ground both
+   themes rendered the controls as flat text with no button edge at all.
+
+   Two corrections, both scoped under .scoping-bulk-bar — .btn-secondary and
+   .form-control are app-wide and repainting them would touch every screen:
+
+   1. Data-mutating controls (the three selects) get real chrome: an opaque
+      var(--surface) fill and a var(--border-visible) edge, the token that is
+      genuinely visible in BOTH themes, unlike var(--border).
+   2. Selection management (Select all / Clear) is deliberately quieted to a
+      borderless text control. It mutates nothing on the server and previously
+      carried the same visual weight as a write across the whole selection.
+
+   Every token used here is defined in both the light `:root` block and the
+   `[data-theme="dark"]` block. */
+
+.scoping-bulk-bar .scoping-bulk-selection-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.scoping-bulk-bar .scoping-bulk-selection-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--muted);
+  font-weight: 500;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.scoping-bulk-bar .scoping-bulk-selection-btn:hover:not(:disabled) {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text);
+}
+
+.scoping-bulk-bar .scoping-bulk-selection-btn:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.scoping-bulk-bar .scoping-bulk-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px;
+  /* Writes sit to the right, away from selection management. */
   margin-left: auto;
 }
 
@@ -28975,8 +28768,33 @@ button.assessment-queue-link:hover {
 
 .scoping-bulk-field-label {
   font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: var(--label-tracking);
+  text-transform: uppercase;
   color: var(--muted);
   white-space: nowrap;
+}
+
+.scoping-bulk-bar .scoping-bulk-select {
+  /* Sizing and the visible border come from .form-control-sm. The bar's
+     tinted ground wants the surface fill and a shadow on top of that. */
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.scoping-bulk-bar .scoping-bulk-select:hover:not(:disabled) {
+  border-color: var(--primary);
+}
+
+.scoping-bulk-bar .scoping-bulk-select:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+  border-color: var(--primary);
+}
+
+.scoping-bulk-bar .scoping-bulk-select:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .scoping-bulk-busy {
@@ -30413,9 +30231,8 @@ button.risk-list-header-cell:hover {
 
 /*
  * Replaces the legacy .layout / .sidebar / .detail split that EvidenceReview
- * used before Phase 4. Now used only for the control-first view and the
- * evidence-first list (no item selected) mode; the evidence detail case renders
- * EvidenceDetailPage full-width instead.
+ * used before Phase 4. Now used only for the evidence list (no item selected);
+ * the evidence detail case renders EvidenceDetailPage full-width instead.
  */
 .evidence-review-layout {
   display: flex;
@@ -30443,14 +30260,6 @@ button.risk-list-header-cell:hover {
   flex: 1;
   width: auto;
   border-right: none;
-}
-
-.evidence-review-detail {
-  flex: 1;
-  padding: 0;
-  overflow: auto;
-  display: flex;
-  flex-direction: column;
 }
 
 /* ── RiskDetailPage — Phase 4 Task 4 ────────────────────────────────────────
@@ -34574,4 +34383,41 @@ button.risk-list-header-cell:hover {
   flex-direction: column;
   gap: 8px;
   margin-top: 12px;
+}
+
+/* ===========================================================================
+   Evidence detail — legacy assignee (C3)
+   ---------------------------------------------------------------------------
+   A person can no longer be assigned to an evidence item from this page;
+   ownership is expressed through owning teams. An item that already carries
+   `evidence_tracking.assigned_user_id` still shows it, because that column is
+   tier 1 of the notification chain and clearing it is the only way to stop the
+   routing. It is deliberately quieter than the live fields above it — a name
+   and a way out, not a control. Colours come from the shared tokens so it
+   follows the theme; nothing new is introduced here.
+   ======================================================================== */
+.evidence-legacy-assignee-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.evidence-legacy-assignee-name {
+  color: var(--text);
+  font-weight: 500;
+}
+
+/* Clear sits at the end of the row at its natural width. */
+.evidence-legacy-assignee-row .btn-secondary {
+  margin-left: auto;
+}
+
+.evidence-legacy-assignee-hint {
+  display: block;
+  margin: 6px 0 0;
+  max-width: 62ch;
 }

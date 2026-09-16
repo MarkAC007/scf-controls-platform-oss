@@ -28,6 +28,8 @@ interface EvidenceWorkspaceProps {
   organizationId: string
   /** Opens the Systems Registry. Optional — see `SystemSelectStep`. */
   onNavigateToSystems?: () => void
+  /** Opens a control in Control Scoping — see `EvidenceReview`. */
+  onNavigateToControl?: (scfId: string) => void
 }
 
 export default function EvidenceWorkspace({
@@ -38,6 +40,7 @@ export default function EvidenceWorkspace({
   evidenceTemplates,
   organizationId,
   onNavigateToSystems,
+  onNavigateToControl,
 }: EvidenceWorkspaceProps) {
   // Seeded from the URL rather than defaulted (#785). Defaulting to the
   // dashboard and correcting in an effect would flash the wrong sub-screen and,
@@ -90,6 +93,7 @@ export default function EvidenceWorkspace({
             erlData={erlData}
             evidenceTemplates={evidenceTemplates}
             onNavigateToSystems={onNavigateToSystems}
+            onNavigateToControl={onNavigateToControl}
           />
         )}
 

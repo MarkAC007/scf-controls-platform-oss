@@ -206,9 +206,9 @@ describe('ScopingList', () => {
       expect(container.querySelector('.status-badge-compact')).toBeInTheDocument()
     })
 
-    it('renders maturity placeholder (—) since slim serializer omits maturity_level', () => {
-      // DEVIATION: maturity_level is not in the paginated API response.
-      // The component renders a dash placeholder gracefully.
+    it('renders a dash placeholder when maturity_level is null', () => {
+      // The paginated endpoint now emits maturity_level (null until the org
+      // sets one), and the column shows '—' for null.
       // Note: owner column also renders '—' when no ownerByControlId is provided,
       // so getAllByText is used to handle both occurrences.
       setupMocks([makeScopedControl()])

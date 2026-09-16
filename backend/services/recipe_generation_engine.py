@@ -243,9 +243,9 @@ def _call_anthropic_for_recipes(user_prompt: str, model: str, sources: List[str]
     An invalid submission is retried exactly once with the validation errors
     fed back as an error tool_result.
     """
-    import anthropic
+    from services.llm_client import build_anthropic_client
 
-    client = anthropic.Anthropic(timeout=540.0)
+    client = build_anthropic_client(timeout=540.0)
     messages: List[Dict[str, Any]] = [{"role": "user", "content": user_prompt}]
     tools = [WEB_SEARCH_TOOL, SUBMIT_RECIPES_TOOL]
     invalid_attempts = 0

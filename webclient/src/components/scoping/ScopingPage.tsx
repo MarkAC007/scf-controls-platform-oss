@@ -15,8 +15,10 @@
  * Selection state is in-page: selectedId → renders ScopingDetailPage full-width;
  * Back → list with filters/scroll preserved (no URL contract for scoping).
  *
- * Bulk actions (ruling 1): sequential loop over updateScopedControl with progress
- * callback, toast summary, then refetch list + stats + onScopingDataChange.
+ * Bulk row actions: ONE batchUpdateScopedControls request for the whole
+ * selection (maturity_level or implementation_status), toast summary from the
+ * endpoint's updated/created/failed counts, then refetch list + stats +
+ * onScopingDataChange. Bulk scoping lives in Scope by Framework, not here.
  */
 import { useState, useEffect, useMemo, useRef, useCallback, type JSX } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
@@ -43,8 +45,8 @@ import {
 import { useTeamAssignments, accountableTeamLabel } from '../../hooks/useTeamAssignments'
 import { useIsOrgAdmin } from '../../hooks/useIsOrgAdmin'
 import { useDebounce } from '../../hooks/useDebounce'
-import type { BulkScopeFrameworkResponse, BulkUnscopeFrameworkResponse, ResetScopeResponse, ScopedControlWithCatalog } from '../../data/apiClient'
-import { listTeams, batchAssignTeamToItems } from '../../data/apiClient'
+import type { BatchScopedControlOperation, BulkScopeFrameworkResponse, BulkUnscopeFrameworkResponse, ResetScopeResponse, ScopedControlWithCatalog } from '../../data/apiClient'
+import { listTeams, batchAssignTeamToItems, batchUpdateScopedControls } from '../../data/apiClient'
 import { ScopeByFrameworkModal } from '../ScopeByFrameworkModal'
 
 import ScopingList, { type ScopingFilters } from './ScopingList'
@@ -525,64 +527,68 @@ export default function ScopingPage({
 
   // ── Bulk row actions ───────────────────────────────────────────────────────
 
-  type BulkActionType = 'applicable' | 'na'
-
-  const runBulkAction = useCallback(
-    async (actionType: BulkActionType) => {
+  /**
+   * Apply one field to every checked row in a SINGLE request.
+   *
+   * The predecessor of this function patched one control at a time in a loop —
+   * an N+1 that fired up to `limit` requests for one click. The batch endpoint
+   * applies up to 500 operations in one transaction, so a partial failure
+   * cannot leave half the selection updated. Do not reintroduce the loop; the
+   * test suite asserts the call count, not just the payload.
+   */
+  const runBulkFieldUpdate = useCallback(
+    async (
+      patch: Partial<Pick<BatchScopedControlOperation, 'maturity_level' | 'implementation_status'>>,
+    ) => {
       const scfIds = Array.from(rowSelection)
-      if (scfIds.length === 0) return
+      if (scfIds.length === 0 || !organizationId) return
 
       setBulkBusy(true)
-      setBulkProgress(`Updating 0 of ${scfIds.length}…`)
+      setBulkProgress(`Updating ${scfIds.length} control${scfIds.length !== 1 ? 's' : ''}…`)
 
-      let successCount = 0
-      let failCount = 0
-
-      for (let i = 0; i < scfIds.length; i++) {
-        const scf_id = scfIds[i]
-        setBulkProgress(`Updating ${i + 1} of ${scfIds.length}…`)
-        try {
-          let scoped = getScopedControl(scopingData, scf_id)
-          if (!scoped) scoped = { scf_id, selected: false }
-
-          const patch: Partial<ScopedControl> =
-            actionType === 'applicable' ? { selected: true } : { selected: false }
-
-          const updated = await updateScopedControl({ ...scopingData }, { ...scoped, ...patch } as ScopedControl)
-          handleScopingDataChange(updated)
-          successCount++
-        } catch (err) {
-          console.error('Bulk update failed for control:', scf_id, err)
-          failCount++
-        }
-      }
-
-      // Toast summary
-      if (failCount === 0) {
-        toast.success(`${successCount} control${successCount !== 1 ? 's' : ''} updated`)
-      } else {
-        toast.error(`${successCount} updated · ${failCount} failed`)
-      }
-
-      // Refetch
       try {
+        const result = await batchUpdateScopedControls(
+          scfIds.map((scf_id) => ({ scf_id, ...patch })),
+          organizationId,
+        )
+
+        const changed = result.updated + result.created
+        if (result.failed === 0) {
+          toast.success(`${changed} control${changed !== 1 ? 's' : ''} updated`)
+        } else {
+          // The endpoint records per-operation failures rather than aborting,
+          // so report both halves instead of claiming a clean success.
+          toast.error(`${changed} updated · ${result.failed} failed`)
+        }
+
         const freshData = await loadScopedControls()
         if (freshData) handleScopingDataChange(freshData)
         refetch()
         refetchStats()
+        setRowSelection(new Set())
       } catch (err) {
-        console.error('Failed to reload after bulk action:', err)
+        console.error('Bulk field update failed:', err)
+        toast.error('Bulk update failed')
+      } finally {
+        setBulkBusy(false)
+        setBulkProgress('')
       }
-
-      setBulkBusy(false)
-      setBulkProgress('')
-      setRowSelection(new Set())
     },
-    [rowSelection, scopingData, handleScopingDataChange, refetch, refetchStats],
+    [rowSelection, organizationId, handleScopingDataChange, refetch, refetchStats],
   )
 
-  const handleSetApplicable = useCallback(() => runBulkAction('applicable'), [runBulkAction])
-  const handleSetNA = useCallback(() => runBulkAction('na'), [runBulkAction])
+  // PIN THE FIELD: `maturity_level` is the ORG's own level. `cmm_maturity` on
+  // the listing is the SCF catalogue's recommendation and is read-only.
+  const handleSetMaturity = useCallback(
+    (maturityLevel: string) => runBulkFieldUpdate({ maturity_level: maturityLevel }),
+    [runBulkFieldUpdate],
+  )
+  const handleSetStatus = useCallback(
+    (implementationStatus: string) =>
+      runBulkFieldUpdate({ implementation_status: implementationStatus }),
+    [runBulkFieldUpdate],
+  )
+
   const handleAssignOwner = useCallback(
     async (teamId: string) => {
       const scfIds = Array.from(rowSelection)
@@ -717,8 +723,8 @@ export default function ScopingPage({
                 const next = new Set(enrichedControls.map((c) => c.scf_id))
                 setRowSelection(next)
               }}
-              onSetApplicable={handleSetApplicable}
-              onSetNA={handleSetNA}
+              onSetMaturity={handleSetMaturity}
+              onSetStatus={handleSetStatus}
               onAssignOwner={handleAssignOwner}
               onClear={() => setRowSelection(new Set())}
             />

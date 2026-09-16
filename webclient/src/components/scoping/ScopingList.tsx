@@ -276,11 +276,10 @@ export default function ScopingList({
       }
 
       const checked = selection.has(control.scf_id)
-      // DEVIATION: maturity_level is not returned by the paginated list endpoint
-      // (slim serializer — only selected/implementation_status/selection_reason).
-      // Rendered gracefully-absent: maturity defaults to '—'.
+      // The org's own maturity setting, served by the paginated list endpoint.
+      // Falls back to an em dash only where the org has genuinely not set one.
       // Owner comes from the container's useTeamAssignments batch load (ownerByControlId).
-      const maturity = '—'
+      const maturity = control.maturity_level || '—'
       const ownerLabel = ownerByControlId?.[control.scf_id] ?? ''
 
       return (
