@@ -328,6 +328,11 @@ export interface ScopedControl {
   scf_id: ControlId
   selected: boolean
   selection_reason?: string
+  out_of_scope_justification?: string
+  scope_override?: 'include' | 'exclude' | null
+  scope_override_reason?: string
+  scope_override_set_at?: string
+  scope_override_set_by?: string
   frameworks_driving_selection?: string[]
   implementation_status?: ImplementationStatus
   priority?: Priority

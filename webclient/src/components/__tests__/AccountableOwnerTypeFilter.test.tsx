@@ -19,9 +19,10 @@ import { describe, expect, it, vi } from 'vitest'
 
 import AccountableOwnerTypeFilter, {
   ALL_OWNER_TYPES,
+  type AccountableOwnerTypeValue,
 } from '../AccountableOwnerTypeFilter'
 
-function renderFilter(value = ALL_OWNER_TYPES) {
+function renderFilter(value: AccountableOwnerTypeValue = ALL_OWNER_TYPES) {
   const onChange = vi.fn()
   render(<AccountableOwnerTypeFilter value={value} onChange={onChange} />)
   return { onChange, select: screen.getByLabelText('Filter by accountable owner type') }

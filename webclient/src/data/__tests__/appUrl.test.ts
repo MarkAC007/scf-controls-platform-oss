@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import {
   DEFAULT_EVIDENCE_VIEW,
+  DEFAULT_LIBRARY_MODE,
   DEFAULT_TAB,
   SYNCED_TABS,
   evidenceItemSearch,
@@ -150,6 +151,7 @@ describe('writers', () => {
       evidenceView: 'workspace',
       evidenceItem: 'E-HRS-16',
       libraryItem: null,
+      libraryMode: DEFAULT_LIBRARY_MODE,
       riskItem: null,
       vendorItem: null,
       systemItem: null,

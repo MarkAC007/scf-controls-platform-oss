@@ -63,6 +63,9 @@ export type SyncedTab = (typeof SYNCED_TABS)[number]
 /** The evidence workspace's two sub-screens. */
 export const EVIDENCE_VIEWS = ['dashboard', 'workspace'] as const
 export type EvidenceView = (typeof EVIDENCE_VIEWS)[number]
+export const LIBRARY_MODES = ['in-scope', 'full-library'] as const
+export type LibraryMode = (typeof LIBRARY_MODES)[number]
+export const DEFAULT_LIBRARY_MODE: LibraryMode = 'in-scope'
 
 /** Where the app lands when the URL names nothing it recognises. */
 export const DEFAULT_TAB = 'dashboard'
@@ -98,7 +101,7 @@ export const TAB_TITLES = {
   'capability-posture': 'Analytics',
   'library':            'Control Library',
   'mapping-matrix':     'Framework Mappings',
-  'scoping':            'Control Scoping',
+  'scoping':            'Framework Scoping',
   'risk-register':      'Risk Register',
   'vendors':            'Vendor Inventory',
   'evidence':           'Evidence',
@@ -120,6 +123,7 @@ export const PARAM_TAB = 'tab'
 export const PARAM_EVIDENCE_VIEW = 'view'
 export const PARAM_EVIDENCE_ITEM = 'item'
 export const PARAM_LIBRARY_ITEM = 'item'
+export const PARAM_LIBRARY_MODE = 'mode'
 export const PARAM_RISK_ITEM = 'risk'
 export const PARAM_VENDOR_ITEM = 'vendor'
 export const PARAM_SYSTEM_ITEM = 'system'
@@ -138,7 +142,7 @@ export const PARAM_TASK_ITEM = 'task'
 export const TAB_OWNED_PARAMS: Partial<Record<SyncedTab, readonly string[]>> = {
   documents: ['doc', 'mode'],
   evidence: [PARAM_EVIDENCE_VIEW, PARAM_EVIDENCE_ITEM],
-  library: [PARAM_LIBRARY_ITEM],
+  library: [PARAM_LIBRARY_MODE, PARAM_LIBRARY_ITEM],
   'risk-register': [PARAM_RISK_ITEM],
   vendors: [PARAM_VENDOR_ITEM],
   systems: [PARAM_SYSTEM_ITEM],
@@ -154,6 +158,8 @@ export interface AppLocation {
   evidenceItem: string | null
   /** The library control to deep-link, or null. Only meaningful when tab is library. */
   libraryItem: string | null
+  /** Primary Control Library presentation, bookmarkable as ?mode=. */
+  libraryMode: LibraryMode
   /** The risk assessment to deep-link, or null. Only meaningful when tab is risk-register. */
   riskItem: string | null
   /** The vendor to deep-link, or null. Only meaningful when tab is vendors. */
@@ -196,6 +202,8 @@ export function readAppLocation(search: string): AppLocation {
 
   // library item: only meaningful when on the library tab
   const libraryItem = tab === 'library' ? rawItem : null
+  const requestedLibraryMode = p.get(PARAM_LIBRARY_MODE)
+  const libraryMode = LIBRARY_MODES.find(mode => mode === requestedLibraryMode) ?? DEFAULT_LIBRARY_MODE
 
   // detail params — each scoped to its own tab and its own param name
   const riskItem = tab === 'risk-register' ? (p.get(PARAM_RISK_ITEM)?.trim() || null) : null
@@ -203,7 +211,7 @@ export function readAppLocation(search: string): AppLocation {
   const systemItem = tab === 'systems' ? (p.get(PARAM_SYSTEM_ITEM)?.trim() || null) : null
   const taskItem = tab === 'tasks' ? (p.get(PARAM_TASK_ITEM)?.trim() || null) : null
 
-  return { tab, evidenceView, evidenceItem, libraryItem, riskItem, vendorItem, systemItem, taskItem }
+  return { tab, evidenceView, evidenceItem, libraryItem, libraryMode, riskItem, vendorItem, systemItem, taskItem }
 }
 
 /**
@@ -295,9 +303,19 @@ export function evidenceItemSearch(search: string, item: string): string {
 export function withLibraryItem(search: string, itemId: string | null): string {
   // First land on the library tab (which clears any outgoing tab's params,
   // including another tab's `item`), then set/clear the library's own item.
-  const p = params(withTab(search, 'library'))
+  const onLibrary = readAppLocation(search).tab === 'library'
+  const p = params(onLibrary ? search : withTab(search, 'library'))
   if (itemId) p.set(PARAM_LIBRARY_ITEM, itemId)
   else p.delete(PARAM_LIBRARY_ITEM)
+  return p.toString()
+}
+
+/** Change Control Library mode without losing unrelated URL state. */
+export function withLibraryMode(search: string, mode: LibraryMode): string {
+  const onLibrary = readAppLocation(search).tab === 'library'
+  const p = params(onLibrary ? search : withTab(search, 'library'))
+  p.set(PARAM_LIBRARY_MODE, mode)
+  p.delete(PARAM_LIBRARY_ITEM)
   return p.toString()
 }
 

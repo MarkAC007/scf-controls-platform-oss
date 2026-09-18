@@ -31,12 +31,14 @@ interface ModernCommentThreadProps {
   commentableType: 'control' | 'evidence' | 'task';
   commentableId: string;
   organizationId: string;
+  readOnly?: boolean;
 }
 
 export const ModernCommentThread: React.FC<ModernCommentThreadProps> = ({
   commentableType,
   commentableId,
-  organizationId
+  organizationId,
+  readOnly = false,
 }) => {
   const [comments, setComments] = useState<Comment[]>([]);
   const [newComment, setNewComment] = useState('');
@@ -321,7 +323,7 @@ export const ModernCommentThread: React.FC<ModernCommentThreadProps> = ({
   });
 
   const renderComment = (comment: Comment, isReply: boolean = false) => {
-    const isEditing = editingId === comment.id;
+    const isEditing = !readOnly && editingId === comment.id;
     const replies = getReplies(comment.id);
 
     return (
@@ -440,7 +442,7 @@ export const ModernCommentThread: React.FC<ModernCommentThreadProps> = ({
                   dangerouslySetInnerHTML={{ __html: renderContent(comment.content, comment.mentions) }}
                 />
 
-                <div style={{ display: 'flex', gap: '1rem', fontSize: '0.8125rem' }}>
+                {!readOnly && <div style={{ display: 'flex', gap: '1rem', fontSize: '0.8125rem' }}>
                   <button
                     onClick={() => setReplyTo(replyTo === comment.id ? null : comment.id)}
                     style={{
@@ -481,7 +483,7 @@ export const ModernCommentThread: React.FC<ModernCommentThreadProps> = ({
                   >
                     🗑️ Delete
                   </button>
-                </div>
+                </div>}
               </>
             )}
           </div>
@@ -511,7 +513,7 @@ export const ModernCommentThread: React.FC<ModernCommentThreadProps> = ({
       </div>
 
       {/* Reply Indicator */}
-      {replyTo && (
+      {!readOnly && replyTo && (
         <div
           style={{
             padding: '0.5rem 1rem',
@@ -544,7 +546,7 @@ export const ModernCommentThread: React.FC<ModernCommentThreadProps> = ({
       )}
 
       {/* New Comment Form */}
-      <form onSubmit={handleSubmit}>
+      {!readOnly && <form onSubmit={handleSubmit}>
         <div style={{ position: 'relative' }}>
           <textarea
             ref={textareaRef}
@@ -659,7 +661,7 @@ export const ModernCommentThread: React.FC<ModernCommentThreadProps> = ({
             {loading ? 'Posting...' : replyTo ? 'Post Reply' : 'Post Comment'}
           </button>
         </div>
-      </form>
+      </form>}
     </div>
   );
 };

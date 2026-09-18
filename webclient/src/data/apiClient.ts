@@ -541,6 +541,11 @@ export interface ScopedControl {
   scf_id: string
   selected: boolean
   selection_reason?: string | null
+  out_of_scope_justification?: string | null
+  scope_override?: 'include' | 'exclude' | null
+  scope_override_reason?: string | null
+  scope_override_set_at?: string | null
+  scope_override_set_by?: string | null
   implementation_status?: string | null
   priority?: string | null
   owner?: string | null
@@ -774,6 +779,79 @@ export async function resetAllScope(
   )
 }
 
+export type ScopeOverrideAction = 'include' | 'exclude' | 'inherit'
+
+export async function setControlScopeOverride(
+  orgId: string,
+  scfId: string,
+  action: ScopeOverrideAction,
+  reason?: string,
+): Promise<ScopedControl> {
+  return apiFetch<ScopedControl>(
+    `/organizations/${orgId}/scoped-controls/${encodeURIComponent(scfId)}/scope-override`,
+    {
+      method: 'PUT',
+      body: JSON.stringify({ action, reason }),
+    },
+  )
+}
+
+export interface FrameworkScopeSummaryItem {
+  id: string
+  name: string
+  family: string
+  mapped_control_count: number
+  in_scope_count: number
+  missing_count: number
+  coverage_percentage: number
+  expected_additions: number
+  active: boolean
+  partial: boolean
+  source?: string | null
+  selected_at?: string | null
+  selected_by?: string | null
+}
+
+export interface FrameworkScopeSummaryResponse {
+  total: number
+  selected_count: number
+  frameworks: FrameworkScopeSummaryItem[]
+}
+
+export interface FrameworkScopePreview {
+  operation: 'add' | 'remove'
+  frameworks: string[]
+  mapped_controls: string[]
+  new_controls: string[]
+  already_covered: string[]
+  shared_with_active_frameworks: string[]
+  individual_inclusions: string[]
+  explicitly_excluded: string[]
+  controls_leaving_scope: string[]
+}
+
+export async function fetchFrameworkScopeSummary(
+  orgId: string,
+): Promise<FrameworkScopeSummaryResponse> {
+  return apiFetch<FrameworkScopeSummaryResponse>(
+    `/organizations/${orgId}/framework-scoping`,
+  )
+}
+
+export async function previewFrameworkScopeChange(
+  orgId: string,
+  operation: 'add' | 'remove',
+  frameworks: string[],
+): Promise<FrameworkScopePreview> {
+  return apiFetch<FrameworkScopePreview>(
+    `/organizations/${orgId}/framework-scoping/preview`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ operation, frameworks }),
+    },
+  )
+}
+
 /**
  * Scoped Controls Stats API
  * Server-side aggregated counts for the stats bar
@@ -810,6 +888,12 @@ export async function fetchScopedControlStats(
 export interface ScopedControlWithCatalog {
   scf_id: string
   scf_domain: string
+  scoped_control_id?: string | null
+  priority?: string | null
+  out_of_scope_justification?: string | null
+  scope_override?: 'include' | 'exclude' | null
+  scope_override_reason?: string | null
+  scope_override_set_at?: string | null
   control_name: string
   control_description: string
   control_question?: string | null

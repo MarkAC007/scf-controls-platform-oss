@@ -158,7 +158,7 @@ export default function Dashboard({ controls, scopingData, onScopingDataChange, 
         <div className="empty-state">
           <div className="empty-icon">--</div>
           <h2>Welcome to Your GRC Dashboard</h2>
-          <p>Your SCF catalogue is loaded. Head to the Control Scoping tab to choose the frameworks and controls that apply to your organisation — your posture and metrics will appear here once controls are scoped.</p>
+          <p>Your SCF catalogue is loaded. Select baseline frameworks in Framework Scoping or add individual controls from the Control Library — your posture and metrics will appear here once controls are in scope.</p>
         </div>
       </div>
     )

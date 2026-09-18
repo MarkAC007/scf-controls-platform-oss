@@ -197,9 +197,9 @@ export default function FrameworkGapDetail({
           <button
             className="gap-action-btn gap-action-secondary"
             onClick={() => onNavigateToScoping(frameworkName)}
-            title={`View all ${frameworkName} controls in Control Scoping`}
+            title={`View all ${frameworkName} controls in the Control Library`}
           >
-            View in Scoping
+            View in Library
           </button>
         )}
       </div>

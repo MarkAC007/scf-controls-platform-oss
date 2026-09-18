@@ -10,7 +10,7 @@
  * Suppressed when focus is in input/textarea/select/contentEditable.
  */
 import { useMemo, useState, useEffect, useCallback, type JSX } from 'react'
-import type { EnrichedControl, ScopedControlsFile } from '../../types'
+import type { EnrichedControl, ScopedControl, ScopedControlsFile } from '../../types'
 import { getEvidenceTracking } from '../../data/scopingService'
 import { getEvidenceHealth, type EvidenceHealthResponse } from '../../data/apiClient'
 
@@ -21,6 +21,10 @@ import AssessmentObjectivesList from '../AssessmentObjectivesList'
 import DeprecatedBadge, { getCatalogLifecycle } from '../DeprecatedBadge'
 import TabRow from '../explorer/TabRow'
 
+import ScopingDetailPage, {
+  type ScopingDetailControl,
+  type ScopingEntry,
+} from '../scoping/ScopingDetailPage'
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface ControlDetailPageProps {
@@ -39,9 +43,15 @@ export interface ControlDetailPageProps {
   organizationId?: string
   scopingData?: ScopedControlsFile
   frameworkNames?: Record<string, string>
+  implementationRecord?: ScopedControl | null
+  onImplementationFieldChange?: (field: string, value: unknown) => void
+  onReloadTeamAssignments?: () => void
+  canEditImplementation?: boolean
+  canManageTeams?: boolean
+  accountableTeamLabel?: string | null
 }
 
-type DetailTab = 'details' | 'assessment' | 'mappings'
+type DetailTab = 'details' | 'implementation' | 'assessment' | 'mappings'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -91,6 +101,12 @@ export default function ControlDetailPage({
   organizationId,
   scopingData,
   frameworkNames: _frameworkNames,
+  implementationRecord,
+  onImplementationFieldChange = () => {},
+  onReloadTeamAssignments = () => {},
+  canEditImplementation = false,
+  canManageTeams = false,
+  accountableTeamLabel = null,
 }: ControlDetailPageProps): JSX.Element {
   const [showGraph, setShowGraph] = useState(false)
   const [activeTab, setActiveTab] = useState<DetailTab>('details')
@@ -202,7 +218,10 @@ export default function ControlDetailPage({
   // ── Tabs ─────────────────────────────────────────────────────────────────
 
   const tabs = [
-    { id: 'details', label: 'Details' },
+    { id: 'details', label: 'Catalog Details' },
+    ...(inScope && implementationRecord
+      ? [{ id: 'implementation', label: 'Implementation Workspace' }]
+      : []),
     { id: 'assessment', label: 'Assessment' },
     { id: 'mappings', label: 'Mappings', count: totalFrameworks },
   ]
@@ -457,6 +476,30 @@ export default function ControlDetailPage({
               onSelect={(id) => setActiveTab(id as DetailTab)}
               aria-label="Control detail sections"
             />
+
+            {activeTab === 'implementation' && implementationRecord && organizationId && (
+              <div
+                className="library-implementation-panel"
+                aria-label="Organization implementation record"
+              >
+                <ScopingDetailPage
+                  control={control as ScopingDetailControl}
+                  scopingEntry={implementationRecord as ScopingEntry}
+                  position={position}
+                  onPrev={onPrev}
+                  onNext={onNext}
+                  onBack={onBack}
+                  onToggleScope={() => {}}
+                  onFieldChange={onImplementationFieldChange}
+                  onReloadTeamAssignments={onReloadTeamAssignments}
+                  organizationId={organizationId}
+                  scopingData={scopingData}
+                  accountableTeamLabel={accountableTeamLabel}
+                  canManageTeams={canManageTeams && canEditImplementation}
+                  readOnly={!canEditImplementation}
+                />
+              </div>
+            )}
 
             {/* ── Details Tab ─────────────────────────────────────────────────── */}
             {activeTab === 'details' && (

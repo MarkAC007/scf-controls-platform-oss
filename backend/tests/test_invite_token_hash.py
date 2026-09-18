@@ -36,7 +36,7 @@ def _python_sources():
     for root, dirs, files in os.walk(BACKEND_DIR):
         dirs[:] = [
             d for d in dirs
-            if d not in {"tests", "__pycache__", "alembic", ".pytest_cache", "installer"}
+            if d not in {"tests", "__pycache__", "alembic", ".pytest_cache", ".venv", "installer"}
         ]
         for name in files:
             if name.endswith(".py"):

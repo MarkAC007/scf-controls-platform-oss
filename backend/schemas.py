@@ -107,6 +107,7 @@ class ScopedControlBase(BaseModel):
     scf_id: str = Field(..., min_length=1, max_length=50, description="SCF control ID (e.g., AST-01)")
     selected: Optional[bool] = False
     selection_reason: Optional[str] = None
+    out_of_scope_justification: Optional[str] = None
     implementation_status: Optional[str] = Field(
         None,
         pattern=f"^({IMPLEMENTATION_STATUSES})$",
@@ -154,6 +155,7 @@ class ScopedControlUpdate(BaseModel):
     """
     selected: Optional[bool] = None
     selection_reason: Optional[str] = None
+    out_of_scope_justification: Optional[str] = None
     implementation_status: Optional[str] = Field(
         None,
         pattern=f"^({IMPLEMENTATION_STATUSES})$",
@@ -182,6 +184,10 @@ class ScopedControlResponse(ScopedControlBase):
     organization_id: UUID
     created_at: datetime
     updated_at: datetime
+    scope_override: Optional[Literal["include", "exclude"]] = None
+    scope_override_reason: Optional[str] = None
+    scope_override_set_at: Optional[datetime] = None
+    scope_override_set_by: Optional[UUID] = None
 
     # Include PPTDF fields from database (flattened in DB, nested in response)
     pptdf_people: Optional[bool] = False
@@ -261,6 +267,12 @@ class ScopedControlListItem(BaseModel):
     selected: bool = False
     implementation_status: Optional[str] = None
     selection_reason: Optional[str] = None
+    out_of_scope_justification: Optional[str] = None
+    scoped_control_id: Optional[UUID] = None
+    priority: Optional[str] = None
+    scope_override: Optional[Literal["include", "exclude"]] = None
+    scope_override_reason: Optional[str] = None
+    scope_override_set_at: Optional[datetime] = None
     # The ORG's own CMM level for this control. Distinct from ``cmm_maturity``
     # below, which is the catalogue's recommendation.
     maturity_level: Optional[str] = None
@@ -1452,7 +1464,59 @@ class FrameworkInfo(BaseModel):
 class FrameworkListResponse(BaseModel):
     """Response schema for listing available frameworks."""
     total: int = Field(description="Total number of frameworks available")
-    frameworks: List[FrameworkInfo] = []
+    frameworks: List[FrameworkInfo] = Field(default_factory=list)
+
+
+class ScopeOverrideRequest(BaseModel):
+    """Set or clear a durable individual exception to framework scope."""
+
+    action: Literal["include", "exclude", "inherit"]
+    reason: Optional[str] = Field(None, max_length=2000)
+
+    @model_validator(mode="after")
+    def exclusion_requires_reason(self):
+        if self.action == "exclude" and not (self.reason or "").strip():
+            raise ValueError("An exclusion rationale is required")
+        return self
+
+
+class FrameworkScopeSummaryItem(BaseModel):
+    id: str
+    name: str
+    family: str
+    mapped_control_count: int
+    in_scope_count: int
+    missing_count: int
+    coverage_percentage: float
+    expected_additions: int
+    active: bool = False
+    partial: bool = False
+    source: Optional[str] = None
+    selected_at: Optional[datetime] = None
+    selected_by: Optional[UUID] = None
+
+
+class FrameworkScopeSummaryResponse(BaseModel):
+    total: int
+    selected_count: int
+    frameworks: List[FrameworkScopeSummaryItem] = Field(default_factory=list)
+
+
+class FrameworkScopePreviewRequest(BaseModel):
+    operation: Literal["add", "remove"]
+    frameworks: List[str] = Field(..., min_length=1)
+
+
+class FrameworkScopePreviewResponse(BaseModel):
+    operation: Literal["add", "remove"]
+    frameworks: List[str]
+    mapped_controls: List[str] = Field(default_factory=list)
+    new_controls: List[str] = Field(default_factory=list)
+    already_covered: List[str] = Field(default_factory=list)
+    shared_with_active_frameworks: List[str] = Field(default_factory=list)
+    individual_inclusions: List[str] = Field(default_factory=list)
+    explicitly_excluded: List[str] = Field(default_factory=list)
+    controls_leaving_scope: List[str] = Field(default_factory=list)
 
 
 # ============================================================================
