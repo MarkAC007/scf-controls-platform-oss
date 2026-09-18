@@ -330,7 +330,6 @@ export default function UnifiedLibraryPage({
   const modeSelector = (
     <div className="library-mode-header">
       <div>
-        <h1>Control Library</h1>
         <p>
           {mode === 'in-scope'
             ? 'Manage implementation records for controls in your effective scope.'

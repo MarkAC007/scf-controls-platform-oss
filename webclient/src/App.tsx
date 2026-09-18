@@ -53,6 +53,7 @@ import { ThemeProvider } from './contexts/ThemeContext'
 import { OrganizationProvider, useOrganization } from './contexts/OrganizationContext'
 import { RiskProfileProvider } from './contexts/RiskProfileContext'
 import { DataRefreshProvider, useDataRefresh } from './contexts/DataRefreshContext'
+import { WorkScopeProvider } from './contexts/WorkScopeContext'
 import GoogleSignIn from './components/GoogleSignIn'
 import OidcSignIn from './components/OidcSignIn'
 import { OIDC_ENABLED } from './data/authToken'
@@ -1072,6 +1073,10 @@ export default function App() {
           {/* Inside OrganizationProvider: the change cursor it polls is
               per-organisation, and a refresh clears that org's caches. */}
           <DataRefreshProvider>
+          {/* Inside OrganizationProvider: "my teams" means teams in the
+              current organisation, so switching org re-reads the lists under
+              the same scope rather than carrying a stale team set across. */}
+          <WorkScopeProvider>
           <RiskProfileProvider>
             <Toaster
               position="top-right"
@@ -1099,6 +1104,7 @@ export default function App() {
             />
             <AppContent />
           </RiskProfileProvider>
+          </WorkScopeProvider>
           </DataRefreshProvider>
         </OrganizationProvider>
       </AuthProvider>

@@ -174,7 +174,6 @@ export default function Dashboard({ controls, scopingData, onScopingDataChange, 
   return (
     <div className="dashboard">
       <div className="dashboard-header">
-        <h1 className="page-title">GRC Dashboard</h1>
         <p className="page-subtitle">Real-time governance oversight and risk posture analysis.</p>
       </div>
 

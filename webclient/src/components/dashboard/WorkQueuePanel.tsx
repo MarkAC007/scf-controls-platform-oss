@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import { useWorkQueue } from '../../hooks/useWorkQueue'
 import type {
   OverdueEvidenceItem,
@@ -18,34 +17,23 @@ export default function WorkQueuePanel({
   onNavigateToEvidence,
   onNavigateToControl,
 }: WorkQueuePanelProps) {
-  const [assignedToMe, setAssignedToMe] = useState(false)
-  const { data, isLoading } = useWorkQueue(orgId, assignedToMe)
+  // Org-wide, always (#1052). This panel used to carry its own All / "My work"
+  // toggle, which was a second scope control that could disagree with the
+  // header's — and disagree meaningfully, because it is backed by a DIFFERENT
+  // filter: my_item_filter, a narrow personal notification queue, versus the
+  // team_assignment_filter the controls and evidence lists use, which is
+  // deliberately generous. Two controls that look alike and mean different
+  // things are worse than one, so the toggle is gone and the panel stays
+  // organisation-wide.
+  const { data, isLoading } = useWorkQueue(orgId)
 
   const totalItems = data?.total_items ?? 0
-
-  const scopeToggle = (
-    <div className="wq-toggle">
-      <button
-        className={`scope-toggle-btn${!assignedToMe ? ' active' : ''}`}
-        onClick={() => setAssignedToMe(false)}
-      >
-        All
-      </button>
-      <button
-        className={`scope-toggle-btn${assignedToMe ? ' active' : ''}`}
-        onClick={() => setAssignedToMe(true)}
-      >
-        My work
-      </button>
-    </div>
-  )
 
   if (isLoading) {
     return (
       <div className="work-queue-panel">
         <div className="wq-header">
           <h3>Work Queue</h3>
-          {scopeToggle}
         </div>
         <div className="wq-loading">Loading work queue...</div>
       </div>
@@ -66,7 +54,6 @@ export default function WorkQueuePanel({
             {totalItems}
           </span>
         </div>
-        {scopeToggle}
       </div>
       <div className="wq-body">
         {!hasItems ? (

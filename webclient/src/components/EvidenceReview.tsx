@@ -26,6 +26,7 @@ import {
 import { getSystems, getEvidenceSuggestions, submitRecipeFeedback, getOrgMembers } from '../data/apiClient'
 import type { System, EvidenceSuggestionsResponse, UserSimple, Team } from '../types'
 import TeamListFilters, { ALL as ALL_TEAMS } from './TeamListFilters'
+import { useWorkScope } from '../contexts/WorkScopeContext'
 import { domainFilterLabel, useDomainIdentifiers } from '../hooks/useCatalogFilters'
 import AccountableOwnerTypeFilter, {
   ALL_OWNER_TYPES,
@@ -350,12 +351,15 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
 
   // Teams for bulk owner assignment. The legacy per-user "Assign to" list is
   // sunset: bulk ownership is the accountable team from the team system.
+  const { isMyTeams } = useWorkScope()
+
   const [teams, setTeams] = useState<Team[]>([])
   useEffect(() => {
     const orgId = scopingData.organizationId
     if (!orgId) return
     let cancelled = false
-    listTeams(orgId)
+    // Under "My teams" the bulk owner picker offers only the caller's teams.
+    listTeams(orgId, { mine: isMyTeams })
       .then(loaded => {
         if (!cancelled) setTeams(loaded)
       })
@@ -365,7 +369,7 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
     return () => {
       cancelled = true
     }
-  }, [scopingData.organizationId])
+  }, [scopingData.organizationId, isMyTeams])
 
   const teamOptions = useMemo(
     () => teams.map(t => ({ value: t.id, label: t.name })),
@@ -394,7 +398,8 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
     scopingData.organizationId,
     teamFilter !== ALL_TEAMS ? teamFilter : undefined,
     functionFilter !== ALL_TEAMS ? functionFilter : undefined,
-    ownerTypeFilterActive ? ownerTypeFilter : undefined
+    ownerTypeFilterActive ? ownerTypeFilter : undefined,
+    isMyTeams
   )
 
   /**
@@ -406,6 +411,21 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
    * It narrows to nothing and says why, right next to the control.
    */
   const ownerTypeUnanswered = ownerTypeFilterActive && !serverFilteredTrackingIds
+
+  /**
+   * Same reasoning for the header work scope (#1052): the assignment map this
+   * screen holds knows which teams own an item, but nothing here knows which
+   * teams the CALLER is on. So there is no client-side equivalent to fall back
+   * to, and falling back to the unfiltered list would present the whole
+   * organisation under a "My teams" chip — the exact failure this feature
+   * exists to prevent. Narrow to nothing and say why instead.
+   */
+  const myTeamsUnanswered = isMyTeams && !serverFilteredTrackingIds
+
+  /** The caller picked a team that is not one of theirs while scoped to theirs. */
+  const teamPickedOutsideMine =
+    isMyTeams && teamFilter !== ALL_TEAMS && !teams.some(t => t.id === teamFilter)
+  const callerHasNoTeams = isMyTeams && teams.length === 0
 
   // Filter evidence items based on search and domain
   const filteredEvidenceItems = useMemo(() => {
@@ -429,8 +449,8 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
     // Owning-team / function filter. An unsaved item has no tracking row and
     // so cannot own anything — it drops out of any active team filter rather
     // than being shown as unowned.
-    if (teamFilterActive || ownerTypeFilterActive) {
-      if (ownerTypeUnanswered) return []
+    if (teamFilterActive || ownerTypeFilterActive || isMyTeams) {
+      if (ownerTypeUnanswered || myTeamsUnanswered) return []
       filtered = filtered.filter(item => {
         const dbId = trackingDbIdFor(item.id)
         if (!dbId) return false
@@ -451,6 +471,8 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
     teamFilterActive,
     ownerTypeFilterActive,
     ownerTypeUnanswered,
+    isMyTeams,
+    myTeamsUnanswered,
     teamFilter,
     functionFilter,
     trackingDbIdFor,
@@ -885,12 +907,34 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
       {/* Everything right of the filter rail: toolbar, bulk bar, list */}
       <div className="evidence-review-main">
 
+        {/* Pinned FIRST: the header owns changing the scope, this owns saying
+            why the list below is short. */}
+        {isMyTeams && (
+          <div className="work-scope-chip-row">
+            <span className="work-scope-chip">My teams</span>
+          </div>
+        )}
+
         {/* Toolbar: search + counts + "Set Up Collection" */}
         <ListToolbar
           search={query}
           onSearchChange={setQuery}
           searchPlaceholder="Search evidence…"
-          count={`${stats.tracked} tracked · ${filteredEvidenceItems.length} evidence items`}
+          count={
+            <span className="scoping-toolbar-count">
+              {/* Organisation-wide totals, never dimmed or hidden by a scope:
+                  how much evidence this organisation has is an organisation
+                  fact. The narrowing is stated separately, below. */}
+              <span className="work-scope-totals-label">Organisation totals: </span>
+              {stats.tracked.toLocaleString()} tracked ·{' '}
+              {stats.total.toLocaleString()} evidence items
+              <span className="work-scope-count" aria-live="polite">
+                Showing {filteredEvidenceItems.length.toLocaleString()} of{' '}
+                {stats.total.toLocaleString()} evidence items
+                {isMyTeams ? ' · My teams' : ''}
+              </span>
+            </span>
+          }
           actions={
             <button
               className="btn-secondary btn-sm"
@@ -922,6 +966,20 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
           onSetFrequency={(frequency: string) => applyBulk({ frequency })}
           onAssignTeam={assignOwnerTeamBulk}
         />
+
+        {filteredEvidenceItems.length === 0 && isMyTeams && (
+          <div className="evidence-empty work-scope-empty" role="status">
+            {callerHasNoTeams
+              ? 'You are not a member of any team yet, so "My teams" has nothing to show. Switch Showing to Everything, or ask an administrator to add you to a team.'
+              : teamPickedOutsideMine
+                ? 'The team you have picked is not one of your teams, and "My teams" narrows to yours — so this combination can never match. Pick one of your teams, or switch Showing to Everything.'
+                : myTeamsUnanswered
+                  ? (ownerFilterLoading
+                      ? 'Narrowing evidence to your teams…'
+                      : ownerFilterError || 'Could not narrow evidence to your teams, so nothing is shown rather than showing the whole organisation under a "My teams" label.')
+                  : 'No evidence is assigned to your teams yet.'}
+          </div>
+        )}
 
         <div className="list">
           {filteredEvidenceItems.map(evidenceItem => {

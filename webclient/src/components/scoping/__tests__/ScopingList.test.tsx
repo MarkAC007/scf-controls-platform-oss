@@ -11,7 +11,20 @@
  *   - useDebounce — passthrough
  *   - listTeams / listFunctions — returns empty arrays to avoid network
  */
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render as rtlRender, screen } from '@testing-library/react'
+import type { ReactElement } from 'react'
+import { WorkScopeProvider } from '../../../contexts/WorkScopeContext'
+
+/**
+ * Work scope (#1052) is read from context by this tree. The header owns the
+ * value; every render here supplies the provider so the component sees its
+ * default ('everything') rather than throwing. Passed as RTL's ``wrapper`` so
+ * that ``rerender`` keeps the provider in place.
+ */
+function render(ui: ReactElement, options?: Parameters<typeof rtlRender>[1]) {
+  return rtlRender(ui, { wrapper: WorkScopeProvider, ...options })
+}
+
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 
 // ─── Stubs ────────────────────────────────────────────────────────────────────

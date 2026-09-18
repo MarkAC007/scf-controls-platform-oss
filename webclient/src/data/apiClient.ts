@@ -968,6 +968,14 @@ export interface ScopedControlsPageParams {
    */
   team_id?: string
   /**
+   * Narrow to controls assigned to ANY team the caller belongs to (#1052).
+   *
+   * INTERSECTS with ``team_id``: both are ANDed server-side, so picking a team
+   * the caller is not on returns nothing rather than widening back out. A
+   * caller on no team gets an empty list, never the whole organisation.
+   */
+  my_teams?: boolean
+  /**
    * Narrow to controls owned by any team under one business function.
    *
    * The API resolves the function through the assignment tables, so pass the
@@ -1006,6 +1014,7 @@ export async function fetchScopedControlsPage(
   if (params.control_weighting !== undefined) queryParams.set('control_weighting', params.control_weighting.toString())
   if (params.framework) queryParams.set('framework', params.framework)
   if (params.team_id) queryParams.set('team_id', params.team_id)
+  if (params.my_teams) queryParams.set('my_teams', 'true')
   if (params.function_id) queryParams.set('function_id', params.function_id)
   if (params.accountable_owner_type) {
     queryParams.set('accountable_owner_type', params.accountable_owner_type)
@@ -1066,6 +1075,12 @@ export interface EvidenceTrackingFilters {
   team_id?: string
   function_id?: string
   /**
+   * Narrow to evidence assigned to ANY team the caller belongs to (#1052).
+   * Same meaning and same INTERSECT-with-``team_id`` rule as the controls
+   * list's parameter of the same name.
+   */
+  my_teams?: boolean
+  /**
    * Accountable team's primary owner is internal or a contractor (#822 phase
    * 2). Same meaning as the controls list's parameter of the same name, so the
    * two lists answer one question one way.
@@ -1083,6 +1098,7 @@ export async function getEvidenceTracking(
   }
   const params = new URLSearchParams()
   if (filters.team_id) params.set('team_id', filters.team_id)
+  if (filters.my_teams) params.set('my_teams', 'true')
   if (filters.function_id) params.set('function_id', filters.function_id)
   if (filters.accountable_owner_type) {
     params.set('accountable_owner_type', filters.accountable_owner_type)
@@ -4239,11 +4255,25 @@ export async function listFunctions(): Promise<OrgFunction[]> {
  */
 export async function listTeams(
   orgId: string,
-  options: { functionId?: string; includeInactive?: boolean } = {}
+  options: {
+    functionId?: string
+    includeInactive?: boolean
+    /**
+     * Only teams the caller belongs to (#1052). Each returned row then also
+     * carries ``membership_role``; on the unfiltered list that field is null.
+     *
+     * This is what makes the work-scope intersect honest: while the scope is
+     * "My teams", a team picker fed by this option cannot offer a team the
+     * caller is not on, so the AND of ``my_teams`` and ``team_id`` can never
+     * be silently emptied by a choice the UI itself invited.
+     */
+    mine?: boolean
+  } = {}
 ): Promise<Team[]> {
   const params = new URLSearchParams()
   if (options.functionId) params.set('function_id', options.functionId)
   if (options.includeInactive) params.set('include_inactive', 'true')
+  if (options.mine) params.set('mine', 'true')
   const query = params.toString()
   return apiClient.get<Team[]>(
     `/organizations/${orgId}/teams${query ? `?${query}` : ''}`

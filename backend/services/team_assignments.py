@@ -29,15 +29,17 @@ giving up referential integrity to get it.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from sqlalchemy import and_, literal, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import (
     ControlTeamAssignment,
     EvidenceTeamAssignment,
     EvidenceTracking,
     ScopedControl,
+    TeamMember,
 )
 from services.audit_service import (
     CONTROL_TEAM_ASSIGNMENT_TRACKED_FIELDS,
@@ -136,6 +138,7 @@ def team_assignment_filter(
     *,
     organization_id: Any,
     team_id: Any = None,
+    team_ids: Optional[Sequence[Any]] = None,
     function_id: Any = None,
 ):
     """An EXISTS clause restricting a list to items a team (or function) works on.
@@ -161,12 +164,34 @@ def team_assignment_filter(
     in the database, where it is now). It also lets the planner use the
     ``(organization_id, team_id)`` index instead of scanning by item alone.
 
-    Passing neither ``team_id`` nor ``function_id`` returns ``None``, so
-    callers can hand the result straight to a conditional ``where`` and the
-    no-filter path adds no SQL whatsoever.
+    Passing none of ``team_id``, ``team_ids`` or ``function_id`` returns
+    ``None``, so callers can hand the result straight to a conditional
+    ``where`` and the no-filter path adds no SQL whatsoever.
+
+    **``team_ids`` versus ``team_id`` (#1052).** ``team_id`` is one team the
+    *user picked*; ``team_ids`` is the set of teams the *caller belongs to*,
+    which is what backs the ``my_teams`` parameter on both list endpoints.
+    They are separate parameters rather than one overloaded one because they
+    answer different questions and, when both are given, they **intersect** —
+    both clauses AND, exactly like every other filter on these endpoints. No
+    precedence rule: asking for "a team I am not on" honestly returns nothing
+    rather than being silently rewritten into a question the caller did not
+    ask.
+
+    **An empty ``team_ids`` narrows to nothing; it does not disappear.** A
+    caller who belongs to no team has an empty set of teams, and the answer to
+    "show me my teams' controls" is zero controls. Collapsing that to "no
+    filter" would hand them the whole organisation under a label promising the
+    opposite — the exact failure the accountable-owner filter's docstring in
+    ``EvidenceReview.tsx`` exists to prevent. ``[]`` is therefore a
+    distinguishable, never-true clause, not a missing argument.
     """
-    if team_id is None and function_id is None:
+    if team_id is None and team_ids is None and function_id is None:
         return None
+
+    if team_ids is not None and len(team_ids) == 0:
+        # Never-true, and deliberately not `None`. See the docstring above.
+        return literal(False)
 
     from models import Function, Team  # local: avoids a circular import at module load
 
@@ -178,6 +203,9 @@ def team_assignment_filter(
 
     if team_id is not None:
         conditions.append(spec.model.team_id == team_id)
+
+    if team_ids is not None:
+        conditions.append(spec.model.team_id.in_(list(team_ids)))
 
     if function_id is not None:
         # The function lives on the team, not the assignment, so reach it
@@ -275,3 +303,44 @@ def accountable_owner_filter(
         )
         .exists()
     )
+
+
+async def resolve_caller_team_ids(
+    db: AsyncSession,
+    *,
+    organization_id: Any,
+    user_id: Any,
+) -> List[Any]:
+    """The ids of the teams ``user_id`` belongs to inside ``organization_id``.
+
+    This is what backs the ``my_teams`` parameter on the controls and evidence
+    lists (#1052). Both endpoints resolve through this one function so the two
+    lists cannot end up disagreeing about which teams are "mine" — the same
+    reason :func:`team_assignment_filter` is shared rather than duplicated.
+
+    **Membership role is not consulted.** #1052 settles "my teams" as *any team
+    I am a member of, with any assignment to the item* — accountable or
+    supporting, primary, delegate or plain member. That is deliberately more
+    generous than :func:`services.responsibility.my_item_filter`, which is a
+    notification queue and restricted to accountable roles because a queue that
+    pages three people is not a queue. A list filter is a different job. The
+    two **will** legitimately return different sets, and the UI says so rather
+    than pretending they agree.
+
+    One indexed lookup: ``ix_team_members_user_id`` covers the ``user_id``
+    predicate and the denormalised ``organization_id`` beside it keeps the
+    result inside the caller's tenant without a join back to ``teams``.
+
+    Returns ``[]``, never ``None``, for a caller who is on no team — the empty
+    list is a real answer and :func:`team_assignment_filter` renders it as a
+    never-true clause rather than as "no filter".
+    """
+    result = await db.execute(
+        select(TeamMember.team_id).where(
+            and_(
+                TeamMember.user_id == user_id,
+                TeamMember.organization_id == organization_id,
+            )
+        )
+    )
+    return list(result.scalars().all())

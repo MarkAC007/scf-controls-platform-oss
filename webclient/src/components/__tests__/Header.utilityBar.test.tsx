@@ -8,7 +8,20 @@
  * - TAB_TITLES covers every member of the Tab union (type-level + runtime)
  * - Mobile hamburger toggle is present
  */
-import { render, screen } from '@testing-library/react'
+import { render as rtlRender, screen } from '@testing-library/react'
+import type { ReactElement } from 'react'
+import { WorkScopeProvider } from '../../contexts/WorkScopeContext'
+
+/**
+ * Work scope (#1052) is read from context by this tree. The header owns the
+ * value; every render here supplies the provider so the component sees its
+ * default ('everything') rather than throwing. Passed as RTL's ``wrapper`` so
+ * that ``rerender`` keeps the provider in place.
+ */
+function render(ui: ReactElement, options?: Parameters<typeof rtlRender>[1]) {
+  return rtlRender(ui, { wrapper: WorkScopeProvider, ...options })
+}
+
 import { describe, expect, it, vi } from 'vitest'
 
 import Header from '../Header'
@@ -189,5 +202,49 @@ describe('TAB_TITLES', () => {
 
   it('maps "settings" to "Org Settings"', () => {
     expect(TAB_TITLES['settings']).toBe('Org Settings')
+  })
+})
+
+// ----------- Work scope visibility (#1052) -----------
+
+/**
+ * The work-scope switch governs the Controls and Evidence lists and nothing
+ * else. It must not render on tabs it does not filter — most importantly the
+ * Library, which reads the same ``useScopedControlsQuery`` but deliberately
+ * never sends ``my_teams`` because it is a catalog browser. A switch reading
+ * "My teams" above an unfiltered catalog is the precise failure #1052 exists
+ * to remove, so absence here is the assertion that matters.
+ */
+describe('Header utility bar: work scope visibility', () => {
+  // The two lists that actually pass `my_teams`: the Controls list
+  // (`library` → UnifiedLibraryPage) and the Evidence list. `scoping` is
+  // FrameworkScopingPage, which picks frameworks and has no per-control rows
+  // to narrow, so the switch was inert there and is deliberately gone.
+  const scoped = ['library', 'evidence'] as const
+  const unscoped = [
+    'dashboard',
+    'scoping',
+    'capability-posture',
+    'mapping-matrix',
+    'tasks',
+    'risk-register',
+    'audit-log',
+    'settings',
+  ] as const
+
+  it.each(scoped)('renders the work-scope switch on "%s"', (tab) => {
+    renderHeader({ activeTab: tab })
+    expect(screen.getByRole('radiogroup', { name: /showing/i })).toBeInTheDocument()
+  })
+
+  it.each(unscoped)('does not render the work-scope switch on "%s"', (tab) => {
+    renderHeader({ activeTab: tab })
+    expect(screen.queryByRole('radiogroup', { name: /showing/i })).toBeNull()
+  })
+
+  it('still renders the other utilities on a tab without the switch', () => {
+    renderHeader({ activeTab: 'dashboard' })
+    expect(screen.getByTestId('theme-menu')).toBeInTheDocument()
+    expect(screen.getByTestId('notification-bell')).toBeInTheDocument()
   })
 })

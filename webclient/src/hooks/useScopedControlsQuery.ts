@@ -25,6 +25,15 @@ export interface ScopedControlFilters {
   team_id?: string
   function_id?: string
   /**
+   * Header work scope (#1052): narrow to controls assigned to ANY team the
+   * caller belongs to. Part of the ``filters`` object and so part of the query
+   * key, which is what makes flipping the header reset pagination instead of
+   * appending a narrowed page beneath the organisation-wide one already shown.
+   *
+   * INTERSECTS with ``team_id`` server-side — both are ANDed, never ORed.
+   */
+  my_teams?: boolean
+  /**
    * Accountable owner's member type (#822 phase 2). Part of the ``filters``
    * object and so part of the query key, which is what makes changing it reset
    * pagination instead of appending a contractor-only page beneath an
@@ -57,6 +66,7 @@ export function useScopedControlsQuery(filters: ScopedControlFilters = {}, orgId
           framework: filters.framework || undefined,
           scope_status: filters.scope_status || undefined,
           team_id: filters.team_id || undefined,
+          my_teams: filters.my_teams || undefined,
           function_id: filters.function_id || undefined,
           accountable_owner_type: filters.accountable_owner_type || undefined,
         },

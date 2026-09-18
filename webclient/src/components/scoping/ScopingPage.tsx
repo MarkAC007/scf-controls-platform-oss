@@ -47,6 +47,7 @@ import { useIsOrgAdmin } from '../../hooks/useIsOrgAdmin'
 import { useDebounce } from '../../hooks/useDebounce'
 import type { BatchScopedControlOperation, BulkScopeFrameworkResponse, BulkUnscopeFrameworkResponse, ResetScopeResponse, ScopedControlWithCatalog } from '../../data/apiClient'
 import { listTeams, batchAssignTeamToItems, batchUpdateScopedControls } from '../../data/apiClient'
+import { useWorkScope } from '../../contexts/WorkScopeContext'
 import { ScopeByFrameworkModal } from '../ScopeByFrameworkModal'
 
 import ScopingList, { type ScopingFilters } from './ScopingList'
@@ -348,11 +349,15 @@ export default function ScopingPage({
   // The legacy settings-sourced owner label list is sunset: "owner" now means
   // the accountable team in the team system (Users → Teams). One fetch for the
   // whole page — options for a dropdown, never a per-row read.
+  const { isMyTeams } = useWorkScope()
+
   const [teams, setTeams] = useState<Team[]>([])
   useEffect(() => {
     if (!organizationId) return
     let cancelled = false
-    listTeams(organizationId)
+    // Under "My teams" the bulk owner picker offers only the caller's teams,
+    // so the options on screen and the rows the list can reach agree.
+    listTeams(organizationId, { mine: isMyTeams })
       .then((loaded) => {
         if (!cancelled) setTeams(loaded)
       })
@@ -362,7 +367,7 @@ export default function ScopingPage({
     return () => {
       cancelled = true
     }
-  }, [organizationId])
+  }, [organizationId, isMyTeams])
 
   const teamOptions = useMemo(
     () => teams.map((t) => ({ value: t.id, label: t.name })),

@@ -13,7 +13,10 @@ import type { LibraryMode } from '../../data/appUrl'
 import {
   flattenScopedControlPages,
   useScopedControlsQuery,
+  useScopedControlsStats,
 } from '../../hooks/useScopedControlsQuery'
+import { useWorkScope } from '../../contexts/WorkScopeContext'
+import { listTeams } from '../../data/apiClient'
 import { useCatalogFilters } from '../../hooks/useCatalogFilters'
 import { useDebounce } from '../../hooks/useDebounce'
 import { getCatalogLifecycle } from '../DeprecatedBadge'
@@ -116,7 +119,12 @@ export default function UnifiedLibraryList({
   const listContainerRef = useRef<HTMLDivElement>(null)
   const debouncedSearch = useDebounce(search, 300)
   const { domains, nistCsfFunctions, controlWeights } = useCatalogFilters()
+  const { isMyTeams } = useWorkScope()
 
+  // Applied in BOTH modes on purpose. A catalog control nobody has scoped has
+  // no team assignment, so it drops out of "My teams" — which is the honest
+  // answer, not a bug. Special-casing full-library would put the header control
+  // back in the position of labelling a list it does not govern.
   const query = useScopedControlsQuery(
     {
       search: debouncedSearch || undefined,
@@ -125,10 +133,39 @@ export default function UnifiedLibraryList({
       control_weighting: filters.weight !== 'all' ? Number(filters.weight) : undefined,
       framework: filters.framework !== 'all' ? filters.framework : undefined,
       scope_status: mode === 'in-scope' ? 'in_scope' : filters.scope,
+      my_teams: isMyTeams || undefined,
     },
     organizationId,
   )
   const { controls, total } = flattenScopedControlPages(query.data?.pages)
+
+  // Organisation-wide and deliberately unfiltered — it is the denominator the
+  // narrowed count is measured against, so it must not move when the scope does.
+  const { data: serverStats } = useScopedControlsStats(organizationId)
+  const orgTotal = serverStats?.total_controls
+
+  // Only to tell "your teams own nothing yet" apart from "you are on no team",
+  // which are different problems with different fixes. Not fetched otherwise.
+  const [callerTeamCount, setCallerTeamCount] = useState<number | null>(null)
+  useEffect(() => {
+    if (!isMyTeams || !organizationId) {
+      setCallerTeamCount(null)
+      return
+    }
+    let cancelled = false
+    listTeams(organizationId, { mine: true })
+      .then((teams) => {
+        if (!cancelled) setCallerTeamCount(teams.length)
+      })
+      .catch(() => {
+        // Leave it null: the generic "nothing assigned to your teams" copy is
+        // correct either way, and a failed lookup must not invent a diagnosis.
+        if (!cancelled) setCallerTeamCount(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [isMyTeams, organizationId])
 
   useEffect(() => {
     const updateHeight = () => {
@@ -317,14 +354,39 @@ export default function UnifiedLibraryList({
           search={search}
           onSearchChange={onSearchChange}
           searchPlaceholder="Search controls — id, name, description…"
-          count={<span>{total} {mode === 'in-scope' ? 'in-scope ' : ''}controls</span>}
+          count={
+            <span>
+              {total.toLocaleString()} {mode === 'in-scope' ? 'in-scope ' : ''}
+              {total === 1 ? 'control' : 'controls'}
+              {isMyTeams && (
+                <span className="work-scope-count" aria-live="polite">
+                  Showing {total.toLocaleString()} of{' '}
+                  {(orgTotal ?? total).toLocaleString()} controls in the
+                  organisation · My teams
+                </span>
+              )}
+            </span>
+          }
         />
+        {/* Pinned above the rows: the header owns changing the scope, this owns
+            saying why the list below is short. */}
+        {isMyTeams && (
+          <div className="work-scope-chip-row">
+            <span className="work-scope-chip">My teams</span>
+          </div>
+        )}
         {bulkBar}
         <div className="library-list-rows" ref={listContainerRef}>
           {query.isLoading ? (
             <div className="library-loading">Loading controls…</div>
           ) : controls.length === 0 ? (
-            <div className="library-empty">No controls match your search criteria.</div>
+            <div className="library-empty">
+              {isMyTeams && callerTeamCount === 0
+                ? 'You are not a member of any team yet, so "My teams" has nothing to show. Switch Showing to Everything, or ask an administrator to add you to a team.'
+                : isMyTeams
+                  ? 'No controls are assigned to your teams yet.'
+                  : 'No controls match your search criteria.'}
+            </div>
           ) : (
             <>
               <List

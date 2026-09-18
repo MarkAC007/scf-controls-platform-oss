@@ -229,7 +229,6 @@ export default function UserManagement({ organizationId }: UserManagementProps) 
     <div className="user-management">
       <div className="user-management-header">
         <div className="header-left">
-          <h1>User Management</h1>
           <div className="org-id-display">
             <span className="org-id-label">Organization ID:</span>
             <code className="org-id-value">{organizationId}</code>

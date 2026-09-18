@@ -10,7 +10,20 @@
  *   b) the user clicks a row — selectEvidence sets it true
  *   c) Back / Esc — handleEvidenceBack sets it false → list again
  */
-import { render, screen, fireEvent, act } from '@testing-library/react'
+import { render as rtlRender, screen, fireEvent, act } from '@testing-library/react'
+import type { ReactElement } from 'react'
+import { WorkScopeProvider } from '../../contexts/WorkScopeContext'
+
+/**
+ * Work scope (#1052) is read from context by this tree. The header owns the
+ * value; every render here supplies the provider so the component sees its
+ * default ('everything') rather than throwing. Passed as RTL's ``wrapper`` so
+ * that ``rerender`` keeps the provider in place.
+ */
+function render(ui: ReactElement, options?: Parameters<typeof rtlRender>[1]) {
+  return rtlRender(ui, { wrapper: WorkScopeProvider, ...options })
+}
+
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import EvidenceReview from '../EvidenceReview'
 import type { EnrichedControl, ScopedControlsFile } from '../../types'
