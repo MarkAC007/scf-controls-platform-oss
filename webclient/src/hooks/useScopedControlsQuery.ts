@@ -41,7 +41,7 @@ export interface ScopedControlFilters {
  * @param orgId - Optional organization ID (uses default from settings if not provided)
  * @returns React Query infinite query result
  */
-export function useScopedControlsQuery(filters: ScopedControlFilters = {}, orgId?: string) {
+export function useScopedControlsQuery(filters: ScopedControlFilters = {}, orgId?: string, enabled = true) {
   return useInfiniteQuery<PaginatedScopedControlsResponse>({
     queryKey: ['scoped-controls', orgId, filters],
     queryFn: async ({ pageParam }) => {
@@ -63,6 +63,7 @@ export function useScopedControlsQuery(filters: ScopedControlFilters = {}, orgId
         orgId
       )
     },
+    enabled,
     initialPageParam: 0,
     getNextPageParam: (lastPage) => {
       const loaded = lastPage.offset + lastPage.controls.length

@@ -12,7 +12,7 @@ from typing import List, Optional, Literal
 from uuid import UUID
 
 from database import get_db
-from models import ScopedControl, Organization
+from models import ScopedControl, Organization, OrganizationFrameworkSelection
 from catalog_models import SCFCatalogControl
 from schemas import (
     ScopedControlResponse,
@@ -28,16 +28,31 @@ from schemas import (
     ResetScopeResponse,
     BatchScopedControlRequest,
     BatchScopedControlResponse,
+    ScopeOverrideRequest,
+    FrameworkScopeSummaryResponse,
+    FrameworkScopePreviewRequest,
+    FrameworkScopePreviewResponse,
 )
 from auth import require_org_role, OrgMembership
 from services.audit_service import log_entity_changes, get_request_id, detect_action_source, SCOPED_CONTROL_TRACKED_FIELDS
 from services.notifications import create_control_ready_for_review_notifications
-from services.scoping_service import bulk_scope_frameworks, bulk_unscope_frameworks
+from services.scoping_service import (
+    bulk_scope_frameworks,
+    bulk_unscope_frameworks,
+    framework_scope_summary,
+    preview_framework_change,
+    set_individual_scope_override,
+)
 from services.team_assignments import (
     CONTROL_ASSIGNMENT_SPEC,
     accountable_owner_filter,
     team_assignment_filter,
 )
+def _tracked_values(control: ScopedControl) -> dict:
+    """Snapshot audit fields while tolerating legacy/pre-migration row adapters."""
+    return {field: getattr(control, field, None) for field in SCOPED_CONTROL_TRACKED_FIELDS}
+
+
 from services.org_utils import MEMBER_TYPES, invalid_member_type_detail
 
 logger = logging.getLogger(__name__)
@@ -184,6 +199,12 @@ async def list_scoped_controls_paginated(
             # The ORG's own maturity setting. NOT the catalogue's recommended
             # levels (those are the cmm_* columns, emitted as `cmm_maturity`).
             ScopedControl.maturity_level,
+            ScopedControl.id,
+            ScopedControl.priority,
+            ScopedControl.out_of_scope_justification,
+            ScopedControl.scope_override,
+            ScopedControl.scope_override_reason,
+            ScopedControl.scope_override_set_at,
         )
         .outerjoin(
             ScopedControl,
@@ -308,6 +329,12 @@ async def list_scoped_controls_paginated(
         impl_status = row[2]  # ScopedControl.implementation_status or None
         selection_reason = row[3]  # ScopedControl.selection_reason or None
         maturity_level = row[4]  # ScopedControl.maturity_level or None
+        scoped_control_id = row[5] if len(row) > 5 else None
+        priority = row[6] if len(row) > 6 else None
+        out_of_scope_justification = row[7] if len(row) > 7 else None
+        scope_override = row[8] if len(row) > 8 else None
+        scope_override_reason = row[9] if len(row) > 9 else None
+        scope_override_set_at = row[10] if len(row) > 10 else None
 
         controls.append({
             "scf_id": catalog.scf_id,
@@ -329,6 +356,12 @@ async def list_scoped_controls_paginated(
             "selected": selected or False,
             "implementation_status": impl_status,
             "selection_reason": selection_reason,
+            "out_of_scope_justification": out_of_scope_justification,
+            "scoped_control_id": scoped_control_id,
+            "priority": priority,
+            "scope_override": scope_override,
+            "scope_override_reason": scope_override_reason,
+            "scope_override_set_at": scope_override_set_at,
             # The org's own maturity setting — the scoping list renders this
             # column, so omitting it left the UI hardcoding an em dash.
             "maturity_level": maturity_level,
@@ -487,7 +520,7 @@ async def create_or_update_scoped_control(
 
     if existing_control:
         # Capture old values for audit trail
-        old_values = {f: getattr(existing_control, f) for f in SCOPED_CONTROL_TRACKED_FIELDS}
+        old_values = _tracked_values(existing_control)
 
         # Update existing control
         for key, value in control_dict.items():
@@ -503,7 +536,7 @@ async def create_or_update_scoped_control(
                 existing_control.completion_date = None
 
         # Capture new values and log changes
-        new_values = {f: getattr(existing_control, f) for f in SCOPED_CONTROL_TRACKED_FIELDS}
+        new_values = _tracked_values(existing_control)
         await log_entity_changes(
             db=db, organization_id=org_id, entity_type='scoped_control',
             entity_id=existing_control.id, action='update', changed_by_user_id=user_id,
@@ -535,7 +568,7 @@ async def create_or_update_scoped_control(
         await db.flush()  # Get the ID before audit logging
 
         # Log creation
-        new_values = {f: getattr(new_control, f) for f in SCOPED_CONTROL_TRACKED_FIELDS}
+        new_values = _tracked_values(new_control)
         await log_entity_changes(
             db=db, organization_id=org_id, entity_type='scoped_control',
             entity_id=new_control.id, action='create', changed_by_user_id=user_id,
@@ -583,7 +616,7 @@ async def update_scoped_control(
     user_id = UUID(membership.user.db_id)
 
     # Capture old values for audit trail
-    old_values = {f: getattr(control, f) for f in SCOPED_CONTROL_TRACKED_FIELDS}
+    old_values = _tracked_values(control)
 
     # Update only provided fields (flatten pptdf_applicability)
     update_data = flatten_pptdf(control_update.model_dump(exclude_unset=True))
@@ -606,7 +639,7 @@ async def update_scoped_control(
     )
 
     # Log field-level changes
-    new_values = {f: getattr(control, f) for f in SCOPED_CONTROL_TRACKED_FIELDS}
+    new_values = _tracked_values(control)
     await log_entity_changes(
         db=db, organization_id=org_id, entity_type='scoped_control',
         entity_id=control.id, action='update', changed_by_user_id=user_id,
@@ -662,7 +695,7 @@ async def delete_scoped_control(
     user_id = UUID(membership.user.db_id)
 
     # Log deletion before removing
-    old_values = {f: getattr(control, f) for f in SCOPED_CONTROL_TRACKED_FIELDS}
+    old_values = _tracked_values(control)
     await log_entity_changes(
         db=db, organization_id=org_id, entity_type='scoped_control',
         entity_id=control.id, action='delete', changed_by_user_id=user_id,
@@ -678,6 +711,96 @@ async def delete_scoped_control(
     return SuccessResponse(message=f"Scoped control {scf_id} deleted successfully")
 
 
+@router.get(
+    "/organizations/{org_id}/framework-scoping",
+    response_model=FrameworkScopeSummaryResponse,
+)
+async def get_framework_scope_summary(
+    org_id: UUID,
+    membership: OrgMembership = Depends(require_org_role("viewer")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Organization-aware framework coverage and selection state."""
+    return await framework_scope_summary(db, org_id)
+
+
+@router.post(
+    "/organizations/{org_id}/framework-scoping/preview",
+    response_model=FrameworkScopePreviewResponse,
+)
+async def preview_framework_scope_change(
+    org_id: UUID,
+    preview: FrameworkScopePreviewRequest,
+    membership: OrgMembership = Depends(require_org_role("viewer")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Server-authoritative exact add/remove effects; never mutates scope."""
+    return await preview_framework_change(
+        db, org_id, preview.frameworks, preview.operation
+    )
+
+
+@router.put(
+    "/organizations/{org_id}/scoped-controls/{scf_id}/scope-override",
+    response_model=ScopedControlResponse,
+)
+async def put_scope_override(
+    org_id: UUID,
+    scf_id: str,
+    override: ScopeOverrideRequest,
+    request: Request,
+    membership: OrgMembership = Depends(require_org_role("editor")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Set an individual inclusion/exclusion, or restore framework inheritance."""
+    existing_result = await db.execute(
+        select(ScopedControl).where(
+            and_(
+                ScopedControl.organization_id == org_id,
+                ScopedControl.scf_id == scf_id,
+            )
+        )
+    )
+    existing = existing_result.scalar_one_or_none()
+    old_values = (
+        _tracked_values(existing)
+        if existing
+        else {}
+    )
+    user_id = UUID(membership.user.db_id)
+    try:
+        control = await set_individual_scope_override(
+            db,
+            org_id,
+            scf_id,
+            override.action,
+            override.reason,
+            user_id,
+            commit=False,
+        )
+    except ValueError as exc:
+        status = 404 if "catalog" in str(exc).lower() else 400
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
+
+    await db.flush()
+    new_values = _tracked_values(control)
+    await log_entity_changes(
+        db=db,
+        organization_id=org_id,
+        entity_type="scoped_control",
+        entity_id=control.id,
+        action="create" if not old_values else "update",
+        changed_by_user_id=user_id,
+        old_values=old_values,
+        new_values=new_values,
+        scf_id=scf_id,
+        tracked_fields=SCOPED_CONTROL_TRACKED_FIELDS,
+        action_source=detect_action_source(request),
+        request_id=get_request_id(request),
+    )
+    await db.commit()
+    await db.refresh(control)
+    return control
 @router.post(
     "/organizations/{org_id}/scoped-controls/bulk-scope-framework",
     response_model=BulkScopeFrameworkResponse,
@@ -798,23 +921,30 @@ async def reset_all_scope(
         )
     ) or 0
 
-    if in_scope_count == 0:
-        return ResetScopeResponse(
-            success=True,
-            removed=0,
-            message="No controls are currently in scope"
-        )
-
-    # Bulk update: set all to selected=False
+    # Clear effective scope, durable individual overrides, and active framework
+    # selections in one transaction. Implementation metadata remains untouched.
     await db.execute(
         ScopedControl.__table__.update()
+        .where(ScopedControl.organization_id == org_id)
+        .values(
+            selected=False,
+            out_of_scope_justification="Scope reset — all controls removed from scope",
+            scope_override=None,
+            scope_override_reason=None,
+            scope_override_set_at=None,
+            scope_override_set_by=None,
+            updated_by_user_id=UUID(membership.user.db_id),
+        )
+    )
+    await db.execute(
+        OrganizationFrameworkSelection.__table__.update()
         .where(
             and_(
-                ScopedControl.organization_id == org_id,
-                ScopedControl.selected == True,
+                OrganizationFrameworkSelection.organization_id == org_id,
+                OrganizationFrameworkSelection.active == True,  # noqa: E712
             )
         )
-        .values(selected=False, selection_reason="Scope reset — all controls removed from scope")
+        .values(active=False)
     )
     await db.commit()
 
@@ -868,7 +998,7 @@ async def batch_update_scoped_controls(
 
             if existing:
                 # Capture old values for audit
-                old_values = {f: getattr(existing, f) for f in SCOPED_CONTROL_TRACKED_FIELDS}
+                old_values = _tracked_values(existing)
 
                 # Apply updates from operation — all provided fields
                 update_fields = op.model_dump(exclude={'scf_id'}, exclude_unset=True)
@@ -884,7 +1014,7 @@ async def batch_update_scoped_controls(
                         existing.completion_date = None
 
                 # Audit log
-                new_values = {f: getattr(existing, f) for f in SCOPED_CONTROL_TRACKED_FIELDS}
+                new_values = _tracked_values(existing)
                 await log_entity_changes(
                     db=db, organization_id=org_id, entity_type='scoped_control',
                     entity_id=existing.id, action='update', changed_by_user_id=user_id,
@@ -920,7 +1050,7 @@ async def batch_update_scoped_controls(
                 await db.flush()
 
                 # Audit log
-                new_values = {f: getattr(new_control, f) for f in SCOPED_CONTROL_TRACKED_FIELDS}
+                new_values = _tracked_values(new_control)
                 await log_entity_changes(
                     db=db, organization_id=org_id, entity_type='scoped_control',
                     entity_id=new_control.id, action='create', changed_by_user_id=user_id,

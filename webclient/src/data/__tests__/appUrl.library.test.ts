@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import {
+  DEFAULT_LIBRARY_MODE,
   readAppLocation,
   withLibraryItem,
+  withLibraryMode,
   withTab,
   withoutTab,
   searchForTab,
@@ -44,6 +46,22 @@ describe('readAppLocation — library', () => {
     const loc = readAppLocation('?tab=library&item=GOV-04')
     expect(loc.evidenceItem).toBeNull()
   })
+describe('Control Library modes', () => {
+  it('defaults to In Scope', () => {
+    expect(readAppLocation('?tab=library').libraryMode).toBe(DEFAULT_LIBRARY_MODE)
+  })
+
+  it('round-trips Full Library as a bookmarkable mode', () => {
+    const search = withLibraryMode('?tab=library', 'full-library')
+    expect(readAppLocation(`?${search}`).libraryMode).toBe('full-library')
+  })
+
+  it('clears the item on a mode switch and clears mode when leaving Library', () => {
+    const switched = withLibraryMode('?tab=library&mode=in-scope&item=GOV-04', 'full-library')
+    expect(new URLSearchParams(switched).get('item')).toBeNull()
+    expect(new URLSearchParams(withTab(`?${switched}`, 'scoping')).get('mode')).toBeNull()
+  })
+})
 })
 
 describe('withLibraryItem', () => {

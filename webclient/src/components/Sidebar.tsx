@@ -214,7 +214,7 @@ const navSections: NavSection[] = [
     items: [
       { id: 'library', label: 'Control Library', icon: Icons.library },
       { id: 'mapping-matrix', label: 'Framework Mappings', icon: Icons.matrix },
-      { id: 'scoping', label: 'Control Scoping', icon: Icons.scope },
+      { id: 'scoping', label: 'Framework Scoping', icon: Icons.scope },
     ],
   },
   {

@@ -23,6 +23,7 @@ from __future__ import annotations
 import os
 import sys
 from uuid import uuid4
+from types import SimpleNamespace
 
 import pytest  # noqa: F401
 
@@ -35,7 +36,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from services.scoping_service import (  # noqa: E402
     bulk_scope_frameworks,
     bulk_unscope_frameworks,
+    framework_scope_summary,
+    preview_framework_change,
+    set_individual_scope_override,
 )
+from api.scoped_controls import reset_all_scope  # noqa: E402
 from models import OrganizationFrameworkSelection, ScopedControl  # noqa: E402
 import catalog_models  # noqa: E402,F401 — registers mappers referenced by models.System
 
@@ -54,6 +59,9 @@ class _Result:
 
     def scalars(self):
         return self
+
+    def scalar_one_or_none(self):
+        return self._rows[0] if self._rows else None
 
     def all(self):
         return self._rows
@@ -74,6 +82,9 @@ class _FakeAsyncSession:
             raise AssertionError("FakeAsyncSession: ran out of scripted results")
         return _Result(self._scripted.pop(0))
 
+
+    async def refresh(self, _row):
+        return None
     def add(self, row):
         self.added.append(row)
 
@@ -276,13 +287,13 @@ class TestBulkScope:
 # bulk_unscope_frameworks
 # ---------------------------------------------------------------------------
 
-def _unscope_script(catalog_rows, in_scope, reasons, selections,
+def _unscope_script(catalog_rows, in_scope, active_frameworks, selections,
                     with_update=True):
     """Scripted results in the service's execute order."""
     script = [
         catalog_rows,                      # catalog query (scf_id, framework_mappings)
         [(s,) for s in in_scope],          # in-scope scf_ids
-        [(r,) for r in reasons],           # distinct selection_reasons
+        [(framework_id,) for framework_id in active_frameworks],
     ]
     if with_update:
         script.append([])                  # UPDATE selected=False
@@ -300,7 +311,7 @@ class TestBulkUnscope:
                 ("ctl-out", {"iso_27017_2015": ["5.3"]}),
             ],
             in_scope=["ctl-shared", "ctl-solo"],  # ctl-out already out of scope
-            reasons=["Bulk scoped from: iso_27001_2022, iso_27017_2015"],
+            active_frameworks=["iso_27001_2022", "iso_27017_2015"],
             selections=[_selection("iso_27017_2015", active=True)],
         ))
 
@@ -330,7 +341,7 @@ class TestBulkUnscope:
         db = _FakeAsyncSession(_unscope_script(
             catalog_rows=[("ctl-solo", {"iso_27017_2015": ["5.2"]})],
             in_scope=["ctl-solo"],
-            reasons=["Bulk scoped from: iso_27017_2015"],
+            active_frameworks=["iso_27017_2015"],
             selections=[active_sel],
         ))
 
@@ -348,7 +359,7 @@ class TestBulkUnscope:
                 ("ctl-shared", {"iso_27017_2015": ["5.1"], "iso_27001_2022": ["5.1"]}),
             ],
             in_scope=["ctl-shared"],
-            reasons=["Bulk scoped from: iso_27001_2022, iso_27017_2015"],
+            active_frameworks=["iso_27001_2022", "iso_27017_2015"],
             selections=[active_sel],
             with_update=False,  # nothing removable → no UPDATE issued
         ))
@@ -360,3 +371,186 @@ class TestBulkUnscope:
         assert "shared with other in-scope frameworks" in result.message
         assert active_sel.active is False
         assert db.commits == 1  # selection deactivation alone still commits
+
+
+# ---------------------------------------------------------------------------
+# Structured precedence and server-authoritative framework views (#1049)
+# ---------------------------------------------------------------------------
+
+class TestStructuredScopePrecedence:
+    async def test_framework_materialisation_preserves_explicit_exclusion(self):
+        db = _FakeAsyncSession([
+            [("ctl-excluded",)],
+            [("ctl-excluded", True)],  # CASE folds explicit exclusion into effective selected
+            [],
+        ])
+        result = await bulk_scope_frameworks(db, ORG_ID, ["iso_27001_2022"])
+        assert (result.added, result.updated, result.skipped) == (0, 0, 1)
+        assert _added_controls(db) == []
+        assert not [stmt for stmt, _ in db.statements if "UPDATE" in str(stmt)]
+
+    async def test_framework_removal_preserves_individual_inclusion(self):
+        active = _selection("iso_27001_2022", active=True)
+        db = _FakeAsyncSession([
+            [("ctl-included", {"iso_27001_2022": ["A.1"]})],
+            [("ctl-included", "include")],
+            [("iso_27001_2022",)],
+            [active],
+        ])
+        result = await bulk_unscope_frameworks(db, ORG_ID, ["iso_27001_2022"])
+        assert result.removed == 0
+        assert result.protected == 1
+        assert result.protected_by == {"individual_inclusion": 1}
+        assert active.active is False
+
+    async def test_exclusion_requires_and_persists_a_rationale(self):
+        control = ScopedControl(organization_id=ORG_ID, scf_id="ctl-one", selected=True)
+        catalog = SimpleNamespace(
+            scf_id="ctl-one", framework_mappings={"iso_27001_2022": ["A.1"]}
+        )
+        db = _FakeAsyncSession([[control], [catalog]])
+        with pytest.raises(ValueError, match="rationale"):
+            await set_individual_scope_override(
+                db, ORG_ID, "ctl-one", "exclude", "  ", USER_ID, commit=False
+            )
+
+        db = _FakeAsyncSession([[control], [catalog]])
+        updated = await set_individual_scope_override(
+            db, ORG_ID, "ctl-one", "exclude", "Compensating control", USER_ID,
+            commit=False,
+        )
+        assert updated.selected is False
+        assert updated.scope_override == "exclude"
+        assert updated.scope_override_reason == "Compensating control"
+        assert updated.out_of_scope_justification == "Compensating control"
+        assert updated.scope_override_set_by == USER_ID
+
+
+class TestFrameworkScopeViews:
+    async def test_remove_preview_returns_exact_overlap_and_exception_sets(self):
+        catalog = [
+            SimpleNamespace(scf_id="leave", framework_mappings={"fw": ["1"]}),
+            SimpleNamespace(scf_id="shared", framework_mappings={"fw": ["2"], "other": ["2"]}),
+            SimpleNamespace(scf_id="included", framework_mappings={"fw": ["3"]}),
+            SimpleNamespace(scf_id="excluded", framework_mappings={"fw": ["4"]}),
+            SimpleNamespace(scf_id="already-out", framework_mappings={"fw": ["5"]}),
+        ]
+        scoped = [
+            ScopedControl(organization_id=ORG_ID, scf_id="leave", selected=True),
+            ScopedControl(organization_id=ORG_ID, scf_id="shared", selected=True),
+            ScopedControl(organization_id=ORG_ID, scf_id="included", selected=True, scope_override="include"),
+            ScopedControl(
+                organization_id=ORG_ID, scf_id="excluded", selected=False,
+                scope_override="exclude", scope_override_reason="Exception",
+            ),
+        ]
+        db = _FakeAsyncSession([catalog, scoped, [("fw",), ("other",)]])
+        preview = await preview_framework_change(db, ORG_ID, ["fw"], "remove")
+        assert preview["controls_leaving_scope"] == ["leave"]
+        assert preview["shared_with_active_frameworks"] == ["shared"]
+        assert preview["individual_inclusions"] == ["included"]
+        assert preview["explicitly_excluded"] == ["excluded"]
+        assert preview["already_covered"] == ["already-out"]
+
+    async def test_add_preview_reports_real_overlap_not_structural_zeros(self):
+        """The add path used to sort every control into new/already_covered and `continue`,
+        so shared_with_active_frameworks and individual_inclusions were always empty on an
+        add no matter how much the incoming framework overlapped the existing scope."""
+        catalog = [
+            SimpleNamespace(scf_id="brand-new", framework_mappings={"fw": ["1"]}),
+            SimpleNamespace(scf_id="shared", framework_mappings={"fw": ["2"], "other": ["2"]}),
+            SimpleNamespace(scf_id="included", framework_mappings={"fw": ["3"]}),
+            SimpleNamespace(scf_id="excluded", framework_mappings={"fw": ["4"]}),
+            SimpleNamespace(scf_id="orphan", framework_mappings={"fw": ["5"]}),
+        ]
+        scoped = [
+            ScopedControl(organization_id=ORG_ID, scf_id="shared", selected=True),
+            ScopedControl(
+                organization_id=ORG_ID, scf_id="included", selected=True,
+                scope_override="include",
+            ),
+            ScopedControl(
+                organization_id=ORG_ID, scf_id="excluded", selected=False,
+                scope_override="exclude", scope_override_reason="Exception",
+            ),
+            ScopedControl(organization_id=ORG_ID, scf_id="orphan", selected=True),
+        ]
+        db = _FakeAsyncSession([catalog, scoped, [("other",)]])
+        preview = await preview_framework_change(db, ORG_ID, ["fw"], "add")
+
+        assert preview["new_controls"] == ["brand-new"]
+        # "other" is active and also maps this control, so the overlap is real and reported.
+        assert preview["shared_with_active_frameworks"] == ["shared"]
+        assert preview["individual_inclusions"] == ["included"]
+        assert preview["explicitly_excluded"] == ["excluded"]
+        # In scope, but nothing active justifies it independently of the framework being added.
+        assert preview["already_covered"] == ["orphan"]
+        # An add can never take a control out of scope.
+        assert preview["controls_leaving_scope"] == []
+
+    async def test_summary_marks_partial_and_filters_internal_mappings(self):
+        catalog = [
+            SimpleNamespace(
+                scf_id="covered",
+                framework_mappings={"iso_27001_2022": ["A.1"], "risk_catalog": ["R.1"]},
+            ),
+            SimpleNamespace(
+                scf_id="excluded",
+                framework_mappings={"iso_27001_2022": ["A.2"], "threat_catalog": ["T.1"]},
+            ),
+        ]
+        scoped = [
+            ScopedControl(organization_id=ORG_ID, scf_id="covered", selected=True),
+            ScopedControl(
+                organization_id=ORG_ID, scf_id="excluded", selected=False,
+                scope_override="exclude", scope_override_reason="Exception",
+            ),
+        ]
+        selection = _selection("iso_27001_2022", active=True)
+        db = _FakeAsyncSession([catalog, scoped, [selection]])
+        summary = await framework_scope_summary(db, ORG_ID)
+        assert summary["selected_count"] == 1
+        assert [row["id"] for row in summary["frameworks"]] == ["iso_27001_2022"]
+        row = summary["frameworks"][0]
+        assert row["partial"] is True
+        assert row["mapped_control_count"] == 2
+        assert row["in_scope_count"] == 1
+        assert row["missing_count"] == 1
+        assert row["expected_additions"] == 0
+
+
+class _ResetSession:
+    def __init__(self):
+        self.statements = []
+        self.commits = 0
+
+    async def scalar(self, stmt):
+        self.statements.append(stmt)
+        return 3
+
+    async def execute(self, stmt):
+        self.statements.append(stmt)
+        return _Result([])
+
+    async def commit(self):
+        self.commits += 1
+
+
+async def test_reset_clears_effective_scope_overrides_and_framework_selections():
+    db = _ResetSession()
+    membership = SimpleNamespace(user=SimpleNamespace(db_id=str(USER_ID)))
+
+    result = await reset_all_scope(ORG_ID, membership=membership, db=db)
+
+    assert result.removed == 3
+    assert db.commits == 1
+    statements = [str(stmt) for stmt in db.statements]
+    scoped_update = next(stmt for stmt in statements if stmt.startswith("UPDATE scoped_controls"))
+    framework_update = next(
+        stmt for stmt in statements if stmt.startswith("UPDATE organization_framework_selections")
+    )
+    assert "scope_override" in scoped_update
+    assert "scope_override_reason" in scoped_update
+    assert "scoped_controls.organization_id" in scoped_update
+    assert "active" in framework_update
+    assert "organization_framework_selections.organization_id" in framework_update

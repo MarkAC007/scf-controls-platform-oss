@@ -34433,3 +34433,349 @@ button.risk-list-header-cell:hover {
   margin: 6px 0 0;
   max-width: 62ch;
 }
+
+/* Unified Control Library and Framework Scoping (#1049) */
+.library-mode-header,
+.framework-scoping-header,
+.framework-section-heading,
+.library-scope-action-bar,
+.framework-card-actions,
+.framework-preview-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.library-mode-header,
+.framework-scoping-header {
+  margin: 0 0 20px;
+}
+
+.library-mode-header h1,
+.framework-scoping-header h1,
+.framework-section-heading h2,
+.framework-selected-card h3,
+.framework-browser-group h3,
+.framework-danger-zone h2 {
+  margin: 0;
+}
+
+.library-mode-header p,
+.framework-scoping-header p,
+.framework-section-heading p,
+.framework-danger-zone p {
+  margin: 6px 0 0;
+  color: var(--text-secondary);
+}
+
+.library-mode-selector {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-bedrock, var(--surface));
+}
+
+.library-mode-selector button {
+  padding: 8px 16px;
+  border: 0;
+  border-radius: 7px;
+  color: var(--text-secondary);
+  background: transparent;
+  cursor: pointer;
+}
+
+.library-mode-selector button.active {
+  color: var(--text);
+  background: var(--primary-light, var(--surface-raised));
+  box-shadow: 0 1px 3px rgb(0 0 0 / 12%);
+}
+
+.library-scope-action-bar {
+  margin-bottom: 16px;
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-raised, var(--surface));
+}
+
+.library-implementation-panel {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.library-implementation-panel .scoping-detail-breadcrumb,
+.library-implementation-panel .scoping-detail-header,
+.library-implementation-panel .scoping-detail-content-compact,
+.library-implementation-panel .scoping-scope-toggle {
+  display: none;
+}
+
+.library-implementation-panel .scoping-detail-body {
+  overflow: visible;
+  padding: 0;
+}
+
+.framework-scoping-page {
+  position: relative;
+  display: grid;
+  gap: 28px;
+  padding: 32px;
+}
+
+.framework-scoping-page section {
+  display: grid;
+  gap: 14px;
+}
+
+.framework-selected-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 14px;
+}
+
+.framework-selected-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-raised, var(--surface));
+}
+
+.framework-selected-card-main {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  gap: 8px;
+}
+
+.framework-selected-card-title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.framework-coverage-meter {
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--surface-sunken, var(--border));
+}
+
+.framework-coverage-meter > div {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--success, #16a34a);
+}
+
+.framework-empty,
+.framework-danger-zone {
+  padding: 18px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+}
+
+.framework-browser input[type='search'] {
+  width: min(360px, 100%);
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--text);
+  background: var(--surface);
+}
+
+.framework-browser-group {
+  display: grid;
+  gap: 8px;
+}
+
+.framework-browser-table {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+}
+
+.framework-browser-row {
+  display: grid;
+  grid-template-columns: minmax(240px, 2fr) repeat(4, minmax(110px, 1fr));
+  align-items: center;
+  gap: 12px;
+  min-height: 54px;
+  padding: 9px 14px;
+  border-top: 1px solid var(--border);
+}
+
+.framework-browser-row:first-child {
+  border-top: 0;
+}
+
+.framework-browser-row--header {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  background: var(--surface-bedrock, var(--surface));
+}
+
+.framework-browser-row span:first-child {
+  display: grid;
+  gap: 2px;
+}
+
+.framework-browser-row small,
+.framework-selected-card small {
+  color: var(--text-secondary);
+}
+
+.framework-danger-zone {
+  border-color: var(--danger, #dc2626);
+}
+
+.framework-preview-panel {
+  position: fixed;
+  inset: 0 0 0 auto;
+  z-index: 1000;
+  width: min(520px, 100vw);
+  padding: 24px;
+  overflow-y: auto;
+  border-left: 1px solid var(--border);
+  color: var(--text);
+  background: var(--surface-raised, var(--surface));
+  box-shadow: -12px 0 32px rgb(0 0 0 / 18%);
+}
+
+.framework-preview-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.framework-preview-header span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.framework-preview-header h2 {
+  margin: 4px 0 0;
+}
+
+.framework-preview-header > button {
+  padding: 2px 8px;
+  border: 0;
+  color: var(--text-secondary);
+  font-size: 24px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.framework-preview-panel > label {
+  display: grid;
+  gap: 7px;
+  margin-top: 18px;
+  font-weight: 600;
+}
+
+.framework-preview-panel textarea {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--text);
+  background: var(--surface);
+  resize: vertical;
+}
+
+.framework-preview-actions {
+  margin-top: 20px;
+}
+
+/* The base `details` rule (~:1994) already draws the card — border, radius and
+   `padding:10px 12px` — and the base `summary` bleeds to its edge with
+   `margin:-10px -12px 8px -12px`. Left inherited, a collapsed row kept 8px of summary
+   margin plus 10px of card padding as a blank strip under the label, so every zero row
+   read as a half-empty box. Zero the vertical padding here and let the summary's own
+   padding set the row height. */
+.framework-preview-group {
+  border-top: 1px solid var(--border);
+  padding: 0 12px;
+}
+
+.framework-preview-group summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0;
+  padding: 12px 0;
+  cursor: pointer;
+}
+
+.framework-preview-group summary > :first-child {
+  flex: 1 1 auto;
+}
+
+/* Counts share a column, so hold the digits to one advance width. */
+.framework-preview-group summary > :nth-child(2) {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
+/* `display:flex` on a summary suppresses the native disclosure triangle in Chrome, which
+   left the rows with no hint that they expand. Draw the marker back. */
+.framework-preview-group summary::after {
+  content: '';
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-right: 2px solid var(--muted);
+  border-bottom: 2px solid var(--muted);
+  transform: translateY(-2px) rotate(45deg);
+  transition: transform 120ms ease;
+}
+
+.framework-preview-group[open] summary::after {
+  transform: translateY(2px) rotate(225deg);
+}
+
+.framework-preview-group p {
+  margin: 0 0 12px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 900px) {
+  .library-mode-header,
+  .framework-scoping-header,
+  .framework-section-heading,
+  .library-scope-action-bar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .library-mode-selector {
+    align-self: flex-start;
+  }
+
+  .framework-selected-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .framework-browser-table {
+    overflow-x: auto;
+  }
+
+  .framework-browser-row {
+    min-width: 760px;
+  }
+}

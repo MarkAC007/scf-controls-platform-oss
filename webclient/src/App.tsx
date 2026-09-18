@@ -16,8 +16,8 @@ import {
   transformConsultantInvite
 } from './data/apiClient'
 import type { EnrichedControl, ScopedControlsFile, CollectionInterfacesFile, ERLFile, FrameworkNameMap, EvidenceTemplatesFile } from './types'
-import LibraryPage from './components/library/LibraryPage'
-import ScopingPage from './components/scoping/ScopingPage'
+import LibraryPage from './components/library/UnifiedLibraryPage'
+import ScopingPage from './components/scoping/FrameworkScopingPage'
 import EvidenceWorkspace from './components/EvidenceWorkspace'
 import Dashboard from './components/Dashboard'
 import MappingMatrix from './components/MappingMatrix'
@@ -70,6 +70,7 @@ import {
   withTab,
   withEvidenceView,
   withLibraryItem,
+  withLibraryMode,
   withRiskItem,
   withVendorItem,
   withSystemItem,
@@ -149,13 +150,16 @@ function AppContent() {
     queryClient.setQueryData(['scoping-data', currentOrg?.id, dataEpoch], data)
   }, [queryClient, currentOrg?.id, dataEpoch])
 
-  const [selectedId, setSelectedId] = useState<string | undefined>(undefined)
   // Library tab: the ?item= param from the URL (scf_id of the control to show, or null).
   // Seeded from the URL on mount so deep links land on the right control.
   const [libraryItem, setLibraryItem] = useState<string | null>(
     () => readAppLocation(window.location.search).libraryItem,
   )
+  const [libraryFrameworkFilter, setLibraryFrameworkFilter] = useState<string | undefined>()
   // Risk register tab: the ?risk= param from the URL (risk code to show in detail, or null).
+  const [libraryMode, setLibraryMode] = useState(
+    () => readAppLocation(window.location.search).libraryMode,
+  )
   // Seeded from the URL on mount so deep links land on the right risk.
   const [riskItem, setRiskItem] = useState<string | null>(
     () => readAppLocation(window.location.search).riskItem,
@@ -175,10 +179,8 @@ function AppContent() {
   const [taskItem, setTaskItem] = useState<string | null>(
     () => readAppLocation(window.location.search).taskItem,
   )
-  // One-shot "navigate me to this control" signal for ScopingPage.
-  const [controlNavTarget, setControlNavTarget] = useState<string | undefined>(undefined)
-  // Seeded from the URL: every sidebar destination is addressable, so a reload
-  // or a pasted link lands on the screen it names rather than the dashboard
+  // Every sidebar destination is addressable, so a reload or a pasted link
+  // lands on the screen it names rather than the dashboard
   // (#810). An unrecognised `?tab=` still resolves to the dashboard.
   const [activeTab, setActiveTab] = useState<Tab>(readTabFromUrl)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
@@ -238,6 +240,11 @@ function AppContent() {
       pushSearch(next)
     }
     setLibraryItem(id)
+  }, [])
+  const handleLibraryModeChange = useCallback((mode: typeof libraryMode) => {
+    pushSearch(withLibraryMode(window.location.search, mode))
+    setLibraryMode(mode)
+    setLibraryItem(null)
   }, [])
 
   // Handler for risk register tab ?risk= changes.
@@ -325,14 +332,12 @@ function AppContent() {
   }, [])
 
   // Handler for navigating to a specific control from the dashboard work
-  // queue, a risk assessment, or a notification. `controlNavTarget` is the
-  // "take me there" signal — distinct from `selectedId`, which only remembers
-  // the last selection. ScopingPage clears it once acted on (onNavigationConsumed),
-  // so arriving at Scoping later by other means does not re-trigger the search.
+  // queue, a risk assessment, or a notification.
   const handleNavigateToControl = (scfId: string) => {
-    setSelectedId(scfId)
-    setControlNavTarget(scfId)
-    setActiveTab('scoping')
+    pushSearch(withLibraryItem(withLibraryMode(window.location.search, 'in-scope'), scfId))
+    setLibraryMode('in-scope')
+    setLibraryItem(scfId)
+    setActiveTab('library')
   }
 
   // Handler for invite acceptance completion
@@ -532,6 +537,7 @@ function AppContent() {
       const loc = readAppLocation(window.location.search)
       // Restore libraryItem from the history entry we're navigating to
       setLibraryItem(loc.libraryItem)
+      setLibraryMode(loc.libraryMode)
       // Restore riskItem from the history entry we're navigating to
       setRiskItem(loc.riskItem)
       // Restore vendorItem from the history entry we're navigating to
@@ -566,10 +572,6 @@ function AppContent() {
 
       // Scoping data is loaded by the ['scoping-data'] React Query above,
       // which is the single source of truth. loadData() no longer owns it.
-
-      if (!selectedId && enriched.length > 0) {
-        setSelectedId(enriched[0]?.scf_id)
-      }
 
     } catch (e: any) {
       console.error('Failed to load data:', e)
@@ -760,7 +762,12 @@ function AppContent() {
               onScopingDataChange={setScopingData}
               onNavigateToEvidence={handleNavigateToEvidence}
               onNavigateToControl={handleNavigateToControl}
-              onNavigateToScoping={() => setActiveTab('scoping')}
+              onNavigateToScoping={() => {
+                pushSearch(withLibraryMode(window.location.search, 'full-library'))
+                setLibraryMode('full-library')
+                setLibraryItem(null)
+                setActiveTab('library')
+              }}
             />
           )}
           {activeTab === 'capability-posture' && scopingData && (
@@ -770,24 +777,31 @@ function AppContent() {
             <LibraryPage
               item={libraryItem}
               onItemChange={handleLibraryItemChange}
+              mode={libraryMode}
+              onModeChange={handleLibraryModeChange}
               scopingData={scopingData}
               erlData={erlData}
               frameworkNames={frameworkNames}
               onNavigateToEvidence={handleNavigateToEvidence}
               organizationId={scopingData?.organizationId ?? undefined}
               controls={controls}
+              onScopingDataChange={setScopingData}
+              initialFramework={libraryFrameworkFilter}
             />
           )}
           {activeTab === 'scoping' && scopingData && (
             <ScopingPage
               organizationId={scopingData.organizationId!}
-              erlData={erlData}
-              frameworkNames={frameworkNames}
-              initialSelectedId={selectedId}
-              navigateToId={controlNavTarget}
-              onNavigationConsumed={() => setControlNavTarget(undefined)}
-              scopingData={scopingData}
-              onScopingDataChange={setScopingData}
+              onReviewControls={(frameworkId) => {
+                setLibraryFrameworkFilter(frameworkId)
+                pushSearch(withLibraryMode(window.location.search, 'full-library'))
+                setLibraryMode('full-library')
+                setLibraryItem(null)
+                setActiveTab('library')
+              }}
+              onChanged={() => {
+                queryClient.invalidateQueries({ queryKey: ['scoping-data'] })
+              }}
             />
           )}
           {activeTab === 'evidence' && scopingData && (

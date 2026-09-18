@@ -127,6 +127,8 @@ describe('no other screen was quietly made URL-aware', () => {
   // signals out of sessionStorage and would arrive without them. This fails the
   // moment an un-intended file starts writing the address bar.
   //
+  // Issue #1049 adds the same type-only relationship for the unified Library
+  // container/list; App remains the sole writer for Library mode and items.
   // Task 6 added Header.tsx: it reads TAB_TITLES and the Tab type from appUrl
   // but does NOT write the address bar — it is a read-only consumer.
   it('only the intended components import the URL module', () => {
@@ -138,6 +140,8 @@ describe('no other screen was quietly made URL-aware', () => {
       'components/EvidenceReview.tsx',
       'components/EvidenceWorkspace.tsx',
       'components/Header.tsx',
+      'components/library/UnifiedLibraryList.tsx',
+      'components/library/UnifiedLibraryPage.tsx',
     ])
   })
 })

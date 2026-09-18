@@ -13,13 +13,14 @@ a previously deactivated one); bulk-unscope deactivates them.
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set
 from uuid import UUID
 
-from sqlalchemy import select, and_, text
+from sqlalchemy import select, and_, case, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import ScopedControl, OrganizationFrameworkSelection
+from catalog_models import SCFCatalogControl
 
 logger = logging.getLogger(__name__)
 
@@ -163,13 +164,17 @@ async def bulk_scope_frameworks(
             message=f"No controls found for frameworks: {', '.join(framework_ids)}"
         )
 
-    # Get existing scoped controls for this org WITH their selected status
+    # Explicit exclusions behave as already selected for framework materialisation.
+    # The historical two-column shape is retained for reconciliation adapters.
+    effective_selected = case(
+        (ScopedControl.scope_override == "exclude", True),
+        else_=ScopedControl.selected,
+    ).label("selected")
     existing_query = await db.execute(
-        select(ScopedControl.scf_id, ScopedControl.selected)
+        select(ScopedControl.scf_id, effective_selected)
         .where(ScopedControl.organization_id == org_id)
     )
     existing_controls = {row[0]: row[1] for row in existing_query.fetchall()}
-
     # Partition framework controls into three buckets
     new_control_ids: Set[str] = set()
     needs_update_ids: Set[str] = set()
@@ -209,7 +214,11 @@ async def bulk_scope_frameworks(
                     ScopedControl.scf_id.in_(needs_update_ids)
                 )
             )
-            .values(selected=True, selection_reason=reason)
+            .values(
+                selected=True,
+                selection_reason=reason,
+                out_of_scope_justification=None,
+            )
         )
         updated_count = len(needs_update_ids)
 
@@ -262,9 +271,9 @@ async def bulk_unscope_frameworks(
     Remove the frameworks' controls from scope, with overlap protection.
 
     Controls mapped to any OTHER framework the org explicitly scoped remain
-    protected (selected=True). Explicitly-scoped frameworks are derived from
-    the "Bulk scoped from:" selection_reason convention. Also deactivates the
-    frameworks' organization_framework_selections rows.
+    protected (selected=True). Active organization_framework_selections are
+    authoritative; individual inclusions also protect controls. The removed
+    framework selections are deactivated in the same transaction.
     """
     removing_frameworks = set(framework_ids)
 
@@ -304,7 +313,7 @@ async def bulk_unscope_frameworks(
 
     # 2. Get all in-scope controls for this org
     in_scope_query = await db.execute(
-        select(ScopedControl.scf_id)
+        select(ScopedControl.scf_id, ScopedControl.scope_override)
         .where(
             and_(
                 ScopedControl.organization_id == org_id,
@@ -312,34 +321,20 @@ async def bulk_unscope_frameworks(
             )
         )
     )
-    in_scope_ids: Set[str] = {row[0] for row in in_scope_query.fetchall()}
+    in_scope_overrides: Dict[str, Optional[str]] = {
+        row[0]: (row[1] if len(row) > 1 else None) for row in in_scope_query.fetchall()
+    }
 
-    # 3. Determine which frameworks were EXPLICITLY scoped by the user.
-    # We parse selection_reason ("Bulk scoped from: iso_27001_2022, ...") to find
-    # frameworks the user intentionally added. This avoids the bug where checking
-    # ALL framework_mappings of in-scope controls produces a huge set (each SCF
-    # control maps to 10-50+ frameworks), causing every control to appear
-    # "protected" by frameworks the user never explicitly scoped.
+    # 3. Structured framework selections are the sole authority.
     explicit_fw_query = await db.execute(
-        select(ScopedControl.selection_reason)
-        .where(
+        select(OrganizationFrameworkSelection.framework_id).where(
             and_(
-                ScopedControl.organization_id == org_id,
-                ScopedControl.selected == True,  # noqa: E712
-                ScopedControl.selection_reason.like("Bulk scoped from:%")
+                OrganizationFrameworkSelection.organization_id == org_id,
+                OrganizationFrameworkSelection.active == True,  # noqa: E712
             )
         )
-        .distinct()
     )
-    explicitly_scoped_frameworks: Set[str] = set()
-    for row in explicit_fw_query.fetchall():
-        if row[0]:
-            fw_part = row[0].replace("Bulk scoped from:", "").strip()
-            for fw in fw_part.split(", "):
-                fw = fw.strip()
-                if fw:
-                    explicitly_scoped_frameworks.add(fw)
-
+    explicitly_scoped_frameworks = {row[0] for row in explicit_fw_query.fetchall()}
     active_frameworks: Set[str] = explicitly_scoped_frameworks - removing_frameworks
 
     # 4. For each candidate control, check overlap with explicitly-scoped frameworks
@@ -349,8 +344,13 @@ async def bulk_unscope_frameworks(
     protected_by_count: Dict[str, int] = {}
 
     for scf_id in framework_control_ids:
-        if scf_id not in in_scope_ids:
+        if scf_id not in in_scope_overrides:
             already_out.add(scf_id)
+            continue
+
+        if in_scope_overrides[scf_id] == "include":
+            protected_controls.add(scf_id)
+            protected_by_count["individual_inclusion"] = protected_by_count.get("individual_inclusion", 0) + 1
             continue
 
         # Check if this control maps to any other explicitly-scoped framework
@@ -376,7 +376,7 @@ async def bulk_unscope_frameworks(
                     ScopedControl.scf_id.in_(to_remove)
                 )
             )
-            .values(selected=False, selection_reason=reason)
+            .values(selected=False, out_of_scope_justification=reason)
         )
         removed_count = len(to_remove)
 
@@ -418,3 +418,264 @@ async def bulk_unscope_frameworks(
         frameworks_processed=framework_ids,
         message=message
     )
+INTERNAL_MAPPING_PREFIXES = (
+    "risk_",
+    "threat_",
+    "scf_core_",
+    "control_threat_summary",
+    "risk_threat_summary",
+    "minimum_security_requirements_mcr_dsr",
+    "identify_",
+    "errata_",
+)
+
+
+def _framework_name(framework_id: str) -> str:
+    return framework_id.replace("_", " ").strip().title()
+
+
+def _framework_family(framework_id: str) -> str:
+    groups = (
+        ("international", ("iso_", "iec_", "bsi_", "cobit_", "coso_", "apec_", "oecd_")),
+        ("us_federal", ("us_fedramp_", "us_nist_", "us_cmmc_", "us_hipaa_", "nist_", "pci_dss_")),
+        ("us_state", ("us_ak_", "us_ca_", "us_co_", "us_ct_", "us_de_", "us_fl_", "us_il_", "us_ny_", "us_tx_", "us_va_", "us_wa_")),
+        ("emea", ("emea_",)),
+        ("apac", ("apac_",)),
+        ("americas", ("americas_",)),
+        ("industry", ("aicpa_", "swift_", "tisax_", "csa_", "mitre_", "govramp_", "sparta")),
+    )
+    for family, prefixes in groups:
+        if framework_id.startswith(prefixes):
+            return family
+    return "other"
+
+
+async def framework_scope_summary(db: AsyncSession, org_id: UUID) -> Dict[str, Any]:
+    """Return the organization overlay for every selectable catalog framework."""
+    catalog_result = await db.execute(
+        select(SCFCatalogControl).where(SCFCatalogControl.status == "active")
+    )
+    catalog_controls = catalog_result.scalars().all()
+
+    scoped_result = await db.execute(
+        select(ScopedControl).where(ScopedControl.organization_id == org_id)
+    )
+    scoped_by_id = {row.scf_id: row for row in scoped_result.scalars().all()}
+
+    selection_result = await db.execute(
+        select(OrganizationFrameworkSelection).where(
+            OrganizationFrameworkSelection.organization_id == org_id
+        )
+    )
+    selections = {
+        row.framework_id: row for row in selection_result.scalars().all()
+    }
+
+    control_ids_by_framework: Dict[str, Set[str]] = {}
+    for control in catalog_controls:
+        for framework_id in (control.framework_mappings or {}):
+            if framework_id.startswith(INTERNAL_MAPPING_PREFIXES):
+                continue
+            control_ids_by_framework.setdefault(framework_id, set()).add(control.scf_id)
+
+    frameworks = []
+    for framework_id, control_ids in control_ids_by_framework.items():
+        selection = selections.get(framework_id)
+        active = bool(selection and selection.active)
+        in_scope = {
+            scf_id
+            for scf_id in control_ids
+            if scoped_by_id.get(scf_id) is not None and scoped_by_id[scf_id].selected
+        }
+        explicit_exclusions = {
+            scf_id
+            for scf_id in control_ids
+            if scoped_by_id.get(scf_id) is not None
+            and scoped_by_id[scf_id].scope_override == "exclude"
+        }
+        mapped = len(control_ids)
+        missing = mapped - len(in_scope)
+        frameworks.append(
+            {
+                "id": framework_id,
+                "name": _framework_name(framework_id),
+                "family": _framework_family(framework_id),
+                "mapped_control_count": mapped,
+                "in_scope_count": len(in_scope),
+                "missing_count": missing,
+                "coverage_percentage": round((len(in_scope) / mapped) * 100, 1) if mapped else 0.0,
+                "expected_additions": len(control_ids - in_scope - explicit_exclusions),
+                "active": active,
+                "partial": active and missing > 0,
+                "source": selection.source if selection else None,
+                "selected_at": selection.selected_at if selection else None,
+                "selected_by": selection.selected_by if selection else None,
+            }
+        )
+
+    frameworks.sort(key=lambda item: (not item["active"], item["name"]))
+    return {
+        "total": len(frameworks),
+        "selected_count": sum(1 for item in frameworks if item["active"]),
+        "frameworks": frameworks,
+    }
+
+
+async def preview_framework_change(
+    db: AsyncSession,
+    org_id: UUID,
+    framework_ids: List[str],
+    operation: str,
+) -> Dict[str, Any]:
+    """Compute exact add/remove effects from current structured scope state."""
+    catalog_result = await db.execute(
+        select(SCFCatalogControl).where(SCFCatalogControl.status == "active")
+    )
+    catalog_controls = catalog_result.scalars().all()
+    requested = set(framework_ids)
+    mappings_by_control = {
+        row.scf_id: set((row.framework_mappings or {}).keys())
+        for row in catalog_controls
+        if set((row.framework_mappings or {}).keys()) & requested
+    }
+
+    scoped_result = await db.execute(
+        select(ScopedControl).where(ScopedControl.organization_id == org_id)
+    )
+    scoped = {row.scf_id: row for row in scoped_result.scalars().all()}
+
+    selection_result = await db.execute(
+        select(OrganizationFrameworkSelection.framework_id).where(
+            and_(
+                OrganizationFrameworkSelection.organization_id == org_id,
+                OrganizationFrameworkSelection.active == True,  # noqa: E712
+            )
+        )
+    )
+    active_frameworks = {row[0] for row in selection_result.fetchall()}
+    # The frameworks that justify a control independently of the one being changed. For a
+    # remove this is the post-change active set; for an add it is the pre-change set minus
+    # the requested framework. Both are the same expression, and using it for `add` is what
+    # lets the add path report real overlap instead of a structural zero.
+    other_active = active_frameworks - requested
+
+    preview: Dict[str, Any] = {
+        "operation": operation,
+        "frameworks": sorted(requested),
+        "mapped_controls": sorted(mappings_by_control),
+        "new_controls": [],
+        "already_covered": [],
+        "shared_with_active_frameworks": [],
+        "individual_inclusions": [],
+        "explicitly_excluded": [],
+        "controls_leaving_scope": [],
+    }
+
+    for scf_id, mappings in mappings_by_control.items():
+        row = scoped.get(scf_id)
+        selected = bool(row and row.selected)
+        override = row.scope_override if row else None
+        if override == "exclude":
+            preview["explicitly_excluded"].append(scf_id)
+            continue
+        if operation == "add":
+            if not selected:
+                preview["new_controls"].append(scf_id)
+            elif override == "include":
+                preview["individual_inclusions"].append(scf_id)
+            elif mappings & other_active:
+                preview["shared_with_active_frameworks"].append(scf_id)
+            else:
+                preview["already_covered"].append(scf_id)
+            continue
+        if not selected:
+            preview["already_covered"].append(scf_id)
+        elif override == "include":
+            preview["individual_inclusions"].append(scf_id)
+        elif mappings & other_active:
+            preview["shared_with_active_frameworks"].append(scf_id)
+        else:
+            preview["controls_leaving_scope"].append(scf_id)
+
+    for key, value in preview.items():
+        if isinstance(value, list):
+            value.sort()
+    return preview
+
+
+async def set_individual_scope_override(
+    db: AsyncSession,
+    org_id: UUID,
+    scf_id: str,
+    action: str,
+    reason: Optional[str],
+    user_id: Optional[UUID],
+    *,
+    commit: bool = True,
+) -> ScopedControl:
+    """Apply framework-baseline + individual-override precedence to one control."""
+    result = await db.execute(
+        select(ScopedControl).where(
+            and_(
+                ScopedControl.organization_id == org_id,
+                ScopedControl.scf_id == scf_id,
+            )
+        )
+    )
+    control = result.scalar_one_or_none()
+
+    catalog_result = await db.execute(
+        select(SCFCatalogControl).where(SCFCatalogControl.scf_id == scf_id)
+    )
+    catalog = catalog_result.scalar_one_or_none()
+    if catalog is None:
+        raise ValueError("Control not found in the SCF catalog")
+
+    if control is None:
+        if action == "inherit":
+            raise ValueError("Control has no individual override")
+        control = ScopedControl(
+            organization_id=org_id,
+            scf_id=scf_id,
+            implementation_status="not_started",
+            created_by_user_id=user_id,
+        )
+        db.add(control)
+
+    now = datetime.utcnow()
+    if action == "include":
+        control.selected = True
+        control.scope_override = "include"
+        control.scope_override_reason = (reason or "").strip() or "Individually included"
+        control.selection_reason = control.scope_override_reason
+        control.out_of_scope_justification = None
+    elif action == "exclude":
+        cleaned = (reason or "").strip()
+        if not cleaned:
+            raise ValueError("An exclusion rationale is required")
+        control.selected = False
+        control.scope_override = "exclude"
+        control.scope_override_reason = cleaned
+        control.out_of_scope_justification = cleaned
+    else:
+        selection_result = await db.execute(
+            select(OrganizationFrameworkSelection.framework_id).where(
+                and_(
+                    OrganizationFrameworkSelection.organization_id == org_id,
+                    OrganizationFrameworkSelection.active == True,  # noqa: E712
+                )
+            )
+        )
+        active_frameworks = {row[0] for row in selection_result.fetchall()}
+        control.selected = bool(set((catalog.framework_mappings or {}).keys()) & active_frameworks)
+        control.scope_override = None
+        control.scope_override_reason = None
+        control.out_of_scope_justification = None
+
+    control.scope_override_set_at = now if action != "inherit" else None
+    control.scope_override_set_by = user_id if action != "inherit" else None
+    control.updated_by_user_id = user_id
+    if commit:
+        await db.commit()
+        await db.refresh(control)
+    return control

@@ -229,7 +229,9 @@ class TestResponseModelCoversEveryEmittedKey:
             "nist_csf_function", "evidence_requests", "framework_mappings",
             "catalog_status", "retired_in_version", "superseded_by",
             "is_scoped", "selected", "implementation_status",
-            "selection_reason", "maturity_level", "pptdf_applicability",
+            "selection_reason", "out_of_scope_justification",
+            "scoped_control_id", "priority", "scope_override",
+            "scope_override_reason", "scope_override_set_at", "maturity_level", "pptdf_applicability",
             "cmm_maturity", "business_size_guidance", "scrm_focus",
             "risk_threat_mapping",
         }

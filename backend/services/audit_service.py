@@ -34,6 +34,11 @@ logger = logging.getLogger(__name__)
 SCOPED_CONTROL_TRACKED_FIELDS: set = {
     'selected',
     'selection_reason',
+    'out_of_scope_justification',
+    'scope_override',
+    'scope_override_reason',
+    'scope_override_set_at',
+    'scope_override_set_by',
     'implementation_status',
     'priority',
     'owner',

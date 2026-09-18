@@ -415,6 +415,15 @@ class ScopedControl(Base):
     """
     __tablename__ = "scoped_controls"
     __table_args__ = (
+        CheckConstraint(
+            "scope_override IS NULL OR scope_override IN ('include', 'exclude')",
+            name='ck_scoped_controls_scope_override',
+        ),
+        CheckConstraint(
+            "scope_override <> 'exclude' OR length(btrim(scope_override_reason)) > 0",
+            name='ck_scoped_controls_exclusion_reason',
+        ),
+        Index('ix_scoped_controls_org_scope_override', 'organization_id', 'scope_override'),
         # Redundant against the primary key as a uniqueness statement, and not
         # redundant at all as a foreign-key target: it is what lets
         # ControlTeamAssignment prove its denormalised organization_id matches
@@ -428,6 +437,14 @@ class ScopedControl(Base):
     selected = Column(Boolean, default=False)
     selection_reason = Column(Text)  # Rationale for INCLUSION (selected=True)
     out_of_scope_justification = Column(Text)  # Rationale for EXCLUSION (selected=False); surfaced to auditors in engagements
+    # Structured precedence for effective scope (#1049). A null value means
+    # the control follows the union of active framework selections. Explicit
+    # per-control decisions always win over that baseline and survive catalog
+    # reconciliation.
+    scope_override = Column(String(10), nullable=True)  # include | exclude | NULL
+    scope_override_reason = Column(Text, nullable=True)
+    scope_override_set_at = Column(DateTime(timezone=False), nullable=True)
+    scope_override_set_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     implementation_status = Column(String(50))  # See ImplementationStatus enum for valid values
     priority = Column(String(20))
     owner = Column(String(255))  # Legacy text field
@@ -466,6 +483,7 @@ class ScopedControl(Base):
     owner_user = relationship("User", foreign_keys=[owner_user_id])
     created_by = relationship("User", foreign_keys=[created_by_user_id])
     updated_by = relationship("User", foreign_keys=[updated_by_user_id])
+    scope_override_actor = relationship("User", foreign_keys=[scope_override_set_by])
 
     def __repr__(self):
         return f"<ScopedControl(id={self.id}, scf_id={self.scf_id}, status={self.implementation_status})>"

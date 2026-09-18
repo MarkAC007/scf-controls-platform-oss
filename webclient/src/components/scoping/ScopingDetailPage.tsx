@@ -125,6 +125,8 @@ export interface ScopingDetailPageProps {
   accountableTeamLabel?: string | null
   /** Whether the current user can manage owning-team assignments. */
   canManageTeams?: boolean
+  /** Viewer mode: preserve every section while disabling organization mutations. */
+  readOnly?: boolean
 }
 
 type ScopingTab = 'details' | 'notes' | 'assignments' | 'history'
@@ -195,6 +197,7 @@ export default function ScopingDetailPage({
   scopingData,
   accountableTeamLabel = null,
   canManageTeams = false,
+  readOnly = false,
 }: ScopingDetailPageProps): JSX.Element {
   const [activeTab, setActiveTab] = useState<ScopingTab>('details')
   const [frameworksCollapsed, setFrameworksCollapsed] = useState(true)
@@ -503,7 +506,7 @@ export default function ScopingDetailPage({
             <div className="container-content">
 
               {/* Scope toggle */}
-              <div className="form-group">
+              <div className="form-group scoping-scope-toggle">
                 <label>
                   <input
                     type="checkbox"
@@ -524,6 +527,7 @@ export default function ScopingDetailPage({
                     onFieldChange('implementation_status', e.target.value as ImplementationStatus)
                   }
                   className="form-control"
+                  disabled={readOnly}
                 >
                   <option value="not_started">Not Started</option>
                   <option value="in_progress">In Progress</option>
@@ -542,6 +546,7 @@ export default function ScopingDetailPage({
                 <select
                   id="scoping-detail-priority"
                   value={scopingEntry?.priority ?? 'medium'}
+                  disabled={readOnly}
                   onChange={(e) => onFieldChange('priority', e.target.value as Priority)}
                   className="form-control"
                 >
@@ -564,6 +569,7 @@ export default function ScopingDetailPage({
                     onFieldChange('maturity_level', val)
                   }}
                   className="form-control maturity-select"
+                  disabled={readOnly}
                 >
                   <option value="" disabled>Select Maturity Level...</option>
                   <option value="L0">L0 - Initial</option>
@@ -599,6 +605,7 @@ export default function ScopingDetailPage({
                   }
                   className="form-control"
                   rows={3}
+                  disabled={readOnly}
                 />
                 <span
                   className={`char-counter${soaValue.length > 120 ? ' warning' : ''}`}
@@ -627,6 +634,7 @@ export default function ScopingDetailPage({
                 <div className="form-group">
                   <label htmlFor="scoping-detail-target-date">Target Date</label>
                   <input
+                    disabled={readOnly}
                     id="scoping-detail-target-date"
                     type="date"
                     value={scopingEntry?.target_date ?? ''}
@@ -673,6 +681,7 @@ export default function ScopingDetailPage({
                     placeholder="How is this control implemented? What tools or processes are used?"
                     className="form-control"
                     rows={6}
+                    disabled={readOnly}
                   />
                 </div>
               </div>
@@ -684,6 +693,7 @@ export default function ScopingDetailPage({
                   commentableType="control"
                   commentableId={controlDbId}
                   organizationId={organizationId}
+                  readOnly={readOnly}
                 />
               </div>
             ) : (
@@ -716,17 +726,17 @@ export default function ScopingDetailPage({
             <div className="container-content">
               {controlDbId && organizationId ? (
                 <>
-                  <AssignmentPicker
+                  {!readOnly && <AssignmentPicker
                     organizationId={organizationId}
                     assignableType="control"
                     assignableId={controlDbId}
                     onAssignmentChange={() => {}}
-                  />
+                  />}
                   <OwningTeams
                     organizationId={organizationId}
                     assignableType="control"
                     assignableId={controlDbId}
-                    canManage={canManageTeams}
+                    canManage={canManageTeams && !readOnly}
                     onChange={() => {
                       onReloadTeamAssignments()
                     }}

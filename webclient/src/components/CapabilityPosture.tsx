@@ -133,7 +133,7 @@ export default function CapabilityPosture({ organizationId }: CapabilityPostureP
             <polyline points="2 12 12 17 22 12" />
           </svg>
           <h3>No capability posture data yet</h3>
-          <p>Start by scoping controls in the Control Scoping view to see capability theme posture.</p>
+          <p>Start by adding controls in the Control Library to see capability theme posture.</p>
         </div>
       ) : (
         <div className="cp-grid">

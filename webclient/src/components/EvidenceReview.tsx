@@ -700,7 +700,7 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
       <div className="tab-content">
         <div className="placeholder">
           <h2>No Controls Selected</h2>
-          <p>Please select controls in the Control Scoping tab first.</p>
+          <p>Please add controls from the Control Library first.</p>
           <p className="muted">Evidence review is only available for selected controls with audit artifacts.</p>
         </div>
       </div>

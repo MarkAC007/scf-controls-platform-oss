@@ -100,7 +100,7 @@ describe('Sidebar section structure', () => {
     // CONTROLS & FRAMEWORKS (3)
     expect(screen.getByRole('button', { name: 'Control Library' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Framework Mappings' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Control Scoping' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Framework Scoping' })).toBeInTheDocument()
 
     // RISK & THIRD PARTY (2)
     expect(screen.getByRole('button', { name: 'Risk Register' })).toBeInTheDocument()
