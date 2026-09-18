@@ -294,7 +294,24 @@ class ScopedControlsPaginatedResponse(BaseModel):
 
 
 class ScopedControlStats(BaseModel):
-    """Server-side aggregated stats for the Control Scoping stats bar."""
+    """Server-side aggregated stats for the Control Scoping stats bar.
+
+    **These figures are always organisation-wide, and deliberately so (#1052).**
+    When the Controls list is narrowed to the caller's teams, this endpoint is
+    NOT narrowed with it. Compliance posture is an organisation fact: a
+    silently team-scoped "30 of 42 implemented" is a number somebody repeats in
+    a meeting as the organisation's position, which is a GRC failure rather
+    than a UX one. The narrowing is communicated by the row's label
+    ("Organisation totals") and by the list's own count chip instead.
+
+    ``scope`` says so on the wire rather than leaving the client to assume it,
+    because the alternative failure mode — an endpoint that accepts a filter
+    and quietly ignores it — is worse than one that states its scope. Genuinely
+    team-scoped figures are the per-team scorecard, which is a separate issue.
+    """
+    #: Always ``"organization"``. Present so a client can assert the scope it
+    #: is displaying rather than inferring it from the absence of a parameter.
+    scope: Literal["organization"] = "organization"
     total_controls: int = 0
     in_scope: int = 0
     implemented: int = 0
@@ -430,10 +447,29 @@ def _validate_collection_frequency(value: Optional[str]) -> Optional[str]:
 # could assign work to another tenant's account and leak evidence IDs into their
 # notifications.
 #
-# KNOWN SIBLING, NOT FIXED HERE: ScopedControlUpdate has exactly the same shape
+# SIBLING, AND NOW DELIBERATE (#1052): ScopedControlUpdate has the same shape
 # — free-text `owner`/`assigned_to` with no way to write
 # ScopedControl.owner_user_id / assigned_user_id, which dashboard.py:157-158
-# filters the *controls* half of the same work queue on. Tracked separately.
+# filters the *controls* half of the same work queue on. That was recorded here
+# as an unfixed defect. It is not one. #1052 settles that controls and evidence
+# are assignable to TEAMS ONLY — through ControlTeamAssignment and
+# EvidenceTeamAssignment — and that no individual assignment of either is
+# being added. A control with no writable per-user owner is therefore the
+# intended state, not a gap, and dashboard.py's filter on those two always-NULL
+# columns is the thing that needs revisiting, not the schema.
+#
+# TEAM-ONLY ASSIGNMENT, AND WHY THESE TWO FIELDS SURVIVE IT (#1052).
+# The two user foreign keys below stay writable on EvidenceTrackingBase, which
+# looks like a contradiction of "team only". It is a deliberate override, kept
+# for one reason: they are tier 1 of the owner-resolution chain
+# (services/owner_resolution.py), so clearing one is the ONLY way to stop
+# notifications routing to a named individual. Removing the field from the
+# schema would take that escape hatch away and strand every legacy row on a
+# person who may have left. The evidence detail page no longer offers the
+# field (webclient/src/styles.css §34400), EvidenceReview.tsx only round-trips
+# what is already stored, and the MCP server does not expose it — nothing
+# reaches it by accident. A direct API call with an editor token still can, and
+# that is the override, stated here rather than left to be rediscovered.
 
 class EvidenceTrackingBase(BaseModel):
     evidence_id: str = Field(..., min_length=1, max_length=50)
@@ -4708,6 +4744,11 @@ class TeamResponse(TeamBase):
     function: Optional[FunctionSimple] = None
     functions: List[FunctionSimple] = Field(default_factory=list)
     member_count: int = 0
+    #: The CALLER's role on this team, populated only by ``GET .../teams?mine=true``
+    #: (#1052). None on the unfiltered list, where "whose role?" has no answer.
+    #: It is here rather than on a separate schema so the My-teams picker and
+    #: the full team list stay one response shape.
+    membership_role: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 

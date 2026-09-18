@@ -32,6 +32,7 @@ from services.task_generator import generate_task_for_tracking
 from services.team_assignments import (
     EVIDENCE_ASSIGNMENT_SPEC,
     accountable_owner_filter,
+    resolve_caller_team_ids,
     team_assignment_filter,
 )
 from services.org_utils import MEMBER_TYPES, invalid_member_type_detail
@@ -216,6 +217,7 @@ async def list_evidence_tracking(
     membership: OrgMembership = Depends(require_org_role("viewer")),
     system_id: Optional[UUID] = Query(None, description="Filter by collecting system"),
     team_id: Optional[UUID] = Query(None, description="Filter to evidence this team is assigned to (accountable or consulted)"),
+    my_teams: bool = Query(False, description="Filter to evidence assigned to any team the caller belongs to. Intersects with team_id rather than overriding it."),
     function_id: Optional[UUID] = Query(None, description="Filter to evidence assigned to any team aligned to this function"),
     accountable_owner_type: Optional[str] = Query(None, description="Filter to items whose accountable team's primary owner has this member_type: internal or external_contractor"),
     db: AsyncSession = Depends(get_db)
@@ -252,11 +254,22 @@ async def list_evidence_tracking(
     # is how that stays true. And an unpaginated list is exactly the one you
     # least want to ship whole to a browser to have most of it discarded --
     # this pushes the discarding into an indexed semi-join.
+    # `my_teams` (#1052) — the caller's own teams, resolved through the same
+    # helper the controls list uses so the two cannot disagree about which
+    # teams are "mine". Intersects with `team_id`; an empty set of teams
+    # narrows to nothing rather than falling back to the whole org.
+    caller_team_ids = None
+    if my_teams:
+        caller_team_ids = await resolve_caller_team_ids(
+            db, organization_id=org_id, user_id=UUID(membership.user.db_id),
+        )
+
     assignment_filter = team_assignment_filter(
         EVIDENCE_ASSIGNMENT_SPEC,
         EvidenceTracking.id,
         organization_id=org_id,
         team_id=team_id,
+        team_ids=caller_team_ids,
         function_id=function_id,
     )
     if assignment_filter is not None:

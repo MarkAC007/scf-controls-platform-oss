@@ -33,14 +33,26 @@ export function useTeamFilteredEvidence(
    * they are employed. So a failure that would silently un-narrow the list is
    * reported instead — see the catch below.
    */
-  accountableOwnerType?: MemberType
+  accountableOwnerType?: MemberType,
+  /**
+   * Header work scope (#1052): narrow to evidence assigned to ANY team the
+   * caller belongs to.
+   *
+   * Like ``accountableOwnerType`` and unlike the team filters, this one has NO
+   * client-side equivalent — nothing this screen already holds knows which
+   * teams the caller is on. So the caller must treat "my_teams asked for, no
+   * answer yet" the way it treats ``ownerTypeUnanswered``: narrow to nothing
+   * and say why. Falling back to the unfiltered list under a "My teams" label
+   * is precisely the failure this feature exists to prevent.
+   */
+  myTeams?: boolean
 ): { trackingIds: Set<string> | null; loading: boolean; error: string | null } {
   const [trackingIds, setTrackingIds] = useState<Set<string> | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!organizationId || (!teamId && !functionId && !accountableOwnerType)) {
+    if (!organizationId || (!teamId && !functionId && !accountableOwnerType && !myTeams)) {
       setTrackingIds(null)
       setError(null)
       return
@@ -56,6 +68,7 @@ export function useTeamFilteredEvidence(
       team_id: teamId,
       function_id: functionId,
       accountable_owner_type: accountableOwnerType,
+      my_teams: myTeams,
     })
       .then(rows => {
         if (!current) return
@@ -76,7 +89,7 @@ export function useTeamFilteredEvidence(
     return () => {
       current = false
     }
-  }, [organizationId, teamId, functionId, accountableOwnerType])
+  }, [organizationId, teamId, functionId, accountableOwnerType, myTeams])
 
   return { trackingIds, loading, error }
 }

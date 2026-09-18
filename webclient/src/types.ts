@@ -1854,6 +1854,12 @@ export interface Team {
   name: string
   description: string | null
   is_active: boolean
+  /**
+   * The caller's own role on this team (#1052). Only populated by the
+   * ``mine=true`` listing; ``null`` on the unfiltered list, which is a
+   * statement about the query, not about the membership.
+   */
+  membership_role?: TeamMembershipRole | null
 }
 
 /** Mirror of backend ``TeamMember``. ``user`` is embedded for display. */

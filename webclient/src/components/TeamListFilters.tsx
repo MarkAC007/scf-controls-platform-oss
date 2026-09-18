@@ -16,6 +16,7 @@
 import { useEffect, useMemo, useState } from 'react'
 
 import { listFunctions, listTeams } from '../data/apiClient'
+import { useWorkScope } from '../contexts/WorkScopeContext'
 import type { OrgFunction, Team } from '../types'
 
 export const ALL = 'all'
@@ -41,10 +42,14 @@ export default function TeamListFilters({
 }: TeamListFiltersProps) {
   const [teams, setTeams] = useState<Team[]>([])
   const [functions, setFunctions] = useState<OrgFunction[]>([])
+  // The fourth team picker feeding these endpoints (#1052). Under "My teams"
+  // the server ANDs my_teams with team_id, so offering a team the caller is
+  // not on would invite a pick that can only ever return nothing.
+  const { isMyTeams } = useWorkScope()
 
   useEffect(() => {
     let cancelled = false
-    Promise.all([listTeams(organizationId), listFunctions()])
+    Promise.all([listTeams(organizationId, { mine: isMyTeams }), listFunctions()])
       .then(([teamList, fns]) => {
         if (cancelled) return
         setTeams(teamList)
@@ -58,7 +63,7 @@ export default function TeamListFilters({
     return () => {
       cancelled = true
     }
-  }, [organizationId])
+  }, [organizationId, isMyTeams])
 
   /** Only functions that actually have a team — the rest would filter to nothing. */
   const usedFunctions = useMemo(() => {

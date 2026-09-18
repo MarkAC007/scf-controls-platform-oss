@@ -3,9 +3,21 @@ import RefreshControl from './RefreshControl'
 import UserProfileDropdown from './UserProfileDropdown'
 import ThemeMenu from './ThemeMenu'
 import OrgSwitcher from './OrgSwitcher'
+import WorkScopeControl from './WorkScopeControl'
 import { Organization } from '../contexts/OrganizationContext'
 import { useAuth } from '../contexts/AuthContext'
 import { Tab, TAB_TITLES } from '../data/appUrl'
+
+/**
+ * The tabs whose lists honour the work scope: the Controls list and the
+ * Evidence list, and nothing else.
+ *
+ * `library` IS the Controls page — `UnifiedLibraryPage`, the list a user
+ * actually works in. `scoping` is `FrameworkScopingPage`, which picks
+ * frameworks and has no per-control rows to narrow, so the switch was inert
+ * there and is deliberately gone.
+ */
+const WORK_SCOPE_TABS: ReadonlySet<Tab> = new Set<Tab>(['library', 'evidence'])
 
 interface HeaderProps {
   activeTab: Tab
@@ -75,6 +87,16 @@ export default function Header({
             onSwitch={onOrgSwitch}
           />
         )}
+
+        {/* Work scope — the one place the "whose work?" question is answered.
+            Sits next to the org switcher because the two together say which
+            slice of which organisation the list below is showing.
+
+            Rendered ONLY on the tabs whose list actually passes `my_teams`
+            (see WORK_SCOPE_TABS above). A control rendered over a list that
+            ignores it would read "My teams" across an unfiltered page, which is
+            the exact failure this issue exists to remove. */}
+        {WORK_SCOPE_TABS.has(activeTab) && <WorkScopeControl />}
 
         <ThemeMenu />
 

@@ -19,7 +19,7 @@ nothing in this module is consulted by any permission check. There is no such
 thing as a team admin.
 """
 import logging
-from typing import List, Optional
+from typing import Dict, List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -383,6 +383,7 @@ async def list_teams(
     org_id: UUID,
     function_id: Optional[UUID] = Query(None, description="Filter to one function"),
     include_inactive: bool = Query(False, description="Include archived teams"),
+    mine: bool = Query(False, description="Only teams the caller is a member of"),
     membership: OrgMembership = Depends(require_org_role("viewer")),
     db: AsyncSession = Depends(get_db),
 ):
@@ -393,8 +394,26 @@ async def list_teams(
 
     Archived teams are hidden unless ``include_inactive`` is set — they are
     kept, never deleted, so that history referring to them still resolves.
+
+    ``mine`` (#1052) narrows the list to the caller's own teams. It is a
+    parameter here rather than a new ``/users/me/teams`` route so that it
+    reuses ``TeamResponse`` and ``require_org_role("viewer")`` — a second
+    route would be a second auth path to keep correct. When it is set, each
+    returned team also carries ``membership_role``, which is what lets the UI
+    say *why* a team is on your list rather than only that it is.
     """
     query = select(Team).where(Team.organization_id == org_id)
+    if mine:
+        query = query.where(
+            Team.id.in_(
+                select(TeamMember.team_id).where(
+                    and_(
+                        TeamMember.user_id == UUID(membership.user.db_id),
+                        TeamMember.organization_id == org_id,
+                    )
+                )
+            )
+        )
     if function_id is not None:
         query = query.where(or_(
             Team.function_id == function_id,
@@ -419,7 +438,29 @@ async def list_teams(
         )).all()
     )
 
-    return [_team_payload(team, counts.get(team.id, 0)) for team in teams]
+    # `membership_role` is only meaningful relative to a caller, so it is
+    # populated only when the caller asked for their own teams. On the
+    # unfiltered list it stays None rather than being guessed (#1052).
+    roles: Dict[UUID, str] = {}
+    if mine:
+        roles = dict(
+            (await db.execute(
+                select(TeamMember.team_id, TeamMember.membership_role)
+                .where(
+                    and_(
+                        TeamMember.user_id == UUID(membership.user.db_id),
+                        TeamMember.organization_id == org_id,
+                        TeamMember.team_id.in_([t.id for t in teams]),
+                    )
+                )
+            )).all()
+        )
+
+    return [
+        {**_team_payload(team, counts.get(team.id, 0)),
+         "membership_role": roles.get(team.id)}
+        for team in teams
+    ]
 
 
 @router.post(

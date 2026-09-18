@@ -33404,8 +33404,29 @@ button.risk-list-header-cell:hover {
   .sidebar-nav.expanded ~ .app-footer {
     left: 232px;
   }
+  /* The utility bar must BEGIN where the rail ends, not merely pad its
+     contents past it.
+
+     Padding moved the text but not the box. `.header-streamlined` is fixed at
+     `left: 0; right: 0` with an opaque `var(--bg)`, and it and `.sidebar-nav`
+     both sit at `z-index: 100` — a tie the later sibling wins — so the bar
+     painted its own background over the rail's top 44px. That strip is exactly
+     where `.sidebar-brand` lives, so the organisation logo and the wordmark
+     were drawn and then covered: present in the DOM, loaded, sized, and
+     invisible. Offsetting `left` keeps the two surfaces from overlapping at
+     all, and leaves the stacking order the mobile drawer depends on untouched.
+
+     Both rail widths are handled: 56px collapsed, 232px expanded, matching
+     `.sidebar-nav` / `.sidebar-nav.expanded` above. The transition mirrors the
+     rail's own width transition so the two edges move together. */
+  .header-streamlined {
+    left: 56px;
+    padding-left: 24px;
+    transition: left 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  }
   .sidebar-nav.expanded ~ .header-streamlined {
-    padding-left: 256px; /* 232px rail + 24px gutter */
+    left: 232px;
+    padding-left: 24px;
   }
 }
 
@@ -34778,4 +34799,102 @@ button.risk-list-header-cell:hover {
   .framework-browser-row {
     min-width: 760px;
   }
+}
+
+/* ─── Work scope control (issue 1052) ────────────────────────────────────────────
+   Header "Showing: Everything / My teams", plus the chips and count lines the
+   lists use to explain a narrowing they did not choose.
+
+   Every colour here is a var(--…) token. The older .scope-toggle-btn is
+   deliberately not reused: it is declared twice in this sheet and hardcodes a
+   near-opaque white hover literal, which flashes pale against the dark
+   themes. */
+.work-scope-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.work-scope-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.work-scope-options {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--muted-bg);
+}
+.work-scope-option {
+  padding: 4px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+  font-family: inherit;
+  line-height: 1.5;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.work-scope-option:hover {
+  background: var(--card-hover);
+  color: var(--text);
+}
+.work-scope-option:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+.work-scope-option--selected,
+.work-scope-option--selected:hover {
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+
+/* Pinned first chip on a list, stating the narrowing the header applied. The
+   header owns changing the value; this owns explaining why the list is short. */
+.work-scope-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border: 1px solid var(--primary);
+  border-radius: var(--badge-radius, 999px);
+  background: var(--accent-muted);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* Count line under the organisation totals: "Showing 6 of 1,240 controls". */
+.work-scope-count {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+.work-scope-chip-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px 0;
+}
+.work-scope-totals-label {
+  color: var(--muted);
+  font-weight: 500;
+}
+.work-scope-empty {
+  padding: 24px 16px;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.6;
+  text-align: center;
 }

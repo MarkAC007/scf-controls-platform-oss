@@ -157,7 +157,6 @@ export default function FrameworkScopingPage({
     <div className="framework-scoping-page">
       <header className="framework-scoping-header">
         <div>
-          <h1>Framework Scoping</h1>
           <p>
             Selected frameworks establish your baseline. Individual control inclusions
             and exclusions remain explicit overrides.

@@ -37,6 +37,7 @@ import {
 import { useCatalogFilters } from '../../hooks/useCatalogFilters'
 import { useDebounce } from '../../hooks/useDebounce'
 import { listTeams, listFunctions } from '../../data/apiClient'
+import { useWorkScope } from '../../contexts/WorkScopeContext'
 import type { Team, OrgFunction } from '../../types'
 
 import FilterSidebar, {
@@ -150,9 +151,14 @@ export default function ScopingList({
   const [teams, setTeams] = useState<Team[]>([])
   const [functions, setFunctions] = useState<OrgFunction[]>([])
 
+  const { isMyTeams } = useWorkScope()
+
+  // Under "My teams" the picker must not offer a team the caller is not on:
+  // the server ANDs my_teams with team_id, so such a pick would silently
+  // return nothing and read as "this team owns no controls".
   useEffect(() => {
     let cancelled = false
-    Promise.all([listTeams(organizationId), listFunctions()])
+    Promise.all([listTeams(organizationId, { mine: isMyTeams }), listFunctions()])
       .then(([teamList, fns]) => {
         if (cancelled) return
         setTeams(teamList)
@@ -164,7 +170,7 @@ export default function ScopingList({
     return () => {
       cancelled = true
     }
-  }, [organizationId])
+  }, [organizationId, isMyTeams])
 
   const debouncedSearch = useDebounce(search, 300)
 
@@ -189,6 +195,7 @@ export default function ScopingList({
       framework: filters.framework !== ALL ? filters.framework : undefined,
       scope_status: filters.scope,
       team_id: filters.teamId !== ALL ? filters.teamId : undefined,
+      my_teams: isMyTeams || undefined,
       function_id: filters.functionId !== ALL ? filters.functionId : undefined,
       accountable_owner_type:
         filters.ownerType !== ALL
@@ -404,16 +411,34 @@ export default function ScopingList({
   ]
 
   // ── Toolbar count ─────────────────────────────────────────────────────────
+  // The stats endpoint is deliberately organisation-wide and stays that way
+  // under any scope: "how big is this organisation's control set" is an
+  // organisation fact, and dimming or hiding it would turn a narrowed view
+  // into a claim about the whole estate. The narrowing is stated separately,
+  // on the line below, so the two numbers can never be mistaken for each other.
   const inScopeCount = serverStats?.in_scope
+  const orgTotal = serverStats?.total_controls
+  const teamPickedOutsideMine =
+    isMyTeams && filters.teamId !== ALL && !teams.some((t) => t.id === filters.teamId)
+  const callerHasNoTeams = isMyTeams && teams.length === 0
+
   const countNode = (
     <span className="scoping-toolbar-count">
+      <span className="work-scope-totals-label">Organisation totals: </span>
       {inScopeCount !== undefined && (
         <>
           <span className="scoping-count-scope">{inScopeCount} in scope</span>
           <span className="scoping-count-sep"> · </span>
         </>
       )}
-      <span className="scoping-count-total">{total} controls</span>
+      <span className="scoping-count-total">
+        {(orgTotal ?? total).toLocaleString()} controls
+      </span>
+      <span className="work-scope-count" aria-live="polite">
+        Showing {total.toLocaleString()} of{' '}
+        {(orgTotal ?? total).toLocaleString()} controls
+        {isMyTeams ? ' · My teams' : ''}
+      </span>
     </span>
   )
 
@@ -539,6 +564,14 @@ export default function ScopingList({
           }
         />
 
+        {/* Pinned FIRST: the header owns changing the scope, this owns saying
+            why the list below is short. */}
+        {isMyTeams && (
+          <div className="work-scope-chip-row">
+            <span className="work-scope-chip">My teams</span>
+          </div>
+        )}
+
         {bulkBar}
 
         <div className="scoping-list-rows" ref={listContainerRef}>
@@ -549,7 +582,13 @@ export default function ScopingList({
             </div>
           ) : controls.length === 0 ? (
             <div className="scoping-empty">
-              No controls match your filter criteria.
+              {callerHasNoTeams
+                ? 'You are not a member of any team yet, so "My teams" has nothing to show. Switch Showing to Everything, or ask an administrator to add you to a team.'
+                : teamPickedOutsideMine
+                  ? 'The team you have picked is not one of your teams, and "My teams" narrows to yours — so this combination can never match. Pick one of your teams, or switch Showing to Everything.'
+                  : isMyTeams
+                    ? 'No controls are assigned to your teams yet.'
+                    : 'No controls match your filter criteria.'}
             </div>
           ) : (
             <>

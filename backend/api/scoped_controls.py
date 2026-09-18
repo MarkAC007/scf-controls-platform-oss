@@ -46,6 +46,7 @@ from services.scoping_service import (
 from services.team_assignments import (
     CONTROL_ASSIGNMENT_SPEC,
     accountable_owner_filter,
+    resolve_caller_team_ids,
     team_assignment_filter,
 )
 def _tracked_values(control: ScopedControl) -> dict:
@@ -169,6 +170,7 @@ async def list_scoped_controls_paginated(
     control_weighting: Optional[int] = Query(None, ge=0, le=10, description="Filter by control weighting (0-10)"),
     search: Optional[str] = Query(None, description="Search control name/description/ID"),
     team_id: Optional[UUID] = Query(None, description="Filter to controls this team is assigned to (accountable or consulted)"),
+    my_teams: bool = Query(False, description="Filter to controls assigned to any team the caller belongs to. Intersects with team_id rather than overriding it."),
     function_id: Optional[UUID] = Query(None, description="Filter to controls assigned to any team aligned to this function"),
     accountable_owner_type: Optional[str] = Query(None, description="Filter to items whose accountable team's primary owner has this member_type: internal or external_contractor"),
     limit: int = Query(50, ge=1, le=200, description="Max results per page"),
@@ -280,11 +282,27 @@ async def list_scoped_controls_paginated(
     # row. It correlates on ScopedControl.id, which the LEFT JOIN leaves NULL
     # for a catalog control the org has never scoped -- such a control has no
     # scoped row to hang an assignment off and is correctly excluded.
+    # `my_teams` (#1052) resolves the CALLER's teams and hands them to the same
+    # helper as an id collection. It intersects with `team_id` rather than
+    # overriding it: both clauses AND, like every other filter here. Asking for
+    # a team you are not on therefore returns nothing, which is the honest
+    # answer; the UI stops you reaching that state by constraining the picker.
+    #
+    # A caller on no team resolves to `[]`, which the helper renders as a
+    # never-true clause — an empty list, not the whole organisation under a
+    # label promising otherwise.
+    caller_team_ids = None
+    if my_teams:
+        caller_team_ids = await resolve_caller_team_ids(
+            db, organization_id=org_id, user_id=UUID(membership.user.db_id),
+        )
+
     assignment_filter = team_assignment_filter(
         CONTROL_ASSIGNMENT_SPEC,
         ScopedControl.id,
         organization_id=org_id,
         team_id=team_id,
+        team_ids=caller_team_ids,
         function_id=function_id,
     )
     if assignment_filter is not None:

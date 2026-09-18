@@ -727,7 +727,6 @@ export default function EvidenceDashboardTab({
     <div className="ehd-container">
       <div className="ehd-header">
         <div>
-          <h2>Evidence Dashboard</h2>
           <p className="ehd-subtitle">
             Monitor evidence freshness and owner workload across your organisation
           </p>
