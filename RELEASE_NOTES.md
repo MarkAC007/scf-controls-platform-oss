@@ -1,11 +1,11 @@
-# v0.39.0
+# v0.40.0
 
 .
 
 ## What's new
 
-- Team work scoping for the Controls and Evidence lists (PR 1053)
+- Add end-user help for control status and evidence review (PR 1056)
 
 ## Upgrading
 
-- Run `scripts/upgrade.sh v0.39.0` (read `UPGRADING.md` first).
+- Run `scripts/upgrade.sh v0.40.0` (read `UPGRADING.md` first).

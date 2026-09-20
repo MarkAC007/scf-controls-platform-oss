@@ -40,6 +40,7 @@ import { AuditLogPanel } from '../AuditLogPanel'
 import { AssignmentPicker } from '../AssignmentPicker'
 import OwningTeams from '../OwningTeams'
 import TabRow from '../explorer/TabRow'
+import ControlStatusHelp from './ControlStatusHelp'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -519,7 +520,10 @@ export default function ScopingDetailPage({
 
               {/* Implementation Status */}
               <div className="form-group">
-                <label htmlFor="scoping-detail-status">Implementation Status</label>
+                <div className="control-status-help-label">
+                  <label htmlFor="scoping-detail-status">Implementation Status</label>
+                  <ControlStatusHelp />
+                </div>
                 <select
                   id="scoping-detail-status"
                   value={scopingEntry?.implementation_status ?? 'not_started'}
