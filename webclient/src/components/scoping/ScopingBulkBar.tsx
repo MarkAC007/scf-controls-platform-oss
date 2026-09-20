@@ -30,7 +30,8 @@
  * management (Select all / Clear) is deliberately given the lighter, quieter
  * treatment so it no longer carries the same weight as a write.
  */
-import { useState, type JSX } from 'react'
+import { useId, useState, type JSX } from 'react'
+import ControlStatusHelp from './ControlStatusHelp'
 
 export interface TeamOption {
   /** Team id from the team system (Users → Teams). */
@@ -111,6 +112,7 @@ export default function ScopingBulkBar({
   const [owner, setOwner] = useState('')
   const [maturity, setMaturity] = useState('')
   const [status, setStatus] = useState('')
+  const statusId = useId()
 
   return (
     <div className="scoping-bulk-bar" role="group" aria-label="Bulk actions">
@@ -169,9 +171,13 @@ export default function ScopingBulkBar({
             </select>
           </label>
 
-          <label className="scoping-bulk-field">
-            <span className="scoping-bulk-field-label">Set status</span>
+          <div className="scoping-bulk-field">
+            <div className="control-status-help-label">
+              <label htmlFor={statusId} className="scoping-bulk-field-label">Set status</label>
+              <ControlStatusHelp />
+            </div>
             <select
+              id={statusId}
               aria-label="Set implementation status"
               className="form-control form-control-sm scoping-bulk-select"
               value={status}
@@ -190,7 +196,7 @@ export default function ScopingBulkBar({
                 </option>
               ))}
             </select>
-          </label>
+          </div>
 
           {teamOptions !== null && (
             <label className="scoping-bulk-field">
