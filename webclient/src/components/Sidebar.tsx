@@ -5,7 +5,7 @@ import { useOrganization } from '../contexts/OrganizationContext'
 import { getCatalogStatusExtended } from '../data/catalogUpgradeApi'
 import { DEFAULT_APP_TITLE, getAppLogo } from '../branding'
 
-type Tab = 'dashboard' | 'capability-posture' | 'library' | 'scoping' | 'evidence' | 'mapping-matrix' | 'tasks' | 'systems' | 'users' | 'consultant-portal' | 'risk-register' | 'vendors' | 'settings' | 'webhooks' | 'audit-log' | 'engagements' | 'documents' | 'platform-catalog' | 'platform-tenants' | 'catalog-changelog'
+type Tab = 'dashboard' | 'journey' | 'capability-posture' | 'library' | 'scoping' | 'evidence' | 'mapping-matrix' | 'tasks' | 'systems' | 'users' | 'consultant-portal' | 'risk-register' | 'vendors' | 'settings' | 'webhooks' | 'audit-log' | 'engagements' | 'documents' | 'platform-catalog' | 'platform-tenants' | 'catalog-changelog'
 
 interface SidebarProps {
   activeTab: Tab
@@ -57,6 +57,16 @@ const Icons = {
       <path d="M18 17V9" />
       <path d="M13 17V5" />
       <path d="M8 17v-3" />
+    </svg>
+  ),
+  journey: (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      {/* Stepping stones climbing left to right. */}
+      <circle cx="4" cy="18" r="2" />
+      <circle cx="12" cy="12" r="2" />
+      <circle cx="20" cy="6" r="2" />
+      <path d="M5.7 16.6 10.3 13.4" />
+      <path d="M13.7 10.6 18.3 7.4" />
     </svg>
   ),
   dashboard: (
@@ -206,6 +216,7 @@ const navSections: NavSection[] = [
     label: 'OVERVIEW',
     items: [
       { id: 'dashboard', label: 'Dashboard', icon: Icons.dashboard },
+      { id: 'journey', label: 'Journey', icon: Icons.journey },
       { id: 'capability-posture', label: 'Analytics', icon: Icons.analytics },
     ],
   },

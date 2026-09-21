@@ -32,6 +32,7 @@ import { ConsultantDashboard } from './components/consultant'
 import RiskDashboard from './components/RiskDashboard'
 import VendorManagement from './components/VendorManagement'
 import CapabilityPosture from './components/CapabilityPosture'
+import JourneyPage from './components/journey/JourneyPage'
 import RiskProfileSettings from './components/RiskProfileSettings'
 import AppearanceSettings from './components/AppearanceSettings'
 import ApiKeyManagement from './components/ApiKeyManagement'
@@ -81,7 +82,7 @@ import InviteAcceptance, { PENDING_INVITE_KEY } from './components/InviteAccepta
 import OrgSwitcher from './components/OrgSwitcher'
 import type { ClientSummary, ConsultantInvite } from './types'
 
-type Tab = 'dashboard' | 'capability-posture' | 'library' | 'scoping' | 'evidence' | 'mapping-matrix' | 'tasks' | 'systems' | 'users' | 'consultant-portal' | 'risk-register' | 'vendors' | 'settings' | 'webhooks' | 'audit-log' | 'engagements' | 'documents' | 'platform-catalog' | 'platform-tenants' | 'catalog-changelog'
+type Tab = 'dashboard' | 'journey' | 'capability-posture' | 'library' | 'scoping' | 'evidence' | 'mapping-matrix' | 'tasks' | 'systems' | 'users' | 'consultant-portal' | 'risk-register' | 'vendors' | 'settings' | 'webhooks' | 'audit-log' | 'engagements' | 'documents' | 'platform-catalog' | 'platform-tenants' | 'catalog-changelog'
 
 /**
  * Screen selection lives in `activeTab`; `data/appUrl.ts` owns the vocabulary
@@ -769,6 +770,12 @@ function AppContent() {
                 setLibraryItem(null)
                 setActiveTab('library')
               }}
+            />
+          )}
+          {activeTab === 'journey' && scopingData && (
+            <JourneyPage
+              organizationId={scopingData.organizationId!}
+              onNavigateToTasks={() => setActiveTab('tasks')}
             />
           )}
           {activeTab === 'capability-posture' && scopingData && (

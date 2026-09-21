@@ -92,6 +92,20 @@ TENANT_SCOPED_EXCLUDED_TABLES: Dict[str, str] = {
     # the whole-DB dump in scripts/backup.sh, not this portable export.
     "audit_log": "append-only audit trail; captured by scripts/backup.sh",
     "audit_engagements": "audit trail; captured by scripts/backup.sh",
+    # The guided journey. Excluded on two independent grounds, either of which
+    # would be sufficient. First, a passed stage carries a named person's
+    # attestation — the same kind of signed trail as audit_log, belonging to
+    # the deployment where the signing happened. Second, the journey is
+    # re-established on a destination deployment by re-uploading the
+    # practitioner's artefact; that upload path exists precisely so a plan can
+    # be carried between deployments without the platform carrying it.
+    #
+    # Note for whoever revisits this: the child table `journey_stages` has no
+    # `organization_id` of its own, so the honesty guard above cannot see it.
+    # Exporting `org_journeys` without also exporting its stages would produce
+    # a journey with no road — worse than not carrying it at all. Any future
+    # decision to include this must move both tables together.
+    "org_journeys": "attestation trail; re-established by re-uploading the practitioner's artefact",
     # Unlike evidence_assessments below, this one is NOT recomputable — a
     # frozen verdict cannot be regenerated, only re-derived into a different
     # one. It is excluded on the same grounds as audit_log rather than on

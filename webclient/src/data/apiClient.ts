@@ -4555,3 +4555,89 @@ export async function getOrgMemberships(
     member_type: m.member_type,
   }))
 }
+
+// ---------------------------------------------------------------------------
+// Organisational journey
+// ---------------------------------------------------------------------------
+
+export interface JourneyPreconditionCheck {
+  type: string
+  label: string
+  /** `null` means this deployment could not evaluate the check — never a pass. */
+  met: boolean | null
+  detail: string
+}
+
+export interface JourneyPreconditions {
+  checks: JourneyPreconditionCheck[]
+  met_count: number
+  total_count: number
+  unknown_count: number
+  all_met: boolean
+}
+
+export type JourneyStageState =
+  | 'locked'
+  | 'active'
+  | 'awaiting_attestation'
+  | 'passed'
+  | 'passed_conditional'
+
+export interface JourneyStage {
+  /** `null` on an unprovisioned preview — there is no row to attest against yet. */
+  id: string | null
+  ordinal: number
+  key: string
+  title: string
+  summary: string | null
+  expect_next: string | null
+  state: JourneyStageState
+  started_at: string | null
+  attested_at: string | null
+  attested_by_user_id: string | null
+  attested_by_name: string | null
+  attestation_note: string | null
+  target_date: string | null
+  preconditions: JourneyPreconditions
+}
+
+export interface JourneyResponse {
+  /** False when the org has no journey row and this is the default template rendered as a map. */
+  provisioned: boolean
+  activated: boolean
+  activated_at?: string | null
+  practitioner: { company_name: string | null; consultant_profile_id?: string } | null
+  name: string | null
+  description: string | null
+  template_key: string | null
+  template_version: string | null
+  attribution?: string | null
+  current_stage_key: string | null
+  stages: JourneyStage[]
+  focus: JourneyPreconditionCheck[]
+}
+
+export async function getJourney(orgId: string): Promise<JourneyResponse> {
+  return apiFetch<JourneyResponse>(`/organizations/${orgId}/journey`)
+}
+
+export async function importJourney(
+  orgId: string,
+  body: { template_key?: string; activate?: boolean; practitioner_name?: string }
+): Promise<{ id: string; template_key: string; activated: boolean }> {
+  return apiFetch(`/organizations/${orgId}/journey/import`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function attestJourneyStage(
+  orgId: string,
+  stageId: string,
+  body: { note?: string; conditional?: boolean; target_date?: string }
+): Promise<{ id: string; state: JourneyStageState; attested_at: string; next_stage_key: string | null }> {
+  return apiFetch(`/organizations/${orgId}/journey/stages/${stageId}/attest`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
