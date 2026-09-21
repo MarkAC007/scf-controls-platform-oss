@@ -69,15 +69,25 @@ secretName: ""
 # -----------------------------------------------------------------------------
 # Images
 #
-# Placeholders until the CI image build lands. Every `TODO` here must be
-# replaced with a real registry path and an immutable tag or digest before this
-# chart is deployed anywhere real.
+# An empty `tag` means the chart's appVersion, so a release bumps one line in
+# Chart.yaml rather than five here. Set `digest` to pin immutably; it wins over
+# `tag` when both are given. `global.imageRegistry` overrides the registry on
+# every image at once, for a mirror or an air-gapped pull-through cache.
+#
+# allowLatestTag: the render FAILS if any image resolves to the tag `latest`,
+# because `latest` is not a version — two pods of one Deployment can be running
+# different code after a restart, with nothing in the cluster to say which is
+# which. An image pinned by digest is exempt, since the tag is then irrelevant.
+# Set this true to override, e.g. in a scratch environment that tracks a
+# floating build.
 # -----------------------------------------------------------------------------
+allowLatestTag: false
+
 backend:
   image:
-    registry: ""
-    repository: TODO/scf-backend
-    tag: TODO
+    registry: ghcr.io
+    repository: markac007/scf-backend
+    tag: ""
     digest: ""
     pullPolicy: IfNotPresent
 
@@ -147,9 +157,9 @@ celery:
   # evidence ingest and document generation all run here.
   worker:
     image:
-      registry: ""
-      repository: TODO/scf-backend
-      tag: TODO
+      registry: ghcr.io
+      repository: markac007/scf-backend
+      tag: ""
       digest: ""
       pullPolicy: IfNotPresent
 
@@ -211,9 +221,9 @@ celery:
 
   beat:
     image:
-      registry: ""
-      repository: TODO/scf-backend
-      tag: TODO
+      registry: ghcr.io
+      repository: markac007/scf-backend
+      tag: ""
       digest: ""
       pullPolicy: IfNotPresent
 
@@ -250,9 +260,9 @@ celery:
 
 frontend:
   image:
-    registry: ""
-    repository: TODO/scf-frontend
-    tag: TODO
+    registry: ghcr.io
+    repository: markac007/scf-frontend
+    tag: ""
     digest: ""
     pullPolicy: IfNotPresent
 
@@ -320,6 +330,16 @@ frontend:
   extraEnv: []
   extraVolumes: []
   extraVolumeMounts: []
+
+# Image for `helm test`. Separate because it is the one image that is not this
+# platform's own, and an air-gapped cluster needs to redirect it too.
+tests:
+  image:
+    registry: docker.io
+    repository: curlimages/curl
+    tag: "8.11.1"
+    digest: ""
+    pullPolicy: IfNotPresent
 
 # -----------------------------------------------------------------------------
 # Application configuration (non-secret)
@@ -493,9 +513,9 @@ migrations:
   enabled: true
 
   image:
-    registry: ""
-    repository: TODO/scf-backend
-    tag: TODO
+    registry: ghcr.io
+    repository: markac007/scf-backend
+    tag: ""
     digest: ""
     pullPolicy: IfNotPresent
 
@@ -586,10 +606,13 @@ catalogData:
   importer:
     # Run as a Job on install. Needs the workbook to already be on the claim.
     enabled: false
+    # The backend image, not a separate importer image: it already bakes
+    # /app/scripts/extract_scf_data.py and pins the same pandas and openpyxl the
+    # extractor needs, so a third image would add a build for no new content.
     image:
-      registry: ""
-      repository: TODO/scf-catalog-importer
-      tag: TODO
+      registry: ghcr.io
+      repository: markac007/scf-backend
+      tag: ""
       digest: ""
       pullPolicy: IfNotPresent
     # Where the SCF .xlsx sits on the claim, which is mounted at

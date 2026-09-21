@@ -18,15 +18,14 @@ spec:
       type: RuntimeDefault
   containers:
     - name: test
-      image: curlimages/curl:8.11.1
+      image: {{ include "scf.image" (dict "image" .Values.tests.image "root" $) }}
+      imagePullPolicy: {{ .Values.tests.image.pullPolicy }}
       securityContext:
         allowPrivilegeEscalation: false
         readOnlyRootFilesystem: true
         capabilities:
           drop:
             - ALL
-      # /health reports degraded rather than failing when a non-critical
-      # component is down, so assert on the response rather than the status code.
       command:
         - /bin/sh
         - -c

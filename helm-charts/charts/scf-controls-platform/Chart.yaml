@@ -2,7 +2,8 @@ apiVersion: v2
 name: scf-controls-platform
 version: 0.1.0
 type: application
-appVersion: xxxxxxx
+# The appVersion has a leading "v" because that is how images are tagged in the registry.
+appVersion: v0.40.0
 kubeVersion: ">=1.27.0-0"
 description: |-
   Open-source release of the SCF Controls Platform — SCF-native GRC tooling,

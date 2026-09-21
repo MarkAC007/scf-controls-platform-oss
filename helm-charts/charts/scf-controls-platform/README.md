@@ -23,12 +23,34 @@ Celery has no switch. Scheduled assessments, evidence ingest, malware scanning
 of browser uploads and document generation all run there, so a deployment
 without it silently stops doing most of its work.
 
-## Status
+## Images
 
-The image references in `values.yaml` are placeholders containing `TODO`. The
-CI image build is a separate piece of work; until it lands this chart renders
-and validates but will not pull. `helm install` prints a warning while a `TODO`
-is still present.
+| Component | Image |
+|---|---|
+| backend, celery worker, celery beat, migration Job | `ghcr.io/markac007/scf-backend` |
+| frontend | `ghcr.io/markac007/scf-frontend` |
+| catalogue importer | `ghcr.io/markac007/scf-backend` (see below) |
+
+Tags default to the chart's `appVersion`, which carries the leading `v` because
+that is how the images are tagged (`:v0.40.0`). A release therefore bumps one
+line in `Chart.yaml` rather than five in `values.yaml`. Set `digest` on any
+image to pin immutably — it wins over `tag`.
+
+`global.imageRegistry` redirects every image at once, including the `helm test`
+curl image, for a mirror or an air-gapped pull-through cache.
+
+The render **fails** if any image resolves to the tag `latest`, including when
+it is inherited from `appVersion`. `latest` is not a version: two pods of one
+Deployment can be running different code after a restart, with nothing in the
+cluster to say which is which. An image pinned by `digest` is exempt, since the
+tag is then irrelevant. Set `allowLatestTag: true` to override — for a scratch
+environment tracking a floating build, say.
+
+The catalogue importer runs from the **backend** image rather than a third one:
+that image already bakes `/app/scripts/extract_scf_data.py` and pins the same
+`pandas` and `openpyxl` the extractor needs, so a separate importer image would
+be a build with no content of its own. The Job invokes the extractor explicitly,
+because the backend image's own command is uvicorn.
 
 ## Requirements
 
@@ -49,6 +71,7 @@ runtime, so there are no silent defaults for any of the following:
 | Value | Required |
 |---|---|
 | `secretName` | always |
+| no image on the `latest` tag | unless `allowLatestTag` |
 | `database.host`, `.name`, `.username` | unless `database.urlFromSecret` |
 | `redis.host` | unless `redis.urlFromSecret` |
 | `evidenceStorage.bucket` | always |

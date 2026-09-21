@@ -17,6 +17,32 @@ Invoked once, from configmap.yaml.
 {{- fail "secretName is required: the name of the Secret holding the platform's credentials. See README, Secrets, for the keys it must carry." -}}
 {{- end -}}
 
+{{/* ---- images ---- */}}
+{{/*
+`latest` is not a version. Two pods of the same Deployment can be running
+different code after one of them restarts, and there is no way to tell from the
+cluster which is which — so the default is to refuse it outright. A digest makes
+the tag irrelevant, so an image pinned by digest is exempt.
+*/}}
+{{- if not .Values.allowLatestTag -}}
+{{- $images := dict
+      "backend.image" .Values.backend.image
+      "celery.worker.image" .Values.celery.worker.image
+      "celery.beat.image" .Values.celery.beat.image
+      "frontend.image" .Values.frontend.image
+      "migrations.image" .Values.migrations.image
+      "catalogData.importer.image" .Values.catalogData.importer.image
+      "tests.image" .Values.tests.image -}}
+{{- range $path, $image := $images -}}
+{{- if not $image.digest -}}
+{{- $tag := $image.tag | default $.Chart.AppVersion -}}
+{{- if eq $tag "latest" -}}
+{{- fail (printf "%s resolves to the tag \"latest\", which is not a version: a restarted pod can land on different code than its neighbours. Pin a release tag or a digest, or set allowLatestTag=true to override." $path) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
 {{/* ---- database ---- */}}
 {{- if not .Values.database.urlFromSecret -}}
 {{- if not .Values.database.host -}}

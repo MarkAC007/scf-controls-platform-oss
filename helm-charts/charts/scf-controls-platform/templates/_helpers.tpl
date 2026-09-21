@@ -68,10 +68,11 @@ SOPS, sealed-secrets, kubectl — is the operator's business.
 
 {{/*
 Image reference. `digest` wins over `tag` when both are set, so a CI-published
-chart can pin immutably without rewriting the tag.
+chart can pin immutably without rewriting the tag, and `global.imageRegistry`
+wins over the per-image registry so one value redirects every pull at a mirror.
 */}}
 {{- define "scf.image" -}}
-{{- $registry := .image.registry | default .root.Values.global.imageRegistry -}}
+{{- $registry := .root.Values.global.imageRegistry | default .image.registry -}}
 {{- $repo := .image.repository -}}
 {{- $ref := ternary (printf "@%s" .image.digest) (printf ":%s" (.image.tag | default .root.Chart.AppVersion)) (not (empty .image.digest)) -}}
 {{- if $registry -}}

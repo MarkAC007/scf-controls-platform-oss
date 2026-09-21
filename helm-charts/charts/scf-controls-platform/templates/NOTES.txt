@@ -24,11 +24,10 @@ Reach it
 Check it
   helm test {{ .Release.Name }} -n {{ .Release.Namespace }}
 
-{{- if contains "TODO" (printf "%s%s%s" .Values.backend.image.repository .Values.frontend.image.repository .Values.backend.image.tag) }}
+{{- if .Values.allowLatestTag }}
 
-WARNING: image references still contain TODO placeholders. Set backend.image,
-celery.worker.image, celery.beat.image and frontend.image to real, immutable
-references before this release serves anything.
+WARNING: allowLatestTag is set, so the `latest` tag check is disabled. A
+restarted pod can land on different code than its neighbours.
 {{- end }}
 
 

@@ -35,11 +35,11 @@ spec:
           imagePullPolicy: {{ .Values.catalogData.importer.image.pullPolicy }}
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
-          env:
-            - name: SCF_XLSX
-              value: {{ .Values.catalogData.importer.workbookPath | quote }}
-            - name: CATALOG_OUTPUT_DIR
-              value: /app/data/json
+          command: ["python", "/app/scripts/extract_scf_data.py"]
+          args:
+            - {{ .Values.catalogData.importer.workbookPath | quote }}
+            - --output-dir
+            - /app/data/json
           resources:
             {{- toYaml .Values.catalogData.importer.resources | nindent 12 }}
           volumeMounts:
