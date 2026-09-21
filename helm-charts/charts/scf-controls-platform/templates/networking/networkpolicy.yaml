@@ -1,0 +1,110 @@
+{{- if .Values.networkPolicy.enabled }}
+{{/*
+Default-deny ingress for every pod this chart owns - and then the specific
+ingresses for the frontend and backend.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "scf.fullname" . }}-default-deny
+  labels:
+    {{- include "scf.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "scf.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "scf.fullname" . }}-frontend
+  labels:
+    {{- include "scf.componentLabels" (dict "ctx" . "component" "frontend") | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "scf.componentSelectorLabels" (dict "ctx" . "component" "frontend") | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            {{- toYaml .Values.networkPolicy.ingressControllerNamespaceSelector | nindent 12 }}
+      ports:
+        - port: 80
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "scf.fullname" . }}-backend
+  labels:
+    {{- include "scf.componentLabels" (dict "ctx" . "component" "backend") | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "scf.componentSelectorLabels" (dict "ctx" . "component" "backend") | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "scf.componentSelectorLabels" (dict "ctx" . "component" "frontend") | nindent 14 }}
+      ports:
+        - port: 8000
+          protocol: TCP
+    {{- if not .Values.frontend.proxyApi }}
+    # frontend.proxyApi is off, so the ingress controller reaches /api/ itself.
+    - from:
+        - namespaceSelector:
+            {{- toYaml .Values.networkPolicy.ingressControllerNamespaceSelector | nindent 12 }}
+      ports:
+        - port: 8000
+          protocol: TCP
+    {{- end }}
+{{- if .Values.networkPolicy.egress.enabled }}
+---
+{{/*
+Egress is opt-in because the backend and worker reach Anthropic, Resend, HIBP and
+NVD over the internet; a default-deny egress policy breaks AI assessment, vendor
+research and invitation email in ways that surface as slow timeouts rather than
+errors. The cloud metadata endpoint is excluded so a server-side request forgery
+cannot reach instance credentials.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "scf.fullname" . }}-egress
+  labels:
+    {{- include "scf.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "scf.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Egress
+  egress:
+    # DNS
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # In-cluster: the rest of the release, and any in-cluster database,
+    # cache or object store
+    - to:
+        - namespaceSelector: {}
+    - to:
+        {{- range .Values.networkPolicy.egress.allowedCidrs }}
+        - ipBlock:
+            cidr: {{ . | quote }}
+            except:
+              {{- toYaml $.Values.networkPolicy.egress.excludedCidrs | nindent 14 }}
+        {{- end }}
+{{- end }}
+{{- end }}

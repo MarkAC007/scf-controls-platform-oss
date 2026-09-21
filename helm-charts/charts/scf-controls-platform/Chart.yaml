@@ -1,0 +1,19 @@
+apiVersion: v2
+name: scf-controls-platform
+version: 0.1.0
+type: application
+appVersion: xxxxxxx
+kubeVersion: ">=1.27.0-0"
+description: |-
+  Open-source release of the SCF Controls Platform — SCF-native GRC tooling,
+  built to run the free Secure Controls Framework content.
+home: https://github.com/MarkAC007/scf-controls-platform-oss
+sources:
+  - https://github.com/MarkAC007/scf-controls-platform-oss/helm-charts
+icon: https://avatars.githubusercontent.com/u/56160609
+maintainers:
+  - name: MarkAC007
+    url: https://github.com/MarkAC007
+annotations:
+  artifacthub.io/containsSecurityUpdates: "false"
+  artifacthub.io/prerelease: "true"

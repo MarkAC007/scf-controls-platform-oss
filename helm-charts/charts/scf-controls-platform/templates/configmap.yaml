@@ -1,0 +1,103 @@
+{{/*
+Non-secret application configuration. Every value here is safe to read from
+`kubectl get configmap -o yaml`; anything that is not belongs in the Secret
+named by `secretName`.
+*/}}
+{{- include "scf.validate" . }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "scf.fullname" . }}-config
+  labels:
+    {{- include "scf.labels" . | nindent 4 }}
+data:
+  # The image layers are read-only, so a stray .pyc write would fail the pod.
+  PYTHONDONTWRITEBYTECODE: "1"
+
+  ENVIRONMENT: {{ .Values.config.environment | quote }}
+  LOG_LEVEL: {{ .Values.config.logLevel | quote }}
+  RATE_LIMITING_ENABLED: {{ .Values.config.rateLimitingEnabled | quote }}
+  SCF_UPDATE_CHECK: {{ .Values.config.updateCheck | quote }}
+  OSS_SINGLE_TENANT: {{ .Values.config.singleTenant | quote }}
+  PLATFORM_VERSION: {{ .Values.config.platformVersion | quote }}
+  CATALOG_VERSION: {{ .Values.config.catalogVersion | quote }}
+  BOOTSTRAP_ADMIN_EMAIL: {{ .Values.config.bootstrapAdminEmail | quote }}
+
+  {{- $appUrl := .Values.config.appUrl }}
+  {{- if and (not $appUrl) .Values.ingress.enabled (gt (len .Values.ingress.hosts) 0) }}
+    {{- $host := (index .Values.ingress.hosts 0).host }}
+    {{- $scheme := ternary "https" "http" (gt (len .Values.ingress.tls) 0) }}
+    {{- $appUrl = printf "%s://%s" $scheme $host }}
+  {{- end }}
+  APP_URL: {{ $appUrl | quote }}
+
+  {{- if .Values.config.corsOrigins }}
+  CORS_ORIGINS: {{ join "," .Values.config.corsOrigins | quote }}
+  {{- else }}
+  CORS_ORIGINS: {{ $appUrl | quote }}
+  {{- end }}
+
+  # ---- database ----
+  {{- if include "scf.databaseUrlFromSecret" . }}
+  # DATABASE_URL arrives from the secret store, which the envFrom ordering puts
+  # after this ConfigMap.
+  {{- else }}
+  DATABASE_URL: ""
+  DB_HOST: {{ include "scf.databaseHost" . | quote }}
+  DB_PORT: {{ .Values.database.port | quote }}
+  DB_NAME: {{ .Values.database.name | quote }}
+  DB_USER: {{ .Values.database.username | quote }}
+  DB_SSLMODE: {{ .Values.database.sslMode | quote }}
+  {{- end }}
+
+  # ---- redis ----
+  {{- if not (include "scf.redisUrlFromSecret" .) }}
+  REDIS_URL: {{ include "scf.redisUrl" . | quote }}
+  CELERY_BROKER_URL: {{ include "scf.celeryRedisUrl" . | quote }}
+  CELERY_RESULT_BACKEND: {{ include "scf.celeryRedisUrl" . | quote }}
+  {{- end }}
+
+  # ---- evidence storage ----
+  EVIDENCE_BUCKET: {{ .Values.evidenceStorage.bucket | quote }}
+  AWS_DEFAULT_REGION: {{ .Values.evidenceStorage.region | quote }}
+  AWS_ENDPOINT_URL: {{ .Values.evidenceStorage.endpoint | quote }}
+  EVIDENCE_PUBLIC_ENDPOINT: {{ .Values.evidenceStorage.publicEndpoint | quote }}
+
+  # ---- identity ----
+  GOOGLE_AUTH_ENABLED: {{ .Values.google.enabled | quote }}
+  GOOGLE_CLIENT_ID: {{ .Values.google.enabled | ternary .Values.google.clientId "" | quote }}
+  OIDC_ISSUER: {{ .Values.oidc.enabled | ternary .Values.oidc.issuer "" | quote }}
+  OIDC_DISCOVERY_URL: {{ .Values.oidc.enabled | ternary .Values.oidc.discoveryUrl "" | quote }}
+  OIDC_CLIENT_ID: {{ .Values.oidc.enabled | ternary .Values.oidc.clientId "" | quote }}
+  OIDC_REDIRECT_URI: {{ .Values.oidc.enabled | ternary .Values.oidc.redirectUri "" | quote }}
+
+  # ---- email ----
+  RESEND_FROM_EMAIL: {{ .Values.config.email.fromAddress | quote }}
+
+  # ---- malware scanning ----
+  # With scanning on and no reachable clamd, scans record an error verdict
+  MALWARE_SCAN_ENABLED: {{ .Values.config.malwareScan.enabled | quote }}
+  CLAMD_HOST: {{ .Values.config.malwareScan.host | quote }}
+  CLAMD_PORT: {{ .Values.config.malwareScan.port | quote }}
+
+  # ---- assurance / KSI feature flags ----
+  ENABLE_PER_WINDOW_REVIEW: {{ .Values.config.features.perWindowReview | quote }}
+  ENABLE_WINDOW_ASSESSMENT_KSI: {{ .Values.config.features.windowAssessmentKsi | quote }}
+  ENABLE_COMPOSITE_KSI: {{ .Values.config.features.compositeKsi | quote }}
+
+  ARTIFACT_TYPE_LAZY_EXTRACTION: {{ .Values.config.windowAssessment.artifactTypeLazyExtraction | quote }}
+  WINDOW_ASSESSMENT_TEXT_BUDGET: {{ .Values.config.windowAssessment.textBudget | quote }}
+  WINDOW_ASSESSMENT_ON_INGEST: {{ .Values.config.windowAssessment.onIngest | quote }}
+  WINDOW_ASSESSMENT_INGEST_DEBOUNCE_SECONDS: {{ .Values.config.windowAssessment.ingestDebounceSeconds | quote }}
+
+  EVIDENCE_INTEGRITY_SWEEP_ENABLED: {{ .Values.config.evidenceIntegrity.sweepEnabled | quote }}
+  EVIDENCE_INTEGRITY_SWEEP_BATCH: {{ .Values.config.evidenceIntegrity.sweepBatch | quote }}
+
+  # ---- AI model overrides ----
+  # Empty means the backend's own model registry default.
+  SCF_AI_MODEL: {{ .Values.config.aiModels.scf | quote }}
+  EVIDENCE_AI_MODEL: {{ .Values.config.aiModels.evidence | quote }}
+  ARTIFACT_TYPE_AI_MODEL: {{ .Values.config.aiModels.artifactType | quote }}
+  VENDOR_AI_MODEL: {{ .Values.config.aiModels.vendor | quote }}
+  SYSTEMS_AI_MODEL: {{ .Values.config.aiModels.systems | quote }}
+  DOC_GEN_AI_MODEL: {{ .Values.config.aiModels.docGen | quote }}

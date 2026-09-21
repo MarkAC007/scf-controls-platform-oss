@@ -1,0 +1,622 @@
+# =============================================================================
+# SCF Controls Platform — Helm values
+#
+# This chart deploys the platform only: backend, Celery worker, Celery beat and
+# frontend. PostgreSQL, Redis and object storage are NOT deployed — point the
+# chart at the ones you already run. Celery has no switch; too much of the
+# platform runs there for it to be optional.
+#
+# Credentials are read from a Secret you supply (see secretName). Nothing in
+# this file is a secret, and none of it should ever become one.
+# =============================================================================
+
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+  # Applies to the bundled subcharts' volume claims when set.
+  storageClass: ""
+
+nameOverride: ""
+fullnameOverride: ""
+
+imagePullSecrets: []
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+  automountServiceAccountToken: false
+
+# -----------------------------------------------------------------------------
+# Credentials — REQUIRED
+#
+# The name of an existing Kubernetes Secret in this namespace holding every
+# credential the platform needs. This chart does not create it and does not know
+# where it came from: External Secrets Operator, Vault Agent, SOPS,
+# sealed-secrets or a one-off kubectl are all equally fine, and all are your
+# concern rather than the chart's.
+#
+# Every key is injected with envFrom, so a key that is absent is simply not set
+# and its feature stays off. The contract:
+#
+#   REQUIRED
+#     SCF_SECRET_KEY        Fernet key for at-rest encryption of integration
+#                           secrets. Changing it makes stored secrets unreadable.
+#     API_KEY               master API key
+#     DB_PASSWORD           unless database.urlFromSecret is set
+#
+#   REQUIRED BY A SETTING
+#     DATABASE_URL          when database.urlFromSecret is set
+#     REDIS_URL             } when redis.urlFromSecret is set
+#     CELERY_BROKER_URL     }
+#     CELERY_RESULT_BACKEND }
+#     OIDC_CLIENT_SECRET    when oidc.enabled is set
+#
+#   OPTIONAL
+#     DOWNLOAD_TOKEN_SECRET  signs evidence download links and upload tickets.
+#                            Falls back to API_KEY; with neither, links and
+#                            uploads are refused rather than forgeable.
+#     AWS_ACCESS_KEY_ID      omit both to use a pod identity (IRSA, Workload
+#     AWS_SECRET_ACCESS_KEY  Identity) on the service account instead
+#     ANTHROPIC_API_KEY, RESEND_API_KEY, HIBP_API_KEY, NVD_API_KEY,
+#     APPLICATIONINSIGHTS_CONNECTION_STRING
+#
+# Pods stay in CreateContainerConfigError until the Secret exists, which is the
+# expected state on a first install while an operator syncs it.
+# -----------------------------------------------------------------------------
+secretName: ""
+
+# -----------------------------------------------------------------------------
+# Images
+#
+# Placeholders until the CI image build lands. Every `TODO` here must be
+# replaced with a real registry path and an immutable tag or digest before this
+# chart is deployed anywhere real.
+# -----------------------------------------------------------------------------
+backend:
+  image:
+    registry: ""
+    repository: TODO/scf-backend
+    tag: TODO
+    digest: ""
+    pullPolicy: IfNotPresent
+
+  replicaCount: 1
+
+  service:
+    type: ClusterIP
+    port: 8000
+    annotations: {}
+
+  # Mirrors the compose `mem_limit: 2g`. Requests are set below the limit so the
+  # pod is Burstable; raise the request to the limit for Guaranteed QoS.
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      memory: 2Gi
+
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 75
+    targetMemoryUtilizationPercentage: ""
+    behavior: {}
+
+  podDisruptionBudget:
+    enabled: false
+    minAvailable: 1
+    maxUnavailable: ""
+
+  # Probe the same /health the compose healthcheck and load balancers use. It
+  # takes no authentication and never dials the object store.
+  livenessProbe:
+    initialDelaySeconds: 30
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readinessProbe:
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  startupProbe:
+    enabled: true
+    periodSeconds: 10
+    timeoutSeconds: 5
+    # The lifespan seeds the catalogue on first boot, which is slow on an empty
+    # database. 30 x 10s before the pod is declared failed.
+    failureThreshold: 30
+
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  topologySpreadConstraints: []
+  priorityClassName: ""
+  terminationGracePeriodSeconds: 30
+  extraEnv: []
+  extraVolumes: []
+  extraVolumeMounts: []
+
+celery:
+  # No `enabled` switch, by design: the platform's scheduled assessments,
+  # evidence ingest and document generation all run here.
+  worker:
+    image:
+      registry: ""
+      repository: TODO/scf-backend
+      tag: TODO
+      digest: ""
+      pullPolicy: IfNotPresent
+
+    replicaCount: 1
+    concurrency: 2
+    queues:
+      - default
+      - high_priority
+      - low_priority
+      - tprm_research
+      - dpsia
+      - evidence_assessment
+      - evidence_window
+      - evidence_composite
+      - catalog
+    logLevel: info
+    extraArgs: []
+
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+      limits:
+        memory: 3Gi
+
+    autoscaling:
+      enabled: false
+      minReplicas: 2
+      maxReplicas: 8
+      targetCPUUtilizationPercentage: 75
+      targetMemoryUtilizationPercentage: ""
+      behavior: {}
+
+    podDisruptionBudget:
+      enabled: false
+      minAvailable: 1
+      maxUnavailable: ""
+
+    livenessProbe:
+      enabled: true
+      initialDelaySeconds: 60
+      periodSeconds: 30
+      timeoutSeconds: 10
+      failureThreshold: 3
+
+    podAnnotations: {}
+    podLabels: {}
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
+    topologySpreadConstraints: []
+    priorityClassName: ""
+    # Long enough for an in-flight assessment or document render to finish
+    # before SIGKILL; Celery stops prefetching as soon as it gets SIGTERM.
+    terminationGracePeriodSeconds: 300
+    extraEnv: []
+    extraVolumes: []
+    extraVolumeMounts: []
+
+  beat:
+    image:
+      registry: ""
+      repository: TODO/scf-backend
+      tag: TODO
+      digest: ""
+      pullPolicy: IfNotPresent
+
+    # Never more than one: two schedulers double every periodic task.
+    logLevel: info
+
+    resources:
+      requests:
+        cpu: 100m
+        memory: 192Mi
+      limits:
+        memory: 512Mi
+
+    # HeartbeatScheduler stamps a Redis key with a TTL on every tick; the probe
+    # asks whether that key is still there, so a wedged beat fails on its own
+    # rather than reporting healthy forever.
+    livenessProbe:
+      enabled: true
+      initialDelaySeconds: 120
+      periodSeconds: 30
+      timeoutSeconds: 10
+      failureThreshold: 3
+
+    podAnnotations: {}
+    podLabels: {}
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
+    priorityClassName: ""
+    terminationGracePeriodSeconds: 30
+    extraEnv: []
+    extraVolumes: []
+    extraVolumeMounts: []
+
+frontend:
+  image:
+    registry: ""
+    repository: TODO/scf-frontend
+    tag: TODO
+    digest: ""
+    pullPolicy: IfNotPresent
+
+  replicaCount: 2
+
+  service:
+    type: ClusterIP
+    port: 80
+    annotations: {}
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      memory: 256Mi
+
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 75
+    targetMemoryUtilizationPercentage: ""
+    behavior: {}
+
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+    maxUnavailable: ""
+
+  # nginx proxies /api/ to the backend Service, exactly as it does in compose.
+  # Set to false only when the ingress controller routes /api/ to the backend
+  # itself; the entrypoint then starts in load-balancer mode.
+  proxyApi: true
+
+  # client_max_body_size. Clears the backend's 50 MB SCF workbook cap with
+  # headroom for multipart overhead. Raise the ingress body limit alongside it.
+  maxUploadSize: 64m
+
+  # Extra CSP connect-src origins for this deployment's evidence storage.
+  # Defaults to the browser-facing evidence endpoint (evidenceStorage.
+  # publicEndpoint) when that is set; anything else the browser must reach —
+  # a second S3 origin, an APM collector — belongs here.
+  extraConnectSrc: []
+
+  livenessProbe:
+    initialDelaySeconds: 10
+    periodSeconds: 20
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readinessProbe:
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  topologySpreadConstraints: []
+  priorityClassName: ""
+  terminationGracePeriodSeconds: 30
+  extraEnv: []
+  extraVolumes: []
+  extraVolumeMounts: []
+
+# -----------------------------------------------------------------------------
+# Application configuration (non-secret)
+# -----------------------------------------------------------------------------
+config:
+  environment: production
+  logLevel: INFO
+
+  # Public URL of the platform. Used in invitation emails and evidence links.
+  appUrl: ""
+
+  # Browser origins allowed to call the API. Leave empty to derive from
+  # ingress.hosts, which is right for the single-origin deployment.
+  corsOrigins: []
+
+  # Grants the master API key admin on the single organisation. Leave false for
+  # multi-tenant. See OSS_SINGLE_TENANT in .env.example.
+  singleTenant: false
+
+  # Email address seeded as the first platform admin on boot.
+  bootstrapAdminEmail: ""
+
+  # Opts out of the daily GitHub release poll.
+  updateCheck: true
+
+  platformVersion: ""
+  catalogVersion: ""
+
+  rateLimitingEnabled: false
+
+  # Assurance / KSI feature flags. All three must match across the backend and
+  # the worker, or the same organisation gets two different answers.
+  features:
+    perWindowReview: true
+    windowAssessmentKsi: true
+    compositeKsi: true
+
+  windowAssessment:
+    artifactTypeLazyExtraction: true
+    textBudget: 150000
+    onIngest: true
+    ingestDebounceSeconds: 120
+
+  evidenceIntegrity:
+    sweepEnabled: true
+    sweepBatch: ""
+
+  # ClamAV. With scanning on and no reachable clamd, scans record an error
+  # verdict rather than a clean one — the platform does not claim a file is safe
+  # because it failed to look. Point host/port at your own clamd Service.
+  malwareScan:
+    enabled: false
+    host: ""
+    port: 3310
+
+  # Model ids for the AI paths. Empty means the backend's own model registry
+  # default (backend/services/model_registry.py), which is the normal case.
+  aiModels:
+    scf: ""
+    evidence: ""
+    artifactType: ""
+    vendor: ""
+    systems: ""
+    docGen: ""
+
+  # Email delivery (Resend). The API key itself comes from the secret store.
+  email:
+    fromAddress: ""
+
+# -----------------------------------------------------------------------------
+# Database — REQUIRED
+#
+# Supply either the components below, or a whole DSN from the secret store with
+# urlFromSecret — the only way to pass a DSN that embeds credentials, since one
+# in a ConfigMap is readable by anything that can read the namespace.
+# -----------------------------------------------------------------------------
+database:
+  # REQUIRED unless urlFromSecret.
+  host: ""
+  port: 5432
+  name: cg_scf
+  username: cg
+  # require / verify-full / ... Empty leaves libpq's default.
+  sslMode: require
+  # true reads the whole DSN from the DATABASE_URL key of the secret store and
+  # ignores every component above.
+  urlFromSecret: false
+
+# -----------------------------------------------------------------------------
+# Redis — REQUIRED. Cache (db 0) and the Celery broker/result backend (db 1)
+#
+# The two logical databases are kept apart so flushing the cache never drops
+# queued work.
+# -----------------------------------------------------------------------------
+redis:
+  # REQUIRED unless urlFromSecret.
+  host: ""
+  port: 6379
+  cacheDatabase: 0
+  celeryDatabase: 1
+  # true reads REDIS_URL, CELERY_BROKER_URL and CELERY_RESULT_BACKEND from the
+  # secret store instead — the only way to pass a Redis password.
+  urlFromSecret: false
+
+# -----------------------------------------------------------------------------
+# Evidence object storage — REQUIRED
+#
+# S3, or any S3-compatible store. Credentials come from the secret store; only
+# the non-secret coordinates are here.
+#
+# Azure Blob is deliberately absent: the backend retired that driver and now
+# ignores AZURE_STORAGE_ACCOUNT_NAME, logging a warning and falling through to
+# S3 (see backend/services/storage_service.py). Offering it here would be
+# offering a path that no longer works.
+# -----------------------------------------------------------------------------
+evidenceStorage:
+  # REQUIRED. Without a bucket the backend resolves to no storage backend at
+  # all and every upload fails with a 409 naming the Settings screen.
+  bucket: ""
+
+  region: eu-west-1
+
+  # Internal S3 endpoint the backend and worker dial. Leave empty for AWS S3;
+  # set it for MinIO, Ceph, or any other S3-compatible store.
+  endpoint: ""
+
+  # The endpoint a BROWSER uses for presigned upload and download. Required
+  # whenever `endpoint` is set, because the browser cannot reach an in-cluster
+  # address. Added to the frontend's CSP connect-src automatically.
+  publicEndpoint: ""
+
+  # Credentials are optional: omit AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY
+  # from the Secret and annotate the service account instead (IRSA, Workload
+  # Identity), which boto3 picks up on its own and avoids a static key
+  # altogether.
+
+# -----------------------------------------------------------------------------
+# Identity — any OIDC provider (Keycloak, Entra, Okta, ...)
+#
+# At least one sign-in path must be configured: oidc, google, or the
+# single-tenant master key (config.singleTenant). Enabling a provider makes its
+# settings mandatory.
+# -----------------------------------------------------------------------------
+oidc:
+  enabled: false
+  # The PUBLIC issuer identifier, byte-compared against the `iss` claim of every
+  # token. The backend treats a non-empty OIDC_ISSUER as the switch that turns
+  # OIDC login on, so this chart leaves it empty while enabled is false.
+  issuer: ""
+  # Only when the backend fetches the discovery document from a different origin
+  # than the browser uses (a split proxy). Defaults to issuer in-process.
+  discoveryUrl: ""
+  clientId: ""
+  redirectUri: ""
+
+google:
+  enabled: false
+  clientId: ""
+
+# -----------------------------------------------------------------------------
+# Database migrations
+#
+# A pre-install/pre-upgrade hook Job runs the backend's own migration path —
+# guard, upgrade, record version — once per release, before anything rolls.
+# Argo CD maps that to PreSync, so the same annotations work under both.
+#
+# The backend also migrates from its own startup path and cannot be told not
+# to; once this Job has run, that becomes a no-op and the guard permits it.
+# -----------------------------------------------------------------------------
+migrations:
+  enabled: true
+
+  image:
+    registry: ""
+    repository: TODO/scf-backend
+    tag: TODO
+    digest: ""
+    pullPolicy: IfNotPresent
+
+  # Acknowledges the guard's backup sentinel. Empty means the Job REFUSES to
+  # migrate an existing database, which is the intended default: set this to the
+  # target version in the same change that bumps the image tag, so the upgrade
+  # is explicit and reviewable. "any" disables the sentinel permanently — only
+  # reasonable when the pipeline provably backs up first.
+  #
+  # Neither a fresh database nor one already at head needs this: the guard
+  # permits both outright.
+  acknowledge: ""
+
+  # One-off acknowledgement for the CDM table drop (migration cdmdrop001).
+  # See UPGRADING.md; leave empty unless that migration is the one pending.
+  cdmDropAcknowledge: ""
+
+  # 0 means a failed migration is not retried. Retrying a refusal just repeats
+  # it, and retrying a genuine failure risks compounding a partial change.
+  backoffLimit: 0
+  activeDeadlineSeconds: 1800
+
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      memory: 2Gi
+
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  extraEnv: []
+
+# -----------------------------------------------------------------------------
+# Ingress
+# -----------------------------------------------------------------------------
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: scf.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+# -----------------------------------------------------------------------------
+# Network policy
+#
+# Default-deny ingress for every pod this chart owns, plus the flows the
+# platform actually needs. Egress is left open unless egress.enabled is set,
+# because the backend and worker reach Anthropic, Resend, HIBP and NVD.
+# -----------------------------------------------------------------------------
+networkPolicy:
+  enabled: false
+  # Selector for the namespace the ingress controller runs in.
+  ingressControllerNamespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: ingress-nginx
+  egress:
+    enabled: false
+    # CIDRs the backend and worker may reach — third-party APIs, and the
+    # database, cache and object store if those live outside the cluster.
+    allowedCidrs:
+      - 0.0.0.0/0
+    excludedCidrs:
+      - 169.254.169.254/32
+
+# -----------------------------------------------------------------------------
+# SCF catalogue content
+#
+# The images ship the importer and the curated non-SCF JSON only; the SCF
+# catalogue itself is licensed, so you bring your own workbook. Enabling this
+# provisions a ReadWriteMany claim that the importer Job writes and the backend
+# and worker read.
+# -----------------------------------------------------------------------------
+catalogData:
+  enabled: false
+  existingClaim: ""
+  size: 2Gi
+  storageClass: ""
+  accessModes:
+    - ReadWriteMany
+
+  importer:
+    # Run as a Job on install. Needs the workbook to already be on the claim.
+    enabled: false
+    image:
+      registry: ""
+      repository: TODO/scf-catalog-importer
+      tag: TODO
+      digest: ""
+      pullPolicy: IfNotPresent
+    # Where the SCF .xlsx sits on the claim, which is mounted at
+    # /app/data/json. The extractor writes its output alongside it.
+    workbookPath: /app/data/json/scf.xlsx
+    backoffLimit: 1
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        memory: 2Gi
+
+# -----------------------------------------------------------------------------
+# Pod-level hardening, mirroring the compose stack's container hardening.
+# -----------------------------------------------------------------------------
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1001
+  runAsGroup: 1001
+  fsGroup: 1001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
