@@ -36,4 +36,11 @@ services:
       VITE_API_URL: ${VITE_API_URL:-http://localhost:8000/api}
       VITE_API_KEY: ${VITE_API_KEY}
       VITE_GOOGLE_AUTH_ENABLED: ${VITE_GOOGLE_AUTH_ENABLED}
+      # Without this line, VITE_OIDC_ENABLED=true in the root .env lights up OIDC
+      # in the nginx frontend (docker-compose.yml passes it as a build arg) but
+      # NOT in this dev overlay, because vite dev reads its VITE_* from process
+      # env and the mounted webclient/.env — neither of which sees the root .env
+      # unless it is forwarded here. The symptom is a hot-reload stack that
+      # silently falls back to API-key auth while the flag reads true.
+      VITE_OIDC_ENABLED: ${VITE_OIDC_ENABLED}
     command: npm run dev -- --host 0.0.0.0

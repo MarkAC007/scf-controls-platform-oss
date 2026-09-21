@@ -1,0 +1,80 @@
+{
+  "template_key": "compliancegenie-default",
+  "template_version": "1.0.0",
+  "name": "Compliance transformation",
+  "description": "The path an organisation walks from a set of policies and an audit date to a control set that is owned, documented, evidenced and watched. Seven stages. A practitioner decides when each one is finished.",
+  "attribution": "Stage content authored by ComplianceGenie.io. Replace it with your own template if you run a different programme.",
+  "stages": [
+    {
+      "key": "mobilise",
+      "title": "Mobilise",
+      "summary": "Agree what is in scope, who owns what, and when the audit is. Nothing is assessed yet — this stage exists so the rest of the road has a map and named people on it.",
+      "expect_next": "You will be asked to confirm your frameworks, name an owner for each area of the business, and give us the date your audit fieldwork starts. Expect one workshop with your sponsor.",
+      "precondition_spec": [
+        { "type": "frameworks_scoped", "min_count": 1, "label": "At least one framework scoped" },
+        { "type": "controls_with_decision", "min_fraction": 0.95, "label": "95% of controls have a scope decision" },
+        { "type": "controls_with_owner", "min_fraction": 0.9, "label": "90% of in-scope controls have an owner" }
+      ]
+    },
+    {
+      "key": "determine",
+      "title": "Set the determinants",
+      "summary": "Settle the decisions everything else depends on: how you govern, how you judge risk, what obligations you carry, how you classify information. These are leadership decisions, not technical work.",
+      "expect_next": "Workshops with your sponsor and compliance lead. The output is decisions written down and approved — minutes, a risk approach, an obligations list. Those documents become your first evidence.",
+      "precondition_spec": [
+        { "type": "documents_approved", "min_count": 3, "label": "At least three approved documents" },
+        { "type": "controls_at_status", "statuses": ["implemented", "ready_for_review", "monitored"], "min_fraction": 0.2, "label": "20% of in-scope controls implemented" }
+      ]
+    },
+    {
+      "key": "registers",
+      "title": "Build the registers",
+      "summary": "Your assets, your people, your suppliers, your data. An auditor will reconcile each register against a source export, so a register that cannot be traced back to a system is not finished.",
+      "expect_next": "Your own teams do most of this. Expect to nominate the system each register is drawn from, and to produce one export per register that we can check the register against.",
+      "precondition_spec": [
+        { "type": "evidence_items_tracked", "min_count": 10, "label": "Ten or more evidence items tracked" },
+        { "type": "evidence_files_uploaded", "min_count": 5, "label": "Five or more evidence files uploaded" }
+      ]
+    },
+    {
+      "key": "evidence",
+      "title": "Evidence the operating controls",
+      "summary": "Show the controls running, not just written down. Each one needs a named collector, a frequency, and a first collection that came out of the live system rather than a policy document.",
+      "expect_next": "For every mandatory item: who collects it, from which system, how often. Then one real collection each. Evidence that all arrives in the week before a deadline reads as inflation to an auditor, so this stage rewards starting early.",
+      "precondition_spec": [
+        { "type": "evidence_items_tracked", "min_count": 25, "label": "Twenty-five or more evidence items tracked" },
+        { "type": "evidence_files_uploaded", "min_count": 25, "label": "Twenty-five or more evidence files uploaded" },
+        { "type": "controls_at_status", "statuses": ["implemented", "ready_for_review", "monitored"], "min_fraction": 0.7, "label": "70% of in-scope controls implemented" },
+        { "type": "evidence_upload_spread_days", "min_days": 30, "label": "Uploads spread over 30 days or more" }
+      ]
+    },
+    {
+      "key": "internal-review",
+      "title": "Internal review and freeze",
+      "summary": "Go back over everything already signed off and check it still holds. Anything that has drifted gets fixed or declared. After this, the scope stops moving.",
+      "expect_next": "A second pass over closed areas, your internal audit and management review, and a decision on anything still outstanding: it is either finished, or it is declared to the auditor with a date.",
+      "precondition_spec": [
+        { "type": "controls_at_status", "statuses": ["implemented", "ready_for_review", "monitored"], "min_fraction": 0.95, "label": "95% of in-scope controls implemented" },
+        { "type": "controls_at_risk_max", "max_count": 10, "label": "Ten or fewer controls flagged at risk" }
+      ]
+    },
+    {
+      "key": "fieldwork",
+      "title": "Audit fieldwork",
+      "summary": "The auditor asks; your owners answer. Nothing else changes while this runs.",
+      "expect_next": "Your control owners answer queries directly, with us reviewing before anything goes back. Expect the auditor to sample records themselves rather than accept the ones you chose.",
+      "precondition_spec": [
+        { "type": "engagement_exists", "label": "An audit engagement exists" }
+      ]
+    },
+    {
+      "key": "steady-state",
+      "title": "Steady state",
+      "summary": "Evidence keeps arriving on schedule without anyone chasing it. Findings become risks or flagged controls. The next cycle plans itself backwards from the next audit date.",
+      "expect_next": "A monthly steering rhythm and a quarterly review. Anything deferred from this cycle becomes early work in the next one.",
+      "precondition_spec": [
+        { "type": "controls_at_status", "statuses": ["monitored"], "min_fraction": 0.5, "label": "Half of in-scope controls in monitoring" }
+      ]
+    }
+  ]
+}

@@ -3033,6 +3033,133 @@ class UserScopePreferences(Base):
 
 
 # =============================================================================
+# Organisational Journey — the staged path an organisation walks
+# =============================================================================
+
+
+class JourneyStageState(str, Enum):
+    """
+    Where one stage of an organisation's journey stands.
+
+    The progression is LOCKED -> ACTIVE -> AWAITING_ATTESTATION -> PASSED.
+
+    AWAITING_ATTESTATION exists because a stage never advances on computed
+    evidence alone. The platform can see that the mechanical preconditions are
+    met; it cannot see whether the control owners could explain their controls
+    with nobody helping them. That judgement is a named person's signature,
+    recorded in `attested_by_user_id`, and nothing in this codebase may write
+    PASSED without one.
+
+    PASSED_CONDITIONAL is a stage signed off with named items still outstanding
+    — typically something that needs calendar time rather than effort. It
+    carries a `target_date` by which those items are expected to land.
+    """
+    LOCKED = "locked"
+    ACTIVE = "active"
+    AWAITING_ATTESTATION = "awaiting_attestation"
+    PASSED = "passed"
+    PASSED_CONDITIONAL = "passed_conditional"
+
+    @classmethod
+    def values(cls) -> List[str]:
+        return [s.value for s in cls]
+
+
+class OrgJourney(Base):
+    """
+    One organisation's journey: an ordered path of stages it is walking.
+
+    The platform ships the *engine*, never the journey. A journey's stages are
+    per-organisation data, imported from a template by whoever holds the
+    practitioner relationship. A rival consultancy imports their own template;
+    nothing about the stages is compiled into the product.
+
+    `activated_at` is the difference between a road and a map. Until it is set,
+    the organisation can see the shape of the journey — every stage, in order,
+    with what each one will ask of them — but no stage is in progress. That is
+    deliberate: an organisation without a practitioner still gets to see where
+    it is going.
+    """
+    __tablename__ = 'org_journeys'
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey('organizations.id', ondelete='CASCADE'), nullable=False)
+    name = Column(String(255), nullable=False)
+    description = Column(Text)
+    # Which template this journey was imported from, so a later template
+    # revision can be reconciled against a journey already in flight.
+    template_key = Column(String(100))
+    template_version = Column(String(50))
+    # The organisation acting as practitioner. NULL means nobody is engaged and
+    # the journey renders as an unlit map.
+    practitioner_organization_id = Column(UUID(as_uuid=True), ForeignKey('organizations.id', ondelete='SET NULL'), nullable=True)
+    practitioner_name = Column(String(255))
+    activated_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    stages = relationship(
+        'JourneyStage',
+        back_populates='journey',
+        cascade='all, delete-orphan',
+        order_by='JourneyStage.ordinal',
+    )
+
+    __table_args__ = (
+        # One journey per organisation for now. Multiple concurrent journeys
+        # (a certification alongside a regulatory programme) is a later problem
+        # and deliberately not modelled here.
+        UniqueConstraint('organization_id', name='uq_org_journey_organization'),
+    )
+
+
+class JourneyStage(Base):
+    """
+    One stone on the path.
+
+    `precondition_spec` is a declarative list of checks evaluated against data
+    the platform already holds — control statuses, tracked evidence, approved
+    documents. It is data, not code, so a practitioner's template defines what
+    a stage requires without anyone touching the product.
+
+    The preconditions are advisory by design. They turn green; they do not
+    advance the stage.
+    """
+    __tablename__ = 'journey_stages'
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    journey_id = Column(UUID(as_uuid=True), ForeignKey('org_journeys.id', ondelete='CASCADE'), nullable=False)
+    ordinal = Column(Integer, nullable=False)
+    key = Column(String(100), nullable=False)
+    title = Column(String(255), nullable=False)
+    # What this stage asks of the organisation, in the practitioner's words.
+    summary = Column(Text)
+    # What the organisation should expect when this stage opens — shown on a
+    # locked stone so a future stage is legible rather than mysterious.
+    expect_next = Column(Text)
+    precondition_spec = Column(JSON)
+
+    state = Column(String(50), nullable=False, default=JourneyStageState.LOCKED.value)
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    attested_by_user_id = Column(UUID(as_uuid=True), ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
+    attested_at = Column(DateTime(timezone=True), nullable=True)
+    attestation_note = Column(Text)
+    # Set when a stage passes conditionally: the date the outstanding items are
+    # due. Deliberately the same shape as ScopedControl.target_date.
+    target_date = Column(Date, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    journey = relationship('OrgJourney', back_populates='stages')
+
+    __table_args__ = (
+        UniqueConstraint('journey_id', 'ordinal', name='uq_journey_stage_ordinal'),
+        UniqueConstraint('journey_id', 'key', name='uq_journey_stage_key'),
+    )
+
+
+# =============================================================================
 # Catalog Upgrade & Per-Org Reconciliation
 # =============================================================================
 

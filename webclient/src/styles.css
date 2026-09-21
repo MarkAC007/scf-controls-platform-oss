@@ -34898,3 +34898,414 @@ button.risk-list-header-cell:hover {
   line-height: 1.6;
   text-align: center;
 }
+
+/* ==========================================================================
+   Organisational journey — the stepping-stone path
+   --------------------------------------------------------------------------
+   Two rules govern this block.
+
+   State is never carried by colour alone. Every stone shows a glyph and the
+   state spelled out in words; the colour is the third signal, not the first.
+   That is what keeps the path legible to a colour-blind reader and in a
+   greyscale print of a board pack.
+
+   The unlit path is dimmed, not disabled. An organisation with no practitioner
+   reads every word of every stage — opacity drops to about 0.7, which reads as
+   "not yet", where a heavier fade or a lock icon would read as "buy this".
+   ========================================================================== */
+
+.journey-page {
+  padding: 24px 28px 48px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.journey-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+}
+
+.journey-title {
+  font-family: var(--font-sans);
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--text);
+  margin: 0 0 4px;
+}
+
+.journey-subtitle {
+  font-size: 0.875rem;
+  color: var(--muted);
+  margin: 0;
+}
+
+.journey-subtitle strong { color: var(--text); font-weight: 600; }
+
+.journey-loading,
+.journey-empty-note {
+  color: var(--muted);
+  font-size: 0.875rem;
+  padding: 12px 0;
+  margin: 0;
+}
+
+.journey-unlit-note {
+  background: var(--info-bg);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--info);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  font-size: 0.875rem;
+  line-height: 1.6;
+  color: var(--text);
+  margin-bottom: 24px;
+}
+
+/* --- the path ----------------------------------------------------------- */
+
+.journey-path {
+  list-style: none;
+  margin: 0 0 28px;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+/* Dimmed, never hidden. See the note at the top of this block. */
+.journey-path-unlit { opacity: 0.7; }
+
+.journey-stone {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+  overflow: hidden;
+}
+
+.journey-stone-current {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-sm);
+}
+
+.journey-stone-button {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 28px 24px 1fr auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  background: none;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+  font-family: var(--font-sans);
+  color: var(--text);
+}
+
+.journey-stone-button:hover { background: var(--card-hover); }
+
+.journey-stone-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* The glyph is the first, non-colour signal of state. */
+.journey-stone-marker {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  font-weight: 700;
+  border: 1px solid var(--border-visible);
+  background: transparent;
+  color: var(--muted);
+  flex: 0 0 auto;
+}
+
+.journey-stone-ordinal {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.journey-stone-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* The state in words, so the path survives greyscale and colour blindness. */
+.journey-stone-state {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.journey-stone-pre {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.journey-stone-locked .journey-stone-title { color: var(--muted); }
+
+.journey-stone-active .journey-stone-marker,
+.journey-stone-awaiting_attestation .journey-stone-marker {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--primary-foreground);
+}
+
+.journey-stone-active .journey-stone-state { color: var(--accent); }
+
+/* Awaiting sign-off is its own state, not a shade of passed: every check is
+   green and the stage is still open, because nobody has signed it. */
+.journey-stone-awaiting_attestation .journey-stone-marker {
+  background: var(--warning);
+  border-color: var(--warning);
+  color: #fff;
+}
+
+.journey-stone-awaiting_attestation .journey-stone-state { color: var(--warning); }
+
+.journey-stone-awaiting_attestation {
+  border-color: var(--warning);
+  background: var(--warning-bg);
+}
+
+.journey-stone-passed .journey-stone-marker,
+.journey-stone-passed_conditional .journey-stone-marker {
+  background: var(--success);
+  border-color: var(--success);
+  color: #fff;
+}
+
+.journey-stone-passed .journey-stone-state,
+.journey-stone-passed_conditional .journey-stone-state { color: var(--success); }
+
+.journey-stone-passed_conditional .journey-stone-marker {
+  background: var(--success-bg);
+  border-color: var(--success);
+  color: var(--success);
+}
+
+/* --- expanded detail ---------------------------------------------------- */
+
+.journey-stone-detail {
+  padding: 4px 16px 18px 68px;
+  border-top: 1px solid var(--border);
+  background: var(--surface-lowest);
+}
+
+.journey-stone-summary,
+.journey-stone-expect {
+  font-size: 0.875rem;
+  line-height: 1.65;
+  color: var(--text);
+  margin: 14px 0 0;
+}
+
+.journey-label {
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.journey-check-list {
+  list-style: none;
+  margin: 16px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.journey-check {
+  display: grid;
+  grid-template-columns: 18px 1fr auto;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 0.82rem;
+  color: var(--text);
+}
+
+.journey-check-glyph {
+  font-weight: 700;
+  text-align: center;
+  color: var(--muted);
+}
+
+.journey-check-met .journey-check-glyph { color: var(--success); }
+.journey-check-unmet .journey-check-label { color: var(--muted); }
+
+/* "We could not evaluate this" is deliberately not styled as a failure —
+   unknown is not a no, and reading it as one would send someone chasing work
+   that may already be done. */
+.journey-check-unknown .journey-check-glyph { color: var(--warning); }
+
+.journey-check-detail {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.journey-attested {
+  margin: 16px 0 0;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: var(--success-bg);
+  font-size: 0.8rem;
+  line-height: 1.6;
+  color: var(--text);
+}
+
+/* --- attestation -------------------------------------------------------- */
+
+.journey-attest-form {
+  margin-top: 18px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  max-width: 620px;
+}
+
+.journey-attest-note {
+  width: 100%;
+  font-family: var(--font-sans);
+  font-size: 0.85rem;
+  padding: 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-visible);
+  background: var(--surface-lowest);
+  color: var(--text);
+  resize: vertical;
+}
+
+.journey-attest-conditional {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.82rem;
+  color: var(--text);
+  margin: 12px 0;
+}
+
+.journey-attest-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+
+.journey-attest-caveat {
+  margin: 12px 0 0;
+  font-size: 0.75rem;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+/* --- today / what next -------------------------------------------------- */
+
+.journey-panels {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  gap: 16px;
+}
+
+.journey-focus,
+.journey-next {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+  padding: 18px 20px;
+}
+
+.journey-panel-title {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 0 0 12px;
+}
+
+.journey-focus-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.journey-focus-item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.85rem;
+  color: var(--text);
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.journey-focus-item:last-child { border-bottom: none; padding-bottom: 0; }
+
+.journey-focus-detail {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.journey-focus-link { margin-top: 16px; }
+
+.journey-next-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0 0 8px;
+}
+
+.journey-next-body {
+  font-size: 0.85rem;
+  line-height: 1.65;
+  color: var(--muted);
+  margin: 0;
+}
+
+/* --- reflow ------------------------------------------------------------- */
+
+@media (max-width: 900px) {
+  .journey-panels { grid-template-columns: 1fr; }
+  .journey-stone-detail { padding-left: 16px; }
+}
+
+@media (max-width: 640px) {
+  .journey-page { padding: 16px 14px 40px; }
+
+  /* The ordinal, the state and the check count stack under the title rather
+     than squeezing five columns into a phone. */
+  .journey-stone-button {
+    grid-template-columns: 28px 1fr;
+    row-gap: 4px;
+  }
+  .journey-stone-ordinal { display: none; }
+  .journey-stone-title { grid-column: 2; }
+  .journey-stone-state,
+  .journey-stone-pre { grid-column: 2; justify-self: start; }
+  .journey-focus-item { flex-direction: column; gap: 2px; }
+}

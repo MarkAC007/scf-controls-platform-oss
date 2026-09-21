@@ -31,6 +31,7 @@
  */
 export const SYNCED_TABS = [
   // Overview
+  'journey',
   'capability-posture',
   // Controls & Frameworks
   'library',
@@ -98,6 +99,7 @@ export type Tab = AppTab
  */
 export const TAB_TITLES = {
   'dashboard':          'Dashboard',
+  'journey':            'Journey',
   'capability-posture': 'Analytics',
   'library':            'Control Library',
   'mapping-matrix':     'Framework Mappings',

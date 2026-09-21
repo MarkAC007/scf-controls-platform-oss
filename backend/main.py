@@ -67,6 +67,7 @@ from api import (
     control_composites,
     audit_engagements,
     trust_portal,
+    journey,
     catalog_admin,
     catalog_upgrade_admin,
     catalog_reconciliation,
@@ -453,6 +454,7 @@ app.include_router(evidence_window_assessment.router, prefix="/api")  # Windowed
 app.include_router(control_composites.router, prefix="/api")  # Control assessment composites read API (M3 PR 2, #575)
 app.include_router(audit_engagements.router, prefix="/api")  # Audit Engagement Workspaces (Issue #370 Phase D)
 app.include_router(trust_portal.router, prefix="/api")  # Public trust portal (unauthenticated)
+app.include_router(journey.router, prefix="/api")  # Organisational journey — staged path with practitioner attestation
 # OIDC login / callback endpoints. The router self-prefixes /api/auth, so it is
 # included WITHOUT an extra prefix here (a "/api" prefix would double to /api/api/auth).
 app.include_router(oidc_auth.router)
