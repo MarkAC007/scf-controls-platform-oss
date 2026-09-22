@@ -72,30 +72,42 @@ fi
 # An UNSET variable is omitted rather than written as "". The two are not the
 # same: SCF_APP_LOGO="" hides the logo, while unset means "use the bundled
 # default". Collapsing them would make it impossible to ask for no logo.
+#
+# The object is built by jq and emitted as a single JSON.parse() argument rather
+# than hand-escaped. This is environment-to-JavaScript codegen, where a value is
+# arbitrary operator input: a newline breaks the file, and a `</script>` ends it
+# early, which is worse than breaking it. jq -Rn owns the escaping, and JSON is
+# a subset of JavaScript object syntax, so a correctly escaped JSON string is a
+# correct JavaScript string.
 # ---------------------------------------------------------------------------
 CONFIG_JS=/tmp/config.js
 CONFIG_KEYS="APP_TITLE APP_LOGO MARKETING_WEBSITE_URL ENABLE_PER_WINDOW_REVIEW DEBUG_API"
 
-# Backslashes first, then quotes: escaping quotes first would then have its own
-# backslashes escaped again.
-_js_escape() {
-  printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
+_config_json() {
+  # Built one key at a time and merged. `eval` is used only to dereference the
+  # variable NAME; the value itself is passed to jq as an ordinary argument, so
+  # it is never re-parsed by the shell. Interpolating it into an eval'd jq
+  # command line instead silently eats any quote the operator set.
+  _json='{}'
+  for _key in $CONFIG_KEYS; do
+    eval "_isset=\${SCF_${_key}+yes}"
+    [ "${_isset:-}" = yes ] || continue
+    eval "_value=\$SCF_${_key}"
+    _json="$(printf '%s' "$_json" | jq --arg k "$_key" --arg v "$_value" '. + {($k): $v}')"
+    echo "Runtime config: ${_key} set" >&2
+  done
+  printf '%s' "$_json"
 }
 
+# The JSON is embedded as a JavaScript string literal, so jq escapes it a second
+# time. `<` then becomes \u003c, which decodes to the same character but cannot
+# spell `</script>` — this file is external, where that is already harmless, but
+# the escape keeps it harmless if it is ever inlined.
+_config_literal="$(_config_json | jq -Rs . | sed -e 's/</\\u003c/g')"
 {
   echo "// Generated at container start by docker-entrypoint.sh. Do not edit."
-  echo "window.__SCF_CONFIG__ = {"
+  printf 'window.__SCF_CONFIG__ = JSON.parse(%s);\n' "$_config_literal"
 } > "$CONFIG_JS"
-
-for _key in $CONFIG_KEYS; do
-  eval "_isset=\${SCF_${_key}+yes}"
-  [ "${_isset:-}" = yes ] || continue
-  eval "_value=\$SCF_${_key}"
-  printf '  "%s": "%s",\n' "$_key" "$(_js_escape "$_value")" >> "$CONFIG_JS"
-  echo "Runtime config: ${_key} set"
-done
-
-echo "};" >> "$CONFIG_JS"
 
 echo "Nginx config validated, testing configuration..."
 

@@ -990,6 +990,21 @@ services:
       # Raise it only if you also raise the backend cap. Evidence files bypass
       # this entirely — they go browser-to-S3/MinIO via a presigned URL.
       MAX_UPLOAD_SIZE: ${MAX_UPLOAD_SIZE:-64m}
+      # Runtime application config (#112). The entrypoint renders these into
+      # /config.js, which the page loads before the app bundle — so branding and
+      # the review mode are deployment settings rather than properties of the
+      # image, and changing one is a restart rather than a rebuild.
+      #
+      # `${VAR+x}`-style presence matters here: the entrypoint omits a variable
+      # it was not given, and an omitted SCF_APP_LOGO means "bundled default"
+      # while an empty one means "no logo at all". Compose cannot express
+      # "unset" for a listed key, so each default below is the empty string and
+      # the logo is deliberately NOT listed — set it in an override when you
+      # want to hide it.
+      SCF_APP_TITLE: ${SCF_APP_TITLE:-}
+      SCF_MARKETING_WEBSITE_URL: ${SCF_MARKETING_WEBSITE_URL:-}
+      SCF_ENABLE_PER_WINDOW_REVIEW: ${ENABLE_PER_WINDOW_REVIEW:-true}
+      SCF_DEBUG_API: ${SCF_DEBUG_API:-}
       # Only consumed by the Vite DEV server (docker-compose.dev.yml overlay),
       # where vite.config.ts is evaluated by Node at container start. Set it
       # when the dev UI is reached under a hostname Vite would otherwise reject
