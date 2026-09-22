@@ -26,10 +26,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        # SHA-pinned: semgrep's github-actions-mutable-action-tag rule rejects a
+        # floating tag, since the owner can silently repoint it. Same pin as
+        # ci.yml and semgrep.yml use.
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
 
       - name: Set up Helm
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
         with:
           version: v3.16.3
 
