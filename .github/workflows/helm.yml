@@ -70,6 +70,34 @@ jobs:
           done
 
       # Check that invalid configuration options cause a failure to render, as expected.
+      # kubeconform proves the manifests are schema-valid. It never starts a
+      # container, so it cannot see one that will not start — which is how
+      # `command: [celery]` with args beginning `- celery` shipped, rendering
+      # `celery celery ...` and CrashLoopBackOff on perfectly valid YAML.
+      - name: No container repeats its executable in args
+        run: |
+          helm template scf "$CHART" --values "$CHART/ci/full-values.yaml" \
+            | python3 "$CHART/ci/assert-container-argv.py"
+
+      # helm validates values.schema.json BEFORE rendering, so a schema rule on a
+      # field that ships empty makes the matching _validate.tpl message
+      # unreachable on the one path that needs it most: a default install.
+      - name: A default install fails with our message, not a schema error
+        run: |
+          out="$(helm template scf "$CHART" 2>&1 || true)"
+          case "$out" in
+            *"schema"*)
+              echo "::error::a default install dies on values.schema.json before _validate.tpl runs"
+              printf '%s\n' "$out" | head -10
+              exit 1 ;;
+            *"secretName is required"*)
+              echo "ok: the operator sees the chart's own message" ;;
+            *)
+              echo "::error::unexpected output from a default install"
+              printf '%s\n' "$out" | head -10
+              exit 1 ;;
+          esac
+
       - name: Guards still refuse invalid configurations
         run: |
           set -u
