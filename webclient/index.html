@@ -10,6 +10,11 @@
     <meta name="theme-color" content="#1a202c" />
     <title>SCF Controls Platform - GRC Control Management</title>
     <link rel="stylesheet" href="/src/styles.css" />
+    <!-- Runtime config, written by the container at start. Must load before the
+         app bundle: the values are read at module scope. External, and classic
+         rather than module, for the same two reasons as theme-init.js below —
+         no script-src 'unsafe-inline', and it runs during parse. -->
+    <script src="/config.js"></script>
     <!-- Prevent flash of wrong theme. External (not inline) so the CSP can drop
          script-src 'unsafe-inline' — see webclient/public/theme-init.js. -->
     <script src="/theme-init.js"></script>

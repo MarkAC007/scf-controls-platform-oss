@@ -56,6 +56,47 @@ if ! grep "proxy_pass" "$NGINX_CONF" | grep -qE "https?://"; then
   exit 1
 fi
 
+# ---------------------------------------------------------------------------
+# Runtime application config (/config.js).
+#
+# Vite compiles VITE_* values into the JS bundle, so anything that varies per
+# deployment would otherwise mean a rebuild per deployment. index.html loads
+# /config.js before the app bundle; this renders it from the SCF_* environment,
+# and src/data/runtimeConfig.ts falls back to the build-time value for any key
+# not written here.
+#
+# Rendered to /tmp for the same reason the nginx config is: the container runs
+# with a read-only root, so the document root cannot be written. nginx serves it
+# through `location = /config.js`.
+#
+# An UNSET variable is omitted rather than written as "". The two are not the
+# same: SCF_APP_LOGO="" hides the logo, while unset means "use the bundled
+# default". Collapsing them would make it impossible to ask for no logo.
+# ---------------------------------------------------------------------------
+CONFIG_JS=/tmp/config.js
+CONFIG_KEYS="APP_TITLE APP_LOGO MARKETING_WEBSITE_URL ENABLE_PER_WINDOW_REVIEW DEBUG_API"
+
+# Backslashes first, then quotes: escaping quotes first would then have its own
+# backslashes escaped again.
+_js_escape() {
+  printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
+}
+
+{
+  echo "// Generated at container start by docker-entrypoint.sh. Do not edit."
+  echo "window.__SCF_CONFIG__ = {"
+} > "$CONFIG_JS"
+
+for _key in $CONFIG_KEYS; do
+  eval "_isset=\${SCF_${_key}+yes}"
+  [ "${_isset:-}" = yes ] || continue
+  eval "_value=\$SCF_${_key}"
+  printf '  "%s": "%s",\n' "$_key" "$(_js_escape "$_value")" >> "$CONFIG_JS"
+  echo "Runtime config: ${_key} set"
+done
+
+echo "};" >> "$CONFIG_JS"
+
 echo "Nginx config validated, testing configuration..."
 
 # Test nginx configuration (against the rendered file, not the image default)

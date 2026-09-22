@@ -18,11 +18,14 @@ import {
   GOOGLE_AUTH_ENABLED,
   API_KEY,
 } from './authToken'
+import { getConfigFlag } from './runtimeConfig'
 
-const DEBUG_API = import.meta.env.VITE_DEBUG_API === 'true'
+const DEBUG_API = getConfigFlag('DEBUG_API')
 
-// Validate API key configuration
-if (!GOOGLE_AUTH_ENABLED && !API_KEY) {
+// Validate API key configuration.
+// OIDC mode carries no API key by design — the Bearer is the id_token — so
+// warning about a missing one there is noise on every page load.
+if (!OIDC_ENABLED && !GOOGLE_AUTH_ENABLED && !API_KEY) {
   console.error(
     '❌ VITE_API_KEY environment variable is not set!\n' +
     '   Google auth is disabled, so API key is required.\n' +
