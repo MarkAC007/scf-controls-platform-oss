@@ -87,6 +87,32 @@ spec:
               value: {{ .Values.frontend.maxUploadSize | quote }}
             - name: EXTRA_CONNECT_SRC
               value: {{ include "scf.extraConnectSrc" . | quote }}
+            # Runtime application config. The entrypoint renders these into
+            # /config.js at start, which the page loads before the app bundle —
+            # so branding and the review mode are deployment settings rather
+            # than properties of the image.
+            #
+            # Each is emitted only when it is non-null, because the injector
+            # distinguishes "unset" from "set to empty": branding.logoUrl=""
+            # means show no logo, while unset means use the bundled one.
+            {{- if not (kindIs "invalid" .Values.branding.appTitle) }}
+            - name: SCF_APP_TITLE
+              value: {{ .Values.branding.appTitle | quote }}
+            {{- end }}
+            {{- if not (kindIs "invalid" .Values.branding.logoUrl) }}
+            - name: SCF_APP_LOGO
+              value: {{ .Values.branding.logoUrl | quote }}
+            {{- end }}
+            {{- if not (kindIs "invalid" .Values.branding.marketingUrl) }}
+            - name: SCF_MARKETING_WEBSITE_URL
+              value: {{ .Values.branding.marketingUrl | quote }}
+            {{- end }}
+            # The same value the backend and worker get as
+            # ENABLE_PER_WINDOW_REVIEW, so the two cannot drift apart.
+            - name: SCF_ENABLE_PER_WINDOW_REVIEW
+              value: {{ .Values.config.features.perWindowReview | quote }}
+            - name: SCF_DEBUG_API
+              value: {{ .Values.config.debugApi | quote }}
             {{- with .Values.frontend.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

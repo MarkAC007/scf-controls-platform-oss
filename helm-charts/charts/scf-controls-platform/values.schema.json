@@ -141,6 +141,9 @@
               "maximum": 65535
             }
           }
+        },
+        "debugApi": {
+          "type": "boolean"
         }
       }
     },
@@ -464,8 +467,28 @@
         }
       }
     },
-    "allowLatestTag": {
-      "type": "boolean"
+    "branding": {
+      "type": "object",
+      "properties": {
+        "appTitle": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "logoUrl": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "marketingUrl": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
     }
   },
   "$defs": {

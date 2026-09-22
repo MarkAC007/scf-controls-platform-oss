@@ -412,9 +412,17 @@ config:
 
   rateLimitingEnabled: false
 
+  # Logs every API request to the browser console. For support, not production.
+  debugApi: false
+
   # Assurance / KSI feature flags. All three must match across the backend and
   # the worker, or the same organisation gets two different answers.
   features:
+    # Switches evidence review between per-file approval and reviewing a whole
+    # time window at once. This ONE setting drives the backend, the worker and
+    # the frontend: the two sides disagreeing is the failure that leaves a
+    # reviewer with per-file Approve buttons the backend has stopped accepting,
+    # and no window panel either.
     perWindowReview: true
     windowAssessmentKsi: true
     compositeKsi: true

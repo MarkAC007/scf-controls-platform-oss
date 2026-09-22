@@ -204,14 +204,71 @@ oidc:
   redirectUri: https://scf.example.com/auth/callback
 ```
 
-The Secret must then carry `OIDC_CLIENT_SECRET`.
+The Secret must carry `OIDC_CLIENT_SECRET`.
+
+This is not a preference, it is what the frontend image is. It is built with
+`VITE_OIDC_ENABLED=true`, and Vite constant-folds that flag — so the Google and
+API-key sign-in paths are compiled out of the bundle entirely. In
+`scf-frontend:v0.40.1`, `getAuthToken()` reduces to
+`localStorage.getItem("oidc_token") || ""`, and the strings
+`accounts.google.com` and `Sign in with Google` do not appear at all. A
+deployment configured any other way presents a sign-in screen nobody can get
+through, so the chart fails at render rather than at first login.
+
+Nothing deployment-specific is baked into the image. The sign-in button
+redirects to `/api/auth/login` and the backend owns the issuer, client id,
+redirect URI and client secret — all configured above. One published image
+serves every OIDC deployment.
 
 `issuer` is the public issuer identifier, byte-compared against the `iss` claim
-of every token, and the backend treats a non-empty `OIDC_ISSUER` as the switch
-that turns OIDC login on — so this chart holds it empty while `enabled` is
-false, rather than leaving a stale URL to re-enable sign-in by accident. Set
-`discoveryUrl` only when the backend fetches discovery from a different origin
-than the browser uses.
+of every token. Set `discoveryUrl` only when the backend fetches the discovery
+document from a different origin than the browser uses.
+
+`config.singleTenant` is **not** an alternative sign-in method. It grants the
+master API key admin on the single organisation for direct API callers, and it
+gates the live catalogue import task, which refuses to run without it. Set it if
+you use the importer or drive the API with the master key; it does nothing for
+the UI.
+
+## Branding and runtime configuration
+
+Branding is injected into the page when the container starts, so changing it is
+a pod restart rather than an image rebuild:
+
+```yaml
+branding:
+  appTitle: Acme GRC
+  logoUrl: /acme-logo.png
+  marketingUrl: https://acme.example.com
+```
+
+`logoUrl` has three states and the default is `null` rather than `""` because
+they are not the same thing: `null` uses the bundled logo, `""` shows no logo at
+all, and a path or URL is used verbatim. The chart only sets the variable when
+it is non-null, so the distinction survives.
+
+How it works: `docker-entrypoint.sh` writes `/config.js` from the `SCF_*`
+environment, `index.html` loads it before the app bundle, and
+`src/data/runtimeConfig.ts` prefers an injected value over the build-time one.
+The fallback is what keeps `vite dev` working. It needs no Content-Security-
+Policy change — an external same-origin script is already covered by
+`script-src 'self'` — and no caching change, because nginx's existing
+`$cache_control` map already serves root-level `.js` as `no-cache`.
+
+Authentication is deliberately **not** runtime-configurable. `VITE_OIDC_ENABLED`
+and `VITE_GOOGLE_AUTH_ENABLED` drive dead-code elimination, which is what keeps
+the unused sign-in paths out of the shipped bundle; moving them to runtime would
+put the Google path and its configuration-error screen back into every image.
+
+### One switch for evidence review
+
+`config.features.perWindowReview` drives the backend, the Celery worker **and**
+the frontend from a single value. That matters because the two sides disagreeing
+is a real failure, not a cosmetic one: a frontend on per-file review against a
+backend that has moved on shows Approve buttons the backend refuses, with no
+window panel in that build either — leaving a reviewer no way to review
+anything. Driving both from one setting makes that combination unreachable from
+the chart.
 
 ## Ingress
 
