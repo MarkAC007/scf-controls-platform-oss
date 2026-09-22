@@ -295,12 +295,13 @@
             "enabled": {
               "type": "boolean"
             },
-            "workbookPath": {
-              "type": "string"
-            },
             "backoffLimit": {
               "type": "integer",
               "minimum": 0
+            },
+            "workbookFile": {
+              "type": "string",
+              "minLength": 1
             }
           }
         }

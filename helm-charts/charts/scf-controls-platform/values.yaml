@@ -686,9 +686,9 @@ catalogData:
       tag: ""
       digest: ""
       pullPolicy: IfNotPresent
-    # Where the SCF .xlsx sits on the claim, which is mounted at
-    # /app/data/json. The extractor writes its output alongside it.
-    workbookPath: /app/data/json/scf.xlsx
+    # Name of the SCF workbook on the shared volume. Copy it there before
+    # running the import; the extracted catalogue is written alongside it.
+    workbookFile: scf.xlsx
     backoffLimit: 1
     resources:
       requests:

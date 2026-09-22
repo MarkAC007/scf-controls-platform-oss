@@ -35,16 +35,25 @@ spec:
           imagePullPolicy: {{ .Values.catalogData.importer.image.pullPolicy }}
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
-          command: ["python", "/app/scripts/extract_scf_data.py"]
+          # The volume is mounted at /out, not over /app/data/json. The image
+          # ships three curated catalogue files in that directory which the
+          # spreadsheet does not produce; mounting over it would hide them from
+          # the copy below and leave the volume short of a file the backend
+          # needs at startup.
+          command: ["/bin/sh", "-c"]
           args:
-            - {{ .Values.catalogData.importer.workbookPath | quote }}
-            - --output-dir
-            - /app/data/json
+            - |
+              set -eu
+              cp -n /app/data/json/*.json /out/ 2>/dev/null || true
+              python /app/scripts/extract_scf_data.py \
+                "/out/{{ .Values.catalogData.importer.workbookFile }}" \
+                --output-dir /out
+              ls -1 /out/*.json
           resources:
             {{- toYaml .Values.catalogData.importer.resources | nindent 12 }}
           volumeMounts:
             - name: catalog-data
-              mountPath: /app/data/json
+              mountPath: /out
             - name: tmp
               mountPath: /tmp
       volumes:
