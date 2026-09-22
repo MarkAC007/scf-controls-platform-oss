@@ -32,26 +32,40 @@ declare global {
 }
 
 /**
- * Build-time values, as a static map.
+ * The build-time value for a key.
  *
- * Every entry is a LITERAL `import.meta.env.VITE_X` access, because that is the
+ * Every arm is a LITERAL `import.meta.env.VITE_X` access, because that is the
  * only form Vite substitutes. A computed `import.meta.env[name]` is left alone
  * at build time and reads as undefined in the bundle, which would silently
  * disable the fallback in production while working perfectly in dev.
+ *
+ * A function rather than a module-scope map, so the read happens per call.
+ * Substitution is syntactic and happens either way, so the production bundle is
+ * identical — but `vi.stubEnv` mutates `import.meta.env` after this module has
+ * been imported, and a map captured at import time can never see it.
  */
-const BUILD_TIME: RuntimeConfig = {
-  APP_TITLE: import.meta.env.VITE_APP_TITLE,
-  APP_LOGO: import.meta.env.VITE_APP_LOGO,
-  MARKETING_WEBSITE_URL: import.meta.env.VITE_MARKETING_WEBSITE_URL,
-  ENABLE_PER_WINDOW_REVIEW: import.meta.env.VITE_ENABLE_PER_WINDOW_REVIEW,
-  DEBUG_API: import.meta.env.VITE_DEBUG_API,
+function buildTimeValue(name: string): string | undefined {
+  switch (name) {
+    case 'APP_TITLE':
+      return import.meta.env.VITE_APP_TITLE
+    case 'APP_LOGO':
+      return import.meta.env.VITE_APP_LOGO
+    case 'MARKETING_WEBSITE_URL':
+      return import.meta.env.VITE_MARKETING_WEBSITE_URL
+    case 'ENABLE_PER_WINDOW_REVIEW':
+      return import.meta.env.VITE_ENABLE_PER_WINDOW_REVIEW
+    case 'DEBUG_API':
+      return import.meta.env.VITE_DEBUG_API
+    default:
+      return undefined
+  }
 }
 
 /** The raw value, or undefined when it was configured nowhere. */
-export function getConfig(name: keyof typeof BUILD_TIME | string): string | undefined {
+export function getConfig(name: string): string | undefined {
   const injected =
     typeof window !== 'undefined' ? window.__SCF_CONFIG__?.[name] : undefined
-  return injected !== undefined ? injected : BUILD_TIME[name]
+  return injected !== undefined ? injected : buildTimeValue(name)
 }
 
 /** True only for the literal string 'true'. Anything unset reads false. */
