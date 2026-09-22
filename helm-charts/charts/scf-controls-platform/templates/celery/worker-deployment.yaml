@@ -64,8 +64,10 @@ spec:
           imagePullPolicy: {{ .Values.celery.worker.image.pullPolicy }}
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
+          # Starts at -A: `command` already supplies the executable, and
+          # Kubernetes concatenates the two. Repeating it here renders
+          # `celery celery -A ...`, which exits on the duplicate subcommand.
           args:
-            - celery
             - -A
             - celery_app
             - worker
