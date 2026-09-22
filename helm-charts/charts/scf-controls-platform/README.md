@@ -1,187 +1,139 @@
 # scf-controls-platform
 
-Helm chart for the SCF Controls Platform, derived from the repository's main
-`docker-compose.yml`.
+Helm chart for the SCF Controls Platform: backend, Celery worker, Celery beat
+and frontend.
 
-## Scope
+The database, cache, object store and identity provider are **not** deployed by
+this chart. Bring your own.
 
-This chart deploys the **platform only**:
+## Deployment
 
-| Component | Replicas |
-|---|---|
-| backend (FastAPI) | 1 |
-| celery worker | 1 |
-| celery beat | exactly 1 |
-| frontend (nginx) | 2 |
+1. [Check the requirements](#requirements).
+2. [Create a Secret](#secrets) holding the platform's credentials.
+3. [Point the chart at your database and cache](#database-and-cache).
+4. [Point it at an S3 bucket](#evidence-storage) for evidence.
+5. [Configure OIDC](#identity) — the only supported sign-in method.
+6. [Install](#install), then [load the SCF catalogue](#scf-catalogue).
 
-PostgreSQL, Redis and object storage are **not** deployed and have no subcharts.
-Which database, cache and object store an organisation runs is its own decision,
-and vendoring them in would make this chart responsible for three lifecycles it
-has no business owning. Point it at what you already run.
+```sh
+helm install scf ./helm-charts/charts/scf-controls-platform \
+  --namespace scf --create-namespace \
+  --values my-values.yaml
+```
 
-Celery has no switch. Scheduled assessments, evidence ingest, malware scanning
-of browser uploads and document generation all run there, so a deployment
-without it silently stops doing most of its work.
-
-## Images
-
-| Component | Image |
-|---|---|
-| backend, celery worker, celery beat, migration Job | `ghcr.io/markac007/scf-backend` |
-| frontend | `ghcr.io/markac007/scf-frontend` |
-| catalogue importer | `ghcr.io/markac007/scf-backend` (see below) |
-
-Tags default to the chart's `appVersion`, which carries the leading `v` because
-that is how the images are tagged (`:v0.40.0`). A release therefore bumps one
-line in `Chart.yaml` rather than five in `values.yaml`. Set `digest` on any
-image to pin immutably — it wins over `tag`.
-
-`global.imageRegistry` redirects every image at once, including the `helm test`
-curl image, for a mirror or an air-gapped pull-through cache.
-
-The render **fails** if any image resolves to the tag `latest`, including when
-it is inherited from `appVersion`. `latest` is not a version: two pods of one
-Deployment can be running different code after a restart, with nothing in the
-cluster to say which is which. An image pinned by `digest` is exempt, since the
-tag is then irrelevant. Set `allowLatestTag: true` to override — for a scratch
-environment tracking a floating build, say.
-
-The catalogue importer runs from the **backend** image rather than a third one:
-that image already bakes `/app/scripts/extract_scf_data.py` and pins the same
-`pandas` and `openpyxl` the extractor needs, so a separate importer image would
-be a build with no content of its own. The Job invokes the extractor explicitly,
-because the backend image's own command is uvicorn.
+The chart refuses to install until everything above is configured, and the error
+names the missing value.
 
 ## Requirements
 
 - Kubernetes >= 1.27
-- PostgreSQL 15 or later, reachable from the cluster
-- Redis 7 or later, reachable from the cluster
-- Some way to create a Kubernetes Secret (see Secrets)
-- An ingress controller, if `ingress.enabled` is set
-- An S3 or S3-compatible bucket (mandatory)
-- A `ReadWriteMany` storage class, only if `catalogData.enabled` is set
+- PostgreSQL 15+ and Redis 7+, reachable from the cluster
+- An S3 or S3-compatible bucket
+- An OIDC provider
+- Some way to create a Kubernetes Secret
+- A `ReadWriteMany` storage class, only if you load the SCF catalogue
 
-## Required configuration
+## Install
 
-The chart refuses to render until the platform is fully wired up. A missing
-connection is one line to fix at install time and an incident to diagnose at
-runtime, so there are no silent defaults for any of the following:
+```yaml
+# my-values.yaml
+secretName: scf-platform-credentials
 
-| Value | Required |
-|---|---|
-| `secretName` | always |
-| no image on the `latest` tag | unless `allowLatestTag` |
-| `database.host`, `.name`, `.username` | unless `database.urlFromSecret` |
-| `redis.host` | unless `redis.urlFromSecret` |
-| `evidenceStorage.bucket` | always |
-| `evidenceStorage.publicEndpoint` | when `evidenceStorage.endpoint` is set |
-| `oidc.issuer`, `.clientId`, `.redirectUri` | always |
+database:
+  host: postgres.example.internal
+  name: cg_scf
+  username: cg
 
-`redis.cacheDatabase` must differ from `redis.celeryDatabase`.
+redis:
+  host: redis.example.internal
 
-All of it is checked in `templates/_validate.tpl`. The contents of the Secret
-are not — the chart cannot read it, so a missing key surfaces at runtime.
+evidenceStorage:
+  bucket: scf-evidence
+  region: eu-west-2
+
+oidc:
+  issuer: https://idp.example.com/realms/scf
+  clientId: scf-platform
+  redirectUri: https://scf.example.com/auth/callback
+
+ingress:
+  enabled: true
+  className: nginx
+  hosts:
+    - host: scf.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: scf-tls
+      hosts: [scf.example.com]
+```
+
+Images default to the chart's `appVersion`. Set `global.imageRegistry` to pull
+everything through a mirror. The chart rejects any image on the `latest` tag;
+set `allowLatestTag: true` to override.
 
 ## Secrets
 
-The chart reads every credential from one existing Kubernetes Secret and knows
-nothing else about it:
-
-```yaml
-secretName: scf-platform-credentials
-```
-
-How that Secret comes to exist is deliberately outside the chart — External
-Secrets Operator, Vault Agent, SOPS, sealed-secrets or a one-off `kubectl` are
-all equally fine. The chart neither creates it nor inspects it, which also means
-it cannot tell you a key is missing: that failure shows up at runtime, not at
-install.
-
-Keys are injected with `envFrom`, so an absent key is simply unset and its
-feature stays off.
+Create a Secret in the release namespace and name it in `secretName`. The chart
+neither creates nor reads it — use External Secrets Operator, Vault, SOPS,
+sealed-secrets or `kubectl`, whichever you already run.
 
 | Key | When |
 |---|---|
-| `SCF_SECRET_KEY` | always — Fernet key for integration secrets at rest |
-| `API_KEY` | always — master API key |
+| `SCF_SECRET_KEY` | always — encrypts stored integration secrets |
+| `API_KEY` | always |
+| `OIDC_CLIENT_SECRET` | always |
 | `DB_PASSWORD` | unless `database.urlFromSecret` |
 | `DATABASE_URL` | when `database.urlFromSecret` |
 | `REDIS_URL`, `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND` | when `redis.urlFromSecret` |
-| `OIDC_CLIENT_SECRET` | always |
 | `DOWNLOAD_TOKEN_SECRET` | optional — signs evidence links; falls back to `API_KEY` |
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | optional — omit to use a pod identity |
 | `ANTHROPIC_API_KEY`, `RESEND_API_KEY`, `HIBP_API_KEY`, `NVD_API_KEY`, `APPLICATIONINSIGHTS_CONNECTION_STRING` | optional |
 
+Pods stay in `CreateContainerConfigError` until the Secret exists.
+
 Changing `SCF_SECRET_KEY` makes every stored integration secret unreadable.
 
-Pods stay in `CreateContainerConfigError` until the Secret exists. That is the
-expected state on a first install while your secret tooling catches up.
-
-An External Secrets Operator example is in [Appendix: producing the Secret](#appendix-producing-the-secret).
-
-## Database
+## Database and cache
 
 ```yaml
 database:
-  host: db.internal
+  host: postgres.example.internal
   port: 5432
   name: cg_scf
   username: cg
   sslMode: require
-```
 
-The password comes from the Secret as `DB_PASSWORD`, and the backend
-composes the DSN in-process so it never appears in a ConfigMap or in any
-process environment but the one that needs it.
-
-To pass a whole connection string instead — the only way to use one that embeds
-credentials:
-
-```yaml
-database:
-  urlFromSecret: true    # the Secret must then carry DATABASE_URL
-```
-
-The backend honours `DATABASE_URL` byte for byte when it is non-empty, so the
-two paths are mutually exclusive and the components above are then ignored.
-
-## Redis
-
-```yaml
 redis:
-  host: cache.internal
+  host: redis.example.internal
   port: 6379
   cacheDatabase: 0
   celeryDatabase: 1
 ```
 
-The cache and Celery's broker and result backend use separate logical databases
-so flushing one never drops queued work. `redis.urlFromSecret` takes all three
-URLs from the Secret instead, which is the only way to pass a password.
+To pass a connection string instead — the only way to use one containing
+credentials — set `database.urlFromSecret: true` and put `DATABASE_URL` in the
+Secret. `redis.urlFromSecret` does the same for the three Redis URLs.
+
+The two Redis databases must differ.
 
 ## Evidence storage
 
-Mandatory. The platform stores every piece of evidence here, and a deployment
-without it resolves to no storage backend at all — every upload then fails with
-a 409 pointing at the Settings screen.
-
 ```yaml
 evidenceStorage:
-  bucket: scf-evidence          # required
+  bucket: scf-evidence
   region: eu-west-2
-  endpoint: ""                  # set for a non-AWS S3-compatible store
-  publicEndpoint: ""            # required whenever endpoint is set
+  endpoint: ""          # set for a non-AWS S3-compatible store
+  publicEndpoint: ""    # required whenever endpoint is set
 ```
 
-`publicEndpoint` is the URL a **browser** uses. Upload and download go
-browser-to-store over a presigned URL, so an in-cluster `endpoint` with no
-public counterpart fails every transfer in the browser while the API still looks
-healthy. It is added to the frontend's CSP `connect-src` automatically.
+`publicEndpoint` is the URL a **browser** uses. Uploads and downloads go
+browser-to-store directly, so an internal-only `endpoint` fails every transfer
+while the API still looks healthy.
 
-Credentials are the one optional part: omit `AWS_ACCESS_KEY_ID` and
-`AWS_SECRET_ACCESS_KEY` from the Secret and annotate the service account for
-IRSA or Workload Identity instead, which boto3 picks up on its own.
+To use a pod identity instead of static keys, omit the two `AWS_*` keys from the
+Secret and annotate the service account:
 
 ```yaml
 serviceAccount:
@@ -189,13 +141,9 @@ serviceAccount:
     eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/scf-evidence
 ```
 
-Azure Blob is not offered. The backend retired that driver: setting
-`AZURE_STORAGE_ACCOUNT_NAME` is now ignored, logs a warning and falls through to
-S3 (`backend/services/storage_service.py`).
-
 ## Identity
 
-OIDC, and only OIDC. The chart refuses to render without it.
+OIDC only. The published frontend image has no other sign-in path compiled in.
 
 ```yaml
 oidc:
@@ -204,36 +152,60 @@ oidc:
   redirectUri: https://scf.example.com/auth/callback
 ```
 
-The Secret must carry `OIDC_CLIENT_SECRET`.
+`issuer` is compared against the `iss` claim of every token. Set `discoveryUrl`
+only if the backend reaches the provider on a different address than the browser
+does. The client secret goes in the Secret as `OIDC_CLIENT_SECRET`.
 
-This is not a preference, it is what the frontend image is. It is built with
-`VITE_OIDC_ENABLED=true`, and Vite constant-folds that flag — so the Google and
-API-key sign-in paths are compiled out of the bundle entirely. In
-`scf-frontend:v0.40.1`, `getAuthToken()` reduces to
-`localStorage.getItem("oidc_token") || ""`, and the strings
-`accounts.google.com` and `Sign in with Google` do not appear at all. A
-deployment configured any other way presents a sign-in screen nobody can get
-through, so the chart fails at render rather than at first login.
+`config.singleTenant` is not a sign-in method. It grants the master API key admin
+rights for direct API calls, and is required by the catalogue import below.
 
-Nothing deployment-specific is baked into the image. The sign-in button
-redirects to `/api/auth/login` and the backend owns the issuer, client id,
-redirect URI and client secret — all configured above. One published image
-serves every OIDC deployment.
+## SCF catalogue
 
-`issuer` is the public issuer identifier, byte-compared against the `iss` claim
-of every token. Set `discoveryUrl` only when the backend fetches the discovery
-document from a different origin than the browser uses.
+SCF content is licensed and not shipped, so you supply your own workbook. This
+needs a `ReadWriteMany` storage class.
 
-`config.singleTenant` is **not** an alternative sign-in method. It grants the
-master API key admin on the single organisation for direct API callers, and it
-gates the live catalogue import task, which refuses to run without it. Set it if
-you use the importer or drive the API with the master key; it does nothing for
-the UI.
+Install with the shared volume but **not** the importer — it would run before the
+workbook exists and fail the release:
 
-## Branding and runtime configuration
+```yaml
+catalogData:
+  enabled: true
+  importer:
+    enabled: false
+config:
+  singleTenant: true    # the import refuses to run without it
+```
 
-Branding is injected into the page when the container starts, so changing it is
-a pod restart rather than an image rebuild:
+Copy the workbook onto the volume. The backend mounts it at `/app/data/json`:
+
+```sh
+kubectl -n scf cp scf.xlsx \
+  "$(kubectl -n scf get pod -l app.kubernetes.io/component=backend \
+     -o jsonpath='{.items[0].metadata.name}')":/app/data/json/scf.xlsx
+```
+
+Then turn the importer on:
+
+```sh
+helm upgrade scf ./helm-charts/charts/scf-controls-platform \
+  --namespace scf --reuse-values \
+  --set catalogData.importer.enabled=true
+```
+
+The backend reads the catalogue only at startup, so restart it once the import
+has finished:
+
+```sh
+kubectl -n scf rollout restart deploy/scf-scf-controls-platform-backend
+```
+
+Leave `catalogData.importer.enabled: true` and the import re-runs on every
+upgrade. Set it back to `false` once the catalogue is loaded.
+
+## Branding
+
+Applied when the container starts, so changing any of these is a restart rather
+than a rebuild:
 
 ```yaml
 branding:
@@ -242,167 +214,42 @@ branding:
   marketingUrl: https://acme.example.com
 ```
 
-`logoUrl` has three states and the default is `null` rather than `""` because
-they are not the same thing: `null` uses the bundled logo, `""` shows no logo at
-all, and a path or URL is used verbatim. The chart only sets the variable when
-it is non-null, so the distinction survives.
+Leave a value unset for the default. `logoUrl: ""` hides the logo entirely,
+which is not the same as leaving it unset.
 
-How it works: `docker-entrypoint.sh` writes `/config.js` from the `SCF_*`
-environment, `index.html` loads it before the app bundle, and
-`src/data/runtimeConfig.ts` prefers an injected value over the build-time one.
-The fallback is what keeps `vite dev` working. It needs no Content-Security-
-Policy change — an external same-origin script is already covered by
-`script-src 'self'` — and no caching change, because nginx's existing
-`$cache_control` map already serves root-level `.js` as `no-cache`.
+## Upgrades
 
-Authentication is deliberately **not** runtime-configurable. `VITE_OIDC_ENABLED`
-and `VITE_GOOGLE_AUTH_ENABLED` drive dead-code elimination, which is what keeps
-the unused sign-in paths out of the shipped bundle; moving them to runtime would
-put the Google path and its configuration-error screen back into every image.
+Migrations run before anything else rolls, as a `pre-install,pre-upgrade` hook
+(`PreSync` under Argo CD). A failed migration fails the release.
 
-### One switch for evidence review
+By default the migration **refuses to touch an existing database**. Set
+`migrations.acknowledge` to the version you are upgrading to, in the same change
+that bumps the image tag:
 
-`config.features.perWindowReview` drives the backend, the Celery worker **and**
-the frontend from a single value. That matters because the two sides disagreeing
-is a real failure, not a cosmetic one: a frontend on per-file review against a
-backend that has moved on shows Approve buttons the backend refuses, with no
-window panel in that build either — leaving a reviewer no way to review
-anything. Driving both from one setting makes that combination unreachable from
-the chart.
-
-## Ingress
-
-Everything routes to the frontend, which proxies `/api/` to the backend with the
-security headers from `nginx.conf` attached. To route `/api/` at the ingress
-instead, set `frontend.proxyApi: false` and add the path rule yourself.
-
-## Migrations and upgrades
-
-A `pre-install,pre-upgrade` hook Job runs the migration before anything else
-rolls. Argo CD maps that to `PreSync` and `hook-weight` to `sync-wave`, so the
-Helm annotations are the whole story on both. Do **not** add
-`argocd.argoproj.io/hook` annotations: defining any Argo hook makes Argo ignore
-every Helm hook on the release.
-
-A hook rather than an initContainer, deliberately. An initContainer fires on
-every pod start, scale-up and restart, so replicas starting together would race
-— and Alembic takes no lock of its own. The hook runs once and blocks the rest
-of the sync, which is also what keeps a new-code Celery worker from starting
-against a half-migrated schema.
-
-The Job runs `python -m scf_upgrade migrate`, which calls the backend's own
-migration path — guard, upgrade, record version — rather than a bare `alembic
-upgrade head`. That matters: the bare command skips `upgrade_guard`, and with it
-the **version-floor check** that refuses an upgrade jumping a required
-intermediate stop. `scripts/upgrade.sh` may skip the guard because it has
-already done the equivalent check against the release manifest and taken a
-verified backup; nothing else has earned that.
-
-### The acknowledgement
-
-`migrations.acknowledge` maps to `SCF_MIGRATE_ACK`. Empty means the Job refuses
-to migrate an existing database. That is the intended default:
-
-| Database state | Behaviour with `acknowledge` empty |
-|---|---|
-| fresh / empty | migrates — the guard permits initial installs outright |
-| already at head | no-op — nothing to protect against |
-| pending migrations | **refuses**, naming the version to acknowledge |
-
-So set it to the target version in the same change that bumps the image tag, and
-the upgrade stays explicit and reviewable. `"any"` disables the sentinel
-permanently and is only reasonable when the pipeline provably backs up first.
-
-It is set on the Job and nowhere else, on purpose. An ack living in a
-long-running Deployment would silently pre-acknowledge a future same-version
-migration — a hotfix, say — and let it migrate with no backup.
-
-### Rollback
-
-Forward-only. Alembic downgrades are not exercised here, and `helm rollback` or
-an Argo revert restores manifests, not schema. To go back, revert the image tag
-*and* restore the database from a backup taken before the upgrade.
-
-## Smoke test
-
-A `post-install,post-upgrade` hook Job waits for the API and the web tier to
-answer from inside the cluster, and the release fails if they do not. Argo CD
-maps that to `PostSync` and runs it once the Sync-phase resources report
-healthy, so a deployment that rolled out but does not serve fails the sync
-rather than looking successful.
-
-It is a hook rather than a `helm test`, because `helm test` has no Argo
-equivalent and would never run there. Add `test` to the hook list in
-`templates/smoke-test-job.yaml` to get on-demand `helm test` runs back as well.
-
-The Job retries until `smokeTest.timeoutSeconds` because plain `helm upgrade`
-without `--wait` starts post-install hooks before the new pods are necessarily
-ready. Set `smokeTest.enabled: false` to drop it.
-
-## Layout
-
-Templates are grouped by the component they deploy, so a change to "the worker"
-touches one directory. Helm renders `templates/` recursively, so the nesting is
-presentation only.
-
-```
-templates/
-├── _helpers.tpl        naming, labels, image refs, connection strings
-├── _env.tpl            env and volume partials shared by the Python workloads
-├── _validate.tpl       fail-fast configuration checks (see Required configuration)
-├── NOTES.txt
-├── configmap.yaml      release-wide application config
-├── serviceaccount.yaml
-├── hpa.yaml            autoscalers for every scalable component
-├── poddisruptionbudget.yaml
-├── backend/
-├── celery/             worker and beat
-├── frontend/
-├── migrations/         the pre-install/pre-upgrade hook Job
-├── catalog/            SCF catalogue claim and importer Job
-├── networking/         Ingress and NetworkPolicies
-└── smoke-test-job.yaml post-deploy check, at the root because it is release-wide
+```yaml
+migrations:
+  acknowledge: "0.41.0"
 ```
 
-`configmap.yaml`, `hpa.yaml`, `poddisruptionbudget.yaml` and the smoke test stay
-at the root
-because they are not per-component: the autoscaler and disruption budget
-templates iterate over every scalable workload, and the ConfigMap is one object
-shared by all three Python workloads. The deployments also hash it by path
-(`$.Template.BasePath "/configmap.yaml"`) to roll pods on a config change, so
-moving it means updating those three references.
+Fresh and already-migrated databases need no acknowledgement. `"any"` disables
+the check permanently — only reasonable if your pipeline backs up first.
+
+Rollback is forward-only: reverting the release does not revert the schema.
+Restore from a backup taken before the upgrade.
+
+## Argo CD
+
+Point Argo at this repository and path at a tagged revision. The chart needs no
+publishing step, and its hooks map to `PreSync` and `PostSync` automatically.
+
+Do not add `argocd.argoproj.io/hook` annotations — defining any Argo hook makes
+Argo ignore every Helm hook in the release.
 
 ## Development
 
 ```sh
-helm lint .
-helm template scf . -n scf -f my-values.yaml | kubeconform -strict -ignore-missing-schemas -summary
+helm lint . --values ci/minimal-values.yaml --strict
+helm template scf . --values ci/minimal-values.yaml | kubeconform -strict -summary
 ```
 
-## Appendix: producing the Secret
-
-One way, using the External Secrets Operator with Bitwarden Secrets Manager.
-Nothing here is chart configuration — it lives in your own manifests, and any
-other tool that produces a Secret with the keys above works identically.
-
-```yaml
-apiVersion: external-secrets.io/v1
-kind: ExternalSecret
-metadata:
-  name: scf-platform-credentials
-spec:
-  refreshInterval: 1h
-  secretStoreRef:
-    name: bitwarden
-    kind: SecretStore
-  target:
-    name: scf-platform-credentials   # == secretName
-    creationPolicy: Owner
-  data:
-    - secretKey: SCF_SECRET_KEY
-      remoteRef: { key: <uuid> }
-    - secretKey: API_KEY
-      remoteRef: { key: <uuid> }
-    - secretKey: DB_PASSWORD
-      remoteRef: { key: <uuid> }
-```
+`ci/*-values.yaml` are the configurations CI renders and validates.
