@@ -44,13 +44,13 @@ serviceAccount:
 #                           secrets. Changing it makes stored secrets unreadable.
 #     API_KEY               master API key
 #     DB_PASSWORD           unless database.urlFromSecret is set
+#     OIDC_CLIENT_SECRET    OIDC is the only sign-in path, so always
 #
 #   REQUIRED BY A SETTING
 #     DATABASE_URL          when database.urlFromSecret is set
 #     REDIS_URL             } when redis.urlFromSecret is set
 #     CELERY_BROKER_URL     }
 #     CELERY_RESULT_BACKEND }
-#     OIDC_CLIENT_SECRET    when oidc.enabled is set
 #
 #   OPTIONAL
 #     DOWNLOAD_TOKEN_SECRET  signs evidence download links and upload tickets.
@@ -355,8 +355,11 @@ config:
   # ingress.hosts, which is right for the single-origin deployment.
   corsOrigins: []
 
-  # Grants the master API key admin on the single organisation. Leave false for
-  # multi-tenant. See OSS_SINGLE_TENANT in .env.example.
+  # OSS_SINGLE_TENANT. NOT a sign-in method — the frontend has no API-key path.
+  # It does two server-side things: grants the master API key admin on the
+  # single organisation for direct API callers, and gates the live catalogue
+  # import task, which refuses to run without it (backend/tasks_catalog.py).
+  # Set it if you use the catalogue importer or call the API with the master key.
   singleTenant: false
 
   # Email address seeded as the first platform admin on boot.
@@ -477,27 +480,29 @@ evidenceStorage:
   # altogether.
 
 # -----------------------------------------------------------------------------
-# Identity — any OIDC provider (Keycloak, Entra, Okta, ...)
+# Identity — OIDC, and only OIDC. REQUIRED.
 #
-# At least one sign-in path must be configured: oidc, google, or the
-# single-tenant master key (config.singleTenant). Enabling a provider makes its
-# settings mandatory.
+# The published frontend image is built with VITE_OIDC_ENABLED=true, which
+# constant-folds the Google and API-key sign-in paths out of the bundle
+# entirely: `getAuthToken()` reads the OIDC token and nothing else. A
+# deployment without OIDC therefore has no way for anyone to sign in, so this
+# chart refuses to render one rather than producing a UI nobody can enter.
+#
+# Nothing deployment-specific is baked into the image: the sign-in button
+# redirects to /api/auth/login and the backend owns the issuer, client id,
+# redirect URI and client secret. All of that is configured here.
 # -----------------------------------------------------------------------------
 oidc:
-  enabled: false
   # The PUBLIC issuer identifier, byte-compared against the `iss` claim of every
   # token. The backend treats a non-empty OIDC_ISSUER as the switch that turns
-  # OIDC login on, so this chart leaves it empty while enabled is false.
+  # OIDC login on.
   issuer: ""
   # Only when the backend fetches the discovery document from a different origin
   # than the browser uses (a split proxy). Defaults to issuer in-process.
   discoveryUrl: ""
   clientId: ""
   redirectUri: ""
-
-google:
-  enabled: false
-  clientId: ""
+  # The client secret comes from the Secret, as OIDC_CLIENT_SECRET.
 
 # -----------------------------------------------------------------------------
 # Database migrations

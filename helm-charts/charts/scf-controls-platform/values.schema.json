@@ -167,32 +167,26 @@
     },
     "oidc": {
       "type": "object",
+      "required": [
+        "issuer",
+        "clientId",
+        "redirectUri"
+      ],
       "properties": {
-        "enabled": {
-          "type": "boolean"
-        },
         "issuer": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "discoveryUrl": {
           "type": "string"
         },
         "clientId": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "redirectUri": {
-          "type": "string"
-        }
-      }
-    },
-    "google": {
-      "type": "object",
-      "properties": {
-        "enabled": {
-          "type": "boolean"
-        },
-        "clientId": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         }
       }
     },

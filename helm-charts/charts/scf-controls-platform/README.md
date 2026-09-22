@@ -76,11 +76,9 @@ runtime, so there are no silent defaults for any of the following:
 | `redis.host` | unless `redis.urlFromSecret` |
 | `evidenceStorage.bucket` | always |
 | `evidenceStorage.publicEndpoint` | when `evidenceStorage.endpoint` is set |
-| `oidc.issuer`, `.clientId`, `.redirectUri` | when `oidc.enabled` |
-| `google.clientId` | when `google.enabled` |
+| `oidc.issuer`, `.clientId`, `.redirectUri` | always |
 
-At least one sign-in path — `oidc`, `google`, or `config.singleTenant` — must be
-configured, and `redis.cacheDatabase` must differ from `redis.celeryDatabase`.
+`redis.cacheDatabase` must differ from `redis.celeryDatabase`.
 
 All of it is checked in `templates/_validate.tpl`. The contents of the Secret
 are not — the chart cannot read it, so a missing key surfaces at runtime.
@@ -110,7 +108,7 @@ feature stays off.
 | `DB_PASSWORD` | unless `database.urlFromSecret` |
 | `DATABASE_URL` | when `database.urlFromSecret` |
 | `REDIS_URL`, `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND` | when `redis.urlFromSecret` |
-| `OIDC_CLIENT_SECRET` | when `oidc.enabled` |
+| `OIDC_CLIENT_SECRET` | always |
 | `DOWNLOAD_TOKEN_SECRET` | optional — signs evidence links; falls back to `API_KEY` |
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | optional — omit to use a pod identity |
 | `ANTHROPIC_API_KEY`, `RESEND_API_KEY`, `HIBP_API_KEY`, `NVD_API_KEY`, `APPLICATIONINSIGHTS_CONNECTION_STRING` | optional |
@@ -197,13 +195,11 @@ S3 (`backend/services/storage_service.py`).
 
 ## Identity
 
-Any OIDC provider — Keycloak, Entra, Okta. Enabling it makes the provider's
-settings mandatory:
+OIDC, and only OIDC. The chart refuses to render without it.
 
 ```yaml
 oidc:
-  enabled: true
-  issuer: https://kc.example.com/realms/scf
+  issuer: https://idp.example.com/realms/scf
   clientId: scf-platform
   redirectUri: https://scf.example.com/auth/callback
 ```

@@ -1,15 +1,7 @@
 {{/*
 Fail the render when the platform is not fully wired up.
 
-Every check here guards something that would otherwise surface at runtime as a
-crash-looping pod, a 409 on the first upload, or a sign-in that silently never
-worked. A missing connection is one line to fix here and an incident to diagnose
-there, so this chart refuses to install half-configured.
-
-What is deliberately NOT checked: anything inside the Secret. The chart cannot
-read it, and should not try — see `secretName` in values.yaml.
-
-Invoked once, from configmap.yaml.
+The secret contents cannot be checked in this stage, so that part still contains dragons.
 */}}
 {{- define "scf.validate" -}}
 
@@ -76,23 +68,23 @@ the tag irrelevant, so an image pinned by digest is exempt.
 {{- end -}}
 
 {{/* ---- identity ---- */}}
-{{- if .Values.oidc.enabled -}}
+{{/*
+OIDC is not optional. The published frontend is built with VITE_OIDC_ENABLED,
+which compiles the Google and API-key sign-in paths out of the bundle
+altogether, so a deployment without OIDC presents a sign-in screen that nobody
+can get through.
+
+config.singleTenant is deliberately NOT accepted as an alternative: it is a
+server-side grant for direct API callers and the guard on the catalogue import
+task, not a way for a human to log in.
+*/}}
 {{- if not .Values.oidc.issuer -}}
-{{- fail "oidc.issuer is required when oidc.enabled is set: the backend treats OIDC_ISSUER as the switch that turns OIDC login on." -}}
+{{- fail "oidc.issuer is required: OIDC is the only sign-in path the frontend supports, and the backend treats a non-empty OIDC_ISSUER as the switch that turns it on." -}}
 {{- end -}}
 {{- if not .Values.oidc.clientId -}}
-{{- fail "oidc.clientId is required when oidc.enabled is set: it is the audience every token is validated against." -}}
+{{- fail "oidc.clientId is required: it is the audience every token is validated against." -}}
 {{- end -}}
 {{- if not .Values.oidc.redirectUri -}}
-{{- fail "oidc.redirectUri is required when oidc.enabled is set." -}}
-{{- end -}}
-{{- end -}}
-
-{{- if and .Values.google.enabled (not .Values.google.clientId) -}}
-{{- fail "google.clientId is required when google.enabled is set." -}}
-{{- end -}}
-
-{{- if not (or .Values.oidc.enabled .Values.google.enabled .Values.config.singleTenant) -}}
-{{- fail "No way to sign in: enable oidc, enable google, or set config.singleTenant to grant the master API key admin on the single organisation." -}}
+{{- fail "oidc.redirectUri is required." -}}
 {{- end -}}
 {{- end -}}

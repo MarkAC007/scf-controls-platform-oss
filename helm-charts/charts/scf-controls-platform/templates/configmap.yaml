@@ -64,12 +64,14 @@ data:
   EVIDENCE_PUBLIC_ENDPOINT: {{ .Values.evidenceStorage.publicEndpoint | quote }}
 
   # ---- identity ----
-  GOOGLE_AUTH_ENABLED: {{ .Values.google.enabled | quote }}
-  GOOGLE_CLIENT_ID: {{ .Values.google.enabled | ternary .Values.google.clientId "" | quote }}
-  OIDC_ISSUER: {{ .Values.oidc.enabled | ternary .Values.oidc.issuer "" | quote }}
-  OIDC_DISCOVERY_URL: {{ .Values.oidc.enabled | ternary .Values.oidc.discoveryUrl "" | quote }}
-  OIDC_CLIENT_ID: {{ .Values.oidc.enabled | ternary .Values.oidc.clientId "" | quote }}
-  OIDC_REDIRECT_URI: {{ .Values.oidc.enabled | ternary .Values.oidc.redirectUri "" | quote }}
+  # OIDC is the only sign-in path the frontend supports, so these are always
+  # emitted and _validate.tpl requires them. OIDC_DISCOVERY_URL defaults to the
+  # issuer in-process; it is only needed when the backend fetches the discovery
+  # document from a different origin than the browser uses.
+  OIDC_ISSUER: {{ .Values.oidc.issuer | quote }}
+  OIDC_DISCOVERY_URL: {{ .Values.oidc.discoveryUrl | quote }}
+  OIDC_CLIENT_ID: {{ .Values.oidc.clientId | quote }}
+  OIDC_REDIRECT_URI: {{ .Values.oidc.redirectUri | quote }}
 
   # ---- email ----
   RESEND_FROM_EMAIL: {{ .Values.config.email.fromAddress | quote }}

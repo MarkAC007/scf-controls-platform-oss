@@ -10,7 +10,7 @@ Depends on (not deployed by this chart)
   database         {{ if .Values.database.urlFromSecret }}DSN from the secret store{{ else }}{{ .Values.database.username }}@{{ .Values.database.host }}:{{ .Values.database.port }}/{{ .Values.database.name }}{{ end }}
   redis            {{ if .Values.redis.urlFromSecret }}URLs from the secret store{{ else }}{{ .Values.redis.host }}:{{ .Values.redis.port }} (db {{ .Values.redis.cacheDatabase }} cache, db {{ .Values.redis.celeryDatabase }} celery){{ end }}
   object storage   {{ .Values.evidenceStorage.bucket }} at {{ .Values.evidenceStorage.endpoint | default (printf "AWS S3 (%s)" .Values.evidenceStorage.region) }}
-  identity         {{ if .Values.oidc.enabled }}OIDC ({{ .Values.oidc.issuer }}){{ else if .Values.google.enabled }}Google{{ else }}single-tenant master API key{{ end }}
+  identity         OIDC ({{ .Values.oidc.issuer }})
 
 Reach it
 {{- if .Values.ingress.enabled }}
