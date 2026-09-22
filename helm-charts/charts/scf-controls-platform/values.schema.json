@@ -151,8 +151,7 @@
       "type": "object",
       "properties": {
         "bucket": {
-          "type": "string",
-          "minLength": 1
+          "type": "string"
         },
         "region": {
           "type": "string"
@@ -163,33 +162,22 @@
         "publicEndpoint": {
           "type": "string"
         }
-      },
-      "required": [
-        "bucket"
-      ]
+      }
     },
     "oidc": {
       "type": "object",
-      "required": [
-        "issuer",
-        "clientId",
-        "redirectUri"
-      ],
       "properties": {
         "issuer": {
-          "type": "string",
-          "minLength": 1
+          "type": "string"
         },
         "discoveryUrl": {
           "type": "string"
         },
         "clientId": {
-          "type": "string",
-          "minLength": 1
+          "type": "string"
         },
         "redirectUri": {
-          "type": "string",
-          "minLength": 1
+          "type": "string"
         }
       }
     },
@@ -336,8 +324,7 @@
           "maximum": 65535
         },
         "name": {
-          "type": "string",
-          "minLength": 1
+          "type": "string"
         },
         "username": {
           "type": "string",
@@ -433,8 +420,7 @@
       }
     },
     "secretName": {
-      "type": "string",
-      "minLength": 1
+      "type": "string"
     },
     "allowLatestTag": {
       "type": "boolean"
@@ -609,8 +595,5 @@
         }
       }
     }
-  },
-  "required": [
-    "secretName"
-  ]
+  }
 }

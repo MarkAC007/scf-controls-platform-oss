@@ -32,6 +32,11 @@ spec:
     - from:
         - namespaceSelector:
             {{- toYaml .Values.networkPolicy.ingressControllerNamespaceSelector | nindent 12 }}
+        {{- if .Values.smokeTest.enabled }}
+        - podSelector:
+            matchLabels:
+              {{- include "scf.componentSelectorLabels" (dict "ctx" . "component" "smoke-test") | nindent 14 }}
+        {{- end }}
       ports:
         - port: 80
           protocol: TCP
@@ -53,6 +58,15 @@ spec:
         - podSelector:
             matchLabels:
               {{- include "scf.componentSelectorLabels" (dict "ctx" . "component" "frontend") | nindent 14 }}
+        {{- if .Values.smokeTest.enabled }}
+        # The post-install smoke test calls /health from inside the cluster.
+        # Without this the hook fails under its own NetworkPolicy and takes the
+        # release with it — for the operator who enabled both, which is the same
+        # operator either feature was written for.
+        - podSelector:
+            matchLabels:
+              {{- include "scf.componentSelectorLabels" (dict "ctx" . "component" "smoke-test") | nindent 14 }}
+        {{- end }}
       ports:
         - port: 8000
           protocol: TCP

@@ -308,6 +308,25 @@ frontend:
   # a second S3 origin, an APM collector — belongs here.
   extraConnectSrc: []
 
+  # The frontend runs nginx, not the Python image, so it does not share the
+  # pod-level hardening at the bottom of this file. nginx's master binds :80 and
+  # forks workers as the nginx user, which needs these four capabilities and
+  # rules out runAsNonRoot.
+  podSecurityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop:
+        - ALL
+      add:
+        - NET_BIND_SERVICE
+        - CHOWN
+        - SETUID
+        - SETGID
+
   livenessProbe:
     initialDelaySeconds: 10
     periodSeconds: 20
