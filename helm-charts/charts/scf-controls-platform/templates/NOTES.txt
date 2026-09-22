@@ -21,8 +21,12 @@ Reach it
   kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "scf.frontendServiceName" . }} 8080:{{ .Values.frontend.service.port }}
 {{- end }}
 
-Check it
-  helm test {{ .Release.Name }} -n {{ .Release.Namespace }}
+{{- if .Values.smokeTest.enabled }}
+Checked automatically
+  A smoke test ran after this release and had to pass for it to succeed:
+
+  kubectl -n {{ .Release.Namespace }} logs job/{{ include "scf.fullname" . }}-smoke-test
+{{- end }}
 
 {{- if .Values.allowLatestTag }}
 
@@ -56,7 +60,3 @@ and the Celery worker may start against a half-migrated schema. Keep
 backend.replicaCount at 1, or turn the migration Job back on.
 {{- end }}
 
-Verify a deployment at any time with the same checker the compose upgrade uses:
-
-  kubectl -n {{ .Release.Namespace }} exec deploy/{{ include "scf.fullname" . }}-backend -- \
-    python -m scf_upgrade verify

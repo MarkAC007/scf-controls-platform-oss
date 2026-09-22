@@ -24,7 +24,7 @@ the tag irrelevant, so an image pinned by digest is exempt.
       "frontend.image" .Values.frontend.image
       "migrations.image" .Values.migrations.image
       "catalogData.importer.image" .Values.catalogData.importer.image
-      "tests.image" .Values.tests.image -}}
+      "smokeTest.image" .Values.smokeTest.image -}}
 {{- range $path, $image := $images -}}
 {{- if not $image.digest -}}
 {{- $tag := $image.tag | default $.Chart.AppVersion -}}

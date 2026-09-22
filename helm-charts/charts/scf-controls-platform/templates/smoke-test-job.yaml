@@ -1,0 +1,102 @@
+{{- if .Values.smokeTest.enabled }}
+{{/*
+Post-deploy smoke test: proves the Services resolve and both the API and the web
+tier answer, from inside the cluster.
+
+A post-install/post-upgrade hook rather than a `helm test` one. Argo CD maps
+these to PostSync and runs them after the Sync-phase resources report healthy,
+so a deployment that rolled out but does not actually serve fails the sync
+instead of sitting there looking successful. `helm test` would never run under
+Argo at all — its hook type has no Argo equivalent. Add `test` to the hook list
+below to get on-demand `helm test` runs back as well.
+
+It retries rather than probing once: plain `helm upgrade` without `--wait` runs
+post-install hooks as soon as the manifests are applied, which is before the new
+pods are necessarily ready.
+*/}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "scf.fullname" . }}-smoke-test
+  labels:
+    {{- include "scf.componentLabels" (dict "ctx" . "component" "smoke-test") | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    # After the catalogue importer, so a first install is not raced by a
+    # catalogue seed still in flight.
+    "helm.sh/hook-weight": "10"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: {{ .Values.smokeTest.backoffLimit }}
+  activeDeadlineSeconds: {{ add .Values.smokeTest.timeoutSeconds 60 }}
+  template:
+    metadata:
+      labels:
+        {{- include "scf.componentSelectorLabels" (dict "ctx" . "component" "smoke-test") | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      {{- include "scf.imagePullSecrets" . | nindent 6 }}
+      serviceAccountName: {{ include "scf.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      {{- with .Values.smokeTest.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.smokeTest.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: smoke-test
+          image: {{ include "scf.image" (dict "image" .Values.smokeTest.image "root" $) }}
+          imagePullPolicy: {{ .Values.smokeTest.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          env:
+            - name: BACKEND_HEALTH
+              value: {{ printf "%s/health" (include "scf.backendUrl" .) | quote }}
+            - name: FRONTEND_HEALTH
+              value: {{ printf "http://%s:%d/health" (include "scf.frontendServiceName" .) (int .Values.frontend.service.port) | quote }}
+            - name: TIMEOUT
+              value: {{ .Values.smokeTest.timeoutSeconds | quote }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              deadline=$(( $(date +%s) + TIMEOUT ))
+
+              # The backend answers 200 with "status":"degraded" when a
+              # non-critical component is down, so assert on the body rather
+              # than the status code — a degraded platform is still serving.
+              wait_for() {
+                name="$1"; url="$2"; match="$3"
+                while :; do
+                  if curl -fsS --max-time 10 "$url" 2>/dev/null | grep -q "$match"; then
+                    echo "ok: $name"
+                    return 0
+                  fi
+                  if [ "$(date +%s)" -ge "$deadline" ]; then
+                    echo "FAILED: $name did not respond at $url within ${TIMEOUT}s" >&2
+                    return 1
+                  fi
+                  sleep 5
+                done
+              }
+
+              wait_for "backend"  "$BACKEND_HEALTH"  '"service"'
+              wait_for "frontend" "$FRONTEND_HEALTH" ''
+              echo "smoke test passed"
+          resources:
+            {{- toYaml .Values.smokeTest.resources | nindent 12 }}
+{{- end }}

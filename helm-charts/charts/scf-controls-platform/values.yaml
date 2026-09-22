@@ -331,15 +331,54 @@ frontend:
   extraVolumes: []
   extraVolumeMounts: []
 
-# Image for `helm test`. Separate because it is the one image that is not this
-# platform's own, and an air-gapped cluster needs to redirect it too.
-tests:
+# Post-deploy smoke test: a post-install/post-upgrade hook (PostSync under Argo
+# CD) that waits for the API and the web tier to answer from inside the cluster.
+# A deployment that rolled out but does not serve fails the release rather than
+# looking successful. The image is the one here that is not this platform's own,
+# so an air-gapped cluster needs to redirect it too.
+smokeTest:
+  enabled: true
   image:
     registry: docker.io
     repository: curlimages/curl
     tag: "8.11.1"
     digest: ""
     pullPolicy: IfNotPresent
+  # How long to keep retrying before declaring failure. Plain `helm upgrade`
+  # without --wait starts this before the new pods are necessarily ready.
+  timeoutSeconds: 120
+  # 0: a smoke-test failure is a real signal, and rerunning the Job does not
+  # make a broken deployment work.
+  backoffLimit: 0
+  resources:
+    requests:
+      cpu: 10m
+      memory: 16Mi
+    limits:
+      memory: 64Mi
+  nodeSelector: {}
+  tolerations: []
+
+# -----------------------------------------------------------------------------
+# Branding
+#
+# Injected into the page at container start, so changing any of these is a pod
+# restart rather than an image rebuild. Leave a value null to use the bundled
+# default.
+# -----------------------------------------------------------------------------
+branding:
+  # Browser title and the sidebar wordmark. null keeps "SCF Controls Platform".
+  appTitle: null
+
+  # Logo. Three distinct states, which is why the default is null and not "":
+  #   null   use the bundled logo
+  #   ""     show no logo at all
+  #   "/x"   a path under the web root, or a full URL
+  logoUrl: null
+
+  # Target for the product links on the sign-in and no-organisation screens.
+  # null keeps https://scfcontrolsplatform.com.
+  marketingUrl: null
 
 # -----------------------------------------------------------------------------
 # Application configuration (non-secret)

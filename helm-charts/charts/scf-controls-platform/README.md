@@ -260,22 +260,27 @@ It is set on the Job and nowhere else, on purpose. An ack living in a
 long-running Deployment would silently pre-acknowledge a future same-version
 migration — a hotfix, say — and let it migrate with no backup.
 
-### Verifying
-
-`python -m scf_upgrade verify` asserts the database is at this image's Alembic
-head and that the running image's baked version and build stamp are the ones
-expected. `scripts/upgrade.sh` calls the same command on the compose path, so
-the two cannot drift.
-
-```sh
-kubectl exec deploy/<release>-backend -- python -m scf_upgrade verify
-```
-
 ### Rollback
 
 Forward-only. Alembic downgrades are not exercised here, and `helm rollback` or
 an Argo revert restores manifests, not schema. To go back, revert the image tag
 *and* restore the database from a backup taken before the upgrade.
+
+## Smoke test
+
+A `post-install,post-upgrade` hook Job waits for the API and the web tier to
+answer from inside the cluster, and the release fails if they do not. Argo CD
+maps that to `PostSync` and runs it once the Sync-phase resources report
+healthy, so a deployment that rolled out but does not serve fails the sync
+rather than looking successful.
+
+It is a hook rather than a `helm test`, because `helm test` has no Argo
+equivalent and would never run there. Add `test` to the hook list in
+`templates/smoke-test-job.yaml` to get on-demand `helm test` runs back as well.
+
+The Job retries until `smokeTest.timeoutSeconds` because plain `helm upgrade`
+without `--wait` starts post-install hooks before the new pods are necessarily
+ready. Set `smokeTest.enabled: false` to drop it.
 
 ## Layout
 
@@ -299,10 +304,11 @@ templates/
 ├── migrations/         the pre-install/pre-upgrade hook Job
 ├── catalog/            SCF catalogue claim and importer Job
 ├── networking/         Ingress and NetworkPolicies
-└── tests/              helm test
+└── smoke-test-job.yaml post-deploy check, at the root because it is release-wide
 ```
 
-`configmap.yaml`, `hpa.yaml` and `poddisruptionbudget.yaml` stay at the root
+`configmap.yaml`, `hpa.yaml`, `poddisruptionbudget.yaml` and the smoke test stay
+at the root
 because they are not per-component: the autoscaler and disruption budget
 templates iterate over every scalable workload, and the ConfigMap is one object
 shared by all three Python workloads. The deployments also hash it by path
