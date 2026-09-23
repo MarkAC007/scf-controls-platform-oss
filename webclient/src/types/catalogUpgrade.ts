@@ -41,6 +41,8 @@ export type PlatformRunStatus =
   | 'applied'
   | 'failed'
   | 'cancelled'
+  /** Page-local: held between the revert route's 202 and the worker flipping the row to 'reverted'. */
+  | 'reverting'
   | 'reverted'
 
 /** organization_reconciliation_runs.status (plan §4.1 M5). */
@@ -61,11 +63,33 @@ export interface FieldChange {
   new?: unknown
 }
 
-/** Display-only successor suggestion for a planned deprecation (plan §4.2.3). */
+/**
+ * Legacy shape of a successor candidate. The workbook is now the sole authority
+ * for succession, so this list holds at most the declared successor (score 1.0)
+ * and is empty otherwise. It MUST NOT be rendered as a suggestion list — read
+ * ``DiffItem.superseded_by`` / ``DiffItem.superseded_source`` instead.
+ */
 export interface SupersededSuggestion {
   scf_id: string
   name?: string | null
   score: number
+}
+
+/**
+ * How the workbook declared a deprecated control's successor:
+ * - ``workbook_crosswalk`` — the control's legacy SCF # crosswalk column
+ * - ``publisher_merged`` — the publisher's own merge list (change sheets)
+ */
+export type SupersededSource = 'workbook_crosswalk' | 'publisher_merged'
+
+/**
+ * A control id the publisher re-used: an existing id that now carries a legacy
+ * control the publisher folded into it. Present only on ``changed`` control
+ * rows, and the reason such a row is not simply a wording change.
+ */
+export interface IdReuse {
+  merged_into: string
+  legacy_name: string | null
 }
 
 /** Count-only view of one entity's diff. */
@@ -75,6 +99,12 @@ export interface EntityDiffCounts {
   deprecated: number
   resurrected: number
   unchanged: number
+  /**
+   * Controls whose id the publisher re-used for a merge — a subset of
+   * ``changed``, never added to the entity total. Absent on runs staged before
+   * id reuse was detected; treat as 0.
+   */
+  id_reused?: number
 }
 
 /** catalog_import_runs.diff_summary shape (plan §4.1 M4). */
@@ -82,6 +112,86 @@ export interface DiffSummary {
   from_version: string
   to_version: string
   entities: Partial<Record<CatalogEntityType, EntityDiffCounts>>
+  /**
+   * Counts the publisher itself declared in the workbook's change sheets.
+   * Null/absent for a workbook that ships no change sheets (e.g. 2026.2).
+   */
+  publisher_changes?: PublisherChangesSummary | null
+}
+
+// ─── Publisher-declared changes (SCF change sheets) ─────────────────────────
+
+/**
+ * Compact publisher change counts carried on ``diff_summary``. ``controls`` is
+ * keyed by the publisher's own change categories — ``new_control``,
+ * ``renumbered``, ``wordsmithed``, ``renamed``, ``moved_domains``, ``merged``
+ * — and may be empty.
+ */
+export interface PublisherChangesSummary {
+  summary: string | null
+  frameworks_added: number
+  frameworks_removed: number
+  mapping_errata: number
+  controls: Record<string, number>
+}
+
+/** One framework the publisher added or removed, by focal-document identifier. */
+export interface PublisherFrameworkChange {
+  fdi: string
+  name: string | null
+}
+
+/** A framework whose mappings the publisher corrected in this release. */
+export interface PublisherMappingErratum {
+  fdi: string
+  name: string | null
+  note: string
+}
+
+/** A control the publisher folded into another control. */
+export interface PublisherMergedControl {
+  legacy_scf_id: string | null
+  legacy_name: string | null
+  merged_into: string | null
+}
+
+/** GET .../runs/{id}/publisher-changes — the full parsed change sheets. */
+export interface PublisherChanges {
+  summary: string | null
+  frameworks: {
+    added: PublisherFrameworkChange[]
+    removed: PublisherFrameworkChange[]
+    mapping_errata: PublisherMappingErratum[]
+  }
+  controls: {
+    counts: Record<string, number>
+    merged: PublisherMergedControl[]
+    tags: Record<string, string[]>
+  }
+}
+
+// ─── Framework registry (focal-document identifiers) ────────────────────────
+
+/**
+ * POST /api/admin/catalog/framework-registry receipt. The registry lets the
+ * churn gate tell a renamed framework from a retired one, so it must be stored
+ * for the catalog version currently live.
+ */
+export interface FrameworkRegistryRegistration {
+  catalog_version: string
+  workbook_version: string
+  entries: number
+  with_focal_document_id: number
+  source: string
+}
+
+/** GET /api/admin/catalog/framework-registry — what is stored for the live catalog. */
+export interface FrameworkRegistryStatus {
+  catalog_version: string | null
+  present: boolean
+  entries: number
+  with_focal_document_id: number
+  source: string | null
 }
 
 /** One row of the paginated diff view (GET .../runs/{id}/diff). */
@@ -92,7 +202,13 @@ export interface DiffItem {
   name?: string | null
   fields: Record<string, FieldChange>
   data: Record<string, unknown>
+  /** Declared successor for a deprecated row — the workbook's decision. */
   superseded_by?: string | null
+  /** Which workbook declaration produced ``superseded_by``; null if none did. */
+  superseded_source?: SupersededSource | null
+  /** Only on ``changed`` control rows whose id the publisher re-used. */
+  id_reused?: IdReuse | null
+  /** Legacy field — see ``SupersededSuggestion``; never rendered as suggestions. */
   suggestions: SupersededSuggestion[]
 }
 
@@ -122,7 +238,12 @@ export interface SanityReport {
 
 // ─── Superseded pairings ────────────────────────────────────────────────────
 
-/** ``superseded_by: null`` explicitly records "no successor" (retire outright). */
+/**
+ * One admin OVERRIDE of the workbook's declared succession. The saved list is
+ * overrides only: a deprecated control absent from it keeps the successor the
+ * workbook declared, and is applied with that successor.
+ * ``superseded_by: null`` explicitly records "no successor" (retire outright).
+ */
 export interface SupersededPairing {
   deprecated_scf_id: string
   superseded_by: string | null

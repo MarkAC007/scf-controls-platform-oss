@@ -1,11 +1,11 @@
 {
   "schema": 1,
-  "version": "0.41.0",
-  "released": "2026-09-23T06:15:05Z",
+  "version": "0.41.1",
+  "released": "2026-09-23T11:11:18Z",
   "min_upgradable_version": "0.0.0",
   "breaking": false,
   "required_stops": [],
-  "release_url": "https://github.com/MarkAC007/scf-controls-platform-oss/releases/tag/v0.41.0",
+  "release_url": "https://github.com/MarkAC007/scf-controls-platform-oss/releases/tag/v0.41.1",
   "summary": ".",
   "migration_range": [
     "20260119_000000_62bdef86f249_initial_schema",
@@ -98,7 +98,8 @@
     "20260916_150000_window_assessment_versions",
     "20260917_100000_scope_overrides",
     "20260921_150000_org_journey",
-    "20260922_210000_catalog_framework_registries"
+    "20260922_210000_catalog_framework_registries",
+    "20260923_090000_framework_registry_recovered_source"
   ],
   "env_added": [],
   "min_compose_action": "rebuild"

@@ -50,9 +50,17 @@ from schemas_catalog_upgrade import (  # noqa: E402
     DiffDetail,
     EntityDiff,
     FieldChange,
+    IdReuse,
+    PublisherChanges,
+    PublisherControlChanges,
+    PublisherControlMerge,
+    PublisherFrameworkChanges,
+    PublisherFrameworkErratum,
+    PublisherFrameworkRef,
     ResurrectedEntity,
     SupersededSuggestion,
 )
+from services.framework_registry import RegistryVersionMismatch  # noqa: E402
 
 _XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
@@ -762,3 +770,415 @@ def test_catalog_status_falls_back_to_row_stamp_only_when_ledger_empty(client_fa
     resp = client.get("/api/catalog/status")
     assert resp.status_code == 200, resp.text
     assert resp.json() == {"seeded": True, "controls": 1451, "catalog_version": "2025.4"}
+
+
+# ---------------------------------------------------------------------------
+# Publisher changes (2026.3+) and the live framework registry
+# ---------------------------------------------------------------------------
+
+
+def _publisher_changes() -> PublisherChanges:
+    return PublisherChanges(
+        summary="This release renumbers the catalogue.",
+        frameworks=PublisherFrameworkChanges(
+            added=[PublisherFrameworkRef(fdi="usa-federal-cmmc-3-0", name="CMMC 3.0")],
+            removed=[
+                PublisherFrameworkRef(fdi="emea-deu-c5-2020", name="Germany C5 (2020)")
+            ],
+            mapping_errata=[
+                PublisherFrameworkErratum(
+                    fdi="general-iso-27002-2022",
+                    name="ISO 27002:2022",
+                    note="FDE #: 8.10, 8.12",
+                )
+            ],
+        ),
+        controls=PublisherControlChanges(
+            counts={"renumbered": 1457, "new_control": 80},
+            merged=[
+                PublisherControlMerge(
+                    legacy_scf_id="OLD-Z9",
+                    legacy_name="Old Thing",
+                    merged_into="GOV-A1",
+                )
+            ],
+            tags={"GOV-A1": ["renumbered", "wordsmithed"]},
+        ),
+    )
+
+
+def test_publisher_changes_returns_the_publishers_own_account(
+    client_factory, monkeypatch
+):
+    """Separate from the diff because it is a different kind of claim.
+
+    Everything under .../diff is what the platform derived by comparing two
+    catalogues. This is SCF's account of its own release, and an operator
+    deciding whether to accept a 1,457-control renumbering needs it beside ours.
+    """
+    run = _make_run()
+    detail = _diff_detail()
+    detail.publisher_changes = _publisher_changes()
+    _patch_diff_download(monkeypatch, detail)
+    client = client_factory(FakeSession([_Result([run])]))
+
+    resp = client.get(f"/api/admin/catalog/upgrade/runs/{run.id}/publisher-changes")
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["summary"] == "This release renumbers the catalogue."
+    assert [f["fdi"] for f in body["frameworks"]["removed"]] == ["emea-deu-c5-2020"]
+    assert body["controls"]["counts"]["renumbered"] == 1457
+    assert body["controls"]["merged"][0]["merged_into"] == "GOV-A1"
+    assert body["controls"]["tags"]["GOV-A1"] == ["renumbered", "wordsmithed"]
+
+
+def test_publisher_changes_is_empty_not_404_for_a_release_that_published_none(
+    client_factory, monkeypatch
+):
+    """Every release up to 2026.2 shipped no change sheets.
+
+    A 404 would read as "this run is broken" for a run that staged perfectly
+    well. 404 stays reserved for a run with no staged diff at all.
+    """
+    run = _make_run()
+    _patch_diff_download(monkeypatch, _diff_detail())
+    client = client_factory(FakeSession([_Result([run])]))
+
+    resp = client.get(f"/api/admin/catalog/upgrade/runs/{run.id}/publisher-changes")
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["summary"] is None
+    assert body["frameworks"]["removed"] == []
+    assert body["controls"]["merged"] == []
+
+
+def test_publisher_changes_404s_for_a_run_with_no_staged_diff(client_factory):
+    run = _make_run(status="staging", diff_detail_object_key=None)
+    client = client_factory(FakeSession([_Result([run])]))
+
+    resp = client.get(f"/api/admin/catalog/upgrade/runs/{run.id}/publisher-changes")
+
+    assert resp.status_code == 404
+    assert "no staged diff" in resp.json()["detail"]
+
+
+def test_publisher_changes_404s_for_an_unknown_run(client_factory):
+    client = client_factory(FakeSession([_Result([])]))
+    resp = client.get(f"/api/admin/catalog/upgrade/runs/{uuid4()}/publisher-changes")
+    assert resp.status_code == 404
+
+
+def test_framework_registry_get_reports_a_stocked_registry(
+    client_factory, monkeypatch
+):
+    async def _read(_db):
+        return SimpleNamespace(
+            catalog_version="2026.2",
+            registry={"a": {"focal_document_id": "doc-a"}},
+            entries=248,
+            with_focal_document_id=248,
+            source="apply",
+        )
+
+    monkeypatch.setattr(cua, "read_live_framework_registry", _read)
+    client = client_factory(FakeSession())
+
+    resp = client.get("/api/admin/catalog/framework-registry")
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {
+        "catalog_version": "2026.2",
+        "present": True,
+        "entries": 248,
+        "with_focal_document_id": 248,
+        "source": "apply",
+    }
+
+
+def test_framework_registry_get_reports_the_state_that_blocks_the_next_upgrade(
+    client_factory, monkeypatch
+):
+    """"The next upgrade will be blocked" should be learnable BEFORE uploading.
+
+    Production learned it from a blocked run instead.
+    """
+    async def _read(_db):
+        return SimpleNamespace(
+            catalog_version="2026.2",
+            registry=None,
+            entries=0,
+            with_focal_document_id=0,
+            source=None,
+        )
+
+    monkeypatch.setattr(cua, "read_live_framework_registry", _read)
+    client = client_factory(FakeSession())
+
+    resp = client.get("/api/admin/catalog/framework-registry")
+
+    assert resp.status_code == 200
+    assert resp.json()["present"] is False
+    assert resp.json()["with_focal_document_id"] == 0
+
+
+def test_framework_registry_get_never_writes(client_factory, monkeypatch):
+    """The read path must not be able to have the recovery's side effect."""
+    calls = []
+
+    async def _must_not_run(*args, **kwargs):
+        calls.append(args)
+        raise AssertionError("the GET must not attempt a recovery or a write")
+
+    monkeypatch.setattr(cua, "register_framework_registry_from_workbook", _must_not_run)
+
+    async def _read(_db):
+        return SimpleNamespace(
+            catalog_version="2026.2", registry=None, entries=0,
+            with_focal_document_id=0, source=None,
+        )
+
+    monkeypatch.setattr(cua, "read_live_framework_registry", _read)
+    session = FakeSession()
+    client = client_factory(session)
+
+    assert client.get("/api/admin/catalog/framework-registry").status_code == 200
+    assert calls == []
+    assert session.committed is False
+
+
+def _registry_upload(client, *, name="scf-2026-2.xlsx", body=b"PK\x03\x04payload"):
+    return client.post(
+        "/api/admin/catalog/framework-registry",
+        files={"file": (name, body, _XLSX)},
+    )
+
+
+def test_framework_registry_post_registers_the_live_versions_workbook(
+    client_factory, monkeypatch
+):
+    seen = {}
+
+    async def _register(db, path, source="backfill", **kwargs):
+        seen["source"] = source
+        seen["bytes"] = open(path, "rb").read()
+        seen["kwargs"] = kwargs
+        return SimpleNamespace(
+            catalog_version="2026.2",
+            workbook_version="2026.2",
+            entries=248,
+            with_focal_document_id=248,
+            source=source,
+        )
+
+    monkeypatch.setattr(cua, "register_framework_registry_from_workbook", _register)
+    client = client_factory(FakeSession())
+
+    resp = _registry_upload(client)
+
+    assert resp.status_code == 201, resp.text
+    assert resp.json() == {
+        "catalog_version": "2026.2",
+        "workbook_version": "2026.2",
+        "entries": 248,
+        "with_focal_document_id": 248,
+        "source": "backfill",
+    }
+    assert seen["bytes"] == b"PK\x03\x04payload"
+    # No allow_version_mismatch over HTTP — the CLI keeps that escape hatch.
+    assert "allow_version_mismatch" not in seen["kwargs"]
+
+
+def test_framework_registry_post_409s_on_a_version_mismatch_naming_both(
+    client_factory, monkeypatch
+):
+    """Identifiers from another release describe different rows.
+
+    The refusal has to name both versions: an operator who uploaded the NEW
+    workbook by mistake cannot act on "wrong version".
+    """
+    async def _register(db, path, source="backfill", **kwargs):
+        raise RegistryVersionMismatch("2026.3", "2026.2")
+
+    monkeypatch.setattr(cua, "register_framework_registry_from_workbook", _register)
+    client = client_factory(FakeSession())
+
+    resp = _registry_upload(client, name="scf-2026-3.xlsx")
+
+    assert resp.status_code == 409, resp.text
+    detail = resp.json()["detail"]
+    assert "2026.3" in detail and "2026.2" in detail
+
+
+def test_framework_registry_post_400s_for_a_workbook_with_no_registry(
+    client_factory, monkeypatch
+):
+    async def _register(db, path, source="backfill", **kwargs):
+        raise ValueError("no framework registry in the workbook (a pre-2026.1 workbook?)")
+
+    monkeypatch.setattr(cua, "register_framework_registry_from_workbook", _register)
+    client = client_factory(FakeSession())
+
+    resp = _registry_upload(client)
+
+    assert resp.status_code == 400
+    assert "no framework registry" in resp.json()["detail"]
+
+
+def test_framework_registry_post_400s_rather_than_500s_on_an_unreadable_workbook(
+    client_factory, monkeypatch
+):
+    """A corrupt upload is the operator's problem to fix, not a server fault."""
+    async def _register(db, path, source="backfill", **kwargs):
+        raise RuntimeError("File is not a zip file")
+
+    monkeypatch.setattr(cua, "register_framework_registry_from_workbook", _register)
+    client = client_factory(FakeSession())
+
+    resp = _registry_upload(client)
+
+    assert resp.status_code == 400
+    assert "Could not read the framework registry" in resp.json()["detail"]
+
+
+def test_framework_registry_post_rejects_a_non_xlsx_upload(client_factory):
+    client = client_factory(FakeSession())
+    resp = client.post(
+        "/api/admin/catalog/framework-registry",
+        files={"file": ("registry.csv", b"a,b\n1,2\n", "text/csv")},
+    )
+    assert resp.status_code == 400
+    assert ".xlsx" in resp.json()["detail"]
+
+
+def test_framework_registry_post_rejects_an_empty_upload(client_factory):
+    client = client_factory(FakeSession())
+    resp = _registry_upload(client, body=b"")
+    assert resp.status_code == 400
+    assert "empty" in resp.json()["detail"].lower()
+
+
+def test_framework_registry_post_refuses_the_static_api_key_principal(
+    client_factory, monkeypatch
+):
+    """A mutation of the succession record, guarded like apply and revert.
+
+    The static API key is auto-granted platform admin. It must not be able to
+    rewrite what the platform believes the live catalogue's identifiers are.
+    """
+    async def _must_not_run(*args, **kwargs):
+        raise AssertionError("the guard must reject before any registration runs")
+
+    monkeypatch.setattr(cua, "register_framework_registry_from_workbook", _must_not_run)
+    client = client_factory(FakeSession(), auth_method="api_key")
+
+    resp = _registry_upload(client)
+
+    assert resp.status_code == 403, resp.text
+    assert "static API key" in resp.json()["detail"]
+
+
+def test_framework_registry_post_allows_a_per_user_api_key(
+    client_factory, monkeypatch
+):
+    """Per-user keys resolve to an accountable DB user, so they are allowed."""
+    async def _register(db, path, source="backfill", **kwargs):
+        return SimpleNamespace(
+            catalog_version="2026.2",
+            workbook_version="2026.2",
+            entries=1,
+            with_focal_document_id=1,
+            source=source,
+        )
+
+    monkeypatch.setattr(cua, "register_framework_registry_from_workbook", _register)
+    client = client_factory(FakeSession(), auth_method="user_api_key")
+
+    assert _registry_upload(client).status_code == 201
+
+
+# ---------------------------------------------------------------------------
+# Declared succession + id reuse on the diff row (the console's contract)
+# ---------------------------------------------------------------------------
+
+
+def _declared_diff_detail() -> DiffDetail:
+    """A 2026.3-shaped diff: one declared deprecation and one reused id."""
+    return DiffDetail(
+        from_version="2026.2",
+        to_version="2026.3",
+        entities={
+            CatalogEntityType.CONTROLS: EntityDiff(
+                changed=[
+                    ChangedEntity(
+                        key="GOV-B1",
+                        name="A completely different control now",
+                        fields={"control_name": FieldChange(old="Old", new="New")},
+                        id_reused=IdReuse(
+                            merged_into="GOV-A1", legacy_name="Original owner"
+                        ),
+                    ),
+                    ChangedEntity(
+                        key="GOV-B2",
+                        fields={"control_description": FieldChange(old="a", new="b")},
+                    ),
+                ],
+                deprecated=[
+                    DeprecatedEntity(
+                        key="GOV-C1",
+                        superseded_by="GOV-A1",
+                        superseded_source="workbook_crosswalk",
+                        suggestions=[
+                            SupersededSuggestion(
+                                scf_id="GOV-A1",
+                                name="Survivor",
+                                score=1.0,
+                                signals=["workbook_crosswalk"],
+                            )
+                        ],
+                    ),
+                    DeprecatedEntity(key="GOV-C2"),
+                ],
+            )
+        },
+    )
+
+
+def test_diff_rows_expose_the_declared_source_and_the_id_reuse(
+    client_factory, monkeypatch
+):
+    """Both fields have to survive the flatten, or the console cannot render them.
+
+    The row model is one generic shape across change classes, so a field added
+    to DeprecatedEntity or ChangedEntity is invisible to the endpoint until
+    _flatten_diff copies it across. That omission is silent: the response still
+    validates, with the field defaulted to None on every row.
+    """
+    run = _make_run()
+    _patch_diff_download(monkeypatch, _declared_diff_detail())
+    session = FakeSession([_Result([run])])
+    client = client_factory(session)
+    resp = client.get(f"/api/admin/catalog/upgrade/runs/{run.id}/diff")
+    assert resp.status_code == 200, resp.text
+    by_key = {item["key"]: item for item in resp.json()["items"]}
+
+    declared = by_key["GOV-C1"]
+    assert declared["superseded_source"] == "workbook_crosswalk"
+    assert declared["superseded_by"] == "GOV-A1"
+    assert declared["suggestions"][0]["signals"] == ["workbook_crosswalk"]
+    assert declared["suggestions"][0]["score"] == 1.0
+
+    reused = by_key["GOV-B1"]
+    assert reused["change_class"] == "changed"
+    assert reused["id_reused"] == {
+        "merged_into": "GOV-A1",
+        "legacy_name": "Original owner",
+    }
+
+    # Both fields are None on the rows that do not carry them, for every other
+    # entity type, and for diffs stored before the fields existed.
+    assert by_key["GOV-C2"]["superseded_source"] is None
+    assert by_key["GOV-B2"]["id_reused"] is None
+    assert by_key["GOV-C1"]["id_reused"] is None
+    assert by_key["GOV-B1"]["superseded_source"] is None

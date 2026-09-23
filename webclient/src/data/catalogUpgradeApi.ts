@@ -13,6 +13,8 @@ import type {
   CatalogStatusExtended,
   ChangeClass,
   DiffPageResponse,
+  FrameworkRegistryRegistration,
+  FrameworkRegistryStatus,
   OrgCatalogStatusResponse,
   OrgChangelogResponse,
   OrgReconciliationRunDetail,
@@ -21,6 +23,7 @@ import type {
   PlannedAction,
   PlatformImportRunDetail,
   PlatformImportRunsListResponse,
+  PublisherChanges,
   ReconciliationActionsUpdateResponse,
   ReconciliationApplyResponse,
   ReconciliationCancelResponse,
@@ -362,4 +365,43 @@ export async function revertCatalogUpgrade(runId: string): Promise<UpgradeRevert
     throw new Error(await errorMessageFrom(response))
   }
   return response.json()
+}
+
+/**
+ * Register the workbook for the catalog version currently live (multipart,
+ * field ``file``). Stores that version's framework list and focal-document
+ * identifiers so the next upgrade's churn gate can tell a renamed framework
+ * from a retired one. Nothing in the catalog itself changes.
+ *
+ * 409 when the workbook's version is not the live version (the message names
+ * both), 400 for a workbook with no registry or a non-xlsx upload.
+ */
+export async function registerFrameworkRegistry(
+  file: File
+): Promise<FrameworkRegistryRegistration> {
+  const form = new FormData()
+  form.append('file', file)
+  const response = await fetchWithAuthRetry((bearer) =>
+    fetch(`${API_BASE_URL}/admin/catalog/framework-registry`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${bearer}` },
+      body: form,
+    })
+  )
+  if (!response.ok) {
+    throw new Error(await errorMessageFrom(response))
+  }
+  return response.json()
+}
+
+/** What framework registry, if any, is stored for the live catalog version. */
+export async function getFrameworkRegistryStatus(): Promise<FrameworkRegistryStatus> {
+  return upgradeFetch<FrameworkRegistryStatus>('/admin/catalog/framework-registry')
+}
+
+/** The publisher's own declared changes for a staged run, parsed from the workbook. */
+export async function getPublisherChanges(runId: string): Promise<PublisherChanges> {
+  return upgradeFetch<PublisherChanges>(
+    `/admin/catalog/upgrade/runs/${runId}/publisher-changes`
+  )
 }

@@ -58,6 +58,7 @@ from schemas_catalog_upgrade import (  # noqa: E402
     DiffDetail,
     EntityDiff,
     FieldChange,
+    IdReuse,
     PlannedAction,
     PlannedActionType,
     ResurrectedEntity,
@@ -440,8 +441,12 @@ def _preview_world(first_run=False):
                                 data={"framework_mappings": {"fw_gamma": ["ref"]}}),
                 ],
                 changed=[
+                    # Its id was declared merged away and handed to this
+                    # control: the org is assessing an id that changed meaning.
                     ChangedEntity(key="GOV-A1", name="Changed sel",
-                                  fields={"control_name": FieldChange(old="A", new="B")}),
+                                  fields={"control_name": FieldChange(old="A", new="B")},
+                                  id_reused=IdReuse(merged_into="GOV-B1",
+                                                    legacy_name="Original owner")),
                     ChangedEntity(key="GOV-A2", name="Changed unsel",
                                   fields={"control_name": FieldChange(old="C", new="D")}),
                 ],
@@ -559,6 +564,11 @@ async def test_preview_branch_c_changed_in_scope():
     item = result.changed_in_scope[0]
     assert item.reassessment_recommended is True  # composite exists
     assert item.fields["control_name"].new == "B"
+    # The id-reuse flag reaches the org preview. Information only: the control
+    # stays selected, nothing is re-scoped, and no action is planned for it.
+    assert item.id_reused.merged_into == "GOV-B1"
+    assert item.id_reused.legacy_name == "Original owner"
+    assert "GOV-A1" not in {a["key"] for a in result.run.planned_actions or []}
 
 
 @pytest.mark.asyncio
@@ -950,3 +960,67 @@ async def test_changelog_empty_before_first_apply():
         session, ORG, detail_loader=_loader({})
     )
     assert entries == [] and total == 0
+
+
+# ---------------------------------------------------------------------------
+# Declared succession + id reuse across the org seam
+# ---------------------------------------------------------------------------
+
+
+def test_union_carries_id_reuse_from_the_changed_row():
+    """An org skipping releases must still learn the id changed hands.
+
+    The union is the only diff an org that skipped 2026.3 ever sees. _KeyState
+    has to carry the flag explicitly; folding it into ``fields`` would hide it,
+    and dropping it would make a reused id indistinguishable from an ordinary
+    rewrite for exactly the tenants furthest behind.
+    """
+    d1 = _controls_detail(V1, V2, changed=[
+        ChangedEntity(key="GOV-A1", fields={"control_name": FieldChange(old="A", new="B")},
+                      id_reused=IdReuse(merged_into="GOV-C9", legacy_name="Original")),
+    ])
+    d2 = _controls_detail(V2, V3, changed=[
+        ChangedEntity(key="GOV-A1", fields={"control_name": FieldChange(old="B", new="C")}),
+    ])
+    diff = rs.union_diff_details([d1, d2]).entities[CONTROLS]
+    assert [c.key for c in diff.changed] == ["GOV-A1"]
+    assert diff.changed[0].id_reused.merged_into == "GOV-C9"
+    assert diff.changed[0].fields["control_name"].new == "C"
+
+
+def test_union_leaves_id_reuse_unset_where_no_run_declared_one():
+    d1 = _controls_detail(V1, V2, changed=[
+        ChangedEntity(key="GOV-A1", fields={"control_name": FieldChange(old="A", new="B")}),
+    ])
+    diff = rs.union_diff_details([d1]).entities[CONTROLS]
+    assert diff.changed[0].id_reused is None
+
+
+def test_a_publisher_merged_successor_defaults_to_migrate():
+    """Both declared sources are the publisher's word, so both default to MIGRATE.
+
+    Frameworks discriminate by source because one of their two sources is a
+    similarity match we derived. Controls have no such source any more — both
+    'workbook_crosswalk' and 'publisher_merged' are SCF saying so in the
+    workbook — so a source-aware default here would only ever demote a genuine
+    declaration to RETAIN and strand the org's data on a retired control.
+    """
+    assert rs._default_action_for("GOV-B1") is PlannedActionType.MIGRATE
+    assert rs._default_action_for(None) is PlannedActionType.RETAIN
+
+
+@pytest.mark.asyncio
+async def test_preview_migrates_a_publisher_merged_deprecation():
+    """The same default, exercised through build_preview rather than asserted."""
+    session, _, details = _preview_world()
+    detail = list(details.values())[0]
+    controls = detail.entities[CONTROLS]
+    for dep in controls.deprecated:
+        if dep.key == "GOV-D1":  # the one with no successor anywhere
+            dep.superseded_by = "GOV-B1"
+            dep.superseded_source = "publisher_merged"
+    result = await rs.build_preview(session, ORG, detail_loader=_loader(details))
+    impact = {i.key: i for i in result.deprecated_impacts}["GOV-D1"]
+    assert impact.superseded_by == "GOV-B1"
+    assert impact.suggested_action == PlannedActionType.MIGRATE
+    assert impact.planned_action.successor_scf_id == "GOV-B1"

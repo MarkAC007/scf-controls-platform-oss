@@ -291,7 +291,9 @@ def _live(key, name, fdi=None, status="active"):
     )
 
 
-def _extracted(names, registry=None):
+def _extracted(names, registry=None, retired_fdis=()):
+    """A minimal workbook. ``retired_fdis`` writes the publisher's own
+    ``STRM Errata`` "removed in <version>" declarations into it."""
     return cd.ExtractedCatalog(
         catalog_version="2026.3",
         controls=[{"scf_id": "GOV-01", "control_name": "Governance"}],
@@ -300,6 +302,19 @@ def _extracted(names, registry=None):
         assessment_objectives=[{"ao_id": "GOV-01-A"}],
         framework_names=names,
         framework_registry=registry or {},
+        publisher_changes=(
+            {
+                "summary": None,
+                "frameworks": {
+                    "added": [],
+                    "removed": [{"fdi": fdi, "name": None} for fdi in retired_fdis],
+                    "mapping_errata": [],
+                },
+                "controls": {"counts": {}, "merged": [], "tags": {}},
+            }
+            if retired_fdis
+            else {}
+        ),
     )
 
 
@@ -393,13 +408,27 @@ def test_framework_diff_round_trips_through_json():
 
 
 # -------------------------------------------------------------------- gate --
-def _sanity(live_frameworks, workbook_names, registry=None):
+def _report(
+    live_frameworks,
+    workbook_names,
+    registry=None,
+    retired_fdis=(),
+    live_registry=None,
+):
     live = cd.LiveCatalog()
     live.controls["GOV-01"] = cd.LiveEntityRow(
         key="GOV-01", status="active", fields={}, name="Governance"
     )
     live.frameworks = live_frameworks
-    report = cd.run_sanity_checks(_extracted(workbook_names, registry), live)
+    return cd.run_sanity_checks(
+        _extracted(workbook_names, registry, retired_fdis),
+        live,
+        live_registry=live_registry,
+    )
+
+
+def _sanity(live_frameworks, workbook_names, registry=None, retired_fdis=()):
+    report = _report(live_frameworks, workbook_names, registry, retired_fdis)
     return next(c for c in report.checks if c.check == "framework_churn")
 
 
@@ -548,7 +577,13 @@ def test_framework_churn_counts_only_declared_explanations():
     bound = [k for k, p in proposals.items() if p.bound_successor]
     assert bound, "precondition: the derived matcher does pair these"
     assert check.passed is False
-    assert "0 carry the workbook's own focal-document identifier" in check.detail
+    # The detail must attribute every removal, and a derived pairing attributes
+    # to nothing: no rename, no new edition, no publisher retirement.
+    assert "20 live frameworks absent from the workbook" in check.detail
+    assert "0 renamed (same focal document)" in check.detail
+    assert "0 superseded by a new edition" in check.detail
+    assert "0 retired by the publisher" in check.detail
+    assert "20 unexplained" in check.detail
 
 
 # ------------------------------------------------- review gate on derive ----
@@ -699,7 +734,8 @@ def test_framework_churn_passes_when_live_fdi_comes_from_db_registry():
 
     check = _sanity(live_frameworks, workbook_names, workbook_registry)
     assert check.passed is True
-    assert "20 carry" in check.detail
+    assert "20 renamed (same focal document)" in check.detail
+    assert "0 unexplained" in check.detail
 
     # Same transition with no stored registry: 20 unexplained removals, blocked.
     without = cd.derive_live_frameworks(_live_controls(live_ids), None)
@@ -708,3 +744,270 @@ def test_framework_churn_passes_when_live_fdi_comes_from_db_registry():
     blocked = _sanity(without, workbook_names, workbook_registry)
     assert blocked.passed is False
     assert "unexplained" in blocked.detail
+
+
+# ------------------------------------ publisher-declared retirement (2026.3) --
+def test_a_publisher_declared_retirement_explains_a_successorless_removal():
+    """The third kind of declaration, new in SCF 2026.3.
+
+    A renamed framework has a successor and a new edition has a successor. A
+    RETIRED one has none — the publisher deleted the document. Before the STRM
+    Errata sheet existed there was no way to say so, and every deliberate
+    retirement counted against the gate as if the workbook had lost it.
+
+    This is still a declaration: it is read off the publisher's own sheet and
+    matched on the live framework's focal-document identifier. It is not the
+    matcher being allowed to vote.
+    """
+    live = {
+        f"gone_{i}": _live(f"gone_{i}", f"Gone {i}", f"publisher-doc-{i}")
+        for i in range(20)
+    }
+    live["kept"] = _live("kept", "Kept", "publisher-doc-kept")
+
+    blocked = _sanity(live, {"kept": "Kept"})
+    assert blocked.passed is False
+    assert "20 unexplained" in blocked.detail
+    assert "0 retired by the publisher" in blocked.detail
+
+    explained = _sanity(
+        live,
+        {"kept": "Kept"},
+        retired_fdis=[f"publisher-doc-{i}" for i in range(20)],
+    )
+    assert explained.passed is True
+    assert "20 retired by the publisher" in explained.detail
+    assert "0 unexplained" in explained.detail
+
+
+def test_a_publisher_retirement_is_matched_on_the_identifier_not_the_key():
+    """The declaration names a focal document, not our column slug.
+
+    Matching on the framework key would silently stop working the moment the
+    publisher renamed the column, which is the exact event this whole mechanism
+    exists to survive.
+    """
+    live = {
+        f"gone_{i}": _live(f"gone_{i}", f"Gone {i}", f"publisher-doc-{i}")
+        for i in range(20)
+    }
+    # The publisher retires documents whose identifiers nothing live carries.
+    check = _sanity(
+        live,
+        {"kept": "Kept"},
+        retired_fdis=["some-other-doc-1", "some-other-doc-2"],
+    )
+    assert check.passed is False
+    assert "0 retired by the publisher" in check.detail
+    assert "20 unexplained" in check.detail
+
+
+def test_a_live_framework_with_no_identifier_cannot_be_publisher_retired():
+    """No identifier, no declaration — the pre-registry install's state.
+
+    This is the failure production hit, in miniature: with no live identifiers
+    there is nothing for the publisher's declaration to match against, so the
+    removals stay unexplained and the gate blocks. It must NOT fall back to
+    matching by name.
+    """
+    live = {f"gone_{i}": _live(f"gone_{i}", f"Gone {i}") for i in range(20)}
+    check = _sanity(
+        live, {"kept": "Kept"}, retired_fdis=[f"publisher-doc-{i}" for i in range(20)]
+    )
+    assert check.passed is False
+    assert "0 retired by the publisher" in check.detail
+
+
+def test_a_derived_match_still_explains_nothing_beside_a_publisher_retirement():
+    """The anti-test for the new tier.
+
+    Adding a third way to explain a removal must not have widened the first
+    two. A derived pairing was never an explanation and still is not, even in a
+    release that ships the errata sheet.
+    """
+    live = {
+        f"old_fw_{i}": _live(f"old_fw_{i}", f"Framework {i}", f"publisher-doc-{i}")
+        for i in range(20)
+    }
+    # Names the derived matcher will happily pair, identifiers it cannot see.
+    names = {f"old_fw_{i}_2026": f"Framework {i} 2026" for i in range(20)}
+    proposals = match_framework_successions(
+        {k: v.name for k, v in live.items()}, names
+    )
+    assert [k for k, p in proposals.items() if p.bound_successor], (
+        "precondition: the derived matcher does pair these"
+    )
+
+    # The workbook ships an errata sheet, but retires something else entirely.
+    check = _sanity(live, names, retired_fdis=["general-unrelated-doc"])
+    assert check.passed is False
+    assert "0 renamed (same focal document)" in check.detail
+    assert "0 retired by the publisher" in check.detail
+    assert "20 unexplained" in check.detail
+
+
+def test_each_removal_is_attributed_once_with_rename_taking_precedence():
+    """The counts must sum to the total, so they cannot double-attribute.
+
+    A framework can be both renamed (its identifier survives on a new column)
+    and listed in the errata. The rename is the more specific fact — there IS a
+    successor — so it wins, and the operator reading the line sees each removal
+    in exactly one bucket.
+    """
+    live = {
+        "renamed_one": _live("renamed_one", "Renamed One", "publisher-doc-a"),
+        "retired_one": _live("retired_one", "Retired One", "publisher-doc-b"),
+    }
+    names = {"renamed_one_2026": "Renamed One 2026"}
+    registry = {"renamed_one_2026": {"focal_document_id": "publisher-doc-a"}}
+    check = _sanity(
+        live, names, registry, retired_fdis=["publisher-doc-a", "publisher-doc-b"]
+    )
+
+    assert "2 live frameworks absent from the workbook" in check.detail
+    assert "1 renamed (same focal document)" in check.detail
+    assert "1 retired by the publisher" in check.detail
+    assert "0 unexplained" in check.detail
+
+
+def test_a_workbook_with_no_errata_sheet_retires_nothing():
+    """Every release up to 2026.2. Absence of the sheet is not a declaration."""
+    live = {f"gone_{i}": _live(f"gone_{i}", f"Gone {i}", f"doc-{i}") for i in range(20)}
+    check = _sanity(live, {"kept": "Kept"})
+    assert "0 retired by the publisher" in check.detail
+    assert check.passed is False
+
+
+# ------------------------------------------- live_framework_registry gate --
+def _registry_check(report):
+    return next(
+        (c for c in report.checks if c.check == "live_framework_registry"), None
+    )
+
+
+def _live_registry(**over):
+    from services.framework_registry import LiveRegistryStatus
+
+    fields = dict(
+        catalog_version="2026.2",
+        registry={"a": {"focal_document_id": "doc-a"}},
+        source="apply",
+        entries=1,
+        with_focal_document_id=1,
+    )
+    fields.update(over)
+    return LiveRegistryStatus(**fields)
+
+
+def test_no_registry_check_is_emitted_when_nobody_looked():
+    """A verdict about a registry that was never read would be fabricated.
+
+    ``run_sanity_checks`` is called directly by tests and by any non-staging
+    consumer. Those callers pass no registry status, and the honest response is
+    to omit the check rather than invent a pass or a fail for it.
+    """
+    report = _report({"kept": _live("kept", "Kept")}, {"kept": "Kept"})
+    assert _registry_check(report) is None
+
+
+def test_the_registry_check_sits_immediately_before_framework_churn():
+    """Ordering is part of the deliverable.
+
+    A framework_churn failure is unreadable on its own: "73 unexplained" looks
+    identical whether the release dropped 73 documents or the platform had no
+    identifiers to compare against. Production hit the second. The line that
+    disambiguates it has to be the line above it.
+    """
+    report = _report(
+        {"kept": _live("kept", "Kept")}, {"kept": "Kept"},
+        live_registry=_live_registry(),
+    )
+    names = [c.check for c in report.checks]
+    assert names.index("live_framework_registry") == names.index("framework_churn") - 1
+
+
+def test_the_registry_check_passes_and_states_its_provenance():
+    report = _report(
+        {"kept": _live("kept", "Kept")}, {"kept": "Kept"},
+        live_registry=_live_registry(entries=248, with_focal_document_id=248),
+    )
+    check = _registry_check(report)
+    assert check.passed is True
+    assert "registry for 2026.2" in check.detail
+    assert "248 frameworks" in check.detail
+    assert "248 carrying a focal-document identifier" in check.detail
+    assert "source: apply" in check.detail
+
+
+def test_a_recovered_registry_says_so_rather_than_naming_the_source_column():
+    """"source: recovered" tells an operator nothing they can act on.
+
+    Saying it came from the applied release's own stored workbook tells them
+    where the identifiers are from and why they are trustworthy.
+    """
+    report = _report(
+        {"kept": _live("kept", "Kept")}, {"kept": "Kept"},
+        live_registry=_live_registry(
+            source="recovered", recovered_from_run_id="run-123"
+        ),
+    )
+    check = _registry_check(report)
+    assert check.passed is True
+    assert "recovered from the 2026.2 upgrade workbook" in check.detail
+
+
+def test_a_missing_registry_fails_with_the_reason_and_the_remedy():
+    """The line production needed and did not have.
+
+    It must carry three things: that there is no registry, WHY recovery could
+    not supply one, and what the operator should do next. Anything less and the
+    next person hits the same wall with the same "73 unexplained".
+    """
+    report = _report(
+        {"kept": _live("kept", "Kept")}, {"kept": "Kept"},
+        live_registry=_live_registry(
+            registry=None,
+            source=None,
+            entries=0,
+            with_focal_document_id=0,
+            reason="no applied upgrade run for 2026.2 still holds its workbook",
+        ),
+    )
+    check = _registry_check(report)
+    assert check.passed is False
+    assert "no framework registry with focal-document identifiers" in check.detail
+    assert "2026.2" in check.detail
+    assert "still holds its workbook" in check.detail, "the reason must survive"
+    assert "Register your current catalog workbook" in check.detail, "the remedy"
+
+
+def test_a_registry_with_no_identifiers_fails_like_a_missing_one():
+    """The 2026.1|seed row. A registry that cannot decide anything is not one."""
+    report = _report(
+        {"kept": _live("kept", "Kept")}, {"kept": "Kept"},
+        live_registry=_live_registry(
+            registry={"a": {"focal_document_id": None}},
+            source="seed",
+            entries=1,
+            with_focal_document_id=0,
+            reason="the stored registry for 2026.2 carries no focal-document "
+                   "identifiers (source: seed)",
+        ),
+    )
+    check = _registry_check(report)
+    assert check.passed is False
+    assert "source: seed" in check.detail
+
+
+def test_a_failed_registry_check_fails_the_whole_report():
+    """It is a gate, not a warning. Staging must stop."""
+    report = _report(
+        {"kept": _live("kept", "Kept")}, {"kept": "Kept"},
+        live_registry=_live_registry(
+            registry=None, entries=0, with_focal_document_id=0, reason="none stored"
+        ),
+    )
+    assert report.passed is False
+    assert [c.check for c in report.checks if not c.passed] == [
+        "live_framework_registry"
+    ]

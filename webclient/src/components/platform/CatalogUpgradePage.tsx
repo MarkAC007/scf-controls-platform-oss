@@ -17,13 +17,16 @@ import {
   cancelCatalogUpgradeRun,
   getCatalogStatusExtended,
   getCatalogUpgradeRun,
+  getFrameworkRegistryStatus,
   listCatalogUpgradeRuns,
   revertCatalogUpgrade,
   uploadCatalogUpgrade,
 } from '../../data/catalogUpgradeApi'
 import type {
   CatalogStatusExtended,
+  FrameworkRegistryStatus,
   PlatformImportRunDetail,
+  SanityCheck,
   PlatformImportRunSummary,
 } from '../../types/catalogUpgrade'
 import VersionCard from './VersionCard'
@@ -31,27 +34,58 @@ import ImportRunHistory, { RunStatusBadge } from './ImportRunHistory'
 import UploadStage from './UploadStage'
 import DiffPreview from './DiffPreview'
 import PairingEditor from './PairingEditor'
+import PublisherChangesPanel from './PublisherChangesPanel'
+import RegistryRegistrationCard from './RegistryRegistrationCard'
 import ApplyConfirmDialog from './ApplyConfirmDialog'
 import RevertDialog from './RevertDialog'
 import CompletionReport from './CompletionReport'
 
 /** Statuses during which the page polls the run detail. */
-const IN_FLIGHT_STATUSES = ['staging', 'applying'] as const
+const IN_FLIGHT_STATUSES = ['staging', 'applying', 'reverting'] as const
 const POLL_INTERVAL_MS = 2500
 
 function isInFlight(status: string | undefined): boolean {
   return status !== undefined && (IN_FLIGHT_STATUSES as readonly string[]).includes(status)
 }
 
+/**
+ * The staging check that fails when the platform has no framework registry for
+ * the live catalog version and could not recover one. Only runs staged by the
+ * recovery-capable build report it.
+ */
+const LIVE_REGISTRY_CHECK = 'live_framework_registry'
+
+function needsRegistryRegistration(run: PlatformImportRunDetail): boolean {
+  return (run.sanity_report?.checks ?? []).some(
+    check => check.check === LIVE_REGISTRY_CHECK && check.passed === false
+  )
+}
+
 function CatalogUpgradeConsole() {
   const [status, setStatus] = useState<CatalogStatusExtended | null>(null)
+  const [registry, setRegistry] = useState<FrameworkRegistryStatus | null>(null)
   const [runs, setRuns] = useState<PlatformImportRunSummary[]>([])
   const [runsTotal, setRunsTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [activeRun, setActiveRun] = useState<PlatformImportRunDetail | null>(null)
   const [showApplyDialog, setShowApplyDialog] = useState(false)
   const [applying, setApplying] = useState(false)
+  // A transition the server accepted (202) but whose row the worker may not
+  // have moved yet: apply leaves the row 'staged' until the worker flips it,
+  // revert leaves it 'applied' until it lands as 'reverted'. Until the row
+  // moves, a read of `settledAs` is not news and must not stop the poll or
+  // re-open the previous view.
+  const [pending, setPending] = useState<{ runId: string; settledAs: string } | null>(null)
   const [showRevertDialog, setShowRevertDialog] = useState(false)
+
+  /** Fail soft: a registry we cannot read renders no line at all. */
+  const loadRegistry = useCallback(async () => {
+    try {
+      setRegistry(await getFrameworkRegistryStatus())
+    } catch {
+      setRegistry(null)
+    }
+  }, [])
 
   const loadOverview = useCallback(async () => {
     try {
@@ -71,7 +105,8 @@ function CatalogUpgradeConsole() {
 
   useEffect(() => {
     loadOverview()
-  }, [loadOverview])
+    loadRegistry()
+  }, [loadOverview, loadRegistry])
 
   const selectRun = useCallback(async (runId: string) => {
     try {
@@ -87,11 +122,14 @@ function CatalogUpgradeConsole() {
   useEffect(() => {
     if (!activeRun || !isInFlight(activeRun.status)) return
     const runId = activeRun.id
+    const ignoreStatus = pending?.runId === runId ? pending.settledAs : null
     const timer = setInterval(async () => {
       try {
         const detail = await getCatalogUpgradeRun(runId)
+        if (ignoreStatus !== null && detail.status === ignoreStatus) return
         setActiveRun(current => (current?.id === runId ? detail : current))
         if (!isInFlight(detail.status)) {
+          setPending(current => (current?.runId === runId ? null : current))
           loadOverview()
         }
       } catch {
@@ -99,7 +137,7 @@ function CatalogUpgradeConsole() {
       }
     }, POLL_INTERVAL_MS)
     return () => clearInterval(timer)
-  }, [activeRun?.id, activeRun?.status, loadOverview])
+  }, [activeRun?.id, activeRun?.status, pending, loadOverview])
 
   const handleUpload = async (file: File) => {
     try {
@@ -116,10 +154,16 @@ function CatalogUpgradeConsole() {
     if (!activeRun?.to_version) return
     setApplying(true)
     try {
-      await applyCatalogUpgrade(activeRun.id, activeRun.to_version, confirmText)
+      const runId = activeRun.id
+      await applyCatalogUpgrade(runId, activeRun.to_version, confirmText)
       setShowApplyDialog(false)
       toast.success(`Applying catalog ${activeRun.to_version}…`)
-      await selectRun(activeRun.id)
+      // The route answers 202 before the worker flips the row, so a re-read
+      // here would still say 'staged' and the poll would never start.
+      setPending({ runId, settledAs: 'staged' })
+      setActiveRun(current =>
+        current?.id === runId ? { ...current, status: 'applying' } : current
+      )
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Apply failed')
     } finally {
@@ -142,11 +186,16 @@ function CatalogUpgradeConsole() {
   // RevertDialog surfaces RevertBlockedError (409 + blocking orgs) itself.
   const handleRevert = async () => {
     if (!activeRun) return
-    await revertCatalogUpgrade(activeRun.id)
+    const runId = activeRun.id
+    await revertCatalogUpgrade(runId)
     setShowRevertDialog(false)
     toast.success('Revert started')
-    await selectRun(activeRun.id)
-    await loadOverview()
+    // Same shape as apply: the row stays 'applied' until the worker lands it
+    // as 'reverted', so hold the run in 'reverting' and let the poll settle it.
+    setPending({ runId, settledAs: 'applied' })
+    setActiveRun(current =>
+      current?.id === runId ? { ...current, status: 'reverting' } : current
+    )
   }
 
   const anyRunInFlight = runs.some(run => isInFlight(run.status)) || isInFlight(activeRun?.status)
@@ -154,7 +203,7 @@ function CatalogUpgradeConsole() {
   return (
     <div>
       <h2 style={{ marginBottom: '1rem' }}>Platform Catalog</h2>
-      <VersionCard status={status} loading={loading} />
+      <VersionCard status={status} loading={loading} registry={registry} />
       <UploadStage disabled={anyRunInFlight} onUpload={handleUpload} />
 
       {activeRun && (
@@ -188,20 +237,15 @@ function CatalogUpgradeConsole() {
                 Staging found problems with this workbook — the run is blocked and cannot be
                 applied.
               </p>
+              {needsRegistryRegistration(activeRun) && (
+                <RegistryRegistrationCard
+                  liveVersion={activeRun.from_version}
+                  targetVersion={activeRun.to_version}
+                  onRegistered={loadRegistry}
+                />
+              )}
               {activeRun.sanity_report && (
-                <ul style={{ paddingLeft: '1.25rem' }}>
-                  {activeRun.sanity_report.checks.map(check => (
-                    <li key={check.check} style={{ marginBottom: '0.25rem' }}>
-                      {check.passed ? (
-                        <span className="badge badge-active">pass</span>
-                      ) : (
-                        <span className="badge badge-revoked">fail</span>
-                      )}{' '}
-                      <strong>{check.check}</strong>
-                      {check.detail && <span style={{ color: 'var(--muted)' }}> — {check.detail}</span>}
-                    </li>
-                  ))}
-                </ul>
+                <SanityCheckList checks={activeRun.sanity_report.checks} />
               )}
               <button className="btn btn-secondary" onClick={handleCancel}>
                 Discard run
@@ -212,9 +256,26 @@ function CatalogUpgradeConsole() {
           {activeRun.status === 'staged' && (
             <div>
               <p style={{ color: 'var(--muted)' }}>
-                Review the diff and pair deprecated controls, then apply. Nothing changes until
-                the apply is confirmed.
+                Review the diff, then apply. The workbook's declared successors are applied
+                as-is — override one only where it is wrong. Nothing changes until the apply is
+                confirmed.
               </p>
+              {activeRun.sanity_report && activeRun.sanity_report.checks.length > 0 && (
+                <details style={{ marginBottom: '1.25rem' }}>
+                  <summary style={{ cursor: 'pointer', color: 'var(--muted)' }}>
+                    Staging checks: {activeRun.sanity_report.checks.filter(c => c.passed).length} of{' '}
+                    {activeRun.sanity_report.checks.length} passed
+                  </summary>
+                  <SanityCheckList checks={activeRun.sanity_report.checks} />
+                </details>
+              )}
+              {activeRun.diff_summary?.publisher_changes && (
+                <PublisherChangesPanel
+                  runId={activeRun.id}
+                  toVersion={activeRun.to_version}
+                  summary={activeRun.diff_summary.publisher_changes}
+                />
+              )}
               <DiffPreview runId={activeRun.id} diffSummary={activeRun.diff_summary} />
               <PairingEditor
                 runId={activeRun.id}
@@ -245,11 +306,24 @@ function CatalogUpgradeConsole() {
             </div>
           )}
 
+          {activeRun.status === 'reverting' && (
+            <div style={{ textAlign: 'center', padding: '2rem' }}>
+              <div className="loading-spinner" />
+              <p style={{ color: 'var(--muted)', marginTop: '0.75rem' }}>
+                Reverting catalog {activeRun.to_version}…
+              </p>
+            </div>
+          )}
+
           {activeRun.status === 'applied' && (
             <div>
               <CompletionReport run={activeRun} />
               <div style={{ marginTop: '1.25rem' }}>
-                <button className="btn btn-danger" onClick={() => setShowRevertDialog(true)}>
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  onClick={() => setShowRevertDialog(true)}
+                >
                   Revert upgrade…
                 </button>
               </div>
@@ -302,6 +376,30 @@ function CatalogUpgradeConsole() {
         />
       )}
     </div>
+  )
+}
+
+/**
+ * The sanity gates as staging reported them, one row each. Shown open on a
+ * blocked run (the failures are the point) and inside a collapsed disclosure
+ * on a staged run, so the admin who just registered a workbook can see the
+ * registry and churn gates now pass without leaving the page.
+ */
+function SanityCheckList({ checks }: { checks: SanityCheck[] }) {
+  return (
+    <ul style={{ paddingLeft: '1.25rem' }}>
+      {checks.map(check => (
+        <li key={check.check} style={{ marginBottom: '0.25rem' }}>
+          {check.passed ? (
+            <span className="badge badge-active">pass</span>
+          ) : (
+            <span className="badge badge-revoked">fail</span>
+          )}{' '}
+          <strong>{check.check}</strong>
+          {check.detail && <span style={{ color: 'var(--muted)' }}> — {check.detail}</span>}
+        </li>
+      ))}
+    </ul>
   )
 }
 

@@ -95,9 +95,18 @@ class FieldChange(BaseModel):
 
 
 class SupersededSuggestion(BaseModel):
-    """Display-only successor suggestion for a planned deprecation (plan §4.2.3).
+    """A successor candidate attached to a planned deprecation (plan §4.2.3).
 
-    Never auto-applied; the admin pairs manually via the pairings PUT.
+    For CONTROLS this list is never a guess. It holds at most one entry: the
+    successor the workbook itself declares, at score 1.0, with ``signals``
+    naming the declaring source. Name-similarity scoring was removed - the
+    workbook is the sole authority on control succession, and a generated
+    proposal sitting in the same list as a declaration made the two
+    indistinguishable to anyone reviewing a four-figure renumbering.
+
+    For FRAMEWORKS the list is still derived (no publisher crosswalk exists for
+    focal documents), which is why ``score``, ``control_overlap`` and
+    ``ambiguous`` remain on the model.
     """
     scf_id: str
     name: Optional[str] = None
@@ -127,11 +136,38 @@ class AddedEntity(BaseModel):
     data: Dict[str, Any] = Field(default_factory=dict)
 
 
+class IdReuse(BaseModel):
+    """This key is still in the workbook, but for a DIFFERENT control.
+
+    SCF 2026.3's READ THIS sheet lists 23 controls merged away into survivors.
+    14 of those ids were then handed to an unrelated control in the same
+    release: ``END-03`` was "Prohibit Installation Without Privileged Status",
+    was merged into ``CHG-04.2``, and ``END-03`` in 2026.3 is "Endpoint
+    Protection Mechanisms". The diff can only class such a row as ``changed``,
+    because the key is present on both sides - so without this flag an operator
+    reading the field-level diff sees a wholesale rewrite of a control's name,
+    description and mappings with no explanation, and an org's assessment
+    history stays silently attached to a control that no longer means what it
+    meant.
+
+    ``merged_into`` is where the ORIGINAL owner of the id went; ``legacy_name``
+    is what the id used to be called. Information only: nothing is re-scoped
+    and no pairing is implied. The id's original owner is not deprecated by
+    this run (its key survives), so there is nothing to pair.
+    """
+    merged_into: str
+    legacy_name: Optional[str] = None
+
+
 class ChangedEntity(BaseModel):
     """A row present in both, with field-level differences."""
     key: str
     name: Optional[str] = None
     fields: Dict[str, FieldChange] = Field(default_factory=dict)
+    # Set when the publisher declared THIS key merged away while the key itself
+    # survives in the new workbook for an unrelated control. Optional so stored
+    # diffs written before the field existed still validate.
+    id_reused: Optional[IdReuse] = None
 
 
 class DeprecatedEntity(BaseModel):
@@ -139,10 +175,12 @@ class DeprecatedEntity(BaseModel):
     key: str
     name: Optional[str] = None
     superseded_by: Optional[str] = None
-    # Where superseded_by came from. 'workbook_crosswalk' means the publisher
-    # declared the renumbering in the workbook's Legacy SCF # column, so this
-    # row is a rename rather than a retirement. None means the value (if any)
-    # predates this run as an admin pairing.
+    # Where superseded_by came from, and the ONLY marker that this run claims a
+    # succession for the row. 'workbook_crosswalk' is the workbook's Legacy
+    # SCF # column; 'publisher_merged' is the READ THIS sheet's merge list.
+    # Either way the publisher declared it, so the row is a rename rather than
+    # a retirement. None means this run declares nothing and the value (if any)
+    # predates the run as an admin pairing on the live row.
     superseded_source: Optional[str] = None
     suggestions: List[SupersededSuggestion] = Field(default_factory=list)
 
@@ -166,6 +204,84 @@ class EntityDiff(BaseModel):
     unchanged: List[str] = Field(default_factory=list)  # keys only
 
 
+# =============================================================================
+# Publisher change sheets (SCF 2026.3 onward, plan §4.2.2)
+# =============================================================================
+
+class PublisherFrameworkRef(BaseModel):
+    """A focal document the publisher declares added or removed in a release.
+
+    Keyed by the FOCAL DOCUMENT IDENTIFIER, not by our framework id. The FDI is
+    the publisher's stable identity for the document and the only thing the
+    errata sheet gives us; resolving it to a live framework id is the diff's job.
+    """
+    fdi: str
+    name: Optional[str] = None
+
+
+class PublisherFrameworkErratum(BaseModel):
+    """A focal document that is still shipping but whose mappings moved.
+
+    ``note`` is the publisher's own text ('FDE #: 8.10, 8.12, 8.5'), kept
+    verbatim: the reference format varies per document family and nothing
+    downstream acts on the individual requirement ids.
+    """
+    fdi: str
+    name: Optional[str] = None
+    note: str
+
+
+class PublisherFrameworkChanges(BaseModel):
+    """Framework-level errata, straight from the STRM Errata sheet."""
+    added: List[PublisherFrameworkRef] = Field(default_factory=list)
+    removed: List[PublisherFrameworkRef] = Field(default_factory=list)
+    mapping_errata: List[PublisherFrameworkErratum] = Field(default_factory=list)
+
+
+class PublisherControlMerge(BaseModel):
+    """A deprecated control the publisher merged into a survivor."""
+    legacy_scf_id: Optional[str] = None
+    legacy_name: Optional[str] = None
+    merged_into: Optional[str] = None
+
+
+class PublisherControlChanges(BaseModel):
+    """Per-control publisher change tags.
+
+    ``counts`` is tag OCCURRENCES, not rows: one control routinely carries
+    'renumbered' and 'wordsmithed' together. An empty dict means the workbook
+    shipped no Change Overview sheet at all, which is different from a release
+    that reported every tag as zero.
+    """
+    counts: Dict[str, int] = Field(default_factory=dict)
+    merged: List[PublisherControlMerge] = Field(default_factory=list)
+    tags: Dict[str, List[str]] = Field(default_factory=dict)
+
+
+class PublisherChanges(BaseModel):
+    """What the publisher SAYS it changed, as opposed to what we derived.
+
+    A declaration is a stronger claim than any heuristic: a focal document the
+    publisher lists as removed is a deliberate retirement, and the churn gate
+    treats it as accounted for. Absent from every workbook up to 2026.2, so
+    every consumer must tolerate None.
+    """
+    summary: Optional[str] = None
+    frameworks: PublisherFrameworkChanges = Field(
+        default_factory=PublisherFrameworkChanges
+    )
+    controls: PublisherControlChanges = Field(default_factory=PublisherControlChanges)
+
+
+class PublisherChangesSummary(BaseModel):
+    """Count-only mirror of ``PublisherChanges`` for the diff summary JSONB."""
+    summary: Optional[str] = None
+    frameworks_added: int = 0
+    frameworks_removed: int = 0
+    mapping_errata: int = 0
+    controls: Dict[str, int] = Field(default_factory=dict)
+
+
 class DiffDetail(BaseModel):
     """The complete stored diff object for a platform import run.
 
@@ -179,6 +295,10 @@ class DiffDetail(BaseModel):
     to_version: str
     entities: Dict[CatalogEntityType, EntityDiff] = Field(default_factory=dict)
     framework_registry: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
+    # The publisher's own account of the release (2026.3+). None when the
+    # workbook shipped no change sheets, which is every release before it, and
+    # also the value stored diffs from before this field carried.
+    publisher_changes: Optional[PublisherChanges] = None
 
 
 class EntityDiffCounts(BaseModel):
@@ -195,6 +315,10 @@ class EntityDiffCounts(BaseModel):
     resurrected: int = 0
     unchanged: int = 0
     renamed: int = 0
+    # Subset of ``changed``: rows whose key the publisher declared merged away
+    # and then reused for an unrelated control. Defaulted so summaries stored
+    # before the flag existed still validate.
+    id_reused: int = 0
 
 
 class DiffSummary(BaseModel):
@@ -202,6 +326,9 @@ class DiffSummary(BaseModel):
     from_version: str
     to_version: str
     entities: Dict[CatalogEntityType, EntityDiffCounts] = Field(default_factory=dict)
+    # Counts only; the full lists live in the diff detail. Defaulted so
+    # summaries stored before this field existed still validate.
+    publisher_changes: Optional[PublisherChangesSummary] = None
 
 
 # =============================================================================
@@ -296,7 +423,10 @@ class DiffItem(BaseModel):
     fields: Dict[str, FieldChange] = Field(default_factory=dict)   # changed / resurrected
     data: Dict[str, Any] = Field(default_factory=dict)             # added
     superseded_by: Optional[str] = None                            # deprecated
+    # Which authority named superseded_by; None where this run names nobody.
+    superseded_source: Optional[str] = None                        # deprecated
     suggestions: List[SupersededSuggestion] = Field(default_factory=list)  # deprecated
+    id_reused: Optional[IdReuse] = None                            # changed
 
 
 class DiffPageResponse(BaseModel):
@@ -307,6 +437,41 @@ class DiffPageResponse(BaseModel):
     page_size: int = 50
     entity: Optional[CatalogEntityType] = None      # echo of filter
     change_class: Optional[ChangeClass] = None      # echo of filter
+
+
+# =============================================================================
+# Live framework registry (the succession seam, plan §4.2.2)
+# =============================================================================
+
+class FrameworkRegistryStatus(BaseModel):
+    """Read-only state of the framework registry for the LIVE catalogue version.
+
+    ``present`` False, or ``with_focal_document_id`` 0, both mean the same thing
+    operationally: the next upgrade's declared succession tier cannot fire and
+    the framework_churn gate will block. The console shows this on the catalogue
+    version card so the operator learns it before uploading a workbook.
+    """
+    catalog_version: Optional[str] = None
+    present: bool = False
+    entries: int = 0
+    with_focal_document_id: int = 0
+    source: Optional[str] = None
+
+
+class FrameworkRegistryRegistration(BaseModel):
+    """Result of registering the CURRENT catalogue's workbook (POST).
+
+    ``catalog_version`` is the live version the row was stamped with;
+    ``workbook_version`` is the version read out of the uploaded workbook. They
+    are equal on every accepted registration — the endpoint refuses a mismatch
+    with a 409 rather than writing identifiers that do not describe the live
+    rows — and both are reported so the operator can see what was compared.
+    """
+    catalog_version: str
+    workbook_version: str
+    entries: int
+    with_focal_document_id: int
+    source: str
 
 
 class UpgradeApplyRequest(BaseModel):
@@ -490,6 +655,9 @@ class ChangedInScopeItem(BaseModel):
     name: Optional[str] = None
     fields: Dict[str, FieldChange] = Field(default_factory=dict)
     reassessment_recommended: bool = False  # flagged where composites exist
+    # The org is holding an assessment against an id whose original owner was
+    # merged elsewhere. Surfaced, never acted on: no automatic re-scoping.
+    id_reused: Optional[IdReuse] = None
 
 
 class OrphanItem(BaseModel):

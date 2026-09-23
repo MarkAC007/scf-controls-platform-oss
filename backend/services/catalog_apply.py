@@ -15,9 +15,11 @@ Apply semantics (plan §4.2.4):
   count+max(updated_at) ETag in ``api/catalog.py`` so clients refetch.
 - Deprecations are status flips (+``retired_in_version``), NEVER deletes;
   resurrections re-activate (clear ``retired_in_version``/``superseded_by``).
-- Admin-confirmed superseded pairings (``run.superseded_pairings``) are written
-  onto the deprecated control rows, with successor existence/active validation
-  here in the apply service (the column has no DB FK by design, §4.1 M2).
+- Every run-deprecated control gets the successor the WORKBOOK declared (from
+  the stored diff's ``superseded_source``), unless ``run.superseded_pairings``
+  carries an admin override for that key — including an explicit null meaning
+  "retire outright". Successor existence/active validation happens here in the
+  apply service (the column has no DB FK by design, §4.1 M2).
 - Capability themes are upserted by ``theme_code`` from the curated
   ``capability_themes.json`` (not workbook-sourced); theme mappings are
   recomputed wholesale in-transaction from the post-apply control rows.
@@ -242,6 +244,16 @@ class CatalogApplyReport:
     themes_upserted: int = 0
     mappings_recomputed: int = 0
     registry_rows_upserted: int = 0
+    # Run-deprecated controls whose superseded_by this apply took from the
+    # workbook's declaration in the stored diff — no admin pairing row existed
+    # for the key. This is the number an operator who clicks Apply without
+    # opening the pairing editor gets, and before this change it was always 0.
+    successors_declared: int = 0
+    # Run-deprecated controls for which an admin pairing row existed and was
+    # honoured, whether it named a different successor or an explicit "no
+    # successor". Disjoint from successors_declared by construction: a key is
+    # counted in exactly one of the two.
+    successors_overridden: int = 0
     stale_module_caches: Tuple[str, ...] = STALE_MODULE_CACHES
 
     def as_dict(self) -> dict:
@@ -256,6 +268,8 @@ class CatalogApplyReport:
             "themes_upserted": self.themes_upserted,
             "mappings_recomputed": self.mappings_recomputed,
             "registry_rows_upserted": self.registry_rows_upserted,
+            "successors_declared": self.successors_declared,
+            "successors_overridden": self.successors_overridden,
             "stale_module_caches": list(self.stale_module_caches),
         }
 
@@ -469,7 +483,7 @@ async def _recompute_theme_mappings(
 
 
 # ---------------------------------------------------------------------------
-# Superseded pairings (plan §4.2.3/4 — validated here; no DB FK by design)
+# Successor resolution (plan §4.2.3/4 — validated here; no DB FK by design)
 # ---------------------------------------------------------------------------
 
 
@@ -478,19 +492,68 @@ def _parse_pairings(run: CatalogImportRun) -> List[SupersededPairing]:
     return [SupersededPairing.model_validate(item) for item in raw]
 
 
-async def _apply_pairings(
+def _declared_successors(detail: DiffDetail) -> Dict[str, str]:
+    """Deprecated control key -> the successor the WORKBOOK declared.
+
+    Read out of the stored diff, which is the only carrier: the workbook is
+    gone by apply time. ``superseded_source`` is the marker of this run's own
+    claim — a row with a successor and no source is showing a value that
+    predates the run, and re-asserting it here would turn someone's old pairing
+    into this release's decision.
+    """
+    diff = detail.entities.get(CatalogEntityType.CONTROLS)
+    return {
+        dep.key: dep.superseded_by
+        for dep in (diff.deprecated if diff else [])
+        if dep.superseded_source is not None and dep.superseded_by
+    }
+
+
+async def _apply_successors(
     session: AsyncSession,
-    pairings: List[SupersededPairing],
+    run: CatalogImportRun,
+    detail: DiffDetail,
     deprecated_controls: Dict[str, Any],
     version: str,
     now: datetime,
-) -> None:
-    """Write admin-confirmed successors onto the run's deprecated control rows."""
-    if not pairings:
-        return
-    successor_ids = sorted(
-        {p.superseded_by for p in pairings if p.superseded_by is not None}
-    )
+) -> Tuple[int, int]:
+    """Write each run-deprecated control's successor. Returns (declared, overridden).
+
+    The workbook declares; the admin overrides. A pairing row for a key REPLACES
+    the declaration for that key, including an explicit null meaning "retire
+    outright"; a key with no pairing row gets the declared successor. The
+    previous behaviour wrote successors from the pairing list alone, so an admin
+    who applied a renumbering release without clicking through the pairing
+    editor silently discarded every succession the publisher had declared —
+    801 of them on 2026.2->2026.3.
+
+    Successors are validated against the live catalog INSIDE this transaction.
+    The caller must ``flush()`` first: the session is autoflush=False, so a
+    successor this same run adds is invisible to the SELECT below until it does,
+    and a renumbering release points most of its successors at new rows.
+    """
+    declared = _declared_successors(detail)
+    overrides = {p.deprecated_scf_id: p.superseded_by for p in _parse_pairings(run)}
+
+    invalid: List[str] = []
+    resolved: Dict[str, Optional[str]] = {}
+    declared_count = 0
+    overridden_count = 0
+
+    for key in sorted(set(declared) | set(overrides)):
+        if key not in deprecated_controls:
+            # A pairing for a control this run does not deprecate — stale UI
+            # state, and a signal the admin was looking at a different diff.
+            invalid.append(key)
+            continue
+        if key in overrides:
+            resolved[key] = overrides[key]
+            overridden_count += 1
+        else:
+            resolved[key] = declared[key]
+            declared_count += 1
+
+    successor_ids = sorted({v for v in resolved.values() if v is not None})
     successors: Dict[str, Any] = {}
     if successor_ids:
         result = await session.execute(
@@ -498,27 +561,23 @@ async def _apply_pairings(
         )
         successors = {row.scf_id: row for row in result.scalars().all()}
 
-    invalid = []
-    for pairing in pairings:
-        target = deprecated_controls.get(pairing.deprecated_scf_id)
-        if target is None:
-            # Pairing for a control this run does not deprecate — stale UI state.
-            invalid.append(pairing.deprecated_scf_id)
-            continue
-        if pairing.superseded_by is None:
+    for key, successor_id in resolved.items():
+        target = deprecated_controls[key]
+        if successor_id is None:
             target.superseded_by = None  # explicit "no successor"
             continue
-        successor = successors.get(pairing.superseded_by)
+        successor = successors.get(successor_id)
         if successor is None or getattr(successor, "status", "active") != "active":
-            invalid.append(f"{pairing.deprecated_scf_id}->{pairing.superseded_by}")
+            invalid.append(f"{key}->{successor_id}")
             continue
-        target.superseded_by = pairing.superseded_by
+        target.superseded_by = successor_id
         _touch(target, version, now)
 
     if invalid:
         raise PairingValidationError(
-            f"invalid superseded pairings: {', '.join(invalid)}", invalid
+            f"invalid superseded pairings: {', '.join(sorted(invalid))}", invalid
         )
+    return declared_count, overridden_count
 
 
 # ---------------------------------------------------------------------------
@@ -637,13 +696,17 @@ async def apply_catalog_run(
                 _touch(row, to_version, now)
                 counts.resurrected += 1
 
-        # _apply_pairings validates successors with a SELECT, and the session is
-        # autoflush=False (database.py). Without this flush a pairing pointing at
-        # a control this same run adds is invisible to that SELECT and the whole
-        # apply aborts with PairingValidationError.
+        # _apply_successors validates successors with a SELECT, and the session
+        # is autoflush=False (database.py). Without this flush a successor that
+        # is a control this same run adds is invisible to that SELECT and the
+        # whole apply aborts with PairingValidationError — which is most of a
+        # renumbering release, where 801 of 801 successors are newly added rows.
         await session.flush()
-        await _apply_pairings(
-            session, _parse_pairings(run), deprecated_controls, to_version, now
+        (
+            report.successors_declared,
+            report.successors_overridden,
+        ) = await _apply_successors(
+            session, run, detail, deprecated_controls, to_version, now
         )
 
         report.themes_upserted = await _upsert_themes(

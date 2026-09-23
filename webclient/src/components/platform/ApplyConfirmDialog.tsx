@@ -26,7 +26,7 @@ export default function ApplyConfirmDialog({ toVersion, applying, onConfirm, onC
       <div className="modal-content" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
           <h2>Apply catalog upgrade</h2>
-          <button className="modal-close" onClick={onClose} aria-label="Close">
+          <button type="button" className="modal-close" onClick={onClose} aria-label="Close">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <line x1="18" y1="6" x2="6" y2="18" />
               <line x1="6" y1="6" x2="18" y2="18" />
@@ -52,10 +52,11 @@ export default function ApplyConfirmDialog({ toVersion, applying, onConfirm, onC
             style={{ width: '100%', marginBottom: '1rem' }}
           />
           <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
-            <button className="btn btn-secondary" onClick={onClose} disabled={applying}>
+            <button type="button" className="btn btn-secondary" onClick={onClose} disabled={applying}>
               Cancel
             </button>
             <button
+              type="button"
               className="btn btn-primary"
               disabled={!matches || applying}
               onClick={() => onConfirm(text.trim())}
