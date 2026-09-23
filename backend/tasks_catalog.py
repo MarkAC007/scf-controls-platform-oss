@@ -27,8 +27,10 @@ import asyncio
 import json
 import logging
 import os
+import shutil
 import sys
 import tempfile
+from pathlib import Path
 from typing import Optional
 from uuid import UUID
 
@@ -42,10 +44,91 @@ from services.single_tenant import single_tenant_flag_set
 if "/app/scripts" not in sys.path:
     sys.path.insert(0, "/app/scripts")
 
-# DATA_DIR / reseed_catalog mirror what the backend seeds from on startup.
-from catalog_seeder import DATA_DIR, reseed_catalog
+# Imported as a MODULE, not `from catalog_seeder import DATA_DIR`: the import
+# stages its extraction and points the seeders at the staging directory with
+# catalog_seeder.data_dir_override, which rebinds the module global. A
+# from-import would capture a stale value and defeat the override.
+import catalog_seeder  # noqa: E402
 
 logger = logging.getLogger(__name__)
+
+# The curated, non-SCF JSON that Dockerfile.backend bakes into /app/data/json
+# (collection_interfaces / system_collection_recipes / capability_themes).
+# extract_to_dir does not produce any of them — capability_themes.json in
+# particular is a seeder input — so a staging directory holding only the
+# extraction would be incomplete.
+CURATED_DATA_FILES = (
+    "collection_interfaces.json",
+    "system_collection_recipes.json",
+    "capability_themes.json",
+)
+
+
+def _stage_existing_data_files(staging_dir: Path) -> list:
+    """Prime the staging directory with the install's current DATA_DIR files.
+
+    Copying the whole directory and letting the extraction overwrite its own
+    outputs makes the staging directory byte-identical to what an in-place
+    extraction would have left in DATA_DIR — which is what the seeders, and the
+    publish step below, then depend on. Best-effort: an unreadable DATA_DIR is
+    logged, not fatal.
+    """
+    source = Path(catalog_seeder.DATA_DIR)
+    copied = []
+    try:
+        entries = sorted(p for p in source.iterdir() if p.is_file())
+    except OSError as exc:
+        logger.warning("Could not read catalog data dir %s: %s", source, exc)
+        entries = []
+
+    for path in entries:
+        try:
+            shutil.copy2(path, staging_dir / path.name)
+        except OSError as exc:
+            logger.warning("Could not stage %s for catalog import: %s", path, exc)
+            continue
+        copied.append(path.name)
+
+    for name in CURATED_DATA_FILES:
+        if name not in copied:
+            logger.warning(
+                "Curated catalog file %s not found in %s; the reseed may leave "
+                "its table unseeded",
+                name,
+                source,
+            )
+    return copied
+
+
+def _publish_to_data_dir(staging_dir: Path) -> list:
+    """Best-effort copy of the extraction back into DATA_DIR.
+
+    On Docker Compose — the shipping deployment — DATA_DIR is a writable bind
+    mount and this leaves exactly the end state the pre-staging implementation
+    produced: the extracted JSON on the host volume, where a later restart's
+    seed_catalog_if_empty and the frontend's own fetches expect it. It runs
+    BEFORE the reseed so that end state also holds when the reseed fails.
+
+    Where DATA_DIR is not writable (a read-only container root filesystem) the
+    failure is logged and the import proceeds from the staging directory.
+    """
+    target = Path(catalog_seeder.DATA_DIR)
+    written = []
+    try:
+        os.makedirs(target, exist_ok=True)
+        for path in sorted(p for p in staging_dir.iterdir() if p.is_file()):
+            shutil.copy2(path, target / path.name)
+            written.append(path.name)
+    except OSError as exc:
+        logger.warning(
+            "Catalog data dir %s is not writable (%s); import continues from the "
+            "staging directory and %d of %d files were published",
+            target,
+            exc,
+            len(written),
+            len(list(staging_dir.iterdir())),
+        )
+    return written
 
 
 @celery_app.task(
@@ -75,14 +158,36 @@ def import_catalog(self, object_key: str, original_filename: str = "scf.xlsx") -
         self.update_state(state="PROGRESS", meta={"step": "extracting"})
         import extract_scf_data  # noqa: E402 — path injected above; pandas loads here
 
-        try:
-            os.makedirs(DATA_DIR, exist_ok=True)
-            meta = extract_scf_data.extract_to_dir(tmp.name, DATA_DIR)
-        except ValueError as exc:
-            raise RuntimeError(f"not a valid SCF catalogue workbook: {exc}") from exc
+        # Extract into a writable staging directory rather than DATA_DIR. The
+        # backend image CREATES /app/data/json, so DATA_DIR resolves there on
+        # every deployment; where that path is not a writable mount, writing to
+        # it failed the import after the upload had already succeeded.
+        with tempfile.TemporaryDirectory(prefix="scf-catalog-import-") as staging:
+            staging_dir = Path(staging)
+            _stage_existing_data_files(staging_dir)
 
-    self.update_state(state="PROGRESS", meta={"step": "seeding", **meta})
-    seed_results = asyncio.run(reseed_catalog(force=True))
+            try:
+                meta = extract_scf_data.extract_to_dir(tmp.name, staging_dir)
+            except ValueError as exc:
+                raise RuntimeError(
+                    f"not a valid SCF catalogue workbook: {exc}"
+                ) from exc
+
+            _publish_to_data_dir(staging_dir)
+
+            self.update_state(state="PROGRESS", meta={"step": "seeding", **meta})
+            with catalog_seeder.data_dir_override(staging_dir):
+                seed_results = asyncio.run(catalog_seeder.reseed_catalog(force=True))
+
+    # A refused reseed returns the flat {"status": "error"} guard dict. Reporting
+    # that as "complete" would tell the operator their catalogue imported when no
+    # table was touched — the failure mode this whole change exists to remove, in
+    # a quieter costume. The status endpoint maps a raised task to FAILURE with
+    # the message, which is the contract the invalid-workbook path already uses.
+    if isinstance(seed_results, dict) and seed_results.get("status") == "error":
+        raise RuntimeError(
+            f"catalogue seeding refused: {seed_results.get('message', 'unknown')}"
+        )
 
     logger.info(
         "Catalogue import complete from %s: %s controls",

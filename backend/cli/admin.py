@@ -757,6 +757,12 @@ async def cmd_seed_catalog(args: argparse.Namespace) -> int:
 
         print("\nReseeding catalog (force mode)...")
         results = await reseed_catalog(force=True)
+        # A refused reseed returns a FLAT {"status", "message"} dict rather
+        # than the per-table mapping the loop below walks. It refuses before
+        # deleting anything, so this is a clean no-op, not a partial wipe.
+        if results.get("status") == "error":
+            print(f"\n❌ Reseed refused: {results.get('message', 'unknown error')}")
+            return 1
     else:
         print("\nSeeding catalog (if empty)...")
         results = await seed_catalog_if_empty()

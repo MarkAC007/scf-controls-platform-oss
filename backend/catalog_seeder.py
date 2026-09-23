@@ -15,6 +15,7 @@ Tables seeded:
 import json
 import os
 import logging
+from contextlib import contextmanager
 from pathlib import Path
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -52,6 +53,82 @@ DATA_DIR = _DOCKER_DATA_PATH if _DOCKER_DATA_PATH.exists() else _LOCAL_DATA_PATH
 # Lives inside the backend source tree, so it ships in the image via
 # `COPY backend/ .` with no Dockerfile changes.
 SYSTEM_CATALOG_DIR = Path(__file__).parent / "data" / "system_catalog"
+
+# The DATA_DIR input each seeder needs, as (seeder name, accepted filenames).
+# Any one of the filenames satisfies that seeder — the framework registry takes
+# framework_registry.json, or frameworks.json as the pre-2026.1 fallback.
+#
+# seed_system_catalog is deliberately absent: it reads SYSTEM_CATALOG_DIR from
+# inside the backend source tree (so it ships in the image), never DATA_DIR,
+# and load_system_catalog_files returns empty rather than failing.
+REQUIRED_RESEED_INPUTS = (
+    ("controls", ("control_guidance.json",)),
+    ("domains", ("domains.json",)),
+    ("evidence", ("erl.json",)),
+    ("assessment_objectives", ("assessment_objectives.json",)),
+    ("capability_themes", ("capability_themes.json",)),
+    ("framework_registry", ("framework_registry.json", "frameworks.json")),
+)
+
+
+def _is_readable(path: Path) -> bool:
+    """True only if the file can be opened, read AND parsed as JSON.
+
+    os.access / Path.exists are not enough: a file present on a mount the
+    process cannot read is exactly as fatal to a reseed as an absent one.
+
+    Neither is readability. A truncated or corrupt file has the SAME blast
+    radius as a missing one — json.load raises inside the seeder, after the
+    delete has committed, and the table is gone. The guard only means anything
+    if it covers every way an input can fail to produce rows.
+
+    The parse costs ~50 ms across the whole required set (~20 MB, dominated by
+    control_guidance.json) on a reseed an operator triggers by hand. It is not
+    a hot path, and the alternative is permanent data loss.
+    """
+    try:
+        with open(path, "rb") as handle:
+            json.load(handle)
+    except (OSError, ValueError):
+        return False
+    return True
+
+
+def missing_reseed_inputs(data_dir=None) -> list:
+    """Describe every required seeder input that is absent or unreadable.
+
+    Returns an empty list when a destructive reseed can safely proceed.
+    """
+    base = Path(data_dir) if data_dir is not None else Path(DATA_DIR)
+    missing = []
+    for seeder, candidates in REQUIRED_RESEED_INPUTS:
+        if not any(_is_readable(base / name) for name in candidates):
+            missing.append(f"{seeder} ({' or '.join(candidates)})")
+    return missing
+
+
+@contextmanager
+def data_dir_override(path):
+    """Point the module-level DATA_DIR at ``path`` for the duration of a block.
+
+    The seeders read the module global at call time, which is how the test
+    suite already substitutes a fixture directory. Production code that must
+    seed from somewhere other than the install's DATA_DIR — the live catalogue
+    import, which extracts into a writable staging directory because
+    /app/data/json may not be writable — uses this rather than threading a
+    parameter through all seven seeders.
+
+    Not re-entrant and not thread-safe. Its only production caller is the
+    catalogue import Celery task, which runs serialised on the `catalog` queue
+    in single-tenant deployments only.
+    """
+    global DATA_DIR
+    previous = DATA_DIR
+    DATA_DIR = Path(path)
+    try:
+        yield DATA_DIR
+    finally:
+        DATA_DIR = previous
 
 
 def _resolve_catalog_version() -> str:
@@ -736,6 +813,13 @@ async def reseed_catalog(force: bool = False) -> dict:
     Reseed catalog tables. If force=True, drops existing data first.
     Use with caution - this deletes and recreates all catalog data.
 
+    Refuses, having deleted nothing, if any required input JSON is missing or
+    unreadable. That check has to come first because the delete COMMITS and
+    every seeder reports a missing file as ``{"status": "error"}`` instead of
+    raising — main.py only logs that, so an absent file meant the table was
+    destroyed and never restored. Startup seeding stays tolerant; only this
+    destructive path is strict.
+
     Args:
         force: If True, deletes existing data before reseeding
 
@@ -745,6 +829,16 @@ async def reseed_catalog(force: bool = False) -> dict:
     if not force:
         logger.warning("Reseed called without force=True, skipping")
         return {"status": "skipped", "message": "Use force=True to reseed"}
+
+    missing = missing_reseed_inputs()
+    if missing:
+        message = (
+            f"Refusing to reseed: required catalog input files are missing or "
+            f"unreadable in {DATA_DIR} - {', '.join(missing)}. "
+            f"No catalog data was deleted."
+        )
+        logger.error(message)
+        return {"status": "error", "message": message, "missing": missing}
 
     async with AsyncSessionLocal() as session:
         # Delete existing data (order matters for foreign keys)

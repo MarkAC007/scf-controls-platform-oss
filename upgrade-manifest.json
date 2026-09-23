@@ -1,11 +1,11 @@
 {
   "schema": 1,
-  "version": "0.41.2",
-  "released": "2026-09-23T14:43:22Z",
+  "version": "0.41.3",
+  "released": "2026-09-23T17:03:39Z",
   "min_upgradable_version": "0.0.0",
   "breaking": false,
   "required_stops": [],
-  "release_url": "https://github.com/MarkAC007/scf-controls-platform-oss/releases/tag/v0.41.2",
+  "release_url": "https://github.com/MarkAC007/scf-controls-platform-oss/releases/tag/v0.41.3",
   "summary": ".",
   "migration_range": [
     "20260119_000000_62bdef86f249_initial_schema",
