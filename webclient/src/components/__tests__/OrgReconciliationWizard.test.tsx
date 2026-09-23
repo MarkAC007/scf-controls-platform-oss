@@ -8,7 +8,7 @@
  * gated on typing the exact version with confirm_text travelling in the
  * request.
  */
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import OrgReconciliationWizard from '../platform/OrgReconciliationWizard'
@@ -261,6 +261,133 @@ describe('OrgReconciliationWizard preview flow', () => {
   })
 })
 
+describe('OrgReconciliationWizard apply and rollback handoff', () => {
+  // The apply/rollback routes answer 202 once the worker task is enqueued;
+  // the run row only changes status when the worker picks the task up. The
+  // wizard must treat a read that still shows the pre-flight status as
+  // "queued" and keep polling — not fall back to the stale-preview message
+  // (apply) or the settled summary (rollback) until the admin reloads.
+  const settledStatus = (reconciled: string, platform: string, eligible: boolean) => ({
+    organization_id: ORG_ID,
+    reconciled_catalog_version: reconciled,
+    platform_catalog_version: platform,
+    eligible,
+    active_run: null,
+    first_reconciliation: false,
+  })
+
+  it('shows apply progress while the run row still reads previewed, then settles without a reload', async () => {
+    // Only the poll interval is faked; RTL's own waiting keeps real timers.
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    try {
+      const onRunSettled = vi.fn()
+      render(
+        <OrgReconciliationWizard
+          organizationId={ORG_ID}
+          organizationName="Acme Corp"
+          onRunSettled={onRunSettled}
+          onClose={vi.fn()}
+        />
+      )
+      fireEvent.click(await screen.findByRole('button', { name: 'Preview reconciliation' }))
+      await screen.findByText('NEW-1')
+      fireEvent.click(screen.getByLabelText('Confirm framework selections'))
+      fireEvent.click(screen.getByRole('button', { name: 'Save decisions' }))
+      const applyButton = screen.getByRole('button', { name: 'Apply reconciliation' })
+      await waitFor(() => expect(applyButton).toBeEnabled())
+
+      // The API accepts the apply; the run row has not flipped yet.
+      await act(async () => {
+        fireEvent.click(applyButton)
+      })
+      expect(mockApply).toHaveBeenCalledWith(ORG_ID, RUN_ID, '2026.2')
+      expect(await screen.findByText(/Applying catalog 2026.2/)).toBeInTheDocument()
+      expect(screen.queryByText(/already exists for this organisation/)).not.toBeInTheDocument()
+
+      // First poll still reads 'previewed' → still in flight, nothing settled.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2500)
+      })
+      expect(screen.getByText(/Applying catalog 2026.2/)).toBeInTheDocument()
+      expect(onRunSettled).not.toHaveBeenCalled()
+
+      // The worker finishes: the next poll settles the run and refreshes
+      // eligibility, so the applied summary shows without a new offer.
+      mockGetRun.mockResolvedValue(appliedDetail())
+      mockStatus.mockResolvedValue(settledStatus('2026.2', '2026.2', false))
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2500)
+      })
+      expect(await screen.findByText('Reconciliation applied.')).toBeInTheDocument()
+      expect(screen.getByText(/3 actions executed/)).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Preview reconciliation' })).not.toBeInTheDocument()
+      expect(screen.queryByText(/already exists for this organisation/)).not.toBeInTheDocument()
+      expect(onRunSettled).toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('adopts an apply the worker has already finished and refreshes eligibility at once', async () => {
+    await openPreview()
+    fireEvent.click(screen.getByLabelText('Confirm framework selections'))
+    fireEvent.click(screen.getByRole('button', { name: 'Save decisions' }))
+    const applyButton = screen.getByRole('button', { name: 'Apply reconciliation' })
+    await waitFor(() => expect(applyButton).toBeEnabled())
+
+    mockGetRun.mockResolvedValue(appliedDetail())
+    mockStatus.mockResolvedValue(settledStatus('2026.2', '2026.2', false))
+    fireEvent.click(applyButton)
+
+    // Eligibility is re-read straight away (the settled run moves the summary
+    // out of the offer wrapper, so wait for the refresh before asserting).
+    await waitFor(() => expect(mockStatus).toHaveBeenCalledTimes(2))
+    await waitFor(() =>
+      expect(screen.getByText('Reconciliation applied.')).toBeInTheDocument()
+    )
+    expect(screen.queryByRole('button', { name: 'Preview reconciliation' })).not.toBeInTheDocument()
+    expect(screen.queryByText('Last reconciliation')).not.toBeInTheDocument()
+  })
+
+  it('shows rollback progress while the run row still reads applied, then offers a new preview', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    try {
+      mockStatus.mockResolvedValue(settledStatus('2026.2', '2026.2', false))
+      const applied = appliedDetail()
+      mockListRuns.mockResolvedValue({ runs: [applied], total: 1 })
+      mockGetRun.mockResolvedValue(applied)
+      renderWizard()
+
+      fireEvent.click(await screen.findByRole('button', { name: 'Roll back…' }))
+      fireEvent.change(screen.getByLabelText('Confirm rollback version'), {
+        target: { value: '2026.2' },
+      })
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Roll back' }))
+      })
+      expect(mockRollback).toHaveBeenCalledWith(ORG_ID, RUN_ID, '2026.2')
+      // The run row still reads 'applied' — the wizard must not present the
+      // applied summary (and a second Roll back…) as if nothing happened.
+      expect(await screen.findByText(/Rolling back — restoring/)).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Roll back…' })).not.toBeInTheDocument()
+
+      mockGetRun.mockResolvedValue({
+        ...applied,
+        status: 'rolled_back',
+        rolled_back_at: '2026-08-20T12:00:00Z',
+      })
+      mockStatus.mockResolvedValue(settledStatus('2026.1', '2026.2', true))
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2500)
+      })
+      expect(await screen.findByText(/was rolled back/)).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Preview reconciliation' })).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
 describe('OrgReconciliationWizard rollback', () => {
   it('gates rollback on typing the exact version and sends confirm_text', async () => {
     mockStatus.mockResolvedValue({
@@ -304,5 +431,105 @@ describe('OrgReconciliationWizard rollback', () => {
 
     await waitFor(() => expect(mockRollback).toHaveBeenCalledWith(ORG_ID, RUN_ID, '2026.2'))
     expect(await screen.findByText(/Rolling back — restoring/)).toBeInTheDocument()
+  })
+})
+
+describe('OrgReconciliationWizard after a settled run', () => {
+  it('offers a new preview when the org is eligible and the newest run is applied', async () => {
+    mockStatus.mockResolvedValue({
+      organization_id: ORG_ID,
+      reconciled_catalog_version: '2026.2',
+      platform_catalog_version: '2026.3',
+      eligible: true,
+      active_run: null,
+      first_reconciliation: false,
+    })
+    mockListRuns.mockResolvedValue({ runs: [appliedDetail()], total: 1 })
+    mockGetRun.mockResolvedValue(appliedDetail())
+
+    renderWizard()
+
+    // The preview offer renders first, exactly once, with the settled summary
+    // beneath it under a "Last reconciliation" divider
+    expect(
+      await screen.findByRole('button', { name: 'Preview reconciliation' })
+    ).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: 'Preview reconciliation' })).toHaveLength(1)
+    expect(screen.getByText('Reconciliation applied.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Roll back…' })).toBeInTheDocument()
+    expect(screen.getByText('Last reconciliation')).toBeInTheDocument()
+
+    // Starting the next reconciliation from here renders the in-session preview
+    mockGetRun.mockResolvedValue(previewedDetail())
+    fireEvent.click(screen.getByRole('button', { name: 'Preview reconciliation' }))
+    await waitFor(() => expect(mockPreview).toHaveBeenCalledWith(ORG_ID))
+    expect(await screen.findByText('NEW-1')).toBeInTheDocument()
+  })
+
+  it('offers a new preview when the newest run was rolled back', async () => {
+    mockStatus.mockResolvedValue({
+      organization_id: ORG_ID,
+      reconciled_catalog_version: '2026.1',
+      platform_catalog_version: '2026.3',
+      eligible: true,
+      active_run: null,
+      first_reconciliation: false,
+    })
+    const rolledBack: OrgReconciliationRunDetail = {
+      ...appliedDetail(),
+      status: 'rolled_back',
+      rolled_back_at: '2026-08-20T12:00:00Z',
+    }
+    mockListRuns.mockResolvedValue({ runs: [rolledBack], total: 1 })
+    mockGetRun.mockResolvedValue(rolledBack)
+
+    renderWizard()
+
+    expect(
+      await screen.findByRole('button', { name: 'Preview reconciliation' })
+    ).toBeInTheDocument()
+    expect(screen.getByText(/was rolled back/)).toBeInTheDocument()
+  })
+
+  it('offers a new preview when the newest run failed', async () => {
+    mockStatus.mockResolvedValue({
+      organization_id: ORG_ID,
+      reconciled_catalog_version: '2026.2',
+      platform_catalog_version: '2026.3',
+      eligible: true,
+      active_run: null,
+      first_reconciliation: false,
+    })
+    const failed: OrgReconciliationRunDetail = {
+      ...appliedDetail(),
+      status: 'failed',
+      error: 'successor NET-15.3 is not active',
+    }
+    mockListRuns.mockResolvedValue({ runs: [failed], total: 1 })
+    mockGetRun.mockResolvedValue(failed)
+
+    renderWizard()
+
+    expect(await screen.findByRole('button', { name: 'Preview reconciliation' })).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent('successor NET-15.3 is not active')
+  })
+
+  it('keeps the settled summary alone when the org is not eligible', async () => {
+    mockStatus.mockResolvedValue({
+      organization_id: ORG_ID,
+      reconciled_catalog_version: '2026.2',
+      platform_catalog_version: '2026.2',
+      eligible: false,
+      active_run: null,
+      first_reconciliation: false,
+    })
+    mockListRuns.mockResolvedValue({ runs: [appliedDetail()], total: 1 })
+    mockGetRun.mockResolvedValue(appliedDetail())
+
+    renderWizard()
+
+    expect(await screen.findByText('Reconciliation applied.')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Preview reconciliation' })).toBeNull()
+    expect(screen.queryByText('Last reconciliation')).toBeNull()
   })
 })
