@@ -72,6 +72,7 @@ from schemas_catalog_upgrade import (
     EntityDiff,
     EntityDiffCounts,
     FieldChange,
+    IdReuse,
     FrameworkConfirmation,
     FrameworkImpactItem,
     FrameworkSelectionItem,
@@ -333,6 +334,10 @@ class _KeyState:
     # deprecation to an unattributed successor.
     superseded_source: Optional[str] = None
     suggestions: List = field(default_factory=list)
+    # Carried from changed rows, not deprecated ones: the flag says this KEY's
+    # original owner was merged elsewhere while the key stayed in the catalog.
+    # Latest run wins, like every other changed-row attribute.
+    id_reused: Optional[IdReuse] = None
 
 
 def _merge_fields(state: _KeyState, changes: Dict[str, FieldChange]) -> None:
@@ -386,6 +391,8 @@ def union_diff_details(details: List[DiffDetail]) -> DiffDetail:
                     state = _KeyState(base="active", active=True, name=changed.name)
                     entity_states[changed.key] = state
                 state.name = changed.name or state.name
+                if changed.id_reused is not None:
+                    state.id_reused = changed.id_reused
                 if state.base == "absent" and state.active:
                     # A row this union adds: fold changes into its data.
                     state.data.update({n: fc.new for n, fc in changed.fields.items()})
@@ -457,7 +464,12 @@ def union_diff_details(details: List[DiffDetail]) -> DiffDetail:
                     classified.add(key)
                 elif net_fields:
                     diff.changed.append(
-                        ChangedEntity(key=key, name=state.name, fields=net_fields)
+                        ChangedEntity(
+                            key=key,
+                            name=state.name,
+                            fields=net_fields,
+                            id_reused=state.id_reused,
+                        )
                     )
                     classified.add(key)
                 # else: net no-op (e.g. deprecate→resurrect round trip) → unchanged
@@ -531,6 +543,14 @@ async def _load_union(
 def _default_action_for(superseded_by: Optional[str]) -> PlannedActionType:
     # Plan §4.3b: migrate is the default when a successor is paired; without
     # one, retain (safe for orgs mid-engagement) — retire_only is opt-in.
+    #
+    # Deliberately blind to WHICH authority named the successor. Every source a
+    # control successor can have is the publisher's own declaration: the Legacy
+    # SCF # crosswalk ('workbook_crosswalk') and the READ THIS merge list
+    # ('publisher_merged') are both SCF saying so in the workbook, so
+    # 'publisher_merged' defaults to MIGRATE exactly as 'workbook_crosswalk'
+    # does. Frameworks need _default_framework_action instead, because one of
+    # their two sources is a similarity match we derived ourselves.
     return PlannedActionType.MIGRATE if superseded_by else PlannedActionType.RETAIN
 
 
@@ -724,6 +744,10 @@ async def build_preview(
                 name=changed.name,
                 fields=changed.fields,
                 reassessment_recommended=changed.key in composite_ids,
+                # Information only. The org keeps its scope and its assessment;
+                # what it gains is the fact that this id no longer means what it
+                # meant when the assessment was recorded.
+                id_reused=changed.id_reused,
             )
         )
 

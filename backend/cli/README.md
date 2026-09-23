@@ -209,31 +209,63 @@ Output includes:
 
 ### Catalogue Maintenance
 
-#### Backfilling the framework registry after upgrading to a build that has it
+#### Registering the framework registry for the live catalogue
 
 `catalog_framework_registries` holds, per catalogue version, each framework's
-display name and the publisher's Focal Document Identifier. The catalogue
-upgrade diff reads that row for the LIVE side: without the identifiers it cannot
-tell a renamed framework id from an unrelated addition, so the `framework_churn`
-sanity gate blocks the upgrade.
+display name and the publisher's Focal Document Identifier (FDI). The catalogue
+upgrade diff reads that row for the LIVE side. The FDI is what lets it say "same
+document, new column header" instead of "one retirement plus one unrelated
+addition", so without identifiers the declared succession tier never fires and
+the `framework_churn` sanity gate blocks every real upgrade.
 
-The seeder writes the row on a fresh install and every catalogue apply writes it
-for the version it applies. An install seeded BEFORE this table existed has no
-row, and the fix is a one-off backfill from the workbook matching the live
-catalogue version:
+**In most cases you no longer need this command.** Three things now stock the row
+on their own:
+
+1. the seeder writes it on a fresh install;
+2. every catalogue apply writes it for the version it applies;
+3. **staging repairs it.** Before loading the live catalogue, staging looks for
+   the live version's row and, if there is none, re-reads the registry out of the
+   applied run's own workbook — still in object storage under
+   `catalog_import_runs.workbook_object_key` — and writes it, stamped
+   `source='recovered'`. It is by construction the workbook the live rows came
+   from, so no operator has to pick the right file.
+
+The `live_framework_registry` line in the staging sanity report says which of
+those happened, and names the reason when none of them could. Check it there
+first; a blocked `framework_churn` gate is usually this and not a real churn
+problem.
+
+Recovery cannot run when the applied run's workbook has already been cleaned up
+(`workbook_object_key` is nulled by the retention beat), when the live catalogue
+was never applied through an upgrade run at all, or when object storage is
+unreachable. For those installs the workbook has to come from an operator.
+
+**Prefer the console.** Platform → Catalog offers **Register your current catalog
+workbook**, which does exactly what this command does, from the browser, with no
+container access. It refuses a workbook for a different release outright.
+
+The CLI is the fallback for a headless operator, and the only place the
+version check can be overridden:
 
 ```bash
-# Copy the matching workbook into the container first
-docker compose cp ~/Downloads/scf-2026.1.xlsx backend:/tmp/scf.xlsx
+# Copy the workbook matching the LIVE catalogue version into the container.
+# Not the new release you are trying to upgrade TO — the one the live rows
+# already came from. `GET /api/catalog/status` reports it, and so does the
+# version card on Platform → Catalog. If you get it wrong the command refuses
+# and prints both versions, so a first attempt costs nothing.
+docker compose cp ~/Downloads/scf-<live-version>.xlsx backend:/tmp/scf.xlsx
 
 docker compose exec backend python -m cli.admin backfill-framework-registry \
     --workbook /tmp/scf.xlsx
 ```
 
 The command refuses (exit 1) when the workbook's catalogue version differs from
-the live one, naming both — backfilling the wrong workbook writes identifiers
-that do not describe the live rows. `--allow-version-mismatch` overrides that if
-you know the two registries are equivalent. Catalogue control rows are never
+the live one, naming both: identifiers read from another release describe
+different rows, and the next upgrade's diff would treat them as the publisher's
+own claim about the live catalogue. `--allow-version-mismatch` overrides that if
+you know the two registries are equivalent — it is deliberately CLI-only, and
+the console does not offer it. The row is always stamped with the LIVE version
+whichever workbook it was read from, and catalogue control rows are never
 touched.
 
 ## Safety Features

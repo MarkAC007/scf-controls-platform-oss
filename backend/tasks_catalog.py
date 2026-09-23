@@ -223,13 +223,9 @@ async def _run_upgrade_stage(run_id: str, force: bool) -> dict:
             )
             run.diff_detail_object_key = detail_key
             run.diff_summary = staged.diff_summary.model_dump(mode="json")
-            # Seed the workbook-declared renumbering so apply can migrate
-            # scoped controls without an admin hand-pairing every successor.
-            # Only ever seeds an empty slot: an admin PUT is never clobbered.
-            if staged.suggested_pairings and not run.superseded_pairings:
-                run.superseded_pairings = [
-                    p.model_dump() for p in staged.suggested_pairings
-                ]
+            # superseded_pairings is deliberately left alone. The workbook's
+            # declared successors are in the stored diff and apply reads them
+            # from there; this column holds only the admin's OVERRIDES.
             run.status = "staged"
             if staged.forced:
                 # Forced-and-recorded (plan §4.2.2): surface it in the report.

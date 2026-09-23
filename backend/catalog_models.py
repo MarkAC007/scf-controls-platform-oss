@@ -350,16 +350,25 @@ class CatalogFrameworkRegistry(Base):
     framework, so this row is what lets an upgrade diff recognise a renamed
     framework id as the SAME document rather than an unrelated addition.
 
-    Written by the seeder on first boot, by ``services/catalog_apply`` inside
-    the apply transaction, and by ``cli.admin backfill-framework-registry`` on
-    installs seeded before the table existed. ``webclient/public/data/
-    framework_registry.json`` is a frontend cache derived from the same
-    extraction; this table is the record.
+    ``source`` records which path wrote the row:
+
+    * ``seed``      — the seeder, on first boot;
+    * ``apply``     — ``services/catalog_apply``, inside the apply transaction;
+    * ``recovered`` — ``services/framework_registry.ensure_live_framework_registry``,
+      at stage time, re-read from the applied run's own workbook in object
+      storage. This is the self-heal for installs whose live version was applied
+      by a build that did not write this row: without it the declared succession
+      tier can never fire and the framework_churn gate blocks every upgrade;
+    * ``backfill``  — an operator running ``cli.admin backfill-framework-registry``
+      or the admin console's "Register current catalogue workbook".
+
+    ``webclient/public/data/framework_registry.json`` is a frontend cache
+    derived from the same extraction; this table is the record.
     """
     __tablename__ = "catalog_framework_registries"
     __table_args__ = (
         CheckConstraint(
-            "source IN ('seed', 'apply', 'backfill')",
+            "source IN ('seed', 'apply', 'backfill', 'recovered')",
             name="ck_catalog_framework_registries_source",
         ),
     )

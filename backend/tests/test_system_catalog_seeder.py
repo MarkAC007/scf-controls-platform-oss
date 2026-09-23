@@ -50,14 +50,28 @@ class _FakeCountResult:
 
 
 class _FakeSession:
-    """Counts one query and collects added rows; enough for the seeder's shape."""
+    """Answers the seeder's two COUNTs by table and collects added rows.
 
-    def __init__(self, existing: int = 0):
+    Two counts, not one, and they must not share an answer: the seeder asks how
+    many CONTROL rows carry the version it is about to describe, and separately
+    whether that version already has a REGISTRY row. Answering both from one
+    number is what let the version-mismatch bug through — a fake that cannot
+    express "controls are on 2026.2, catalog_meta.json says 2026.1" cannot test
+    the guard against it.
+    """
+
+    def __init__(self, existing: int = 0, stamped_controls: int = 1):
         self._existing = existing
+        self._stamped_controls = stamped_controls
         self.added = []
         self.commits = 0
+        self.statements = []
 
     async def execute(self, statement):
+        sql = str(statement)
+        self.statements.append(sql)
+        if "scf_catalog_controls" in sql:
+            return _FakeCountResult(self._stamped_controls)
         return _FakeCountResult(self._existing)
 
     def add(self, obj):
@@ -129,3 +143,52 @@ def test_seed_framework_registry_skips_when_version_already_has_a_row(
     session = _FakeSession(existing=1)
     assert _seed_registry(session) == {"status": "skipped", "existing": 1}
     assert session.added == [] and session.commits == 0
+
+
+def test_seed_framework_registry_skips_a_version_no_control_row_carries(
+    tmp_path, monkeypatch
+):
+    """The production bug: catalog_meta.json says 2026.1, the catalogue is 2026.2.
+
+    catalog_meta.json lives on a mounted volume that a catalogue UPGRADE does not
+    rewrite, so on any install whose catalogue has moved on it names the release
+    first booted, not the live one. Writing the row anyway produced a
+    ``2026.1|seed`` row with no focal-document identifiers while the live rows
+    were 2026.2: every lookup of the LIVE version missed it, so the declared
+    succession tier stayed silent and the framework_churn gate blocked the next
+    upgrade — with a registry that all the diagnostics reported as present.
+    """
+    import catalog_seeder
+
+    monkeypatch.setattr(catalog_seeder, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(catalog_seeder, "_resolve_catalog_version", lambda: "2026.1")
+    (tmp_path / "framework_registry.json").write_text(
+        '{"nist_800_53_r5": {"name": "NIST 800-53 rev5", '
+        '"focal_document_id": "usa-federal-nist-800-53-r5"}}'
+    )
+
+    session = _FakeSession(stamped_controls=0)
+    result = _seed_registry(session)
+
+    assert result["status"] == "skipped"
+    assert "2026.1" in result["reason"]
+    assert session.added == [] and session.commits == 0
+    # And the version is checked against the CONTROL rows, not just the registry.
+    assert any("scf_catalog_controls" in sql for sql in session.statements)
+
+
+def test_seed_framework_registry_still_seeds_when_the_version_matches(
+    tmp_path, monkeypatch
+):
+    """The guard must not turn every fresh install into a skip."""
+    import catalog_seeder
+
+    monkeypatch.setattr(catalog_seeder, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(catalog_seeder, "_resolve_catalog_version", lambda: "2026.2")
+    (tmp_path / "frameworks.json").write_text('{"fw_one": "Framework One"}')
+
+    session = _FakeSession(stamped_controls=1534)
+    result = _seed_registry(session)
+
+    assert result == {"status": "seeded", "count": 1, "with_focal_document_id": 0}
+    assert session.added[0].catalog_version == "2026.2"

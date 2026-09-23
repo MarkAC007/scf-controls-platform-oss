@@ -415,6 +415,7 @@ class TestM6EngagementVersion:
 # ---------------------------------------------------------------------------
 
 FRAMEWORK_REGISTRY_MIGRATION = "20260922_210000_catalog_framework_registries.py"
+RECOVERED_SOURCE_MIGRATION = "20260923_090000_framework_registry_recovered_source.py"
 
 
 class TestFrameworkRegistryTable:
@@ -438,11 +439,52 @@ class TestFrameworkRegistryTable:
             "catalog_version", "registry", "source", "created_at", "updated_at",
         }
 
-    def test_source_check_names_the_three_writers(self):
+    def test_source_check_names_the_three_original_writers(self):
         module = _load_migration(FRAMEWORK_REGISTRY_MIGRATION)
         assert set(module.SOURCES) == {"seed", "apply", "backfill"}
         source = (MIGRATIONS_DIR / FRAMEWORK_REGISTRY_MIGRATION).read_text()
         assert "ck_catalog_framework_registries_source" in source
+
+    def test_recovered_source_is_added_by_a_later_revision_not_this_one(self):
+        """The self-heal writer is a fourth source, added on top of fwreg001.
+
+        Editing fwreg001 in place would leave every already-migrated database
+        rejecting a 'recovered' row while alembic reported the revision applied.
+        """
+        later = _load_migration(RECOVERED_SOURCE_MIGRATION)
+        assert later.revision == "fwreg002"
+        assert later.down_revision == "fwreg001"
+        assert set(later.SOURCES) == {"seed", "apply", "backfill", "recovered"}
+        assert set(later.PREVIOUS_SOURCES) == set(
+            _load_migration(FRAMEWORK_REGISTRY_MIGRATION).SOURCES
+        )
+
+    def test_recovered_source_migration_replaces_the_constraint_both_ways(self):
+        later = _load_migration(RECOVERED_SOURCE_MIGRATION)
+        up = _run(later, "upgrade")
+        assert up.constraints_dropped == {"ck_catalog_framework_registries_source"}
+        assert set(up.constraints_created) == {"ck_catalog_framework_registries_source"}
+        assert up.tables_created == {} and up.tables_dropped == []
+
+        down = _run(later, "downgrade")
+        assert down.constraints_dropped == up.constraints_dropped
+        assert set(down.constraints_created) == set(up.constraints_created)
+        # Narrowing a CHECK against rows that violate it aborts, so the
+        # downgrade relabels them first rather than requiring hand-repair.
+        assert any(
+            "recovered" in sql and "backfill" in sql for sql in down.executed_sql
+        ), down.executed_sql
+
+    def test_orm_source_check_allows_the_recovered_writer(self):
+        """The ORM's CheckConstraint must not lag the database's."""
+        import catalog_models
+
+        constraint = next(
+            c for c in catalog_models.CatalogFrameworkRegistry.__table_args__
+        )
+        text = str(constraint.sqltext)
+        for source in ("seed", "apply", "backfill", "recovered"):
+            assert source in text, f"{source} missing from the ORM source CHECK"
 
     def test_downgrade_drops_the_table(self):
         module = _load_migration(FRAMEWORK_REGISTRY_MIGRATION)

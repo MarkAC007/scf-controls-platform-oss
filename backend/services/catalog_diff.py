@@ -38,13 +38,19 @@ Entity coverage notes (contract ``CatalogEntityType``):
   entity, whose changed-field set includes ``framework_mappings``; apply/revert
   (WP1b) must consume the controls entity only.
 
-The superseded_by suggestion scorer (controls only, plan §4.2.3): candidates
-share the deprecated control's domain prefix, name similarity >= 0.6
-(``difflib``), top 3, display-only — the admin pairs manually.
+Control succession (plan §4.2.3) is DECLARED, never guessed. A deprecated
+control's successor comes from the workbook and nowhere else: the ``Legacy
+SCF #`` crosswalk first, the READ THIS sheet's merge list second. There is no
+name-similarity scorer any more. It produced 1-2 extra candidates on 377 of the
+801 deprecations in 2026.2->2026.3 and decided nothing, while making a
+publisher declaration and a string-distance guess look like the same kind of
+claim in the same list — which is exactly the confusion an operator signing off
+a four-figure renumbering cannot afford. Frameworks still derive their
+succession (see ``framework_succession``), because no publisher crosswalk
+exists for focal documents.
 """
 from __future__ import annotations
 
-import difflib
 import json
 import logging
 import re
@@ -53,7 +59,7 @@ import sys
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -80,12 +86,17 @@ from schemas_catalog_upgrade import (
     EntityDiff,
     EntityDiffCounts,
     FieldChange,
+    IdReuse,
+    PublisherChanges,
+    PublisherChangesSummary,
     ResurrectedEntity,
     SanityCheck,
     SanityReport,
-    SupersededPairing,
     SupersededSuggestion,
 )
+
+if TYPE_CHECKING:  # pragma: no cover - import-cycle-free type reference
+    from services.framework_registry import LiveRegistryStatus
 
 logger = logging.getLogger(__name__)
 
@@ -98,9 +109,6 @@ VERSION_RE = re.compile(r"^(\d{4})\.(\d+)$")
 # Sanity-gate threshold: an unclassified control-count drop beyond this
 # fraction of the live active catalog blocks the run (plan §4.2.2).
 CONTROL_COUNT_DROP_THRESHOLD = 0.05
-
-SUGGESTION_SIMILARITY_THRESHOLD = 0.6
-SUGGESTION_TOP_N = 3
 
 # Churn gate: a live control leaving the workbook is "explained" when the
 # workbook's Legacy SCF # crosswalk names its successor. Unexplained
@@ -217,6 +225,10 @@ class ExtractedCatalog:
     # the publisher's stable identity for a framework and is what makes
     # succession a DECLARED fact rather than a guess. Absent before SCF 2026.1.
     framework_registry: Dict[str, dict] = field(default_factory=dict)
+    # What the publisher SAYS it changed, from the 2026.3+ change sheets
+    # (``extract_scf_data.extract_publisher_changes``). Empty for every earlier
+    # release, which is a fact about the release and not a missing extraction.
+    publisher_changes: Dict[str, Any] = field(default_factory=dict)
     meta: dict = field(default_factory=dict)
 
 
@@ -247,6 +259,13 @@ def extract_workbook(workbook_path) -> ExtractedCatalog:
         if registry_path.exists():
             with open(registry_path) as f:
                 framework_registry = json.load(f)
+        # Optional twice over: absent from a workbook that predates the change
+        # sheets, and absent from an extraction that predates this file.
+        publisher_path = tmp / "publisher_changes.json"
+        publisher_changes = {}
+        if publisher_path.exists():
+            with open(publisher_path) as f:
+                publisher_changes = json.load(f) or {}
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -258,6 +277,7 @@ def extract_workbook(workbook_path) -> ExtractedCatalog:
         assessment_objectives=assessment_objectives,
         framework_names=framework_names,
         framework_registry=framework_registry,
+        publisher_changes=publisher_changes,
         meta=meta,
     )
 
@@ -691,11 +711,72 @@ def _decorated_frameworks(
 
 
 # ---------------------------------------------------------------------------
+# Publisher declarations (SCF 2026.3+ change sheets)
+# ---------------------------------------------------------------------------
+
+
+def publisher_retired_focal_document_ids(extracted: ExtractedCatalog) -> set:
+    """Focal-document identifiers the publisher declares removed this release.
+
+    Read off the STRM Errata sheet ("removed in 2026.3"). Identifiers, not our
+    framework ids: the errata sheet never mentions a mapping column header, and
+    the FDI is the only key that survives a rename in either direction.
+    """
+    frameworks = (extracted.publisher_changes or {}).get("frameworks") or {}
+    return {
+        str((entry or {}).get("fdi")).strip()
+        for entry in (frameworks.get("removed") or [])
+        if (entry or {}).get("fdi")
+    }
+
+
+def _live_focal_document_id(
+    live_frameworks: Dict[str, LiveEntityRow], key: str
+) -> Optional[str]:
+    row = live_frameworks.get(key)
+    if row is None:
+        return None
+    value = (row.fields or {}).get("focal_document_id")
+    return str(value).strip() if value else None
+
+
+def publisher_changes_are_empty(publisher_changes: Optional[dict]) -> bool:
+    """Whether a workbook shipped no publisher change sheets at all.
+
+    Distinguished from "shipped them and reported nothing" so the console can
+    hide the panel for a pre-2026.3 workbook instead of showing an empty one.
+    """
+    if not publisher_changes:
+        return True
+    if publisher_changes.get("summary"):
+        return False
+    frameworks = publisher_changes.get("frameworks") or {}
+    if any(frameworks.get(k) for k in ("added", "removed", "mapping_errata")):
+        return False
+    controls = publisher_changes.get("controls") or {}
+    return not any(controls.get(k) for k in ("counts", "merged", "tags"))
+
+
+# ---------------------------------------------------------------------------
 # Sanity gates (plan §4.2.2 — any failure ⇒ run 'blocked')
 # ---------------------------------------------------------------------------
 
 
-def run_sanity_checks(extracted: ExtractedCatalog, live: LiveCatalog) -> SanityReport:
+def run_sanity_checks(
+    extracted: ExtractedCatalog,
+    live: LiveCatalog,
+    *,
+    live_registry: Optional["LiveRegistryStatus"] = None,
+) -> SanityReport:
+    """Run every staging gate.
+
+    ``live_registry`` is the outcome of the stage-time registry self-heal
+    (``services.framework_registry.ensure_live_framework_registry``). It is
+    optional so the many callers that construct a diff directly - tests, and any
+    future non-staging consumer - keep their existing behaviour: when it is None
+    the ``live_framework_registry`` check is not emitted at all, rather than
+    emitted with a fabricated verdict about a registry nobody looked at.
+    """
     checks: List[SanityCheck] = []
 
     version_ok = parse_version(extracted.catalog_version) is not None
@@ -813,6 +894,43 @@ def run_sanity_checks(extracted: ExtractedCatalog, live: LiveCatalog) -> SanityR
         )
     )
 
+    # The seam the framework_churn gate below depends on. Ordered immediately
+    # before it because a framework_churn failure is UNREADABLE without this
+    # line: "0 carry the workbook's own focal-document identifier" describes a
+    # release that dropped 73 documents and a platform that has no identifiers
+    # to compare against identically, and production hit the second one.
+    if live_registry is not None:
+        registry_version = live_registry.catalog_version or "unknown"
+        if live_registry.usable:
+            if live_registry.recovered_from_run_id:
+                provenance = (
+                    f"recovered from the {registry_version} upgrade workbook"
+                )
+            else:
+                provenance = str(live_registry.source)
+            registry_detail = (
+                f"registry for {registry_version}: {live_registry.entries} "
+                f"frameworks, {live_registry.with_focal_document_id} carrying a "
+                f"focal-document identifier (source: {provenance})"
+            )
+        else:
+            registry_detail = (
+                f"no framework registry with focal-document identifiers is stored "
+                f"for the live catalog {registry_version} and none could be "
+                f"recovered from a stored upgrade workbook "
+                f"({live_registry.reason or 'no reason recorded'}). Register the "
+                f"{registry_version} workbook on Platform → Catalog "
+                f'("Register your current catalog workbook"), discard this run and '
+                f"upload the new workbook again."
+            )
+        checks.append(
+            SanityCheck(
+                check="live_framework_registry",
+                passed=live_registry.usable,
+                detail=registry_detail,
+            )
+        )
+
     # ``framework_names`` only asks whether the map came back non-empty. It
     # passed at "extracted 383 framework display names" on a release that
     # silently dropped 75 of them, because a count says nothing about identity.
@@ -855,11 +973,42 @@ def run_sanity_checks(extracted: ExtractedCatalog, live: LiveCatalog) -> SanityR
         # error it would be loosened into is the silent one that rebinds a
         # tenant's scope to the wrong document. Derived proposals still reach
         # the reviewer; they just cannot let a release past this check.
-        fw_explained = sorted(
+        #
+        # There are three kinds of declaration, and the detail names them
+        # separately because "73 unexplained" and "73 accounted for" read the
+        # same to an operator who is only shown a total:
+        #
+        #  * renamed       - same focal-document identifier on both sides. The
+        #                    publisher moved the column header; the document is
+        #                    the document (TIER_DECLARED).
+        #  * new edition   - the identifier differs only by its edition token, so
+        #                    it is the 2026 revision of the 2020 document
+        #                    (TIER_DECLARED_STEM).
+        #  * retired by    - the publisher's own STRM Errata sheet lists the live
+        #    the publisher   document's identifier as "removed in <version>".
+        #                    Nothing succeeds it; it is gone on purpose.
+        #
+        # The third is new in 2026.3 and is the only one that can explain a
+        # removal with no successor at all. It is still a DECLARATION - read off
+        # the publisher's sheet, matched on the FDI - so it cannot be widened
+        # into the failure mode above. A derived matcher tier still explains
+        # nothing, whatever it proposes.
+        fw_renamed = sorted(
             k for k, p in proposals.items()
-            if p.bound_successor
-            and p.best.tier in (TIER_DECLARED, TIER_DECLARED_STEM)
+            if p.bound_successor and p.best.tier == TIER_DECLARED
         )
+        fw_new_edition = sorted(
+            k for k, p in proposals.items()
+            if p.bound_successor and p.best.tier == TIER_DECLARED_STEM
+        )
+        publisher_retired_fdis = publisher_retired_focal_document_ids(extracted)
+        already = set(fw_renamed) | set(fw_new_edition)
+        fw_publisher_retired = sorted(
+            key for key in fw_removed
+            if key not in already
+            and _live_focal_document_id(live_frameworks, key) in publisher_retired_fdis
+        )
+        fw_explained = sorted(already | set(fw_publisher_retired))
         fw_unexplained = sorted(set(fw_removed) - set(fw_explained))
         fw_ratio = len(fw_unexplained) / len(live_fw_active)
         fw_churn_ok = (
@@ -867,10 +1016,11 @@ def run_sanity_checks(extracted: ExtractedCatalog, live: LiveCatalog) -> SanityR
             or fw_ratio <= FRAMEWORK_CHURN_UNEXPLAINED_THRESHOLD
         )
         fw_detail = (
-            f"{len(fw_removed)} live frameworks absent from the workbook; "
-            f"{len(fw_explained)} carry the workbook's own focal-document "
-            f"identifier into the new release, {len(fw_unexplained)} "
-            f"unexplained "
+            f"{len(fw_removed)} live frameworks absent from the workbook: "
+            f"{len(fw_renamed)} renamed (same focal document), "
+            f"{len(fw_new_edition)} superseded by a new edition, "
+            f"{len(fw_publisher_retired)} retired by the publisher, "
+            f"{len(fw_unexplained)} unexplained "
             f"({fw_ratio:.1%} of {len(live_fw_active)} live active) - blocks "
             f"above {FRAMEWORK_CHURN_UNEXPLAINED_THRESHOLD:.0%} unless under "
             f"the {FRAMEWORK_CHURN_MIN_ROWS}-row floor"
@@ -935,7 +1085,7 @@ def _field_changes(
 
 
 # ---------------------------------------------------------------------------
-# superseded_by suggestion scorer (controls only, plan §4.2.3 — display-only)
+# Declared control succession (controls only, plan §4.2.3)
 # ---------------------------------------------------------------------------
 
 
@@ -970,36 +1120,64 @@ def build_legacy_crosswalk(extracted: ExtractedCatalog) -> Dict[str, str]:
     return crosswalk
 
 
-def _domain_prefix(scf_id: str) -> str:
-    return scf_id.split("-", 1)[0]
+SUCCESSION_SOURCE_WORKBOOK_CROSSWALK = "workbook_crosswalk"
+# The READ THIS sheet's deprecation block, which names the survivor each merged
+# control was folded into. Second in precedence behind the Legacy SCF # column:
+# the crosswalk is a per-row machine-readable field the publisher maintains for
+# renumbering, while the merge list is prose about a release. Where both speak
+# they have agreed so far, and where they disagree the structured field wins.
+SUCCESSION_SOURCE_PUBLISHER_MERGED = "publisher_merged"
 
 
-def suggest_successors(
-    deprecated_key: str,
-    deprecated_name: Optional[str],
-    candidates: Dict[str, Optional[str]],
-    *,
-    threshold: float = SUGGESTION_SIMILARITY_THRESHOLD,
-    top_n: int = SUGGESTION_TOP_N,
-) -> List[SupersededSuggestion]:
-    """Rank successor candidates for a planned deprecation.
+def build_publisher_merges(
+    extracted: ExtractedCatalog,
+) -> Dict[str, Tuple[str, Optional[str]]]:
+    """Legacy control id -> (survivor id, the legacy control's own name).
 
-    Candidates (key -> name) must share the deprecated control's domain prefix
-    and reach name similarity >= ``threshold``; top ``top_n`` by score.
+    From the READ THIS sheet's deprecation block (2026.3+), which is the only
+    place the workbook states which retired control was merged into which
+    survivor. Empty for every earlier release.
+
+    Two jobs, and both need the same map. A merged control that LEFT the
+    workbook is a deprecation whose successor the publisher has declared. A
+    merged control whose id is still in the workbook has had its id handed to an
+    unrelated control, and the changed row carries an ``IdReuse`` flag instead.
     """
-    if not deprecated_name:
-        return []
-    prefix = _domain_prefix(deprecated_key)
-    target = deprecated_name.strip().lower()
-    scored = []
-    for key, name in candidates.items():
-        if key == deprecated_key or _domain_prefix(key) != prefix or not name:
+    raw = ((extracted.publisher_changes or {}).get("controls") or {}).get("merged")
+    merges: Dict[str, Tuple[str, Optional[str]]] = {}
+    for entry in raw or []:
+        legacy = str((entry or {}).get("legacy_scf_id") or "").strip()
+        survivor = str((entry or {}).get("merged_into") or "").strip()
+        if not legacy or not survivor or legacy == survivor:
             continue
-        score = difflib.SequenceMatcher(None, target, name.strip().lower()).ratio()
-        if score >= threshold:
-            scored.append(SupersededSuggestion(scf_id=key, name=name, score=round(score, 4)))
-    scored.sort(key=lambda s: (-s.score, s.scf_id))
-    return scored[:top_n]
+        legacy_name = (entry or {}).get("legacy_name")
+        legacy_name = str(legacy_name).strip() or None if legacy_name else None
+        # First mention wins, matching build_legacy_crosswalk.
+        merges.setdefault(legacy, (survivor, legacy_name))
+    return merges
+
+
+def declared_successor(
+    key: str,
+    workbook_rows: Dict[str, dict],
+    legacy_crosswalk: Optional[Dict[str, str]],
+    publisher_merges: Optional[Dict[str, Tuple[str, Optional[str]]]],
+) -> Tuple[Optional[str], Optional[str]]:
+    """(successor, source) the workbook declares for a departing control.
+
+    ``(None, None)`` when the workbook declares nothing. A declared successor
+    that is not itself a row in the new workbook is DROPPED rather than
+    carried: a crosswalk or merge note pointing outside this catalog is stale,
+    and pairing to a key that does not exist would fail apply-time validation
+    for every org at once.
+    """
+    crosswalk_successor = (legacy_crosswalk or {}).get(key)
+    if crosswalk_successor in workbook_rows:
+        return crosswalk_successor, SUCCESSION_SOURCE_WORKBOOK_CROSSWALK
+    merged_into = ((publisher_merges or {}).get(key) or (None, None))[0]
+    if merged_into in workbook_rows:
+        return merged_into, SUCCESSION_SOURCE_PUBLISHER_MERGED
+    return None, None
 
 
 # ---------------------------------------------------------------------------
@@ -1012,15 +1190,17 @@ def compute_entity_diff(
     live_rows: Dict[str, LiveEntityRow],
     compared: tuple,
     name_field: Optional[str] = None,
-    suggestion_candidates: Optional[Dict[str, Optional[str]]] = None,
     legacy_crosswalk: Optional[Dict[str, str]] = None,
+    publisher_merges: Optional[Dict[str, Tuple[str, Optional[str]]]] = None,
 ) -> EntityDiff:
     """Classify one entity's keys into the five change classes.
 
-    ``suggestion_candidates`` (controls only) enables the superseded_by scorer
-    on deprecated rows. ``legacy_crosswalk`` (controls only) supplies the
-    workbook's own predecessor->successor mapping, which outranks the scorer:
-    a renumbering the publisher declared is not a similarity guess.
+    ``legacy_crosswalk`` and ``publisher_merges`` (controls only) are the two
+    things the workbook says about control succession, in that precedence. They
+    are the ONLY sources of a successor on a deprecated row: nothing here
+    proposes one. ``publisher_merges`` does double duty and also flags a changed
+    row whose key the publisher declared merged away while handing the id to an
+    unrelated control.
     """
     diff = EntityDiff()
 
@@ -1037,8 +1217,20 @@ def compute_entity_diff(
                 ResurrectedEntity(key=key, name=name or live.name, fields=changes)
             )
         elif changes:
+            # The publisher declared this key merged away, yet here the key is,
+            # still in the workbook. The id has been reused for something else.
+            merge = (publisher_merges or {}).get(key)
             diff.changed.append(
-                ChangedEntity(key=key, name=name or live.name, fields=changes)
+                ChangedEntity(
+                    key=key,
+                    name=name or live.name,
+                    fields=changes,
+                    id_reused=(
+                        IdReuse(merged_into=merge[0], legacy_name=merge[1])
+                        if merge
+                        else None
+                    ),
+                )
             )
         else:
             diff.unchanged.append(key)
@@ -1051,39 +1243,38 @@ def compute_entity_diff(
             # Already deprecated and still absent: nothing changes.
             diff.unchanged.append(key)
             continue
+        successor, source = declared_successor(
+            key, workbook_rows, legacy_crosswalk, publisher_merges
+        )
         suggestions = (
-            suggest_successors(key, live.name, suggestion_candidates)
-            if suggestion_candidates is not None
+            [
+                SupersededSuggestion(
+                    scf_id=successor,
+                    name=(
+                        workbook_rows[successor].get(name_field)
+                        if name_field
+                        else None
+                    )
+                    or successor,
+                    score=1.0,
+                    # Not "which heuristics fired" — which AUTHORITY said so.
+                    signals=[source],
+                )
+            ]
+            if successor is not None
             else []
         )
-        # The workbook's declared successor only counts if the workbook also
-        # carries it; a crosswalk pointing outside this catalog is stale.
-        crosswalk_successor = (legacy_crosswalk or {}).get(key)
-        if crosswalk_successor is not None and crosswalk_successor not in workbook_rows:
-            crosswalk_successor = None
-        if crosswalk_successor is not None:
-            declared = SupersededSuggestion(
-                scf_id=crosswalk_successor,
-                name=(suggestion_candidates or {}).get(crosswalk_successor)
-                or crosswalk_successor,
-                score=1.0,
-            )
-            suggestions = [declared] + [
-                s for s in suggestions if s.scf_id != crosswalk_successor
-            ]
-            suggestions = suggestions[:SUGGESTION_TOP_N]
         diff.deprecated.append(
             DeprecatedEntity(
                 key=key,
                 name=live.name,
-                # An admin pairing already written to the live row is a human
-                # decision and outranks the workbook.
-                superseded_by=live.superseded_by or crosswalk_successor,
-                superseded_source=(
-                    None
-                    if live.superseded_by or crosswalk_successor is None
-                    else "workbook_crosswalk"
-                ),
+                # The workbook is the authority on succession, so a declaration
+                # wins. A pre-existing value on the live row is only a fallback
+                # for a retirement the workbook says nothing about; the channel
+                # for overriding a declaration is this run's pairings list,
+                # which apply consults (see catalog_apply._apply_successors).
+                superseded_by=successor or live.superseded_by,
+                superseded_source=source,
                 suggestions=suggestions,
             )
         )
@@ -1132,6 +1323,11 @@ SUCCESSION_SOURCE_DERIVED = "derived_succession"
 # Document Identifier. Kept distinct from the derived source so a reviewer can
 # see at a glance which pairings are the publisher's word and which are ours.
 SUCCESSION_SOURCE_FOCAL_DOCUMENT = "workbook_focal_document"
+# A retirement the publisher declares outright on its STRM Errata sheet
+# ("removed in 2026.3"). There is no successor and none is implied: this records
+# WHY the framework left, which is the difference between a deliberate
+# retirement and a document that fell out of the workbook unnoticed.
+SUCCESSION_SOURCE_PUBLISHER_DECLARED = "publisher_declared"
 
 _DECLARED_TIERS = {TIER_DECLARED, TIER_DECLARED_STEM}
 
@@ -1257,6 +1453,7 @@ def compute_frameworks_diff(
             unchanged.append(key)
 
     deprecated = []
+    publisher_retired_fdis = publisher_retired_focal_document_ids(extracted)
     for key in removed_keys:
         proposal = proposals.get(key)
         bound = proposal.bound_successor if proposal else None
@@ -1278,6 +1475,11 @@ def compute_frameworks_diff(
                 if proposal.best.tier in _DECLARED_TIERS
                 else SUCCESSION_SOURCE_DERIVED
             )
+        elif _live_focal_document_id(live_rows, key) in publisher_retired_fdis:
+            # No successor, but not unaccounted for. Recorded on the row so the
+            # console can say "retired by the publisher" instead of leaving the
+            # reviewer to guess at a blank.
+            source = SUCCESSION_SOURCE_PUBLISHER_DECLARED
         deprecated.append(
             DeprecatedEntity(
                 key=key,
@@ -1302,6 +1504,36 @@ def compute_frameworks_diff(
     )
 
 
+def build_publisher_changes(
+    extracted: ExtractedCatalog,
+) -> Optional[PublisherChanges]:
+    """The publisher's own change narrative, contract-shaped, or None.
+
+    None means the workbook shipped no change sheets — every release up to
+    2026.2 — and the console hides the panel rather than rendering a row of
+    zeros that would read as "the publisher changed nothing".
+    """
+    raw = extracted.publisher_changes or {}
+    if publisher_changes_are_empty(raw):
+        return None
+    return PublisherChanges.model_validate(raw)
+
+
+def summarize_publisher_changes(
+    publisher: Optional[PublisherChanges],
+) -> Optional[PublisherChangesSummary]:
+    """Counts only. The lists stay in the diff detail, which is the blob."""
+    if publisher is None:
+        return None
+    return PublisherChangesSummary(
+        summary=publisher.summary,
+        frameworks_added=len(publisher.frameworks.added),
+        frameworks_removed=len(publisher.frameworks.removed),
+        mapping_errata=len(publisher.frameworks.mapping_errata),
+        controls=dict(publisher.controls.counts),
+    )
+
+
 def compute_catalog_diff(
     extracted: ExtractedCatalog, live: LiveCatalog, from_version: str
 ) -> DiffDetail:
@@ -1310,10 +1542,8 @@ def compute_catalog_diff(
     live_by_entity = live.by_entity()
 
     workbook_controls = workbook[CatalogEntityType.CONTROLS]
-    suggestion_candidates = {
-        key: fields.get("control_name") for key, fields in workbook_controls.items()
-    }
     legacy_crosswalk = build_legacy_crosswalk(extracted)
+    publisher_merges = build_publisher_merges(extracted)
 
     compared_by_entity = {
         CatalogEntityType.CONTROLS: CONTROL_COMPARED_FIELDS,
@@ -1335,13 +1565,13 @@ def compute_catalog_diff(
             live_by_entity[entity_type],
             compared,
             name_field=name_field_by_entity[entity_type],
-            suggestion_candidates=(
-                suggestion_candidates
+            legacy_crosswalk=(
+                legacy_crosswalk
                 if entity_type is CatalogEntityType.CONTROLS
                 else None
             ),
-            legacy_crosswalk=(
-                legacy_crosswalk
+            publisher_merges=(
+                publisher_merges
                 if entity_type is CatalogEntityType.CONTROLS
                 else None
             ),
@@ -1364,6 +1594,7 @@ def compute_catalog_diff(
         # The apply transaction persists this against to_version; the workbook
         # is gone by then, so the diff is the only carrier.
         framework_registry=extracted.framework_registry or {},
+        publisher_changes=build_publisher_changes(extracted),
     )
 
 
@@ -1385,12 +1616,23 @@ def summarize_diff(detail: DiffDetail) -> DiffSummary:
                 # the value predates this run as an admin pairing and is not
                 # this run's claim. Controls only ever set 'workbook_crosswalk',
                 # so their count is unchanged by the generalisation.
+                # ``superseded_by`` is required as well as a source, because a
+                # source is now also set for a retirement the PUBLISHER declared
+                # outright, which has no successor. A rename with nothing to
+                # rename to is not a rename.
                 renamed=sum(
-                    1 for d in diff.deprecated if d.superseded_source is not None
+                    1
+                    for d in diff.deprecated
+                    if d.superseded_source is not None and d.superseded_by
                 ),
+                # Changed rows whose key the publisher declared merged away and
+                # then reused. Never a subset of ``renamed``: the reused id is
+                # not deprecated by this run, so it has no successor to name.
+                id_reused=sum(1 for c in diff.changed if c.id_reused is not None),
             )
             for entity_type, diff in detail.entities.items()
         },
+        publisher_changes=summarize_publisher_changes(detail.publisher_changes),
     )
 
 
@@ -1414,11 +1656,6 @@ class StagedDiff:
     diff_detail: Optional[DiffDetail] = None
     diff_summary: Optional[DiffSummary] = None
     forced: bool = False
-    # Pairings the workbook itself declares via the Legacy SCF # crosswalk.
-    # The caller seeds these onto the run so a renumbering release does not
-    # require an admin to hand-confirm four figures of successors before the
-    # upgrade can be applied. An admin PUT still overwrites them wholesale.
-    suggested_pairings: List[SupersededPairing] = field(default_factory=list)
 
 
 async def stage_catalog_diff(
@@ -1434,9 +1671,19 @@ async def stage_catalog_diff(
     ``VersionGuardError`` for a refused same-version/downgrade stage.
     """
     extracted = extract_workbook(workbook_path)
+
+    # BEFORE load_live_catalog, deliberately: this may WRITE the live version's
+    # framework registry row (recovered from the applied run's own workbook), and
+    # load_live_framework_registry a line later has to read what it wrote. The
+    # other order leaves the diff comparing against a registry that exists in the
+    # database but not in this snapshot, which is the silent-stale-read shape
+    # that made the file-based registry unusable in the first place.
+    from services.framework_registry import ensure_live_framework_registry
+
+    live_registry = await ensure_live_framework_registry(session)
     live = await load_live_catalog(session)
 
-    sanity = run_sanity_checks(extracted, live)
+    sanity = run_sanity_checks(extracted, live, live_registry=live_registry)
     if not sanity.passed:
         return StagedDiff(
             to_version=extracted.catalog_version,
@@ -1447,19 +1694,15 @@ async def stage_catalog_diff(
     guard_version(from_version, extracted.catalog_version, force=force)
 
     detail = compute_catalog_diff(extracted, live, from_version)
-    controls_diff = detail.entities.get(CatalogEntityType.CONTROLS)
-    suggested_pairings = [
-        SupersededPairing(
-            deprecated_scf_id=dep.key, superseded_by=dep.superseded_by
-        )
-        for dep in (controls_diff.deprecated if controls_diff else [])
-        if dep.superseded_source == "workbook_crosswalk" and dep.superseded_by
-    ]
+    # No pairings are seeded onto the run. The declared successor lives in the
+    # stored diff and apply reads it from there; ``superseded_pairings`` is the
+    # admin's OVERRIDE list and must stay empty until an admin puts something in
+    # it. Seeding it was what made "apply without editing" lose every
+    # declaration the moment an admin saved a partial list of 801 rows.
     return StagedDiff(
         to_version=extracted.catalog_version,
         sanity_report=sanity,
         diff_detail=detail,
         diff_summary=summarize_diff(detail),
         forced=force,
-        suggested_pairings=suggested_pairings,
     )

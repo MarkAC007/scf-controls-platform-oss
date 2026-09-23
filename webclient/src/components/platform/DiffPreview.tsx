@@ -4,6 +4,10 @@
  *
  * Entity tabs across the six catalog entity types, change-class filters,
  * and field-level old → new rendering for changed/resurrected rows.
+ *
+ * Succession here is the workbook's, never the platform's: a deprecated row
+ * shows the declared successor with the declaration that produced it, and a
+ * changed control row whose id the publisher re-used says so outright.
  */
 import { useEffect, useState } from 'react'
 import { toast } from 'react-hot-toast'
@@ -14,6 +18,7 @@ import type {
   DiffItem,
   DiffPageResponse,
   DiffSummary,
+  SupersededSource,
 } from '../../types/catalogUpgrade'
 import { CATALOG_ENTITY_TYPES, CHANGE_CLASSES } from '../../types/catalogUpgrade'
 
@@ -43,6 +48,39 @@ function formatValue(value: unknown): string {
   return text.length > 80 ? `${text.slice(0, 77)}…` : text
 }
 
+/**
+ * Which workbook declaration produced a deprecated row's successor. The
+ * platform never guesses one, so the label is provenance, not confidence.
+ */
+function sourceLabel(source: SupersededSource | null | undefined): string | null {
+  switch (source) {
+    case 'workbook_crosswalk':
+      return 'Legacy SCF # crosswalk'
+    case 'publisher_merged':
+      return 'Publisher merge list'
+    default:
+      // A source the backend added after this build: show it verbatim rather
+      // than silently dropping the provenance.
+      return source ? source : null
+  }
+}
+
+/**
+ * The publisher re-used this control's id for a merge: the row is not simply a
+ * wording change, it now carries a different (retired) control's substance.
+ */
+function IdReuseLine({ item }: { item: DiffItem }) {
+  if (!item.id_reused) return null
+  const { merged_into, legacy_name } = item.id_reused
+  return (
+    <div>
+      <span className="badge badge-warning">
+        ID reused — publisher merged {legacy_name || 'a legacy control'} into {merged_into}
+      </span>
+    </div>
+  )
+}
+
 function ChangeClassBadge({ changeClass }: { changeClass: ChangeClass }) {
   switch (changeClass) {
     case 'added':
@@ -61,11 +99,12 @@ function ChangeClassBadge({ changeClass }: { changeClass: ChangeClass }) {
 function DiffItemDetail({ item }: { item: DiffItem }) {
   if (item.change_class === 'changed' || item.change_class === 'resurrected') {
     const fieldNames = Object.keys(item.fields)
-    if (fieldNames.length === 0) {
-      return <span style={{ color: 'var(--muted)' }}>Re-activated, no field changes</span>
-    }
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+        <IdReuseLine item={item} />
+        {fieldNames.length === 0 && (
+          <span style={{ color: 'var(--muted)' }}>Re-activated, no field changes</span>
+        )}
         {fieldNames.map(fieldName => (
           <div key={fieldName} style={{ fontSize: '0.82rem' }}>
             <strong>{fieldName}:</strong>{' '}
@@ -84,22 +123,17 @@ function DiffItemDetail({ item }: { item: DiffItem }) {
     return <span style={{ color: 'var(--muted)' }}>New entry ({fieldCount} fields)</span>
   }
   if (item.change_class === 'deprecated') {
+    const label = sourceLabel(item.superseded_source)
     return (
       <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
         {item.superseded_by ? (
-          <span className="badge badge-good">Superseded by {item.superseded_by}</span>
+          <>
+            <span className="badge badge-good">Superseded by {item.superseded_by}</span>
+            {label && <span className="badge badge-viewer">{label}</span>}
+          </>
         ) : (
-          <span style={{ color: 'var(--muted)' }}>No successor paired</span>
+          <span style={{ color: 'var(--muted)' }}>No successor declared</span>
         )}
-        {item.suggestions.map(suggestion => (
-          <span
-            key={suggestion.scf_id}
-            className="badge badge-viewer"
-            title={suggestion.name || suggestion.scf_id}
-          >
-            {suggestion.scf_id} · {Math.round(suggestion.score * 100)}%
-          </span>
-        ))}
       </div>
     )
   }
@@ -149,6 +183,12 @@ export default function DiffPreview({ runId, diffSummary }: DiffPreviewProps) {
     return counts.added + counts.changed + counts.deprecated + counts.resurrected
   }
 
+  // Publisher id reuse is a subset of `changed`, so it is reported separately
+  // and never added to an entity total. Runs staged before it was detected omit
+  // the count entirely.
+  const idReusedCount =
+    entity === 'controls' ? diffSummary?.entities?.controls?.id_reused ?? 0 : 0
+
   const totalPages = pageData ? Math.max(1, Math.ceil(pageData.total / PAGE_SIZE)) : 1
 
   return (
@@ -160,6 +200,7 @@ export default function DiffPreview({ runId, diffSummary }: DiffPreviewProps) {
           return (
             <button
               key={entityType}
+              type="button"
               role="tab"
               aria-selected={entity === entityType}
               className={entity === entityType ? 'btn btn-primary btn-sm' : 'btn btn-secondary btn-sm'}
@@ -178,6 +219,7 @@ export default function DiffPreview({ runId, diffSummary }: DiffPreviewProps) {
       {/* Change-class filters */}
       <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
         <button
+          type="button"
           className={changeClass === 'all' ? 'btn btn-primary btn-sm' : 'btn btn-secondary btn-sm'}
           onClick={() => {
             setChangeClass('all')
@@ -189,6 +231,7 @@ export default function DiffPreview({ runId, diffSummary }: DiffPreviewProps) {
         {CHANGE_CLASSES.map(cls => (
           <button
             key={cls}
+            type="button"
             className={changeClass === cls ? 'btn btn-primary btn-sm' : 'btn btn-secondary btn-sm'}
             onClick={() => {
               setChangeClass(cls)
@@ -199,6 +242,14 @@ export default function DiffPreview({ runId, diffSummary }: DiffPreviewProps) {
           </button>
         ))}
       </div>
+
+      {idReusedCount > 0 && (
+        <p style={{ color: 'var(--muted)', fontSize: '0.85rem', marginBottom: '0.75rem' }}>
+          {idReusedCount === 1
+            ? '1 changed control re-uses an id the publisher merged a retired control into.'
+            : `${idReusedCount} changed controls re-use ids the publisher merged retired controls into.`}
+        </p>
+      )}
 
       {loading && !pageData ? (
         <div style={{ textAlign: 'center', padding: '2rem' }}>
@@ -238,6 +289,7 @@ export default function DiffPreview({ runId, diffSummary }: DiffPreviewProps) {
       {pageData && pageData.total > PAGE_SIZE && (
         <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', marginTop: '0.75rem' }}>
           <button
+            type="button"
             className="btn btn-secondary btn-sm"
             disabled={page <= 1 || loading}
             onClick={() => setPage(p => p - 1)}
@@ -248,6 +300,7 @@ export default function DiffPreview({ runId, diffSummary }: DiffPreviewProps) {
             Page {page} of {totalPages} · {pageData.total} entries
           </span>
           <button
+            type="button"
             className="btn btn-secondary btn-sm"
             disabled={page >= totalPages || loading}
             onClick={() => setPage(p => p + 1)}

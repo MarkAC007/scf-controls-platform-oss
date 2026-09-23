@@ -32,6 +32,12 @@ PLATFORM_ROUTES = [
     ("/api/admin/catalog/upgrade/runs/{run_id}/revert", "POST", contracts.UpgradeRevertResponse),
     ("/api/admin/catalog/tenants", "GET", contracts.TenantsBoardResponse),
     ("/api/admin/catalog/controls/{scf_id}/superseded-by", "PATCH", contracts.SupersededByPatchResponse),
+    # Added by the catalogue-upgrade journey fix. The publisher's own account of
+    # the release it staged, and the live framework registry the declared
+    # succession tier depends on (read, and an operator-supplied write).
+    ("/api/admin/catalog/upgrade/runs/{run_id}/publisher-changes", "GET", contracts.PublisherChanges),
+    ("/api/admin/catalog/framework-registry", "GET", contracts.FrameworkRegistryStatus),
+    ("/api/admin/catalog/framework-registry", "POST", contracts.FrameworkRegistryRegistration),
 ]
 
 ORG_ROUTES = [
@@ -71,8 +77,14 @@ def test_every_contract_path_appears_in_the_openapi_schema_with_its_model():
         assert path in paths, f"missing from openapi: {path}"
         op = paths[path].get(method.lower())
         assert op is not None, f"missing method in openapi: {method} {path}"
-        success = op["responses"].get("200") or op["responses"].get("202")
-        assert success is not None, f"{method} {path}: no 200/202 response in openapi"
+        success = (
+            op["responses"].get("200")
+            or op["responses"].get("201")
+            or op["responses"].get("202")
+        )
+        assert success is not None, (
+            f"{method} {path}: no 200/201/202 response in openapi"
+        )
         ref = success["content"]["application/json"]["schema"].get("$ref", "")
         assert ref.endswith(f"/{response_model.__name__}"), (
             f"{method} {path}: openapi response schema is {ref!r}, "
@@ -108,6 +120,11 @@ def test_platform_routes_use_platform_admin_dependency():
         ("/admin/catalog/upgrade/runs/{run_id}/apply", "POST"),
         ("/admin/catalog/upgrade/runs/{run_id}/revert", "POST"),
         ("/admin/catalog/controls/{scf_id}/superseded-by", "PATCH"),
+        # Rewrites what the platform believes the live catalogue's
+        # focal-document identifiers are, which every subsequent upgrade's
+        # succession reasoning is built on. Guarded like apply: the static API
+        # key is auto-granted platform admin and must not reach it.
+        ("/admin/catalog/framework-registry", "POST"),
     }
     for route in catalog_upgrade_admin.router.routes:
         if not isinstance(route, APIRoute):

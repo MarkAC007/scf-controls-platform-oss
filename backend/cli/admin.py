@@ -1098,53 +1098,71 @@ async def cmd_backfill_framework_registry(args: argparse.Namespace) -> int:
     the framework_churn sanity gate blocks the upgrade. This reads the registry
     out of the matching workbook and writes that one row. The catalogue control
     rows are never touched.
-    """
-    from services.catalog_apply import _upsert_framework_registry, _now
-    from services.catalog_diff import resolve_live_catalog_version
 
+    From the build that added ``services/framework_registry`` the platform
+    recovers this row for itself at stage time, out of the applied run's own
+    stored workbook, and the admin console offers the same write as an upload.
+    This command remains the fallback for a headless operator and the only place
+    ``--allow-version-mismatch`` exists.
+
+    The decisions live in ``services.framework_registry`` so the CLI, the HTTP
+    endpoint and the self-heal cannot drift into three different version guards.
+    """
+    from services.framework_registry import (
+        RegistryVersionMismatch,
+        register_framework_registry_from_workbook,
+    )
+
+    # Resolved here, not in the service, so the extractor this command uses stays
+    # injectable at the CLI boundary the way every other admin command's
+    # dependencies are.
     extractor = _load_extractor()
 
-    try:
-        workbook_version, registry = extractor.extract_framework_registry_only(
-            args.workbook
-        )
-    except Exception as exc:
-        print(f"❌ Could not read framework registry from {args.workbook}: {exc}")
-        return 1
-
-    if not registry:
-        print(f"❌ No framework registry in {args.workbook} (pre-2026.1 workbook?)")
-        return 1
-
     async with AsyncSessionLocal() as session:
-        live_version = await resolve_live_catalog_version(session)
-        if not live_version:
-            print("❌ No live catalog version — seed the catalog first")
-            return 1
-
-        if workbook_version != live_version and not args.allow_version_mismatch:
+        try:
+            status = await register_framework_registry_from_workbook(
+                session,
+                args.workbook,
+                source="backfill",
+                allow_version_mismatch=args.allow_version_mismatch,
+                extractor=extractor,
+            )
+        except RegistryVersionMismatch as exc:
             print(
-                f"❌ Workbook is catalog version {workbook_version!r} but the live "
-                f"catalog is {live_version!r}.\n"
+                f"❌ Workbook is catalog version {exc.workbook_version!r} but the live "
+                f"catalog is {exc.live_version!r}.\n"
                 "   Backfilling the wrong workbook writes focal-document identifiers "
                 "that do not describe the live rows.\n"
                 "   Supply the matching workbook, or pass --allow-version-mismatch "
                 "if you know the registries are equivalent."
             )
             return 1
+        except ValueError as exc:
+            message = str(exc)
+            if "no framework registry" in message.lower():
+                print(
+                    f"❌ No framework registry in {args.workbook} "
+                    f"(pre-2026.1 workbook?)"
+                )
+            else:
+                print(f"❌ No live catalog version — seed the catalog first")
+            return 1
+        except Exception as exc:  # noqa: BLE001 — an unreadable workbook, reported
+            print(f"❌ Could not read framework registry from {args.workbook}: {exc}")
+            return 1
 
-        count = await _upsert_framework_registry(
-            session, live_version, registry, "backfill", _now()
+    print(
+        f"✅ Framework registry backfilled for catalog version "
+        f"{status.catalog_version}"
+    )
+    print(f"   Entries:                        {status.entries}")
+    print(f"   Carrying a focal-document id:   {status.with_focal_document_id}")
+    print(f"   Rows written:                   {status.rows_written}")
+    if status.workbook_version != status.catalog_version:
+        print(
+            f"   ⚠️  Workbook version {status.workbook_version} accepted via "
+            f"--allow-version-mismatch"
         )
-        await session.commit()
-
-    with_fdi = sum(1 for entry in registry.values() if entry.get("focal_document_id"))
-    print(f"✅ Framework registry backfilled for catalog version {live_version}")
-    print(f"   Entries:                        {len(registry)}")
-    print(f"   Carrying a focal-document id:   {with_fdi}")
-    print(f"   Rows written:                   {count}")
-    if workbook_version != live_version:
-        print(f"   ⚠️  Workbook version {workbook_version} accepted via --allow-version-mismatch")
     return 0
 
 

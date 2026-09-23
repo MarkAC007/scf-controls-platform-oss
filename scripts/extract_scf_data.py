@@ -1052,6 +1052,329 @@ def extract_framework_registry_only(excel_path) -> tuple[str, dict]:
     return str(sheets['catalog_version']), registry
 
 
+# =============================================================================
+# Publisher change sheets (SCF 2026.3 onward)
+# =============================================================================
+#
+# From 2026.3 the workbook ships three sheets in which SCF states, in its own
+# words, what it changed. Until now the platform ignored them and re-derived
+# every answer from the data: a framework the publisher explicitly RETIRED was
+# indistinguishable from one that silently vanished, and a release that
+# renumbered 1,457 controls looked like a mass retirement plus a mass addition.
+#
+# All three are OPTIONAL. Every workbook up to and including 2026.2 has none of
+# them, so their absence is a fact about the release, never an error.
+
+# Sheet candidates. Matched on strip+casefold, then on a substring, because the
+# publisher renames sheets between releases ('Authoritative Sources' ->
+# 'Focal Documents' happened to the sheet next door in 2026.2).
+SHEET_STRM_ERRATA = (['STRM Errata'], ['strm errata', 'errata'])
+SHEET_CHANGE_OVERVIEW = (['Change Overview'], ['change overview'])
+SHEET_READ_THIS = (['READ THIS'], ['read this'])
+
+# Framework-level errata verbs. Parsed generically: the version is whatever the
+# publisher wrote, so a 2026.4 workbook saying 'added in 2026.4' needs no edit
+# here. Anything that is neither verb is a mapping erratum — the focal document
+# was RETAINED and only its mapped requirements moved ('FDE #: AC-05, CM-06').
+_ERRATA_ADDED_RE = re.compile(r'^added\s+in\s+(\S+)\s*$', re.I)
+_ERRATA_REMOVED_RE = re.compile(r'^removed\s+in\s+(\S+)\s*$', re.I)
+
+# The control-level tags the 2026.3 Change Overview uses. Listed so the counts
+# dict has a stable key set a reader can rely on; an unrecognised tag is still
+# counted, under its own normalised key, rather than dropped.
+PUBLISHER_CONTROL_TAGS = (
+    'new_control',
+    'renumbered',
+    'wordsmithed',
+    'renamed',
+    'moved_domains',
+    'merged',
+)
+
+# 'merged old TDA-11.2' and 'merged old END-03 & NET 15.3' are the same kind of
+# change with different operands, so the tag is normalised and the operands are
+# read from the READ THIS deprecation block instead, where they are columns.
+_TAG_MERGED_RE = re.compile(r'^merged\b', re.I)
+
+
+def empty_publisher_changes() -> dict:
+    """The shape ``extract_publisher_changes`` returns for a workbook with none.
+
+    Counts are ``{}`` rather than zero-filled on purpose: "the publisher shipped
+    no change sheets" and "the publisher shipped them and changed nothing" are
+    different facts, and only the second one should read as a row of zeros.
+    """
+    return {
+        'summary': None,
+        'frameworks': {'added': [], 'removed': [], 'mapping_errata': []},
+        'controls': {'counts': {}, 'merged': [], 'tags': {}},
+    }
+
+
+def resolve_optional_sheet(xl, preferred_names, contains_texts):
+    """Sheet name for one of ``preferred_names``/``contains_texts``, or None.
+
+    The tolerant, non-raising sibling of ``resolve_sheet_with_contains_fallback``
+    for sheets whose absence is normal.
+    """
+    if isinstance(preferred_names, str):
+        preferred_names = [preferred_names]
+    if isinstance(contains_texts, str):
+        contains_texts = [contains_texts]
+
+    folded = [(s, s.strip().casefold()) for s in xl.sheet_names]
+    for name in preferred_names:
+        needle = name.strip().casefold()
+        for sheet_name, lowered in folded:
+            if lowered == needle:
+                return sheet_name
+    for contains_text in contains_texts:
+        needle = contains_text.strip().casefold()
+        for sheet_name, lowered in folded:
+            if needle in lowered:
+                return sheet_name
+    return None
+
+
+def _find_column(columns, *, contains=None, startswith=None):
+    """First cleaned column matching any ``contains``/``startswith`` needle."""
+    for col in columns:
+        lowered = str(col).strip().casefold()
+        for needle in (startswith or ()):
+            if lowered.startswith(needle.casefold()):
+                return col
+        for needle in (contains or ()):
+            if needle.casefold() in lowered:
+                return col
+    return None
+
+
+def _cell(value) -> str:
+    """A worksheet cell as a stripped string; '' for blank/NaN."""
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return ''
+    try:
+        if pd.isna(value):
+            return ''
+    except (TypeError, ValueError):
+        pass
+    return str(value).strip()
+
+
+def parse_strm_errata(df) -> dict:
+    """Framework-level publisher errata from the STRM Errata sheet.
+
+    Three outcomes per row, keyed off the Errata verb:
+
+    * ``added in <ver>``    — a focal document the release introduces;
+    * ``removed in <ver>``  — a focal document the publisher RETIRED. This is
+      the one that matters most: it is the publisher's own declaration, and it
+      is what lets the ``framework_churn`` gate distinguish a deliberate
+      retirement from a document that fell out of the workbook by accident;
+    * anything else         — a mapping erratum inside a document that is still
+      shipping ('FDE #: 8.10, 8.12, 8.5'). The raw note is kept verbatim rather
+      than parsed into requirement ids: the format varies per document family
+      and nothing downstream needs the individual references.
+    """
+    out = {'added': [], 'removed': [], 'mapping_errata': []}
+    if df is None or df.empty:
+        return out
+    columns = [clean_column_name(str(c)) for c in df.columns]
+    df = df.copy()
+    df.columns = columns
+    fdi_col = _find_column(columns, contains=['focal document identifier', '(fdi)'])
+    name_col = _find_column(columns, contains=['focal document name', '(fdn)'])
+    errata_col = _find_column(columns, startswith=['errata'])
+    if fdi_col is None or errata_col is None:
+        print(
+            "Note: STRM Errata sheet carries no recognised focal-document "
+            "identifier / errata columns; framework-level publisher changes "
+            "unavailable for this workbook"
+        )
+        return out
+
+    for _, row in df.iterrows():
+        fdi = _cell(row.get(fdi_col))
+        note = _cell(row.get(errata_col))
+        if not fdi or not note:
+            continue
+        name = _cell(row.get(name_col)) if name_col is not None else ''
+        if _ERRATA_ADDED_RE.match(note):
+            out['added'].append({'fdi': fdi, 'name': name or None})
+        elif _ERRATA_REMOVED_RE.match(note):
+            out['removed'].append({'fdi': fdi, 'name': name or None})
+        else:
+            out['mapping_errata'].append(
+                {'fdi': fdi, 'name': name or None, 'note': note}
+            )
+    return out
+
+
+def normalize_change_tag(text: str) -> str:
+    """One Change Overview errata line -> its normalised tag.
+
+    'moved domains' -> 'moved_domains'; every 'merged old <id>' variant ->
+    'merged'.
+    """
+    stripped = text.strip().lstrip('-').strip()
+    if _TAG_MERGED_RE.match(stripped):
+        return 'merged'
+    return re.sub(r'\s+', '_', stripped.casefold())
+
+
+def parse_change_overview(df) -> dict:
+    """Per-control publisher change tags from the Change Overview sheet.
+
+    The Errata cell is a newline-separated bullet list ('- renumbered\\n-
+    wordsmithed'), so one control can carry several tags and the counts are tag
+    occurrences, not rows. ``counts`` always names every tag in
+    ``PUBLISHER_CONTROL_TAGS`` (zero where the release used it nowhere) so a
+    reader can tell "none of these" from "this release does not report that".
+    """
+    out = {'counts': {tag: 0 for tag in PUBLISHER_CONTROL_TAGS}, 'tags': {}}
+    if df is None or df.empty:
+        return out
+    columns = [clean_column_name(str(c)) for c in df.columns]
+    df = df.copy()
+    df.columns = columns
+    id_col = _find_column(columns, startswith=['scf #'])
+    errata_col = _find_column(columns, startswith=['errata'])
+    if id_col is None or errata_col is None:
+        print(
+            "Note: Change Overview sheet carries no recognised SCF # / errata "
+            "columns; per-control publisher changes unavailable for this workbook"
+        )
+        return out
+
+    for _, row in df.iterrows():
+        scf_id = _cell(row.get(id_col))
+        note = _cell(row.get(errata_col))
+        if not scf_id or not note:
+            continue
+        tags = []
+        for line in note.split('\n'):
+            tag = normalize_change_tag(line)
+            if not tag:
+                continue
+            out['counts'][tag] = out['counts'].get(tag, 0) + 1
+            if tag not in tags:
+                tags.append(tag)
+        if tags:
+            out['tags'][scf_id] = tags
+    return out
+
+
+def parse_read_this(df) -> dict:
+    """The publisher's narrative and its deprecated-control block.
+
+    The sheet has no header row pandas can use: cell (0,0) is a prose paragraph
+    and the real header sits a couple of rows down, so it is read with
+    ``header=None`` and the header row is LOCATED by looking for 'New SCF #'
+    rather than assumed at a fixed index — a blank row inserted above it in a
+    later release would otherwise silently shift every column.
+
+    Two blocks share that header row. The left one is the renumbering crosswalk,
+    which the platform already gets from the controls sheet's 'Legacy SCF #'
+    column and does not need twice. The right one is the only place the workbook
+    says which deprecated control was merged into which survivor.
+    """
+    out = {'summary': None, 'merged': []}
+    if df is None or df.empty:
+        return out
+
+    first = _cell(df.iat[0, 0]) if df.shape[1] else ''
+    out['summary'] = first or None
+
+    header_row = None
+    for idx in range(len(df)):
+        cells = [_cell(v).casefold() for v in df.iloc[idx].tolist()]
+        if any('new scf #' in c for c in cells):
+            header_row = idx
+            break
+    if header_row is None:
+        return out
+
+    header = [_cell(v).casefold() for v in df.iloc[header_row].tolist()]
+    name_idx = next(
+        (i for i, c in enumerate(header) if 'deprecated scf control name' in c), None
+    )
+    if name_idx is None:
+        return out
+    legacy_idx = next(
+        (i for i in range(name_idx + 1, len(header)) if 'legacy scf #' in header[i]),
+        None,
+    )
+    merged_idx = next(
+        (i for i in range(name_idx + 1, len(header)) if 'merged into' in header[i]),
+        None,
+    )
+    if legacy_idx is None or merged_idx is None:
+        return out
+
+    for idx in range(header_row + 1, len(df)):
+        row = df.iloc[idx].tolist()
+        legacy_name = _cell(row[name_idx]) if name_idx < len(row) else ''
+        legacy_id = _cell(row[legacy_idx]) if legacy_idx < len(row) else ''
+        merged_into = _cell(row[merged_idx]) if merged_idx < len(row) else ''
+        if not legacy_id and not legacy_name:
+            continue
+        out['merged'].append(
+            {
+                'legacy_scf_id': legacy_id or None,
+                'legacy_name': legacy_name or None,
+                'merged_into': merged_into or None,
+            }
+        )
+    return out
+
+
+def extract_publisher_changes(xl_or_path) -> dict:
+    """What the publisher says it changed, from the 2026.3+ change sheets.
+
+    ``xl_or_path`` is a ``pd.ExcelFile`` or anything ``pd.ExcelFile`` accepts.
+    Returns ``empty_publisher_changes()`` for a workbook that ships none of the
+    three sheets (every release up to 2026.2), and never raises for one whose
+    sheets are present but unreadable — a publisher narrative is commentary on
+    an upgrade, and losing it must not be able to block the upgrade itself.
+    """
+    xl = xl_or_path if isinstance(xl_or_path, pd.ExcelFile) else pd.ExcelFile(xl_or_path)
+    result = empty_publisher_changes()
+
+    errata_sheet = resolve_optional_sheet(xl, *SHEET_STRM_ERRATA)
+    if errata_sheet:
+        try:
+            result['frameworks'] = parse_strm_errata(pd.read_excel(xl, errata_sheet))
+        except Exception as exc:  # pragma: no cover - commentary, never fatal
+            print(f"Warning: could not read sheet {errata_sheet!r}: {exc}")
+
+    overview_sheet = resolve_optional_sheet(xl, *SHEET_CHANGE_OVERVIEW)
+    if overview_sheet:
+        try:
+            parsed = parse_change_overview(pd.read_excel(xl, overview_sheet))
+            result['controls']['counts'] = parsed['counts']
+            result['controls']['tags'] = parsed['tags']
+        except Exception as exc:  # pragma: no cover - commentary, never fatal
+            print(f"Warning: could not read sheet {overview_sheet!r}: {exc}")
+
+    read_this_sheet = resolve_optional_sheet(xl, *SHEET_READ_THIS)
+    if read_this_sheet:
+        try:
+            parsed = parse_read_this(pd.read_excel(xl, read_this_sheet, header=None))
+            result['summary'] = parsed['summary']
+            result['controls']['merged'] = parsed['merged']
+        except Exception as exc:  # pragma: no cover - commentary, never fatal
+            print(f"Warning: could not read sheet {read_this_sheet!r}: {exc}")
+
+    fw = result['frameworks']
+    if errata_sheet or overview_sheet or read_this_sheet:
+        print(
+            f"Publisher changes: {len(fw['added'])} focal documents added, "
+            f"{len(fw['removed'])} removed, {len(fw['mapping_errata'])} with "
+            f"mapping errata; {len(result['controls']['merged'])} controls merged"
+        )
+    return result
+
+
 def extract_to_dir(excel_path, output_dir):
     """Extract an SCF Excel workbook into seeder JSON in ``output_dir``.
 
@@ -1088,6 +1411,9 @@ def extract_to_dir(excel_path, output_dir):
     framework_registry = extract_framework_registry(
         xl, framework_names, sheet_names['authoritative_sources']
     )
+    # Optional from 2026.3: what the publisher SAYS it changed. Absent from
+    # every earlier release, so this is an empty structure, not an error.
+    publisher_changes = extract_publisher_changes(xl)
 
     # Write control_guidance.json
     control_guidance = {'controls': controls}
@@ -1117,6 +1443,13 @@ def extract_to_dir(excel_path, output_dir):
         json.dump(framework_registry, f, indent=2)
     print(f"Wrote {output_dir / 'framework_registry.json'}")
 
+    # Write publisher_changes.json (the publisher's own change narrative).
+    # Always written, empty structure included, so a consumer can tell "this
+    # extraction predates the feature" from "this release published nothing".
+    with open(output_dir / 'publisher_changes.json', 'w') as f:
+        json.dump(publisher_changes, f, indent=2)
+    print(f"Wrote {output_dir / 'publisher_changes.json'}")
+
     # Write domains.json
     with open(output_dir / 'domains.json', 'w') as f:
         json.dump(domains, f, indent=2)
@@ -1143,6 +1476,12 @@ def extract_to_dir(excel_path, output_dir):
         'framework_columns_excluded': {
             col: reason for col, reason in sorted(excluded_columns.items())
         },
+        # Whether this workbook shipped the publisher change sheets at all.
+        'publisher_changes': bool(
+            publisher_changes.get('summary')
+            or any(publisher_changes.get('frameworks', {}).values())
+            or publisher_changes.get('controls', {}).get('counts')
+        ),
     }
     with open(output_dir / 'catalog_meta.json', 'w') as f:
         json.dump(catalog_meta, f, indent=2)

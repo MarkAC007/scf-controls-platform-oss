@@ -150,6 +150,17 @@ class _FakeResult:
         return list(self._rows)
 
 
+def _compiled_status(stmt):
+    """The literal bound to a ``status ==`` predicate, or None if there is none."""
+    if stmt.whereclause is None:
+        return None
+    params = stmt.compile().params
+    for key, value in params.items():
+        if key == "status" or key.startswith("status_"):
+            return value
+    return None
+
+
 class FakeSession:
     """In-memory tables + Postgres-like transaction semantics.
 
@@ -295,6 +306,17 @@ class FakeSession:
             descriptions = stmt.column_descriptions
             entity = descriptions[0]["entity"]
             rows = list(self.tables[entity])
+            if entity is CatalogImportRun:
+                # The ONE filter this fake cannot leave to the caller.
+                # get_current_catalog_version (services.catalog_apply) is the
+                # authority for "which catalogue version are the live rows",
+                # and it filters status == 'applied' in SQL, not in Python.
+                # Handing it every run makes a staging run for the NEXT version
+                # look like the live one, which reads back as an install whose
+                # registry is missing. Emulate the predicate instead.
+                status = _compiled_status(stmt)
+                if status is not None:
+                    rows = [r for r in rows if getattr(r, "status", None) == status]
             if len(descriptions) == 1 and descriptions[0]["name"] == entity.__name__:
                 self.events.append(("select", entity.__tablename__))
                 return _FakeResult(rows)
@@ -329,7 +351,8 @@ DOMAIN_NAME = "Cybersecurity & Data Protection Governance"
 # 2026.2-era workbook rows (columns per test_scf_extractor.controls_headers).
 # GOV-A1: description CHANGED vs live; GOV-A2: identical to live (unchanged);
 # GOV-A3/A4/A5: new. GOV-A4's name is a deliberate near-match for the retiring
-# GOV-R1 so the superseded_by suggestion scorer fires. Live-only GOV-C1/D1/R1
+# GOV-R1, which a name-similarity scorer would once have paired. Live-only
+# GOV-C1/D1/R1
 # become deprecations. 5 workbook controls vs 5 live actives keeps the
 # control-count-drop sanity gate quiet.
 WORKBOOK_CONTROL_ROWS = [
@@ -696,6 +719,30 @@ def _controls_by_id(session):
 # ---------------------------------------------------------------------------
 
 
+def _live_framework_registry():
+    return SimpleNamespace(
+        id=uuid.uuid4(),
+        catalog_version=V1,
+        source="apply",
+        registry={
+            AICPA_SLUG: {
+                "name": (
+                    "American Institute of Certified Public Accountants (AICPA) "
+                    "Trust Services Criteria (2017)"
+                ),
+                "focal_document_id": "general-aicpa-tsc-2017",
+                "geography": "General",
+            },
+            GDPR_SLUG: {
+                "name": "GDPR EU General Data Protection Regulation",
+                "focal_document_id": None,
+                "geography": None,
+            },
+        },
+        created_at=T0,
+    )
+
+
 class Journey:
     def __init__(self, tmp_path):
         self.workbook = build_workbook(
@@ -724,6 +771,13 @@ class Journey:
             SCFCatalogEvidence: _live_evidence(),
             SCFCatalogAssessmentObjective: [_ao()],
             CatalogImportRun: [self.platform_run],
+            # The live catalogue's framework registry. Staging gates on this
+            # row existing and carrying at least one focal-document identifier
+            # (services.framework_registry.ensure_live_framework_registry), so
+            # the journey has to start from an install whose last apply wrote
+            # it. The identifiers are the ones the synthetic workbook declares:
+            # the AICPA column has one, the GDPR column does not.
+            CatalogFrameworkRegistry: [_live_framework_registry()],
             # First-reconciliation org: NO organization_catalog_state row,
             # heuristic backfill framework selections awaiting confirmation.
             OrganizationFrameworkSelection: [
@@ -865,9 +919,16 @@ async def test_stage_classifies_the_synthetic_workbook(journey):
     assert [d.key for d in controls.deprecated] == ["GOV-C1", "GOV-D1", "GOV-R1"]
     assert "GOV-A2" in controls.unchanged
 
-    # The display-only successor suggestions: GOV-R1's near-namesake GOV-A4.
+    # A 2026.2-era workbook has no Legacy SCF # column and no READ THIS sheet,
+    # so it declares nothing and every deprecation arrives bare. GOV-A4 is a
+    # deliberate near-namesake for the retiring GOV-R1 and used to be offered as
+    # a candidate; the workbook never said so, so nothing is offered now.
     by_key = {d.key: d for d in controls.deprecated}
-    assert [s.scf_id for s in by_key["GOV-R1"].suggestions] == ["GOV-A4"]
+    assert all(d.suggestions == [] for d in controls.deprecated)
+    assert by_key["GOV-R1"].superseded_by is None
+    assert by_key["GOV-R1"].superseded_source is None
+    # And nothing was seeded onto the run: the pairings column is the admin's.
+    assert (journey.platform_run.superseded_pairings or []) == []
 
     evidence = staged.diff_detail.entities[EVIDENCE]
     assert [d.key for d in evidence.deprecated] == ["E-GOV-A9"]

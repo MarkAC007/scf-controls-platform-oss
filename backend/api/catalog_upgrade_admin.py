@@ -17,6 +17,8 @@ Contracts live in backend/schemas_catalog_upgrade.py — imported, never
 redefined.
 """
 import logging
+import os
+import tempfile
 from typing import List, Optional
 from uuid import UUID
 
@@ -37,12 +39,15 @@ from schemas_catalog_upgrade import (
     DiffItem,
     DiffPageResponse,
     DiffSummary,
+    FrameworkRegistryRegistration,
+    FrameworkRegistryStatus,
     PairingsUpdateRequest,
     PairingsUpdateResponse,
     PlatformImportRunDetail,
     PlatformImportRunsListResponse,
     PlatformImportRunSummary,
     PlatformRunStatus,
+    PublisherChanges,
     SanityReport,
     SupersededByPatchRequest,
     SupersededByPatchResponse,
@@ -63,6 +68,11 @@ from services.catalog_apply import (
     get_current_catalog_version,
 )
 from services.catalog_diff import parse_version
+from services.framework_registry import (
+    RegistryVersionMismatch,
+    read_live_framework_registry,
+    register_framework_registry_from_workbook,
+)
 from tasks_catalog import UPGRADE_OBJECT_PREFIX
 
 logger = logging.getLogger(__name__)
@@ -100,6 +110,29 @@ _CHANGE_CLASS_ORDER = (
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+async def _read_validated_xlsx(file: UploadFile) -> bytes:
+    """The uploaded workbook's bytes, or an HTTPException naming what is wrong.
+
+    Shared by the upgrade upload and the framework-registry registration: both
+    take an SCF workbook from an operator's browser, and a size or content-type
+    limit that differs between the two routes is a limit an operator will
+    discover the hard way. One envelope, one set of status codes.
+    """
+    filename = file.filename or ""
+    if not filename.lower().endswith(".xlsx"):
+        raise HTTPException(status_code=400, detail="Upload must be a .xlsx file.")
+    if file.content_type and file.content_type not in _ALLOWED_XLSX_TYPES:
+        raise HTTPException(
+            status_code=415, detail=f"Unsupported content type: {file.content_type}"
+        )
+    body = await file.read()
+    if not body:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+    if len(body) > _MAX_XLSX_BYTES:
+        raise HTTPException(status_code=413, detail="Workbook exceeds the 50 MB limit.")
+    return body
 
 
 async def _get_run(db: AsyncSession, run_id: UUID) -> CatalogImportRun:
@@ -194,6 +227,7 @@ def _flatten_diff(detail: DiffDetail) -> List[DiffItem]:
                     key=changed.key,
                     name=changed.name,
                     fields=changed.fields,
+                    id_reused=changed.id_reused,
                 )
             )
         for deprecated in diff.deprecated:
@@ -204,6 +238,7 @@ def _flatten_diff(detail: DiffDetail) -> List[DiffItem]:
                     key=deprecated.key,
                     name=deprecated.name,
                     superseded_by=deprecated.superseded_by,
+                    superseded_source=deprecated.superseded_source,
                     suggestions=deprecated.suggestions,
                 )
             )
@@ -255,17 +290,7 @@ async def upload_upgrade_workbook(
     """Upload a new SCF workbook; creates a run in 'staging' and enqueues
     the Celery staging task (plan §4.2.1)."""
     filename = file.filename or ""
-    if not filename.lower().endswith(".xlsx"):
-        raise HTTPException(status_code=400, detail="Upload must be a .xlsx file.")
-    if file.content_type and file.content_type not in _ALLOWED_XLSX_TYPES:
-        raise HTTPException(
-            status_code=415, detail=f"Unsupported content type: {file.content_type}"
-        )
-    body = await file.read()
-    if not body:
-        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
-    if len(body) > _MAX_XLSX_BYTES:
-        raise HTTPException(status_code=413, detail="Workbook exceeds the 50 MB limit.")
+    body = await _read_validated_xlsx(file)
 
     # One in-flight platform run (plan §4.1 M4). The partial unique index is
     # the authority; this pre-check turns the common case into a clean 409.
@@ -397,6 +422,153 @@ async def get_upgrade_run_diff(
         page_size=page_size,
         entity=entity,
         change_class=change_class,
+    )
+
+
+@router.get(
+    "/admin/catalog/upgrade/runs/{run_id}/publisher-changes",
+    response_model=PublisherChanges,
+)
+async def get_upgrade_run_publisher_changes(
+    run_id: UUID,
+    user: User = Depends(require_platform_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """What the publisher says it changed in the staged release (2026.3+).
+
+    Separate from the diff because it is a different KIND of claim. Everything
+    under .../diff is what the platform derived by comparing two catalogues; this
+    is SCF's own account of the release — which focal documents it retired, how
+    many controls it renumbered, which deprecated controls it merged into which
+    survivors, and the narrative paragraph it wrote at the top of the workbook.
+    An operator deciding whether to accept a 1,457-control renumbering needs the
+    publisher's version of events next to ours, not buried inside it.
+
+    Empty (not 404) for a workbook that shipped no change sheets: the run staged
+    fine and the release simply published nothing, which is every release up to
+    2026.2. 404 is reserved for a run that has no staged diff at all.
+    """
+    run = await _get_run(db, run_id)
+    if not run.diff_detail_object_key:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"Run {run.id} has no staged diff, so no publisher changes "
+                f"(status: {run.status})"
+            ),
+        )
+    detail = _load_diff_detail(run)
+    return detail.publisher_changes or PublisherChanges()
+
+
+# ---------------------------------------------------------------------------
+# Live framework registry (the succession seam, plan §4.2.2)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/admin/catalog/framework-registry", response_model=FrameworkRegistryStatus)
+async def get_live_framework_registry(
+    user: User = Depends(require_platform_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Whether the live catalogue has focal-document identifiers stored.
+
+    Read-only on purpose: it deliberately does NOT run the stage-time recovery,
+    so opening the catalogue page can never write a row and commit. The console
+    shows this on the version card, because "the next upgrade will be blocked" is
+    something an operator should be able to learn before uploading a workbook
+    rather than from a blocked run afterwards.
+    """
+    status_ = await read_live_framework_registry(db)
+    return FrameworkRegistryStatus(
+        catalog_version=status_.catalog_version,
+        present=status_.registry is not None,
+        entries=status_.entries,
+        with_focal_document_id=status_.with_focal_document_id,
+        source=status_.source,
+    )
+
+
+@router.post(
+    "/admin/catalog/framework-registry",
+    response_model=FrameworkRegistryRegistration,
+    status_code=201,
+)
+async def register_live_framework_registry(
+    file: UploadFile = File(...),
+    user: User = Depends(require_platform_admin_user_session),
+    db: AsyncSession = Depends(get_db),
+):
+    """Register the CURRENT catalogue's workbook to stock the framework registry.
+
+    The in-app equivalent of ``cli.admin backfill-framework-registry``, for the
+    install whose live catalogue version was applied by a build that never wrote
+    the row and whose applied run no longer holds its workbook, so the stage-time
+    self-heal has nothing to recover from.
+
+    The workbook must be the one matching the LIVE version, and a mismatch is a
+    409 naming both: identifiers read from a different release describe different
+    rows, and the next upgrade's diff would treat them as the live catalogue's
+    own. There is no ``allow_version_mismatch`` here. The CLI keeps that escape
+    hatch because it is run by someone who can see the whole install; an upload
+    button that quietly accepts the wrong file is how the registry got wrong in
+    the first place.
+
+    A mutation, so the real-user-session guard applies exactly as it does to
+    apply/pairings/revert: the static API key is auto-granted platform admin and
+    must not be able to rewrite the catalogue's succession record.
+    """
+    body = await _read_validated_xlsx(file)
+
+    # A temp file, because the extractor is pandas and pandas wants a path. Its
+    # lifetime is this request; the bytes are not retained anywhere afterwards.
+    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
+        tmp.write(body)
+        workbook_path = tmp.name
+    try:
+        try:
+            status_ = await register_framework_registry_from_workbook(
+                db, workbook_path, source="backfill"
+            )
+        except RegistryVersionMismatch as exc:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Workbook is catalog version {exc.workbook_version} but the "
+                    f"live catalog is {exc.live_version}. Upload the workbook "
+                    f"matching the live catalog version: identifiers from "
+                    f"another release do not describe the live rows."
+                ),
+            ) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except HTTPException:
+            raise
+        except Exception as exc:  # noqa: BLE001 — unreadable workbook, not a 500
+            logger.exception("Framework registry registration failed")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Could not read the framework registry from the workbook: {exc}",
+            ) from exc
+    finally:
+        try:
+            os.unlink(workbook_path)
+        except OSError:  # pragma: no cover - already gone
+            pass
+
+    logger.info(
+        "Framework registry registered for catalog version %s: %d entries, %d "
+        "carrying a focal-document identifier",
+        status_.catalog_version,
+        status_.entries,
+        status_.with_focal_document_id,
+    )
+    return FrameworkRegistryRegistration(
+        catalog_version=status_.catalog_version,
+        workbook_version=status_.workbook_version or status_.catalog_version,
+        entries=status_.entries,
+        with_focal_document_id=status_.with_focal_document_id,
+        source=status_.source,
     )
 
 

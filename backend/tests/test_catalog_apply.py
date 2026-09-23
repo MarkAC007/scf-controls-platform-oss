@@ -58,6 +58,7 @@ from schemas_catalog_upgrade import (  # noqa: E402
     CatalogEntityType,
     ChangedEntity,
     DeprecatedEntity,
+    IdReuse,
     DiffDetail,
     EntityDiff,
     FieldChange,
@@ -644,6 +645,307 @@ async def test_theme_upsert_and_mapping_recompute():
 
 
 @pytest.mark.asyncio
+async def test_the_declared_successor_applies_with_no_pairings_at_all():
+    """The bug this change exists to fix.
+
+    Apply used to write superseded_by from ``run.superseded_pairings`` alone, so
+    an admin who staged a renumbering release and pressed Apply without opening
+    the pairing editor discarded every succession the workbook declared — 801 of
+    them on 2026.2->2026.3, every scoped control retiring instead of migrating.
+    The declaration is in the stored diff and needs no confirmation.
+    """
+    retired = _control_row("GOV-A3", "Retiring")
+    successor = _control_row("GOV-A2", "Successor")
+    session = _session(controls=[retired, successor])
+    run = _run(pairings=[])
+    detail = _controls_diff(
+        deprecated=[
+            DeprecatedEntity(
+                key="GOV-A3",
+                superseded_by="GOV-A2",
+                superseded_source="workbook_crosswalk",
+            )
+        ]
+    )
+    report = await ca.apply_catalog_run(session, run, detail, themes_json=THEMES_JSON)
+    assert retired.superseded_by == "GOV-A2"
+    assert retired.status == "deprecated"
+    assert (report.successors_declared, report.successors_overridden) == (1, 0)
+    assert report.as_dict()["successors_declared"] == 1
+
+
+@pytest.mark.asyncio
+async def test_a_publisher_merged_declaration_applies_the_same_way():
+    """Both declared sources are the publisher's word and apply identically."""
+    retired = _control_row("GOV-A3", "Retiring")
+    successor = _control_row("GOV-A2", "Successor")
+    session = _session(controls=[retired, successor])
+    detail = _controls_diff(
+        deprecated=[
+            DeprecatedEntity(
+                key="GOV-A3",
+                superseded_by="GOV-A2",
+                superseded_source="publisher_merged",
+            )
+        ]
+    )
+    report = await ca.apply_catalog_run(
+        session, _run(), detail, themes_json=THEMES_JSON
+    )
+    assert retired.superseded_by == "GOV-A2"
+    assert report.successors_declared == 1
+
+
+@pytest.mark.asyncio
+async def test_a_successor_with_no_source_is_not_this_runs_claim():
+    """``superseded_source`` is the marker, not the presence of a successor.
+
+    A deprecated row can show a value that predates the run (an old admin
+    pairing on the live row). Apply must not adopt it as this release's
+    decision, or a value nobody re-confirmed gets restamped with the new
+    catalog version and counted as a declaration.
+    """
+    retired = _control_row("GOV-A3", "Retiring", superseded_by="GOV-A2")
+    successor = _control_row("GOV-A2", "Successor")
+    session = _session(controls=[retired, successor])
+    detail = _controls_diff(
+        deprecated=[DeprecatedEntity(key="GOV-A3", superseded_by="GOV-A2")]
+    )
+    report = await ca.apply_catalog_run(
+        session, _run(), detail, themes_json=THEMES_JSON
+    )
+    # Left exactly as the live row had it, and not counted.
+    assert retired.superseded_by == "GOV-A2"
+    assert (report.successors_declared, report.successors_overridden) == (0, 0)
+
+
+@pytest.mark.asyncio
+async def test_an_admin_pairing_overrides_the_declaration_for_that_key_only():
+    """The pairing list is a set of per-key overrides, not a replacement set."""
+    overridden = _control_row("GOV-A3", "Overridden")
+    declared_only = _control_row("GOV-A4", "Left to the workbook")
+    workbook_pick = _control_row("GOV-A2", "Workbook's pick")
+    admin_pick = _control_row("GOV-A8", "Admin's pick")
+    session = _session(
+        controls=[overridden, declared_only, workbook_pick, admin_pick]
+    )
+    run = _run(pairings=[{"deprecated_scf_id": "GOV-A3", "superseded_by": "GOV-A8"}])
+    detail = _controls_diff(
+        deprecated=[
+            DeprecatedEntity(
+                key="GOV-A3",
+                superseded_by="GOV-A2",
+                superseded_source="workbook_crosswalk",
+            ),
+            DeprecatedEntity(
+                key="GOV-A4",
+                superseded_by="GOV-A2",
+                superseded_source="workbook_crosswalk",
+            ),
+        ]
+    )
+    report = await ca.apply_catalog_run(session, run, detail, themes_json=THEMES_JSON)
+    assert overridden.superseded_by == "GOV-A8"
+    assert declared_only.superseded_by == "GOV-A2"
+    assert (report.successors_declared, report.successors_overridden) == (1, 1)
+
+
+@pytest.mark.asyncio
+async def test_an_explicit_null_pairing_retires_outright_over_a_declaration():
+    """"No successor" has to be expressible, or the declaration is unopposable.
+
+    The admin's row carries superseded_by=None, which means retire outright. It
+    must beat the workbook's declaration for that key — otherwise the only way
+    to reject a declared succession would be to invent a different one.
+    """
+    retired = _control_row("GOV-A3", "Retiring")
+    successor = _control_row("GOV-A2", "Successor")
+    session = _session(controls=[retired, successor])
+    run = _run(pairings=[{"deprecated_scf_id": "GOV-A3", "superseded_by": None}])
+    detail = _controls_diff(
+        deprecated=[
+            DeprecatedEntity(
+                key="GOV-A3",
+                superseded_by="GOV-A2",
+                superseded_source="workbook_crosswalk",
+            )
+        ]
+    )
+    report = await ca.apply_catalog_run(session, run, detail, themes_json=THEMES_JSON)
+    assert retired.superseded_by is None
+    assert retired.status == "deprecated"
+    assert (report.successors_declared, report.successors_overridden) == (0, 1)
+
+
+@pytest.mark.asyncio
+async def test_a_declared_successor_added_by_the_same_run_validates():
+    """The autoflush trap, now on the path that carries 801 of 801 successors.
+
+    Production runs autoflush=False (database.py), so a successor this run
+    INSERTs is still pending when validation SELECTs for it. On a renumbering
+    release nearly every declared successor is a newly added row, so without the
+    flush before _apply_successors every such release aborts. FakeSession models
+    the same semantics, so deleting that flush fails here.
+    """
+    retired = _control_row("GOV-A3", "Retiring")
+    session = _session(controls=[retired])
+    detail = _controls_diff(
+        added=[AddedEntity(key="GOV-A9", name="Successor", data={})],
+        deprecated=[
+            DeprecatedEntity(
+                key="GOV-A3",
+                superseded_by="GOV-A9",
+                superseded_source="workbook_crosswalk",
+            )
+        ],
+    )
+    report = await ca.apply_catalog_run(
+        session, _run(), detail, themes_json=THEMES_JSON
+    )
+    assert retired.superseded_by == "GOV-A9"
+    assert report.successors_declared == 1
+
+
+@pytest.mark.asyncio
+async def test_a_declared_successor_that_does_not_exist_rolls_back():
+    """A stale crosswalk must abort the run, not write a dangling reference.
+
+    superseded_by has no DB foreign key by design, so this validation is the
+    only thing standing between a bad declaration and 801 rows pointing at
+    controls that are not there.
+    """
+    retired = _control_row("GOV-A3", "Retiring")
+    session = _session(controls=[retired])
+    before = _state(session)
+    detail = _controls_diff(
+        deprecated=[
+            DeprecatedEntity(
+                key="GOV-A3",
+                superseded_by="GOV-A9",
+                superseded_source="workbook_crosswalk",
+            )
+        ]
+    )
+    with pytest.raises(ca.PairingValidationError) as exc:
+        await ca.apply_catalog_run(session, _run(), detail, themes_json=THEMES_JSON)
+    assert "GOV-A3->GOV-A9" in exc.value.invalid
+    assert session.commits == 0
+    assert _state(session) == before
+
+
+@pytest.mark.asyncio
+async def test_a_declared_successor_that_is_deprecated_rolls_back():
+    """Migrating a tenant onto a retired control is worse than not migrating."""
+    retired = _control_row("GOV-A3", "Retiring")
+    zombie = _control_row("GOV-A2", "Already gone", status="deprecated")
+    session = _session(controls=[retired, zombie])
+    detail = _controls_diff(
+        deprecated=[
+            DeprecatedEntity(
+                key="GOV-A3",
+                superseded_by="GOV-A2",
+                superseded_source="workbook_crosswalk",
+            )
+        ]
+    )
+    with pytest.raises(ca.PairingValidationError):
+        await ca.apply_catalog_run(session, _run(), detail, themes_json=THEMES_JSON)
+    assert session.commits == 0
+
+
+@pytest.mark.asyncio
+async def test_a_pairing_for_a_control_this_run_does_not_deprecate_rolls_back():
+    """Stale editor state, and a sign the admin was looking at another diff."""
+    retired = _control_row("GOV-A3", "Retiring")
+    successor = _control_row("GOV-A2", "Successor")
+    session = _session(controls=[retired, successor])
+    run = _run(pairings=[{"deprecated_scf_id": "GOV-A7", "superseded_by": "GOV-A2"}])
+    detail = _controls_diff(
+        deprecated=[
+            DeprecatedEntity(
+                key="GOV-A3",
+                superseded_by="GOV-A2",
+                superseded_source="workbook_crosswalk",
+            )
+        ]
+    )
+    with pytest.raises(ca.PairingValidationError) as exc:
+        await ca.apply_catalog_run(session, run, detail, themes_json=THEMES_JSON)
+    assert "GOV-A7" in exc.value.invalid
+    assert session.commits == 0
+
+
+@pytest.mark.asyncio
+async def test_a_reused_id_on_a_changed_row_never_vetoes_a_declared_pairing():
+    """The TDA-02.6 -> TDA-11.2 shape, carried all the way through apply.
+
+    The successor's own key was declared merged away and handed to a different
+    control, so the changed row carries an IdReuse flag. That flag is history
+    about the id, not a judgement on the id's fitness: the control it now names
+    is active, the workbook declared the pairing, and the pairing must be
+    written. Eight of the 801 deprecations on 2026.3 are exactly this.
+    """
+    retired = _control_row("GOV-A3", "Retiring")
+    reused = _control_row("GOV-A2", "Old meaning")
+    session = _session(controls=[retired, reused])
+    detail = _controls_diff(
+        changed=[
+            ChangedEntity(
+                key="GOV-A2",
+                fields={"control_name": FieldChange(old="Old meaning", new="New meaning")},
+                id_reused=IdReuse(merged_into="GOV-A8", legacy_name="Old meaning"),
+            )
+        ],
+        deprecated=[
+            DeprecatedEntity(
+                key="GOV-A3",
+                superseded_by="GOV-A2",
+                superseded_source="workbook_crosswalk",
+            )
+        ],
+    )
+    report = await ca.apply_catalog_run(
+        session, _run(), detail, themes_json=THEMES_JSON
+    )
+    assert retired.superseded_by == "GOV-A2"
+    assert reused.control_name == "New meaning"
+    assert reused.status == "active"
+    assert report.successors_declared == 1
+
+
+@pytest.mark.asyncio
+async def test_revert_clears_a_superseded_by_written_from_a_declaration():
+    """Revert has to undo the declared pairings too, not just admin ones.
+
+    Before this change superseded_by could only have come from the pairing list,
+    so "reverting a pairing" and "reverting a declaration" were the same code
+    path by accident. They still are, and this pins it: a declared succession
+    that reverts must leave the re-activated control with no successor.
+    """
+    retired = _control_row("GOV-A3", "Retiring")
+    successor = _control_row("GOV-A2", "Successor")
+    session = _session(controls=[retired, successor], themes=[_theme_row(1, "IAM")])
+    run = _run()
+    session.tables[CatalogImportRun].append(run)
+    detail = _controls_diff(
+        deprecated=[
+            DeprecatedEntity(
+                key="GOV-A3",
+                superseded_by="GOV-A2",
+                superseded_source="workbook_crosswalk",
+            )
+        ]
+    )
+    await ca.apply_catalog_run(session, run, detail, themes_json=THEMES_JSON)
+    assert retired.superseded_by == "GOV-A2"
+
+    await ca.revert_catalog_run(session, run, detail, themes_json=THEMES_JSON)
+    assert retired.superseded_by is None
+    assert retired.status == "active"
+    assert retired.retired_in_version is None
+
+
+@pytest.mark.asyncio
 async def test_pairings_written_onto_deprecated_rows():
     retired = _control_row("GOV-A3", "Retiring")
     successor = _control_row("GOV-A2", "Successor")
@@ -674,7 +976,7 @@ async def test_pairing_to_a_successor_added_by_the_same_run():
     """A renumbering release pairs a retiring control to a brand-new one.
 
     Production runs autoflush=False (database.py), so the successor INSERT is
-    still pending when _apply_pairings validates it with a SELECT. Without an
+    still pending when _apply_successors validates it with a SELECT. Without an
     explicit flush the successor is invisible and the whole apply rolls back.
     FakeSession models the same semantics, so removing that flush fails here.
     """

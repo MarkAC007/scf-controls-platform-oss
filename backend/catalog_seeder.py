@@ -637,8 +637,37 @@ async def seed_framework_registry_if_empty(session: AsyncSession) -> dict:
 
     Pre-2026.1 extractions have no registry file, so frameworks.json
     (``{id: name}``) is accepted as a fallback with no identifiers.
+
+    Refuses to write a row for a version no catalogue control row carries. That
+    is not defensive tidying — it is how production ended up with a useless
+    ``2026.1|seed`` row while the live catalogue was 2026.2. The version here
+    comes from ``DATA_DIR/catalog_meta.json``, a file on a mounted volume that an
+    upgrade does NOT rewrite, so on any install whose catalogue has moved on
+    since first boot this function was describing the wrong release. A wrong row
+    is worse than none: ``load_live_framework_registry`` looks up the LIVE
+    version, misses, and falls back to the file — while every diagnostic says a
+    registry is present.
     """
     catalog_version = _resolve_catalog_version()
+
+    # Does any catalogue row actually belong to this version? A fresh install
+    # seeds controls before this function runs (seed_catalog_if_empty's order),
+    # so "no rows at all" also lands here and is equally correct to skip: there
+    # is nothing for the registry to describe yet.
+    stamped_result = await session.execute(
+        select(func.count())
+        .select_from(SCFCatalogControl)
+        .where(SCFCatalogControl.catalog_version == catalog_version)
+    )
+    stamped_count = stamped_result.scalar() or 0
+    if stamped_count == 0:
+        reason = (
+            f"no scf_catalog_controls row carries catalog version "
+            f"{catalog_version} (from catalog_meta.json), so a registry row for "
+            f"it would describe no live rows"
+        )
+        logger.warning(f"Skipping framework registry seed: {reason}")
+        return {"status": "skipped", "reason": reason}
 
     # Check if this version already has a row
     count_result = await session.execute(
