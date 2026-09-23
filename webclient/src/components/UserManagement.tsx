@@ -269,7 +269,7 @@ export default function UserManagement({ organizationId }: UserManagementProps) 
               <line x1="20" y1="8" x2="20" y2="14" />
               <line x1="23" y1="11" x2="17" y2="11" />
             </svg>
-            + Invite User
+            Invite user
           </button>
         }
       />

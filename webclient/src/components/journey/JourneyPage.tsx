@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useAttestStage, useImportJourney, useJourney } from '../../hooks/useJourney'
 import { useHasOrgRole } from '../../hooks/useHasOrgRole'
+import { deriveJourneyCompletion } from './journeyCompletion'
 import type { JourneyStage, JourneyStageState } from '../../data/apiClient'
 
 interface Props {
@@ -44,7 +45,20 @@ export default function JourneyPage({ organizationId, onNavigateToTasks }: Props
     [stages, data?.current_stage_key],
   )
   const current = currentIndex >= 0 ? stages[currentIndex] : null
-  const next = currentIndex >= 0 ? stages[currentIndex + 1] ?? null : stages[0] ?? null
+  // No current stage means no next stage. Falling back to `stages[0]` here told
+  // a finished journey its next step was the first one, which is where the
+  // whole screen started lying.
+  const next = currentIndex >= 0 ? stages[currentIndex + 1] ?? null : null
+
+  const completion = useMemo(
+    () =>
+      deriveJourneyCompletion(
+        stages,
+        { provisioned: data?.provisioned ?? false, activated: data?.activated ?? false },
+        data?.current_stage_key ?? null,
+      ),
+    [stages, data?.provisioned, data?.activated, data?.current_stage_key],
+  )
 
   if (isLoading) {
     return <div className="journey-page"><div className="journey-loading">Loading the journey…</div></div>
@@ -85,9 +99,31 @@ export default function JourneyPage({ organizationId, onNavigateToTasks }: Props
         <div>
           <h1 className="journey-title">{data.name ?? 'Your compliance journey'}</h1>
           <p className="journey-subtitle">
-            {data.provisioned && data.activated && current
-              ? <>Stage {currentIndex + 1} of {stages.length} · <strong>{current.title}</strong></>
-              : <>{stages.length} stages · not started</>}
+            {/*
+              * Four states, not two. "Not started" is now reachable only from
+              * an absent *journey* — never from an absent current stage, which
+              * is also what a finished path reports.
+              */}
+            {data.provisioned && data.activated && current ? (
+              <>Stage {currentIndex + 1} of {stages.length} · <strong>{current.title}</strong></>
+            ) : completion.complete ? (
+              <>
+                All {stages.length} stages attested
+                {completion.conditionalStages.length > 0 && (
+                  <> · {completion.conditionalStages.length} with conditions outstanding</>
+                )}
+                {completion.regressedStages.length > 0 && (
+                  <>
+                    {' '}· {completion.regressedStages.length} signed{' '}
+                    {completion.regressedStages.length === 1 ? 'stage' : 'stages'} no longer passing
+                  </>
+                )}
+              </>
+            ) : completion.noActiveStage ? (
+              <>{stages.length} stages · no stage is currently active</>
+            ) : (
+              <>{stages.length} stages · not started</>
+            )}
             {data.practitioner?.company_name && <> · guided by {data.practitioner.company_name}</>}
           </p>
         </div>
@@ -238,6 +274,74 @@ export default function JourneyPage({ organizationId, onNavigateToTasks }: Props
           <h2 className="journey-panel-title">Today</h2>
           {!data.activated ? (
             <p className="journey-empty-note">Nothing is in progress yet.</p>
+          ) : completion.complete ? (
+            <>
+              {completion.conditionalStages.length === 0 &&
+                completion.regressedStages.length === 0 && (
+                <p className="journey-empty-note">
+                  Every stage on this path has been attested and every check still passes.
+                  Nothing on the Journey is waiting on you.
+                </p>
+              )}
+
+              {completion.conditionalStages.length > 0 && (
+                <>
+                  <p className="journey-empty-note">
+                    Every stage has been attested. {completion.conditionalStages.length} passed
+                    with conditions that are still open.
+                  </p>
+                  <ul className="journey-focus-list">
+                    {completion.conditionalStages.map(stage => (
+                      <li key={stage.key} className="journey-focus-item">
+                        <span className="journey-focus-label">{stage.title}</span>
+                        <span className="journey-focus-detail">
+                          {stage.target_date
+                            ? <>outstanding items due {new Date(stage.target_date).toLocaleDateString()}</>
+                            : <>outstanding items, no due date recorded</>}
+                          {stage.preconditions.total_count > 0 && (
+                            <>
+                              {' '}· {stage.preconditions.met_count}/
+                              {stage.preconditions.total_count} checks met
+                            </>
+                          )}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="journey-attest-caveat">
+                    These signatures stand as recorded. The conditions are the work that remains.
+                  </p>
+                </>
+              )}
+
+              {completion.regressedStages.length > 0 && (
+                <>
+                  <p className="journey-label">Signed, but no longer passing</p>
+                  <ul className="journey-focus-list">
+                    {completion.regressedStages.map(stage => (
+                      <li key={stage.key} className="journey-focus-item">
+                        <span className="journey-focus-label">{stage.title}</span>
+                        <span className="journey-focus-detail">
+                          signed complete on{' '}
+                          {new Date(stage.attested_at as string).toLocaleDateString()}, now{' '}
+                          {stage.preconditions.met_count} of {stage.preconditions.total_count}{' '}
+                          checks.
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="journey-attest-caveat">
+                    The signature stands as recorded. This is today's evaluation of the same
+                    checks; expanding the stage shows which ones changed.
+                  </p>
+                </>
+              )}
+            </>
+          ) : !current ? (
+            <p className="journey-empty-note">
+              No stage is in progress. {completion.unsignedCount} of {stages.length} stages are
+              still unsigned.
+            </p>
           ) : data.focus.length === 0 ? (
             <p className="journey-empty-note">
               Every check on this stage is met. It is waiting on an attestation.
@@ -261,12 +365,40 @@ export default function JourneyPage({ organizationId, onNavigateToTasks }: Props
 
         <section className="journey-next">
           <h2 className="journey-panel-title">What comes next</h2>
-          {next ? (
+          {completion.complete ? (
+            <>
+              {completion.conditionalStages.length > 0 && (
+                <p className="journey-next-body">
+                  Closing the outstanding conditions above.
+                  {completion.nextDue && (
+                    <> The earliest is due {new Date(completion.nextDue).toLocaleDateString()}.</>
+                  )}
+                </p>
+              )}
+              {completion.regressedStages.length > 0 && (
+                <p className="journey-next-body">
+                  Restoring the checks on the{' '}
+                  {completion.regressedStages.length === 1 ? 'stage' : 'stages'} listed above,
+                  then re-attesting if the signer's judgement has changed.
+                </p>
+              )}
+              {completion.conditionalStages.length === 0 &&
+                completion.regressedStages.length === 0 &&
+                completion.lastSigned && (
+                <p className="journey-next-body">
+                  This journey is complete. The last stage signed was{' '}
+                  {completion.lastSigned.title}, on{' '}
+                  {new Date(completion.lastSigned.attested_at as string).toLocaleDateString()}.
+                </p>
+              )}
+            </>
+          ) : next ? (
             <>
               <h3 className="journey-next-title">{next.title}</h3>
               {next.expect_next && <p className="journey-next-body">{next.expect_next}</p>}
             </>
           ) : (
+            /* Reachable again now that an absent current stage no longer wraps to stages[0]. */
             <p className="journey-empty-note">This is the last stage on the path.</p>
           )}
         </section>

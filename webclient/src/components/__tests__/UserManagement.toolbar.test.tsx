@@ -2,7 +2,7 @@
  * UserManagement: toolbar + search + invite button in explorer chrome.
  *
  * These tests assert the explorer-pattern additions for Task 8:
- *  - ListToolbar renders with search input, member count, and "+ Invite User" CTA
+ *  - ListToolbar renders with search input, member count, and "Invite user" CTA
  *  - Client-side search filters by name and email
  *  - Invite button opens the modal callback
  *  - Org-id display with copy button is still present
@@ -97,13 +97,13 @@ describe('explorer toolbar', () => {
 
   it('renders the Invite User button', async () => {
     await setup()
-    expect(screen.getByRole('button', { name: /\+ invite user/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /invite user/i })).toBeInTheDocument()
   })
 
   it('Invite User button opens the invite modal', async () => {
     const user = userEvent.setup()
     await setup()
-    await user.click(screen.getByRole('button', { name: /\+ invite user/i }))
+    await user.click(screen.getByRole('button', { name: /invite user/i }))
     // InviteUserModal renders with "Send Invitation" button
     await waitFor(() =>
       expect(screen.getByRole('button', { name: /send invitation/i })).toBeInTheDocument()

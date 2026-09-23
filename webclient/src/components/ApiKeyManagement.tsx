@@ -126,7 +126,7 @@ export default function ApiKeyManagement({ organizationId }: ApiKeyManagementPro
           onClick={() => setShowCreateModal(true)}
           style={{ whiteSpace: 'nowrap' }}
         >
-          + Create Key
+          Create key
         </button>
       </div>
 

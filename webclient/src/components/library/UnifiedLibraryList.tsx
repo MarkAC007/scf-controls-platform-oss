@@ -244,7 +244,7 @@ export default function UnifiedLibraryList({
             )}
             {mode === 'in-scope' ? (
               <>
-                <RowChip>{label(control.implementation_status)}</RowChip>
+                <RowChip tone={control.implementation_status}>{label(control.implementation_status)}</RowChip>
                 <RowMeta>Maturity {control.maturity_level ?? '—'}</RowMeta>
                 <RowMeta>Priority {label(control.priority)}</RowMeta>
                 <RowMeta>{ownerByControlId[control.scf_id] || 'No accountable team'}</RowMeta>

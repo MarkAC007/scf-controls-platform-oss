@@ -24,7 +24,7 @@ import sys
 from datetime import date, datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -545,73 +545,126 @@ async def _noop_audit(**kwargs):
 # ---------------------------------------------------------------------------
 
 class TestSiblingWritePaths:
+    """These three write paths used to accept a user id, and the hazard this
+    file was opened for was that they checked only that the id *existed*.
+
+    The hazard is now closed further upstream than a membership check: none of
+    them accepts an individual at all (JQA-001 -- controls and evidence are
+    assignable to TEAMS ONLY; see the assignment commentary in schemas.py). So
+    these no longer assert "a stranger is refused" -- a rule that has become a
+    special case -- but the stronger property that replaced it: **everyone is
+    refused, and refused identically.**
+
+    The identity is the part worth pinning. The old contract answered 404 for an
+    id outside the org and would have answered 2xx for one inside it, which makes
+    the status code an org-membership oracle for any authenticated editor willing
+    to enumerate ids. Refusing before the lookup removes the oracle along with the
+    capability; a test that asserted only the refusal would not notice it coming
+    back.
+    """
 
     @pytest.mark.asyncio
-    async def test_task_create_refuses_a_stranger(self, org_a, caller):
+    async def test_task_create_carries_no_individual_whoever_is_named(
+        self, org_a, caller
+    ):
+        """A supplied assignee cannot reach the row -- stranger or not.
+
+        ``EvidenceCollectionTaskCreate`` no longer declares the field, so an old
+        client that still sends it is not broken by a 422; the key is dropped.
+        This drives the HANDLER, by smuggling the attribute past the schema, so
+        that a handler which started reading it again would be caught even though
+        the schema would not carry it in production.
+        """
         from api.evidence_tasks import create_evidence_task
 
         evidence = MagicMock()
         evidence.id = uuid4()
         evidence.organization_id = org_a
 
-        db = FakeSession([None, None])  # both membership lookups empty
-
         async def _resolve(evidence_tracking_id, current_user, db_, min_role="viewer"):
             return evidence
 
-        with patch("api.evidence_tasks._resolve_evidence_access", new=_resolve):
-            with pytest.raises(HTTPException) as exc:
-                await create_evidence_task(
-                    task_data=EvidenceCollectionTaskCreate(
-                        evidence_tracking_id=evidence.id,
-                        due_date=date(2026, 9, 1),
-                        title="Collect Evidence: E-HRS-16",
-                        assigned_user_id=uuid4(),
-                    ),
-                    db=db,
-                    current_user=caller,
-                )
+        stranger = uuid4()
+        payload = EvidenceCollectionTaskCreate(
+            evidence_tracking_id=evidence.id,
+            due_date=date(2026, 9, 1),
+            title="Collect Evidence: E-HRS-16",
+        )
+        payload.__dict__["assigned_user_id"] = stranger
 
-        assert exc.value.status_code == 404
-        assert db.committed is False
+        db = FakeSession([])
+        with patch("api.evidence_tasks._resolve_evidence_access", new=_resolve):
+            await create_evidence_task(
+                task_data=payload, db=db, current_user=caller
+            )
+
+        rows = [r for r in db.added if hasattr(r, "assigned_user_id")]
+        assert rows, "no task row was constructed"
+        assert all(r.assigned_user_id is None for r in rows)
 
     @pytest.mark.asyncio
-    async def test_task_update_refuses_a_stranger(self, org_a, caller):
-        """Reassignment had no validation of any kind before #781."""
+    async def test_task_update_refuses_every_individual_identically(
+        self, org_a, caller
+    ):
+        """The refusal must not vary with who was named.
+
+        Both halves run with an empty script, so any membership lookup the
+        handler performed would return ``None`` and turn into a 404 -- which is
+        exactly the divergence being ruled out.
+        """
         from api.evidence_tasks import update_evidence_task
 
-        task = MagicMock()
-        task.id = uuid4()
-        task.evidence_tracking_id = uuid4()
-        original_assignee = uuid4()
-        task.assigned_user_id = original_assignee
+        async def _attempt(named):
+            task = MagicMock()
+            task.id = uuid4()
+            task.evidence_tracking_id = uuid4()
+            original = uuid4()
+            task.assigned_user_id = original
 
-        # org lookup, then two empty membership lookups
-        db = FakeSession([org_a, None, None])
+            db = FakeSession([])
 
-        async def _resolve(task_id, current_user, db_, min_role="viewer"):
-            return task
+            async def _resolve(task_id, current_user, db_, min_role="viewer"):
+                return task
 
-        with patch("api.evidence_tasks._resolve_task_access", new=_resolve):
-            with pytest.raises(HTTPException) as exc:
-                await update_evidence_task(
-                    task_id=task.id,
-                    task_update=EvidenceCollectionTaskUpdate(
-                        assigned_user_id=uuid4()
-                    ),
-                    db=db,
-                    current_user=caller,
-                )
+            with patch("api.evidence_tasks._resolve_task_access", new=_resolve):
+                with pytest.raises(HTTPException) as exc:
+                    await update_evidence_task(
+                        task_id=task.id,
+                        task_update=EvidenceCollectionTaskUpdate(
+                            assigned_user_id=named
+                        ),
+                        db=db,
+                        current_user=caller,
+                    )
 
-        assert exc.value.status_code == 404
-        assert task.assigned_user_id == original_assignee
-        assert db.committed is False
+            assert task.assigned_user_id == original
+            assert db.committed is False
+            # No lookup of the named user was even attempted. This is what makes
+            # the two refusals identical rather than coincidentally equal.
+            assert db.statements == []
+            return exc.value
+
+        a_stranger = await _attempt(uuid4())
+        a_colleague = await _attempt(UUID(caller.db_id))
+
+        assert a_stranger.status_code == 422
+        assert a_colleague.status_code == a_stranger.status_code
+        assert a_colleague.detail == a_stranger.detail
 
     @pytest.mark.asyncio
     async def test_task_update_does_not_revalidate_an_unchanged_assignee(
         self, org_a, caller
     ):
-        """TaskEditModal re-sends assigned_user_id on every save (#781)."""
+        """Editing a task that carries a legacy assignee must still work.
+
+        A client that PATCHes an object it fetched re-sends every field it read,
+        so a task assigned before JQA-001 arrives here with its existing
+        ``assigned_user_id`` echoed back. Refusing that would leave such a task
+        uneditable -- title, status, due date and all -- until somebody cleared
+        an assignee they may not have known was there. The echo is idempotent and
+        creates no assignment that did not already exist, so it is allowed to
+        pass through untouched.
+        """
         from api.evidence_tasks import update_evidence_task
 
         departed = uuid4()
@@ -641,35 +694,80 @@ class TestSiblingWritePaths:
         assert db.committed is True
 
     @pytest.mark.asyncio
-    async def test_assignment_create_refuses_a_stranger(self, org_a, caller):
+    async def test_task_update_still_clears_a_legacy_assignee(self, org_a, caller):
+        """The counterpart to the echo: an explicit null must still empty it.
+
+        Without this the previous test's tolerance would be indistinguishable
+        from the guard having been removed -- a handler that ignored the field
+        entirely would satisfy both the echo case and every refusal above.
+        """
+        from api.evidence_tasks import update_evidence_task
+
+        task = MagicMock()
+        task.id = uuid4()
+        task.evidence_tracking_id = uuid4()
+        task.assigned_user_id = uuid4()
+
+        db = FakeSession([])
+
+        async def _resolve(task_id, current_user, db_, min_role="viewer"):
+            return task
+
+        with patch("api.evidence_tasks._resolve_task_access", new=_resolve):
+            await update_evidence_task(
+                task_id=task.id,
+                task_update=EvidenceCollectionTaskUpdate(assigned_user_id=None),
+                db=db,
+                current_user=caller,
+            )
+
+        assert task.assigned_user_id is None
+        assert db.committed is True
+
+    @pytest.mark.asyncio
+    async def test_assignment_create_refuses_every_individual_identically(
+        self, org_a, caller
+    ):
+        """``POST /api/assignments`` is gone (410), for everybody.
+
+        The handler deliberately takes neither a ``Request`` nor a session: with
+        no database in scope the refusal cannot be confused with a 404 on a
+        mistyped id, and there is nothing left that could vary by who was named.
+        """
         from api.assignments import create_assignment
         from schemas import AssignmentCreate
 
-        evidence = MagicMock()
-        evidence.id = uuid4()
-        evidence.organization_id = org_a
-
-        # user exists, assignable found, then two empty membership lookups
-        db = FakeSession([MagicMock(), evidence, None, None])
-
-        async def _accessible(user, db_):
-            return [org_a]
-
-        with patch("api.assignments.get_accessible_org_ids", new=_accessible):
+        async def _attempt(named):
             with pytest.raises(HTTPException) as exc:
                 await create_assignment(
-                    request=MagicMock(),
                     assignment_data=AssignmentCreate(
                         assignable_type="evidence",
-                        assignable_id=evidence.id,
-                        user_id=uuid4(),
+                        assignable_id=uuid4(),
+                        user_id=named,
                     ),
-                    db=db,
                     current_user=caller,
                 )
+            return exc.value
 
-        assert exc.value.status_code == 404
-        assert db.committed is False
+        a_stranger = await _attempt(uuid4())
+        a_colleague = await _attempt(UUID(caller.db_id))
+
+        assert a_stranger.status_code == 410
+        assert a_colleague.status_code == a_stranger.status_code
+        assert a_colleague.detail == a_stranger.detail
+
+    def test_the_assignment_handler_takes_no_session(self):
+        """Pins the reason the 410 cannot drift back into a 404.
+
+        A session parameter reintroduced here would be an invitation to look the
+        assignable up first and answer 404 when it is missing, which is the
+        oracle the class docstring rules out.
+        """
+        from api.assignments import create_assignment
+
+        params = inspect.signature(create_assignment).parameters
+        assert "db" not in params
+        assert "request" not in params
 
 
 # ---------------------------------------------------------------------------

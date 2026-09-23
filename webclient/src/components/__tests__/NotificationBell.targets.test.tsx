@@ -30,7 +30,7 @@ function withNotifications(notifications: unknown[]) {
 
 async function openAndClick(message: string) {
   await waitFor(() => expect(mockGet).toHaveBeenCalled())
-  fireEvent.click(screen.getByRole('button', { name: /🔔/ }))
+  fireEvent.click(screen.getByRole('button', { name: /notifications/i }))
   const row = await screen.findByText(message)
   fireEvent.click(row)
 }
@@ -172,7 +172,7 @@ describe('NotificationBell target resolution', () => {
     ])
     render(<NotificationBell onNavigateToEvidence={onNavigateToEvidence} />)
     await waitFor(() => expect(mockGet).toHaveBeenCalled())
-    fireEvent.click(screen.getByRole('button', { name: /🔔/ }))
+    fireEvent.click(screen.getByRole('button', { name: /notifications/i }))
     const row = (await screen.findByText('Alex rejected evidence E-KEY-01')).closest(
       '.notification-item',
     )!

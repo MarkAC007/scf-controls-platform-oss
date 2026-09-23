@@ -1,12 +1,19 @@
 import { useState, useEffect, useCallback } from 'react'
 import { getOrgAuditLog } from '../data/apiClient'
 import type { AuditLogEntry, AuditLogListResponse } from '../types'
+import { decodeAuditValue, formatAuditDate, isDateField } from '../utils/auditValue'
 
 interface AuditLogPageProps {
   organizationId: string
 }
 
 // ── Helpers (adapted from AuditLogPanel.tsx for consistency) ──
+
+/**
+ * The entity id the request-scoped audit fallback records when a write did not
+ * name one entity. Printed raw it reads like a broken id, so it is labelled.
+ */
+const BASELINE_ENTITY_ID = '00000000-0000-0000-0000-000000000000'
 
 const FIELD_LABELS: Record<string, string> = {
   selected: 'Scoped',
@@ -35,17 +42,14 @@ function friendlyError(message?: string): string {
   return message
 }
 
-function formatValue(field: string, value: string | undefined): string {
-  if (!value || value === 'None') return '\u2014'
-  if (field === 'selected') return value === 'True' ? 'Yes' : 'No'
+function formatValue(field: string, raw: string | undefined): string {
+  const value = decodeAuditValue(raw)
+  if (value === null) return '\u2014'
+  if (field === 'selected') return value.toLowerCase() === 'true' ? 'Yes' : 'No'
   if (field === 'implementation_status') return value.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
   if (field === 'priority') return value.charAt(0).toUpperCase() + value.slice(1)
   if (field === 'maturity_level') return value.toUpperCase()
-  if (field.includes('date') && value !== '\u2014') {
-    try {
-      return new Date(value + 'T00:00:00').toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
-    } catch { return value }
-  }
+  if (isDateField(field)) return formatAuditDate(value)
   return value.length > 80 ? value.substring(0, 77) + '...' : value
 }
 
@@ -411,7 +415,14 @@ export default function AuditLogPage({ organizationId }: AuditLogPageProps) {
                       {entry.entity_type.replace(/_/g, ' ')}
                     </td>
                     <td style={{ ...tdStyle, fontSize: 11, fontFamily: 'monospace', color: 'var(--muted)' }}>
-                      {entry.scf_id || (entry.entity_id.length > 12
+                      {entry.scf_id || (entry.entity_id === BASELINE_ENTITY_ID ? (
+                        <span
+                          style={{ fontStyle: 'italic' }}
+                          title="Recorded against the request rather than a single entity."
+                        >
+                          request-level record
+                        </span>
+                      ) : entry.entity_id.length > 12
                         ? entry.entity_id.substring(0, 12) + '...'
                         : entry.entity_id)}
                     </td>

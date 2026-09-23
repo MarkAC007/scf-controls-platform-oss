@@ -22,6 +22,10 @@ Apply semantics (plan §4.2.4):
   ``capability_themes.json`` (not workbook-sourced); theme mappings are
   recomputed wholesale in-transaction from the post-apply control rows.
 - ``catalog_version`` is restamped on touched rows only.
+- The workbook's framework registry (names + publisher focal-document
+  identifiers, carried on the stored diff) is upserted against ``to_version``
+  in the same transaction — it is what makes framework succession in the NEXT
+  upgrade's diff a declared fact rather than a guess.
 - Any failure propagates after ``session.rollback()`` — catalog untouched.
 
 Revert semantics (plan §4.2.6) — latest applied run only, REFUSED while any
@@ -38,6 +42,9 @@ run's ``to_version``:
   ``retired_in_version``/``superseded_by`` are not stored in the diff and are
   left NULL — an accepted, documented loss).
 - Same single transaction + advisory lock; mappings recomputed afterwards.
+- ``catalog_framework_registries`` is NOT touched: the rows are keyed by
+  catalogue version, so the one this run wrote simply stops being the live
+  version's. Deleting it would lose the record for a re-apply.
 
 Post-apply cache handling (plan §4.2.7) is exposed as
 ``purge_trust_portal_cache()`` (Redis) and the ``STALE_MODULE_CACHES``
@@ -59,6 +66,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from cache import CACHE_PREFIX, CACHE_VERSION
 from catalog_models import (
     CapabilityTheme,
+    CatalogFrameworkRegistry,
     CapabilityThemeMapping,
     SCFCatalogAssessmentObjective,
     SCFCatalogControl,
@@ -233,6 +241,7 @@ class CatalogApplyReport:
     entities: Dict[str, EntityApplyCounts] = field(default_factory=dict)
     themes_upserted: int = 0
     mappings_recomputed: int = 0
+    registry_rows_upserted: int = 0
     stale_module_caches: Tuple[str, ...] = STALE_MODULE_CACHES
 
     def as_dict(self) -> dict:
@@ -246,6 +255,7 @@ class CatalogApplyReport:
             },
             "themes_upserted": self.themes_upserted,
             "mappings_recomputed": self.mappings_recomputed,
+            "registry_rows_upserted": self.registry_rows_upserted,
             "stale_module_caches": list(self.stale_module_caches),
         }
 
@@ -344,6 +354,48 @@ async def _upsert_themes(
         _touch(row, version, now)
         upserted += 1
     return upserted
+
+
+async def _upsert_framework_registry(
+    session: AsyncSession,
+    version: str,
+    registry: Optional[dict],
+    source: str,
+    now: datetime,
+) -> int:
+    """Upsert the single ``catalog_framework_registries`` row for ``version``.
+
+    The registry carries each framework's publisher focal-document identifier,
+    which is what makes succession in the NEXT upgrade's diff a declared fact
+    rather than a guess. Written here, in the apply transaction, so the record
+    and the catalogue rows it describes commit together — the JSON artifact on
+    the mounted volume has no such relationship and is only a frontend cache.
+
+    Returns 0 and warns when the workbook carried no registry (every pre-2026.1
+    workbook): an empty row would claim, falsely, that this version has no
+    focal-document identifiers.
+    """
+    if not registry:
+        logger.warning(
+            "Catalog apply: no framework registry in the staged diff for %s; "
+            "declared framework succession will be unavailable at the next upgrade",
+            version,
+        )
+        return 0
+
+    result = await session.execute(
+        select(CatalogFrameworkRegistry).where(
+            CatalogFrameworkRegistry.catalog_version == version
+        )
+    )
+    row = result.scalars().first()
+    if row is None:
+        row = CatalogFrameworkRegistry(catalog_version=version, created_at=now)
+        session.add(row)
+    row.registry = registry
+    row.source = source
+    row.updated_at = now
+    return 1
 
 
 def compute_theme_mappings(
@@ -585,6 +637,11 @@ async def apply_catalog_run(
                 _touch(row, to_version, now)
                 counts.resurrected += 1
 
+        # _apply_pairings validates successors with a SELECT, and the session is
+        # autoflush=False (database.py). Without this flush a pairing pointing at
+        # a control this same run adds is invisible to that SELECT and the whole
+        # apply aborts with PairingValidationError.
+        await session.flush()
         await _apply_pairings(
             session, _parse_pairings(run), deprecated_controls, to_version, now
         )
@@ -594,6 +651,9 @@ async def apply_catalog_run(
         )
         report.mappings_recomputed = await _recompute_theme_mappings(
             session, themes_data, to_version, now
+        )
+        report.registry_rows_upserted = await _upsert_framework_registry(
+            session, to_version, detail.framework_registry, "apply", now
         )
 
         run.status = "applied"

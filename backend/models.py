@@ -447,6 +447,14 @@ class ScopedControl(Base):
     scope_override_set_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     implementation_status = Column(String(50))  # See ImplementationStatus enum for valid values
     priority = Column(String(20))
+    # DEPRECATED (#1052). Free-text control owner, superseded by team
+    # assignment. The Journey ownership gate counts an accountable row in
+    # `control_team_assignments` and deliberately does NOT fall back to this
+    # column: a fallback would leave a live non-team ownership path after the
+    # user-assignment UI was removed, which is the thing #1052 decided against.
+    # The column survives on purpose — like its evidence twin below it holds
+    # team labels that never resolved to a user, so nothing can migrate them
+    # and dropping it would destroy them irreversibly. Inert, not live.
     owner = Column(String(255))  # Legacy text field
     assigned_to = Column(String(255))  # Legacy text field
     maturity_level = Column(String(50))
@@ -2291,6 +2299,11 @@ class EvidenceFile(Base):
     ipe_completeness_check = Column(Text, nullable=True)
 
     # Lifecycle
+    # NOTE: like most datetime columns here, these are naive (timestamp without
+    # time zone) and hold UTC instants by convention rather than by type. The
+    # UTC designator is added at the serialisation boundary by
+    # ``schemas.UtcDateTime``; do not assume a reader can infer the zone from
+    # the column. Migrating this class of column to timestamptz is separate work.
     uploaded_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     uploaded_at = Column(DateTime(timezone=False), default=datetime.utcnow, server_default=func.now(), nullable=False)
     expires_at = Column(DateTime(timezone=False), nullable=True)

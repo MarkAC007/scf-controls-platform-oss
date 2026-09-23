@@ -13,7 +13,7 @@ from datetime import date, datetime
 
 from database import get_db
 from user_display import user_label as _user_label
-from auth import require_auth, get_accessible_org_ids, verify_org_membership, assert_user_in_org, User
+from auth import require_auth, get_accessible_org_ids, verify_org_membership, User
 from models import EvidenceCollectionTask, EvidenceTracking, Team, User as DBUser
 from services.audit_service import (
     EVIDENCE_TASK_OWNERSHIP_TRACKED_FIELDS,
@@ -344,21 +344,13 @@ async def create_evidence_task(
         task_data.evidence_tracking_id, current_user, db, "editor"
     )
 
-    # The assignee must be a member of the task's own organisation, not merely a
-    # user that exists somewhere on the platform (#781). Existence alone let an
-    # editor assign a task to another tenant's account, which then surfaced this
-    # org's evidence IDs in that user's notifications and work queue.
+    # No assignee is resolved on create, because a new task cannot name one: a
+    # task is work on an evidence item and evidence is owned by a team. The
+    # create schema no longer carries the field at all, so there is nothing to
+    # validate here and no user to look up. The task's owner comes from the
+    # owning team below, or is inherited from the parent evidence item's
+    # accountable team when that is left to default.
     user = None
-    if task_data.assigned_user_id:
-        await assert_user_in_org(
-            task_data.assigned_user_id, evidence.organization_id, db
-        )
-        result = await db.execute(
-            select(DBUser).where(DBUser.id == task_data.assigned_user_id)
-        )
-        user = result.scalar_one_or_none()
-        if not user:
-            raise HTTPException(status_code=404, detail="Assigned user not found")
 
     # Create task with enhanced fields
     # #822 phase 4. The create schema accepts an owning team, so the create
@@ -398,7 +390,6 @@ async def create_evidence_task(
         organization_id=evidence.organization_id,
         due_date=task_data.due_date,
         status=task_data.status,
-        assigned_user_id=task_data.assigned_user_id,
         # `None` means inherit the parent evidence item's accountable team.
         owning_team_id=task_data.owning_team_id,
         task_type=task_data.task_type,
@@ -500,27 +491,58 @@ async def update_evidence_task(
         f: getattr(task, f) for f in EVIDENCE_TASK_OWNERSHIP_TRACKED_FIELDS
     }
 
-    # Reassignment had no validation at all before #781 — any UUID was accepted
-    # and written straight to the column. Resolve the owning org from the parent
-    # tracking row and require membership.
+    # The assignee is CLEAR-ONLY. Naming a person is refused outright; blanking
+    # one is not only allowed but is the reason the field still exists.
     #
-    # Only a CHANGED assignee is validated. TaskEditModal re-sends
-    # assigned_user_id with every save, so validating the stored value would make
-    # a task un-editable the moment its assignee left the organisation — failing
-    # on a field the operator never touched.
-    if (
-        task_update.assigned_user_id is not None
-        and task_update.assigned_user_id != task.assigned_user_id
-    ):
-        org_result = await db.execute(
-            select(EvidenceTracking.organization_id).where(
-                EvidenceTracking.id == task.evidence_tracking_id
+    # The refusal is a 422 rather than a silent drop for the same reason the
+    # polymorphic create is a 410: an accepted-and-ignored assignment reads as a
+    # successful one, and the operator walks away believing the work has an
+    # owner. The clear must stay, because a stored assignee is tier 1 of the
+    # owner-resolution chain — without a way to blank it, a task held by someone
+    # who has left notifies that account for good.
+    #
+    # `model_fields_set` is what makes the two distinguishable: the `is not None`
+    # idiom used by every other field below reads an explicit `null` and an
+    # absent key identically, and here those two mean "clear it" and "leave it
+    # alone".
+    assignee_supplied = 'assigned_user_id' in task_update.model_fields_set
+    # Refused on an attempt to SET an individual, not on the continued presence
+    # of one. Those are not the same event and conflating them is a migration
+    # trap: an org holding assignees from before this rule would be unable to
+    # edit a task's status, notes or due date at all until it had first cleared
+    # the assignee, because any client that echoes the field back -- which is
+    # what a PATCH built from a fetched object does -- would be refused on a
+    # value it never chose.
+    #
+    # Echoing the stored value is idempotent and protects nothing to refuse: the
+    # assignment already exists, nothing expires it, and re-sending it creates no
+    # assignment that was not already there. What the guard has to stop is a
+    # value that DIFFERS from the stored one, which is a caller naming a person
+    # -- whether the field was previously null or held somebody else.
+    assignee_unchanged = (
+        assignee_supplied
+        and task.assigned_user_id is not None
+        and str(task_update.assigned_user_id) == str(task.assigned_user_id)
+    )
+    if assignee_supplied and task_update.assigned_user_id is not None and not assignee_unchanged:
+        # Deliberately raised BEFORE any lookup of the named user. The refusal is
+        # then identical for an id that is a member of this org, an id that
+        # belongs to another tenant, and an id that exists nowhere -- so the
+        # status code carries no information about which. Validating membership
+        # first would restore the old 404-for-a-stranger, and with it an oracle:
+        # 404 would mean "not in this org" and 422 would mean "in this org", told
+        # to any authenticated editor willing to enumerate. That lookup also
+        # could not change the outcome, since no non-null value is accepted on
+        # any path, so its only remaining effect would be the leak.
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "A task cannot be assigned to an individual. Evidence work is owned by "
+                "a team -- set owning_team_id, or leave it null to inherit the evidence "
+                "item's accountable team. Sending assigned_user_id: null clears an "
+                "assignee inherited from before this rule."
             )
         )
-        task_org_id = org_result.scalar_one_or_none()
-        if task_org_id is None:
-            raise HTTPException(status_code=404, detail="Task not found")
-        await assert_user_in_org(task_update.assigned_user_id, task_org_id, db)
 
     # `model_fields_set` distinguishes an omitted field from an explicit null;
     # see the docstring. Everything below this block keeps the `is not None`
@@ -575,8 +597,14 @@ async def update_evidence_task(
         task.completion_notes = task_update.completion_notes
     if task_update.completed_date is not None:
         task.completed_date = task_update.completed_date
-    if task_update.assigned_user_id is not None:
-        task.assigned_user_id = task_update.assigned_user_id
+    if assignee_supplied and task_update.assigned_user_id is None:
+        # The clear, which is the only write this field still takes. A non-null
+        # value that differed was rejected above; one that matched is a no-op and
+        # is deliberately not written, so it produces no audit row for a change
+        # that did not happen. Deliberately NOT the `is not None` guard used by
+        # its neighbours: that guard cannot express the single thing this field
+        # is still for.
+        task.assigned_user_id = None
     if task_update.dependencies is not None:
         task.dependencies = task_update.dependencies
     if task_update.attachments is not None:

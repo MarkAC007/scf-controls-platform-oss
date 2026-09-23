@@ -406,7 +406,7 @@ export default function ControlDetailPage({
             {inScope && scopingEntry ? (
               <div className="control-detail-card-body">
                 {scopingEntry.implementation_status && (
-                  <span className="control-detail-status-chip">
+                  <span className={`control-detail-status-chip is-${scopingEntry.implementation_status}`}>
                     {formatStatus(scopingEntry.implementation_status)}
                   </span>
                 )}
@@ -445,7 +445,7 @@ export default function ControlDetailPage({
           <div className="control-detail-card">
             <div className="control-detail-card-label">EVIDENCE</div>
             <div className="control-detail-evidence-counts">
-              {linkedCount} items linked
+              {linkedCount} {linkedCount === 1 ? 'item' : 'items'} linked
               {trackedCount > 0 && <> · {trackedCount} tracked</>}
             </div>
             {onNavigateToEvidence && control.artifactsResolved.length > 0 && (

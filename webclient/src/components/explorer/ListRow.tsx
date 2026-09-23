@@ -54,8 +54,21 @@ export default function ExplorerListRow({
   )
 }
 
-export function RowChip({ children }: { children: ReactNode }): JSX.Element {
-  return <div className="explorer-row-chip">{children}</div>
+/**
+ * `tone` is optional and additive (UIP-002): callers that pass one get the
+ * matching `is-<tone>` colour rule, callers that do not keep the neutral chip
+ * they have always had. It exists so the Control Library list can show the same
+ * implementation-status colour the control's detail view shows, rather than the
+ * two disagreeing.
+ */
+export function RowChip({
+  children,
+  tone,
+}: {
+  children: ReactNode
+  tone?: string | null
+}): JSX.Element {
+  return <div className={tone ? `explorer-row-chip is-${tone}` : 'explorer-row-chip'}>{children}</div>
 }
 
 export function RowMeta({

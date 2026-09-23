@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import difflib
 import json
+import logging
 import re
 import shutil
 import sys
@@ -54,14 +55,20 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from catalog_models import (
+    CatalogFrameworkRegistry,
     SCFCatalogAssessmentObjective,
     SCFCatalogControl,
     SCFCatalogDomain,
     SCFCatalogEvidence,
+)
+from services.framework_succession import (
+    TIER_DECLARED,
+    TIER_DECLARED_STEM,
+    match_framework_successions,
 )
 from schemas_catalog_upgrade import (
     AddedEntity,
@@ -76,8 +83,11 @@ from schemas_catalog_upgrade import (
     ResurrectedEntity,
     SanityCheck,
     SanityReport,
+    SupersededPairing,
     SupersededSuggestion,
 )
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Version guard (plan §4.2.2)
@@ -91,6 +101,29 @@ CONTROL_COUNT_DROP_THRESHOLD = 0.05
 
 SUGGESTION_SIMILARITY_THRESHOLD = 0.6
 SUGGESTION_TOP_N = 3
+
+# Churn gate: a live control leaving the workbook is "explained" when the
+# workbook's Legacy SCF # crosswalk names its successor. Unexplained
+# retirements beyond this fraction of the live active catalog block the run.
+# The absolute floor keeps small catalogs and fixtures out of scope - the
+# failure this gate exists for is a four-figure mass retirement, not a
+# handful of genuine ones.
+CONTROL_CHURN_UNEXPLAINED_THRESHOLD = 0.05
+CONTROL_CHURN_MIN_ROWS = 50
+
+# Framework churn. The registry is an order of magnitude smaller than the
+# control set (254 in 2026.2 against 1534 controls), so the control floor of 50
+# rows would swallow the entire framework population and never fire. The floor
+# here is the number of unexplained removals below which churn is treated as
+# ordinary editorial tidying rather than a mass retirement.
+FRAMEWORK_CHURN_UNEXPLAINED_THRESHOLD = 0.05
+# Deliberately 10, not control_churn's 50. The floor exists so a small
+# catalogue does not block on one or two retirements, where a single row in
+# twenty is already over the ratio. Ten against SCF's ~250 frameworks forgives
+# at most 9 removals = 3.6%, which the 5% ratio would have passed anyway - so
+# on a full catalogue the floor never decides anything and cannot be used to
+# walk a large unexplained churn past this check. Raising it would break that.
+FRAMEWORK_CHURN_MIN_ROWS = 10
 
 
 class CatalogDiffError(Exception):
@@ -180,6 +213,10 @@ class ExtractedCatalog:
     evidence: Dict[str, dict]  # keyed by evidence_id (erl.json shape)
     assessment_objectives: List[dict]
     framework_names: Dict[str, str]
+    # id -> {"name", "focal_document_id", "geography"}. The focal-document id is
+    # the publisher's stable identity for a framework and is what makes
+    # succession a DECLARED fact rather than a guess. Absent before SCF 2026.1.
+    framework_registry: Dict[str, dict] = field(default_factory=dict)
     meta: dict = field(default_factory=dict)
 
 
@@ -205,6 +242,11 @@ def extract_workbook(workbook_path) -> ExtractedCatalog:
             assessment_objectives = json.load(f).get("objectives", [])
         with open(tmp / "frameworks.json") as f:
             framework_names = json.load(f)
+        registry_path = tmp / "framework_registry.json"
+        framework_registry = {}
+        if registry_path.exists():
+            with open(registry_path) as f:
+                framework_registry = json.load(f)
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -215,6 +257,7 @@ def extract_workbook(workbook_path) -> ExtractedCatalog:
         evidence=evidence,
         assessment_objectives=assessment_objectives,
         framework_names=framework_names,
+        framework_registry=framework_registry,
         meta=meta,
     )
 
@@ -431,6 +474,10 @@ class LiveCatalog:
     domains: Dict[str, LiveEntityRow] = field(default_factory=dict)
     evidence: Dict[str, LiveEntityRow] = field(default_factory=dict)
     assessment_objectives: Dict[str, LiveEntityRow] = field(default_factory=dict)
+    # The framework REGISTRY the live catalogue currently offers, id -> row
+    # whose ``name`` is the focal-document display name. Loaded from the
+    # applied seeder artifact rather than a table (see ``load_live_frameworks``).
+    frameworks: Dict[str, LiveEntityRow] = field(default_factory=dict)
 
     @property
     def active_control_count(self) -> int:
@@ -483,7 +530,164 @@ async def load_live_catalog(session: AsyncSession) -> LiveCatalog:
             row, "ao_id", AO_COMPARED_FIELDS, None
         )
 
+    live.frameworks = derive_live_frameworks(
+        live.controls, await load_live_framework_registry(session)
+    )
+
     return live
+
+
+async def resolve_live_catalog_version(session: AsyncSession) -> Optional[str]:
+    """The catalogue version the live rows belong to.
+
+    Ledger first (latest applied import run), else the max version stamped on
+    the control rows — the pre-first-upgrade bootstrap. ONE implementation:
+    ``tasks_catalog._resolve_from_version`` and the admin backfill CLI both
+    call this, so a diff's live side and the version a registry row is written
+    against can never disagree.
+    """
+    from services.catalog_apply import get_current_catalog_version
+
+    version = await get_current_catalog_version(session)
+    if version:
+        return version
+    result = await session.execute(select(func.max(SCFCatalogControl.catalog_version)))
+    return result.scalar()
+
+
+async def load_live_framework_registry(session: AsyncSession) -> Optional[dict]:
+    """The stored framework registry for the live catalogue version, if any.
+
+    None on installs seeded before ``fwreg001`` (or before the row was
+    backfilled), which sends ``derive_live_frameworks`` to the file fallback.
+    """
+    version = await resolve_live_catalog_version(session)
+    if not version:
+        return None
+    result = await session.execute(
+        select(CatalogFrameworkRegistry).where(
+            CatalogFrameworkRegistry.catalog_version == version
+        )
+    )
+    row = result.scalars().first()
+    return row.registry if row is not None else None
+
+
+def derive_live_frameworks(
+    controls: Dict[str, LiveEntityRow],
+    registry: Optional[dict] = None,
+) -> Dict[str, LiveEntityRow]:
+    """The framework registry the live catalogue currently offers.
+
+    Frameworks have no catalogue table — only ``organization_framework_selections``
+    records which ids an org chose — so "live" has to be derived. Two sources,
+    with distinct jobs:
+
+    * **The catalogue rows are authoritative for membership.** A framework is
+      live iff some active control maps to it. Taken from the already-loaded
+      ``controls`` rather than a second query, so it is by construction the
+      same snapshot the rest of the diff compares — and it is the exact set
+      ``bulk_scope_frameworks`` scopes from, so a framework that is "live" here
+      is one a tenant can actually hold.
+    * **The stored registry decorates it.** ``catalog_framework_registries``
+      holds the display NAME and the publisher's focal-document identifier for
+      the live catalogue version, and both are succession signals — without the
+      identifier the DECLARED succession tier can never fire and the
+      ``framework_churn`` gate blocks every real upgrade. ``registry`` is that
+      row, passed in by ``load_live_catalog``. When it is absent — an install
+      seeded before ``fwreg001``, or one whose row has not been backfilled —
+      we fall back to reading ``DATA_DIR/framework_registry.json`` (or the
+      older ``frameworks.json``).
+
+    Deriving membership from the artifact instead was wrong in a way worth
+    recording: the artifact is a file on a mounted volume with no transactional
+    relationship to the session, so a stale or foreign DATA_DIR reported
+    hundreds of phantom retirements and blocked the upgrade.
+
+    Ids the ingestion now classifies as non-frameworks are excluded from the
+    live side. A platform seeded before the column partition existed carries
+    ``risk_r_1`` / ``errata_2026_2`` in its framework mappings; those were never
+    frameworks, so their absence from a clean extraction is a correction and
+    must not be counted as a retirement.
+
+    The JSON artifact is a frontend cache derived from the same extraction;
+    ``catalog_framework_registries`` is the transactional record.
+    """
+    extractor = _load_extractor()
+    non_framework = getattr(extractor, "non_framework_id_reason", lambda _k: None)
+
+    live_ids: set = set()
+    for row in controls.values():
+        if row.status != "active":
+            continue
+        for key in (row.fields or {}).get("framework_mappings") or {}:
+            if not non_framework(key):
+                live_ids.add(key)
+
+    if registry:
+        return _decorated_frameworks(live_ids, _registry_decoration(registry))
+
+    decoration: Dict[str, dict] = {}
+    try:
+        from catalog_seeder import DATA_DIR  # local import: optional dependency
+
+        registry = Path(DATA_DIR) / "framework_registry.json"
+        if registry.exists():
+            with open(registry) as f:
+                entries = json.load(f)
+            if isinstance(entries, dict):
+                decoration = {
+                    k: {
+                        "name": (v or {}).get("name"),
+                        "focal_document_id": (v or {}).get("focal_document_id"),
+                    }
+                    for k, v in entries.items()
+                }
+        else:
+            artifact = Path(DATA_DIR) / "frameworks.json"
+            if artifact.exists():
+                with open(artifact) as f:
+                    names = json.load(f)
+                if isinstance(names, dict):
+                    decoration = {
+                        k: {"name": v, "focal_document_id": None}
+                        for k, v in names.items()
+                    }
+    except Exception:  # pragma: no cover - ids alone still diff correctly
+        logger.warning(
+            "framework registry artifact unreadable; diffing on ids alone "
+            "(display names and focal-document ids unavailable)",
+            exc_info=True,
+        )
+
+    return _decorated_frameworks(live_ids, decoration)
+
+
+def _registry_decoration(registry: dict) -> Dict[str, dict]:
+    """Registry rows -> the two fields the frameworks diff compares."""
+    return {
+        key: {
+            "name": (value or {}).get("name"),
+            "focal_document_id": (value or {}).get("focal_document_id"),
+        }
+        for key, value in registry.items()
+    }
+
+
+def _decorated_frameworks(
+    live_ids: set, decoration: Dict[str, dict]
+) -> Dict[str, LiveEntityRow]:
+    return {
+        key: LiveEntityRow(
+            key=key,
+            status="active",
+            fields={
+                "focal_document_id": decoration.get(key, {}).get("focal_document_id")
+            },
+            name=decoration.get(key, {}).get("name"),
+        )
+        for key in sorted(live_ids)
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -512,9 +716,19 @@ def run_sanity_checks(extracted: ExtractedCatalog, live: LiveCatalog) -> SanityR
     if live_active > 0:
         drop = (live_active - workbook_count) / live_active
         drop_ok = drop <= CONTROL_COUNT_DROP_THRESHOLD
+        # Name the direction explicitly. A signed percentage next to the word
+        # "drop" reads a 57-control RISE as "(-3.7% drop)", which is how a
+        # renumbering release slipped past a human reading this line.
+        delta = workbook_count - live_active
+        if delta > 0:
+            direction = f"{delta} more ({abs(drop):.1%} rise)"
+        elif delta < 0:
+            direction = f"{abs(delta)} fewer ({abs(drop):.1%} drop)"
+        else:
+            direction = "no net change"
         drop_detail = (
             f"live active controls: {live_active}, workbook controls: "
-            f"{workbook_count} ({drop:+.1%} drop)"
+            f"{workbook_count} - {direction}"
         )
     else:
         # Empty live catalog: nothing to compare a drop against.
@@ -522,6 +736,49 @@ def run_sanity_checks(extracted: ExtractedCatalog, live: LiveCatalog) -> SanityR
         drop_detail = f"live catalog empty; workbook controls: {workbook_count}"
     checks.append(
         SanityCheck(check="control_count_drop", passed=drop_ok, detail=drop_detail)
+    )
+
+    # Net counts cannot see churn: 801 retirements offset by 858 additions is a
+    # +3.7% rise on the check above and a catalog-wide renumbering underneath.
+    # This gate counts the retirements themselves and asks the workbook to
+    # account for them.
+    crosswalk = build_legacy_crosswalk(extracted)
+    workbook_keys = {
+        key
+        for key in (str(c.get("scf_id") or "").strip() for c in extracted.controls)
+        if key
+    }
+    retiring = {
+        key
+        for key, row in live.controls.items()
+        if row.status == "active" and key not in workbook_keys
+    }
+    unexplained = {
+        key for key in retiring if crosswalk.get(key) not in workbook_keys
+    }
+    if retiring and live_active > 0:
+        ratio = len(unexplained) / live_active
+        churn_ok = (
+            len(unexplained) < CONTROL_CHURN_MIN_ROWS
+            or ratio <= CONTROL_CHURN_UNEXPLAINED_THRESHOLD
+        )
+        explained = len(retiring) - len(unexplained)
+        churn_detail = (
+            f"{len(retiring)} live controls absent from the workbook; "
+            f"{explained} explained by the Legacy SCF # crosswalk, "
+            f"{len(unexplained)} unexplained ({ratio:.1%} of live active)"
+        )
+        if not churn_ok:
+            sample = ", ".join(sorted(unexplained)[:5])
+            churn_detail += (
+                f" - refusing a mass retirement the workbook does not account "
+                f"for (e.g. {sample})"
+            )
+    else:
+        churn_ok = True
+        churn_detail = "no live controls are absent from the workbook"
+    checks.append(
+        SanityCheck(check="control_churn", passed=churn_ok, detail=churn_detail)
     )
 
     entity_counts = {
@@ -553,6 +810,87 @@ def run_sanity_checks(extracted: ExtractedCatalog, live: LiveCatalog) -> SanityR
                 if fw_count
                 else "framework-name extraction produced no entries"
             ),
+        )
+    )
+
+    # ``framework_names`` only asks whether the map came back non-empty. It
+    # passed at "extracted 383 framework display names" on a release that
+    # silently dropped 75 of them, because a count says nothing about identity.
+    # This gate names the removals and asks the succession matcher to account
+    # for them, the same shape as control_churn - except that where controls
+    # have the workbook's own Legacy SCF # crosswalk, frameworks have only a
+    # derived heuristic, so what "explained" means here is weaker and the
+    # detail string says so.
+    live_frameworks = live.frameworks or {}
+    live_fw_active = {
+        key for key, row in live_frameworks.items() if row.status == "active"
+    }
+    workbook_frameworks = extracted.framework_names or {}
+    fw_removed = {
+        key: live_frameworks[key].name
+        for key in sorted(live_fw_active - set(workbook_frameworks))
+    }
+    if fw_removed and live_fw_active:
+        fw_added = {
+            k: v for k, v in workbook_frameworks.items() if k not in live_fw_active
+        }
+        fw_retained = {
+            k: v for k, v in workbook_frameworks.items() if k in live_fw_active
+        }
+        proposals = match_framework_successions(
+            fw_removed,
+            fw_added,
+            fw_retained,
+            focal_document_ids=framework_focal_document_ids(extracted, live),
+            control_sets=framework_control_sets(extracted, live),
+        )
+        # Only a DECLARED pairing counts as an explanation here, and that is
+        # the whole design of the gate. control_churn is unblocked by the
+        # vendor's own Legacy SCF # column - an assertion SCF publishes and
+        # stands behind - not by our confidence in our own guess. A gate that
+        # accepted derived matches would have exactly one lever: widen the
+        # matcher until the number falls. Every extra match decrements
+        # `unexplained` whether it is right or wrong, so the cheapest way to
+        # unblock a release would be to make the matcher less careful - and the
+        # error it would be loosened into is the silent one that rebinds a
+        # tenant's scope to the wrong document. Derived proposals still reach
+        # the reviewer; they just cannot let a release past this check.
+        fw_explained = sorted(
+            k for k, p in proposals.items()
+            if p.bound_successor
+            and p.best.tier in (TIER_DECLARED, TIER_DECLARED_STEM)
+        )
+        fw_unexplained = sorted(set(fw_removed) - set(fw_explained))
+        fw_ratio = len(fw_unexplained) / len(live_fw_active)
+        fw_churn_ok = (
+            len(fw_unexplained) < FRAMEWORK_CHURN_MIN_ROWS
+            or fw_ratio <= FRAMEWORK_CHURN_UNEXPLAINED_THRESHOLD
+        )
+        fw_detail = (
+            f"{len(fw_removed)} live frameworks absent from the workbook; "
+            f"{len(fw_explained)} carry the workbook's own focal-document "
+            f"identifier into the new release, {len(fw_unexplained)} "
+            f"unexplained "
+            f"({fw_ratio:.1%} of {len(live_fw_active)} live active) - blocks "
+            f"above {FRAMEWORK_CHURN_UNEXPLAINED_THRESHOLD:.0%} unless under "
+            f"the {FRAMEWORK_CHURN_MIN_ROWS}-row floor"
+        )
+        if not fw_churn_ok:
+            sample = ", ".join(sorted(fw_unexplained)[:5])
+            fw_detail += (
+                f" - refusing a framework retirement nothing accounts for "
+                f"(e.g. {sample})"
+            )
+    else:
+        fw_churn_ok = True
+        fw_detail = (
+            "no live frameworks are absent from the workbook"
+            if live_fw_active
+            else "no live framework registry to compare against"
+        )
+    checks.append(
+        SanityCheck(
+            check="framework_churn", passed=fw_churn_ok, detail=fw_detail
         )
     )
 
@@ -601,6 +939,37 @@ def _field_changes(
 # ---------------------------------------------------------------------------
 
 
+def build_legacy_crosswalk(extracted: ExtractedCatalog) -> Dict[str, str]:
+    """Map each predecessor SCF id to its successor, from the workbook itself.
+
+    SCF ships the ``Legacy SCF #`` column from 2026.3 onward; it is the
+    authoritative record of a renumbering, and it is what makes a mass
+    renumber distinguishable from a mass retirement. Without it a release
+    that renames 1,457 controls looks identical to one that retires them and
+    adds 1,457 unrelated replacements.
+
+    Controls that kept their id contribute nothing (they are not renames).
+    Pre-2026.3 workbooks carry no such column, so the crosswalk is empty and
+    every caller falls back to its prior behaviour.
+
+    A predecessor claimed by more than one successor would be a split, which
+    the format does not express unambiguously; first-in-workbook-order wins
+    and the ambiguity surfaces as a sanity-check detail rather than a silent
+    pick.
+    """
+    crosswalk: Dict[str, str] = {}
+    for ctrl in extracted.controls:
+        successor = str(ctrl.get("scf_id") or "").strip()
+        if not successor:
+            continue
+        for legacy in ctrl.get("legacy_scf_ids") or []:
+            legacy_key = str(legacy).strip()
+            if not legacy_key or legacy_key == successor:
+                continue
+            crosswalk.setdefault(legacy_key, successor)
+    return crosswalk
+
+
 def _domain_prefix(scf_id: str) -> str:
     return scf_id.split("-", 1)[0]
 
@@ -644,11 +1013,14 @@ def compute_entity_diff(
     compared: tuple,
     name_field: Optional[str] = None,
     suggestion_candidates: Optional[Dict[str, Optional[str]]] = None,
+    legacy_crosswalk: Optional[Dict[str, str]] = None,
 ) -> EntityDiff:
     """Classify one entity's keys into the five change classes.
 
     ``suggestion_candidates`` (controls only) enables the superseded_by scorer
-    on deprecated rows.
+    on deprecated rows. ``legacy_crosswalk`` (controls only) supplies the
+    workbook's own predecessor->successor mapping, which outranks the scorer:
+    a renumbering the publisher declared is not a similarity guess.
     """
     diff = EntityDiff()
 
@@ -684,11 +1056,34 @@ def compute_entity_diff(
             if suggestion_candidates is not None
             else []
         )
+        # The workbook's declared successor only counts if the workbook also
+        # carries it; a crosswalk pointing outside this catalog is stale.
+        crosswalk_successor = (legacy_crosswalk or {}).get(key)
+        if crosswalk_successor is not None and crosswalk_successor not in workbook_rows:
+            crosswalk_successor = None
+        if crosswalk_successor is not None:
+            declared = SupersededSuggestion(
+                scf_id=crosswalk_successor,
+                name=(suggestion_candidates or {}).get(crosswalk_successor)
+                or crosswalk_successor,
+                score=1.0,
+            )
+            suggestions = [declared] + [
+                s for s in suggestions if s.scf_id != crosswalk_successor
+            ]
+            suggestions = suggestions[:SUGGESTION_TOP_N]
         diff.deprecated.append(
             DeprecatedEntity(
                 key=key,
                 name=live.name,
-                superseded_by=live.superseded_by,
+                # An admin pairing already written to the live row is a human
+                # decision and outranks the workbook.
+                superseded_by=live.superseded_by or crosswalk_successor,
+                superseded_source=(
+                    None
+                    if live.superseded_by or crosswalk_successor is None
+                    else "workbook_crosswalk"
+                ),
                 suggestions=suggestions,
             )
         )
@@ -732,6 +1127,181 @@ def compute_framework_mappings_diff(
     return diff
 
 
+SUCCESSION_SOURCE_DERIVED = "derived_succession"
+# A match the workbook itself declares, via the Focal Documents sheet's Focal
+# Document Identifier. Kept distinct from the derived source so a reviewer can
+# see at a glance which pairings are the publisher's word and which are ours.
+SUCCESSION_SOURCE_FOCAL_DOCUMENT = "workbook_focal_document"
+
+_DECLARED_TIERS = {TIER_DECLARED, TIER_DECLARED_STEM}
+
+
+def framework_control_sets(
+    extracted: ExtractedCatalog, live: LiveCatalog
+) -> Dict[str, set]:
+    """framework id -> the set of control ids mapping to it, in ONE id space.
+
+    Both sides are expressed in the WORKBOOK's control-id space: the live rows
+    are pushed forward through the workbook's own ``Legacy SCF #`` crosswalk
+    first. Skipping that step makes the signal worse than useless - 2026.3
+    renumbered nearly every control, so the same true framework pairs score a
+    median overlap of 0.075 raw against 1.000 remapped.
+
+    Where a framework id appears on both sides the workbook's set wins, since
+    that is the coverage being proposed.
+    """
+    crosswalk = build_legacy_crosswalk(extracted)
+    sets: Dict[str, set] = {}
+    for key, row in (live.controls or {}).items():
+        if row.status != "active":
+            continue
+        forward = crosswalk.get(key, key)
+        for fw in (row.fields or {}).get("framework_mappings") or {}:
+            sets.setdefault(fw, set()).add(forward)
+    workbook_sets: Dict[str, set] = {}
+    for ctrl in extracted.controls or []:
+        key = str(ctrl.get("scf_id") or "").strip()
+        if not key:
+            continue
+        for fw in (ctrl.get("framework_mappings") or {}):
+            workbook_sets.setdefault(fw, set()).add(key)
+    sets.update(workbook_sets)
+    return sets
+
+
+def framework_focal_document_ids(
+    extracted: ExtractedCatalog, live: LiveCatalog
+) -> Dict[str, Optional[str]]:
+    """id -> focal-document identifier, across both sides of the diff.
+
+    The live side's value comes from the applied registry artifact; the
+    workbook side's from this extraction. Ids present on both sides take the
+    workbook's value, which is the one being proposed.
+    """
+    ids: Dict[str, Optional[str]] = {}
+    for key, row in (live.frameworks or {}).items():
+        value = (row.fields or {}).get("focal_document_id")
+        if value:
+            ids[key] = value
+    for key, entry in (extracted.framework_registry or {}).items():
+        value = (entry or {}).get("focal_document_id")
+        if value:
+            ids[key] = value
+    return ids
+
+
+def compute_frameworks_diff(
+    extracted: ExtractedCatalog, live: LiveCatalog
+) -> EntityDiff:
+    """Diff the framework REGISTRY: which focal documents the catalogue offers.
+
+    Distinct from ``compute_framework_mappings_diff``, which reports how each
+    control's mapping set moved. A framework can leave the registry while every
+    surviving control keeps mappings, and a control's mappings can churn
+    wholesale without the registry changing, so neither is derivable from the
+    other.
+
+    ``deprecated`` rows carry a DERIVED successor where the matcher is
+    confident. That is a weaker claim than a control's ``superseded_by``, which
+    the publisher declares in the workbook, and the contract keeps the two
+    distinguishable: ``superseded_source`` is ``workbook_crosswalk`` for a
+    declared control rename and ``derived_succession`` here. Every proposal is
+    also repeated in ``suggestions`` with its score, its signals and an
+    ambiguity flag, so nothing downstream has to take the bound value on faith.
+    """
+    workbook = {k: v for k, v in (extracted.framework_names or {}).items()}
+    live_rows = live.frameworks or {}
+
+    added_keys = sorted(k for k in workbook if k not in live_rows)
+    # A live row that is already deprecated and back in the workbook is
+    # RESURRECTED, not changed or unchanged: the five classes stay disjoint,
+    # exactly as _compute_entity_diff keeps them for the other entities.
+    common_keys = sorted(
+        k for k in workbook
+        if k in live_rows and live_rows[k].status == "active"
+    )
+    removed_keys = sorted(
+        k for k, row in live_rows.items()
+        if row.status == "active" and k not in workbook
+    )
+    resurrected_keys = sorted(
+        k for k, row in live_rows.items()
+        if row.status != "active" and k in workbook
+    )
+
+    removed = {k: live_rows[k].name for k in removed_keys}
+    added = {k: workbook[k] for k in added_keys}
+    retained = {k: workbook[k] for k in common_keys}
+    proposals = match_framework_successions(
+        removed,
+        added,
+        retained,
+        focal_document_ids=framework_focal_document_ids(extracted, live),
+        control_sets=framework_control_sets(extracted, live),
+    )
+
+    changed, unchanged = [], []
+    for key in common_keys:
+        old_name, new_name = live_rows[key].name, workbook[key]
+        # A live registry derived from framework_mappings keys has no names; a
+        # None old name is "unknown", never "changed to".
+        if old_name is not None and _norm(old_name) != _norm(new_name):
+            changed.append(
+                ChangedEntity(
+                    key=key,
+                    name=new_name,
+                    fields={"display_name": FieldChange(old=old_name, new=new_name)},
+                )
+            )
+        else:
+            unchanged.append(key)
+
+    deprecated = []
+    for key in removed_keys:
+        proposal = proposals.get(key)
+        bound = proposal.bound_successor if proposal else None
+        suggestions = [
+            SupersededSuggestion(
+                scf_id=c.successor_id,
+                name=c.successor_name,
+                score=c.score,
+                signals=list(c.signals),
+                ambiguous=c.ambiguous,
+                control_overlap=c.control_overlap,
+            )
+            for c in (proposal.candidates if proposal else [])
+        ]
+        source = None
+        if bound:
+            source = (
+                SUCCESSION_SOURCE_FOCAL_DOCUMENT
+                if proposal.best.tier in _DECLARED_TIERS
+                else SUCCESSION_SOURCE_DERIVED
+            )
+        deprecated.append(
+            DeprecatedEntity(
+                key=key,
+                name=live_rows[key].name,
+                superseded_by=bound,
+                superseded_source=source,
+                suggestions=suggestions,
+            )
+        )
+
+    return EntityDiff(
+        added=[
+            AddedEntity(key=k, name=workbook[k], data={"display_name": workbook[k]})
+            for k in added_keys
+        ],
+        changed=changed,
+        deprecated=deprecated,
+        resurrected=[
+            ResurrectedEntity(key=k, name=workbook[k]) for k in resurrected_keys
+        ],
+        unchanged=unchanged,
+    )
+
+
 def compute_catalog_diff(
     extracted: ExtractedCatalog, live: LiveCatalog, from_version: str
 ) -> DiffDetail:
@@ -743,6 +1313,7 @@ def compute_catalog_diff(
     suggestion_candidates = {
         key: fields.get("control_name") for key, fields in workbook_controls.items()
     }
+    legacy_crosswalk = build_legacy_crosswalk(extracted)
 
     compared_by_entity = {
         CatalogEntityType.CONTROLS: CONTROL_COMPARED_FIELDS,
@@ -769,7 +1340,16 @@ def compute_catalog_diff(
                 if entity_type is CatalogEntityType.CONTROLS
                 else None
             ),
+            legacy_crosswalk=(
+                legacy_crosswalk
+                if entity_type is CatalogEntityType.CONTROLS
+                else None
+            ),
         )
+
+    entities[CatalogEntityType.FRAMEWORKS] = compute_frameworks_diff(
+        extracted, live
+    )
 
     entities[CatalogEntityType.FRAMEWORK_MAPPINGS] = compute_framework_mappings_diff(
         workbook_controls, live.controls
@@ -781,6 +1361,9 @@ def compute_catalog_diff(
         from_version=from_version,
         to_version=extracted.catalog_version,
         entities=entities,
+        # The apply transaction persists this against to_version; the workbook
+        # is gone by then, so the diff is the only carrier.
+        framework_registry=extracted.framework_registry or {},
     )
 
 
@@ -796,6 +1379,15 @@ def summarize_diff(detail: DiffDetail) -> DiffSummary:
                 deprecated=len(diff.deprecated),
                 resurrected=len(diff.resurrected),
                 unchanged=len(diff.unchanged),
+                # ``renamed`` is deprecations this RUN attributed a successor
+                # to, whatever the source — the workbook's own crosswalk for
+                # controls, a derived match for frameworks. A None source means
+                # the value predates this run as an admin pairing and is not
+                # this run's claim. Controls only ever set 'workbook_crosswalk',
+                # so their count is unchanged by the generalisation.
+                renamed=sum(
+                    1 for d in diff.deprecated if d.superseded_source is not None
+                ),
             )
             for entity_type, diff in detail.entities.items()
         },
@@ -822,6 +1414,11 @@ class StagedDiff:
     diff_detail: Optional[DiffDetail] = None
     diff_summary: Optional[DiffSummary] = None
     forced: bool = False
+    # Pairings the workbook itself declares via the Legacy SCF # crosswalk.
+    # The caller seeds these onto the run so a renumbering release does not
+    # require an admin to hand-confirm four figures of successors before the
+    # upgrade can be applied. An admin PUT still overwrites them wholesale.
+    suggested_pairings: List[SupersededPairing] = field(default_factory=list)
 
 
 async def stage_catalog_diff(
@@ -850,10 +1447,19 @@ async def stage_catalog_diff(
     guard_version(from_version, extracted.catalog_version, force=force)
 
     detail = compute_catalog_diff(extracted, live, from_version)
+    controls_diff = detail.entities.get(CatalogEntityType.CONTROLS)
+    suggested_pairings = [
+        SupersededPairing(
+            deprecated_scf_id=dep.key, superseded_by=dep.superseded_by
+        )
+        for dep in (controls_diff.deprecated if controls_diff else [])
+        if dep.superseded_source == "workbook_crosswalk" and dep.superseded_by
+    ]
     return StagedDiff(
         to_version=extracted.catalog_version,
         sanity_report=sanity,
         diff_detail=detail,
         diff_summary=summarize_diff(detail),
         forced=force,
+        suggested_pairings=suggested_pairings,
     )

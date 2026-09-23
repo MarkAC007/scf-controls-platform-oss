@@ -12,11 +12,11 @@ import { ContractorBadge, withContractorSuffix } from '../ContractorBadge'
  * task was created unassigned: no reminder was sent for it and it could not
  * appear in anybody's "assigned to me" queue.
  *
- * Deliberately a plain <select> and not the polymorphic `AssignmentPicker`.
- * That component manages a multi-user COLLABORATOR list in the `assignments`
- * table, which is a different thing from "the one person who has to collect
- * this" and is not what task generation reads. Both are shown in the panel; the
- * labels say which is which.
+ * Deliberately a plain <select> and never the polymorphic `assignments` table,
+ * which held a multi-user list nothing downstream read. That table's per-user
+ * picker has since been withdrawn along with the rest of individual assignment:
+ * evidence is owned by a team. What remains here is read-and-clear only, so a
+ * row stamped with somebody before that rule can still be handed back.
  */
 
 export interface EvidenceAssigneeSelectProps {

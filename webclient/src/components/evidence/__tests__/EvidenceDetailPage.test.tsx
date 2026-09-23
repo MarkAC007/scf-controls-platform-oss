@@ -68,9 +68,6 @@ vi.mock('../../EvidenceTemplateGuidance', () => ({
 vi.mock('../WindowReviewPanel', () => ({
   WindowReviewPanel: () => <div data-testid="window-review-panel" />,
 }))
-vi.mock('../../AssignmentPicker', () => ({
-  AssignmentPicker: () => <div data-testid="assignment-picker" />,
-}))
 vi.mock('../../OwningTeams', () => ({
   default: () => <div data-testid="owning-teams" />,
 }))

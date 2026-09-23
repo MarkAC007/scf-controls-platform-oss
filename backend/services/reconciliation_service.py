@@ -73,6 +73,7 @@ from schemas_catalog_upgrade import (
     EntityDiffCounts,
     FieldChange,
     FrameworkConfirmation,
+    FrameworkImpactItem,
     FrameworkSelectionItem,
     OrgSnapshot,
     OrgSnapshotRow,
@@ -85,6 +86,7 @@ from schemas_catalog_upgrade import (
     ScopeAdditionsPreview,
 )
 from services.catalog_apply import CATALOG_LOCK_KEY
+from services.catalog_diff import SUCCESSION_SOURCE_FOCAL_DOCUMENT
 from services.scoping_service import bulk_scope_frameworks
 
 logger = logging.getLogger(__name__)
@@ -325,6 +327,11 @@ class _KeyState:
     data: Dict[str, Any] = field(default_factory=dict)  # for base-absent adds
     fields: Dict[str, FieldChange] = field(default_factory=dict)
     superseded_by: Optional[str] = None
+    # Carried alongside superseded_by, not derived from it: "the workbook says
+    # so" and "we inferred it" are different claims and the union must not
+    # flatten them. Dropping it here silently downgraded every unioned
+    # deprecation to an unattributed successor.
+    superseded_source: Optional[str] = None
     suggestions: List = field(default_factory=list)
 
 
@@ -393,6 +400,7 @@ def union_diff_details(details: List[DiffDetail]) -> DiffDetail:
                 state.active = False
                 state.name = deprecated.name or state.name
                 state.superseded_by = deprecated.superseded_by
+                state.superseded_source = deprecated.superseded_source
                 state.suggestions = list(deprecated.suggestions)
 
             for resurrected in diff.resurrected:
@@ -403,6 +411,7 @@ def union_diff_details(details: List[DiffDetail]) -> DiffDetail:
                 state.active = True
                 state.name = resurrected.name or state.name
                 state.superseded_by = None
+                state.superseded_source = None
                 state.suggestions = []
                 if state.base == "absent":
                     state.data.update({n: fc.new for n, fc in resurrected.fields.items()})
@@ -430,6 +439,7 @@ def union_diff_details(details: List[DiffDetail]) -> DiffDetail:
                         DeprecatedEntity(
                             key=key, name=state.name,
                             superseded_by=state.superseded_by,
+                            superseded_source=state.superseded_source,
                             suggestions=state.suggestions,
                         )
                     )
@@ -440,6 +450,7 @@ def union_diff_details(details: List[DiffDetail]) -> DiffDetail:
                         DeprecatedEntity(
                             key=key, name=state.name,
                             superseded_by=state.superseded_by,
+                            superseded_source=state.superseded_source,
                             suggestions=state.suggestions,
                         )
                     )
@@ -502,6 +513,8 @@ class PreviewResult:
     changed_in_scope: List[ChangedInScopeItem]
     orphans: OrphanReport
     framework_confirmation: FrameworkConfirmation
+    framework_impacts: List[FrameworkImpactItem]
+    frameworks_retired_outside_scope: int
     union_detail: DiffDetail
     eligibility: EligibilityInfo
 
@@ -519,6 +532,29 @@ def _default_action_for(superseded_by: Optional[str]) -> PlannedActionType:
     # Plan §4.3b: migrate is the default when a successor is paired; without
     # one, retain (safe for orgs mid-engagement) — retire_only is opt-in.
     return PlannedActionType.MIGRATE if superseded_by else PlannedActionType.RETAIN
+
+
+def _default_framework_action(
+    superseded_by: Optional[str], source: Optional[str]
+) -> PlannedActionType:
+    """Migrate on the publisher's word; retain on our own guess.
+
+    Controls may default to MIGRATE on any pairing because their successor
+    comes from the workbook's ``Legacy SCF #`` column - an assertion SCF
+    publishes. Frameworks have two sources. A focal-document pairing is the
+    same kind of assertion and gets the same default. A derived pairing is a
+    string-similarity guess, and defaulting it to MIGRATE would make the path
+    of least resistance - apply without editing - silently rebind a tenant's
+    scope to a document nobody asserted was the successor. So a derived
+    proposal defaults to RETAIN: it still arrives with its candidate, score,
+    signals and alternatives attached, and one edit turns it into a migration.
+    The reviewer has to say yes.
+    """
+    if not superseded_by:
+        return PlannedActionType.RETAIN
+    if source == SUCCESSION_SOURCE_FOCAL_DOCUMENT:
+        return PlannedActionType.MIGRATE
+    return PlannedActionType.RETAIN
 
 
 async def build_preview(
@@ -724,6 +760,68 @@ async def build_preview(
         ],
     )
 
+    # --- (f) framework successions touching this org's selections ---------
+    # The catalogue's framework ids encode the edition, so a version bump looks
+    # like a retirement plus an unrelated addition. Without this block an org
+    # scoped to the March 2026 ISM loses its framework silently and is offered
+    # the June edition as something new.
+    framework_impacts: List[FrameworkImpactItem] = []
+    frameworks_retired_outside_scope = 0
+    framework_diff = union.entities.get(CatalogEntityType.FRAMEWORKS)
+    if framework_diff is not None:
+        selected_ids = {
+            s.framework_id for s in selections if bool(s.active)
+        }
+        for dep in framework_diff.deprecated:
+            if dep.key not in selected_ids:
+                frameworks_retired_outside_scope += 1
+                continue
+            best = dep.suggestions[0] if dep.suggestions else None
+            # The successor named on the row wins over the suggestion list, the
+            # same precedence controls use: a suggestion is a candidate, a
+            # superseded_by is a decision the diff already took.
+            successor = dep.superseded_by
+            successor_row = next(
+                (sg for sg in dep.suggestions if sg.scf_id == successor), best
+            )
+            # Registered in ``planned`` so the admin can change it through the
+            # same actions PUT that governs controls and evidence. An impact
+            # with no editable action is the ChangedInScopeItem shortfall all
+            # over again: surfaced, and still nothing to do about it.
+            fw_default = _default_framework_action(
+                successor, dep.superseded_source
+            )
+            fw_action = PlannedAction(
+                key=dep.key,
+                entity=CatalogEntityType.FRAMEWORKS,
+                action=fw_default,
+                successor_scf_id=successor,
+            )
+            planned.append(fw_action)
+            framework_impacts.append(
+                FrameworkImpactItem(
+                    framework_id=dep.key,
+                    name=dep.name,
+                    superseded_by=successor,
+                    superseded_by_name=(
+                        successor_row.name if successor_row else None
+                    ),
+                    superseded_source=dep.superseded_source,
+                    confidence=(successor_row.score if successor_row else None),
+                    signals=list(successor_row.signals) if successor_row else [],
+                    ambiguous=bool(successor_row.ambiguous) if successor_row else False,
+                    control_overlap=(
+                        successor_row.control_overlap if successor_row else None
+                    ),
+                    alternatives=[
+                        sg for sg in dep.suggestions if sg.scf_id != successor
+                    ],
+                    suggested_action=fw_default,
+                    planned_action=fw_action,
+                )
+            )
+        framework_impacts.sort(key=lambda i: i.framework_id)
+
     # --- persist the run ---------------------------------------------------
     now = _now()
     run = OrganizationReconciliationRun(
@@ -765,6 +863,8 @@ async def build_preview(
         changed_in_scope=changed_in_scope,
         orphans=orphans,
         framework_confirmation=framework_confirmation,
+        framework_impacts=framework_impacts,
+        frameworks_retired_outside_scope=frameworks_retired_outside_scope,
         union_detail=union,
         eligibility=eligibility,
     )
@@ -873,6 +973,22 @@ async def update_planned_actions(
             successor = action.successor_scf_id
             if not successor:
                 errors.append(f"{action.key}: migrate requires successor_scf_id")
+            elif action.entity == CatalogEntityType.FRAMEWORKS:
+                # Frameworks have no catalogue table, so "exists" means the id
+                # appears in some active control's framework mappings - the
+                # same set bulk_scope_frameworks scopes from. Re-checked at
+                # apply, because the catalogue can move between the two.
+                framework_ids = {
+                    key
+                    for row in catalog_controls.values()
+                    if getattr(row, "status", "active") == "active"
+                    for key in (row.framework_mappings or {})
+                }
+                if successor not in framework_ids:
+                    errors.append(
+                        f"{action.key}: successor framework {successor} is not "
+                        f"in the catalog"
+                    )
             else:
                 # Same entity-keyed lookup as _validate_actions_for_apply: an
                 # evidence migrate's successor lives in the evidence catalog.
@@ -1234,6 +1350,8 @@ class OrgReconcileReport:
     restored: int = 0
     deleted: int = 0
     demoted: int = 0
+    frameworks_migrated: int = 0
+    frameworks_retired: int = 0
 
     def as_dict(self) -> dict:
         return vars(self).copy()
@@ -1305,6 +1423,7 @@ def _validate_actions_for_apply(
     actions: List[PlannedAction],
     catalog_controls: Dict[str, Any],
     catalog_evidence: Dict[str, Any],
+    catalog_framework_ids: Optional[set] = None,
 ) -> None:
     """Re-validate migrate successors at apply time (the catalog may have
     moved since the actions PUT). Runs before any mutation."""
@@ -1315,6 +1434,18 @@ def _validate_actions_for_apply(
         successor = action.successor_scf_id
         if not successor:
             errors.append(f"{action.key}: migrate requires successor_scf_id")
+            continue
+        if action.entity == CatalogEntityType.FRAMEWORKS:
+            # Frameworks have no catalogue table; the registry the platform
+            # actually offers is the key set of the live controls' framework
+            # mappings, which is also what bulk_scope_frameworks scopes from.
+            # Validating against anything else would let an apply migrate a
+            # selection to a framework that scopes nothing.
+            if successor not in (catalog_framework_ids or set()):
+                errors.append(
+                    f"{action.key}: successor framework {successor} is not in "
+                    f"the catalog"
+                )
             continue
         lookup = (
             catalog_controls
@@ -1432,6 +1563,59 @@ def _execute_evidence_action(
     report.retired += 1
 
 
+def _execute_framework_action(
+    session: AsyncSession,
+    org_id: UUID,
+    action: PlannedAction,
+    selections_by_id: Dict[str, Any],
+    now: datetime,
+    report: OrgReconcileReport,
+) -> None:
+    """Move an org's framework selection off a retired framework.
+
+    Runs only for an action an admin has set and applied. Nothing here fires
+    from the diff alone: ``build_preview`` proposes, ``update_planned_actions``
+    lets the admin change or override the proposal, and only this apply acts.
+    That ordering is the whole point of deriving succession rather than
+    declaring it — a derived pairing must never rebind a tenant's scope on its
+    own.
+
+    Scope re-materialisation runs immediately after the action loop and reads
+    the active selections, so flipping the row here is enough: the successor
+    framework's controls are scoped in the same apply.
+    """
+    selection = selections_by_id.get(action.key)
+    if selection is None:
+        return
+    if action.action == PlannedActionType.RETAIN:
+        # The selection keeps pointing at a framework the catalogue no longer
+        # offers. Deliberate: an org mid-audit may need the old scope to stand
+        # until the engagement closes. It surfaces as an orphan next run.
+        report.retained += 1
+        return
+    if action.action == PlannedActionType.MIGRATE:
+        successor_id = action.successor_scf_id
+        successor = selections_by_id.get(successor_id)
+        if successor is None:
+            successor = OrganizationFrameworkSelection(
+                organization_id=org_id,
+                framework_id=successor_id,
+                source="reconciliation",
+                active=True,
+                selected_at=now,
+            )
+            session.add(successor)
+            selections_by_id[successor_id] = successor
+        else:
+            successor.active = True
+        selection.active = False
+        report.frameworks_migrated += 1
+        return
+    # RETIRE_ONLY
+    selection.active = False
+    report.frameworks_retired += 1
+
+
 async def apply_reconciliation_run(
     session: AsyncSession,
     org_id: UUID,
@@ -1490,10 +1674,22 @@ async def apply_reconciliation_run(
         catalog_controls = {r.scf_id: r for r in result.scalars().all()}
         result = await session.execute(select(SCFCatalogEvidence))
         catalog_evidence = {r.evidence_id: r for r in result.scalars().all()}
-        _validate_actions_for_apply(actions, catalog_controls, catalog_evidence)
+        catalog_framework_ids = {
+            key
+            for row in catalog_controls.values()
+            if getattr(row, "status", "active") == "active"
+            for key in (row.framework_mappings or {})
+        }
+        _validate_actions_for_apply(
+            actions, catalog_controls, catalog_evidence, catalog_framework_ids
+        )
 
         scoped_by_id = {r.scf_id: r for r in scoped_rows}
         tracking_by_id = {r.evidence_id: r for r in tracking_rows}
+        framework_selections = await _org_rows(
+            session, OrganizationFrameworkSelection, org_id
+        )
+        selections_by_id = {r.framework_id: r for r in framework_selections}
         for action in actions:
             if action.entity == CatalogEntityType.CONTROLS:
                 _execute_control_action(
@@ -1503,8 +1699,13 @@ async def apply_reconciliation_run(
                 _execute_evidence_action(
                     session, org_id, action, tracking_by_id, to_version, now, report
                 )
+            elif action.entity == CatalogEntityType.FRAMEWORKS:
+                _execute_framework_action(
+                    session, org_id, action, selections_by_id, now, report
+                )
 
         # --- scope re-materialisation (plan §4.3: the WP2a primitive) -----
+        await session.flush()
         selections = await _org_rows(session, OrganizationFrameworkSelection, org_id)
         active_framework_ids = sorted(
             {s.framework_id for s in selections if s.active}
