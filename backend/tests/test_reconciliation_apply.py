@@ -837,3 +837,73 @@ async def test_cancel_refuses_non_previewed_run():
         await rs.cancel_reconciliation_run(session, ORG, run.id)
     with pytest.raises(rs.RunNotFoundError):
         await rs.cancel_reconciliation_run(session, ORG, uuid.uuid4())
+
+
+# ---------------------------------------------------------------------------
+# Apply — framework succession
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_apply_migrates_a_framework_selection_and_rescopes():
+    """An admin-approved framework migrate moves the selection, then rescopes.
+
+    The selection flip has to land BEFORE scope re-materialisation reads the
+    active selections, or the successor framework's controls never get scoped
+    and the tenant ends the run with an empty scope.
+    """
+    session, run, _ = _world(planned=[
+        {"key": "fw_alpha", "entity": "frameworks", "action": "migrate",
+         "justification": None, "successor_scf_id": "fw_beta"},
+    ])
+    # fw_beta is a framework the catalog actually offers.
+    session.tables[SCFCatalogControl].append(
+        _catalog_control("GOV-N1", frameworks=["fw_beta"])
+    )
+    report = await rs.apply_reconciliation_run(session, ORG, run.id, user_id=USER)
+
+    selections = {
+        row.framework_id: row
+        for row in session.tables[OrganizationFrameworkSelection]
+    }
+    assert selections["fw_alpha"].active is False
+    assert selections["fw_beta"].active is True
+    assert selections["fw_beta"].source == "reconciliation"
+    assert report.frameworks_migrated == 1
+
+    # The successor framework's control was scoped in the same apply.
+    assert _scoped_by_id(session)["GOV-N1"].selected is True
+
+
+@pytest.mark.asyncio
+async def test_apply_retain_leaves_a_framework_selection_alone():
+    session, run, _ = _world(planned=[
+        {"key": "fw_alpha", "entity": "frameworks", "action": "retain",
+         "justification": None, "successor_scf_id": None},
+    ])
+    report = await rs.apply_reconciliation_run(session, ORG, run.id, user_id=USER)
+    selections = {
+        row.framework_id: row
+        for row in session.tables[OrganizationFrameworkSelection]
+    }
+    assert selections["fw_alpha"].active is True
+    assert report.frameworks_migrated == 0
+    assert report.retained == 1
+
+
+@pytest.mark.asyncio
+async def test_apply_refuses_a_framework_successor_the_catalog_does_not_offer():
+    """Frameworks have no table, so 'exists' is checked against the live
+    mappings — otherwise an apply can migrate a tenant into an empty scope."""
+    session, run, _ = _world(planned=[
+        {"key": "fw_alpha", "entity": "frameworks", "action": "migrate",
+         "justification": None, "successor_scf_id": "fw_does_not_exist"},
+    ])
+    with pytest.raises(rs.ActionValidationError) as exc:
+        await rs.apply_reconciliation_run(session, ORG, run.id, user_id=USER)
+    assert "fw_does_not_exist" in str(exc.value)
+    selections = {
+        row.framework_id: row
+        for row in session.tables[OrganizationFrameworkSelection]
+    }
+    assert selections["fw_alpha"].active is True, "nothing mutates on refusal"

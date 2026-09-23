@@ -41,7 +41,7 @@ from schemas_catalog_upgrade import (  # noqa: E402
     SanityReport,
     SupersededSuggestion,
 )
-from test_scf_extractor import build_workbook  # noqa: E402
+from test_scf_extractor import AICPA_HEADER, build_workbook  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -209,8 +209,10 @@ def test_sanity_all_pass():
     assert {c.check for c in report.checks} == {
         "version_parseable",
         "control_count_drop",
+        "control_churn",
         "zero_rows",
         "framework_names",
+        "framework_churn",
     }
 
 
@@ -584,8 +586,9 @@ def test_controls_entity_owns_framework_mappings_revert_anchor():
 
 
 class _FakeResult:
-    def __init__(self, rows):
+    def __init__(self, rows, scalar=None):
         self._rows = rows
+        self._scalar = scalar
 
     def scalars(self):
         return self
@@ -593,15 +596,50 @@ class _FakeResult:
     def all(self):
         return self._rows
 
+    def first(self):
+        return self._rows[0] if self._rows else None
+
+    def scalar(self):
+        return self._scalar
+
 
 class FakeSession:
     """Answers the four load_live_catalog selects in order:
-    controls, domains, evidence, assessment objectives."""
+    controls, domains, evidence, assessment objectives.
 
-    def __init__(self, controls=(), domains=(), evidence=(), objectives=()):
+    load_live_catalog also resolves the live catalogue version and reads that
+    version's framework registry row (fwreg001). Those three selects are
+    answered by table name rather than from the ordered queue, so they cannot
+    consume an entity result. Default: no ledger run, no stamped version and no
+    registry row — which is the pre-fwreg001 install whose live focal-document
+    identifiers come from the JSON artifact.
+    """
+
+    def __init__(
+        self,
+        controls=(),
+        domains=(),
+        evidence=(),
+        objectives=(),
+        registry=None,
+        live_version=None,
+    ):
         self._results = [list(controls), list(domains), list(evidence), list(objectives)]
+        self._live_version = live_version
+        self._registry_row = (
+            SimpleNamespace(catalog_version=live_version, registry=registry)
+            if registry is not None
+            else None
+        )
 
-    async def execute(self, _stmt):
+    async def execute(self, stmt):
+        sql = str(stmt)
+        if "catalog_import_runs" in sql:
+            return _FakeResult([])  # no applied run; falls through to max()
+        if "max(scf_catalog_controls.catalog_version)" in sql:
+            return _FakeResult([], scalar=self._live_version)
+        if "catalog_framework_registries" in sql:
+            return _FakeResult([self._registry_row] if self._registry_row else [])
         return _FakeResult(self._results.pop(0))
 
 
@@ -791,3 +829,217 @@ async def test_stage_raises_for_unrecognisable_workbook(tmp_path):
     )
     with pytest.raises(ValueError, match="catalog version"):
         await cd.stage_catalog_diff(FakeSession(), workbook, "2026.1")
+
+
+# ---------------------------------------------------------------------------
+# Legacy SCF # crosswalk (2026.3 renumbering)
+# ---------------------------------------------------------------------------
+
+
+def _wb_control(scf_id: str, name: str, legacy: list | None = None) -> dict:
+    ctrl = {
+        "scf_id": scf_id,
+        "scf_domain": "Governance",
+        "control_name": name,
+        "control_description": "Mechanisms exist.",
+    }
+    if legacy is not None:
+        ctrl["legacy_scf_ids"] = legacy
+    return ctrl
+
+
+def test_crosswalk_maps_predecessor_to_successor():
+    extracted = _extracted(controls=[_wb_control("GOV-02", "Program", ["GOV-01"])])
+    assert cd.build_legacy_crosswalk(extracted) == {"GOV-01": "GOV-02"}
+
+
+def test_crosswalk_omits_self_referential_entries():
+    """A control that kept its id is not a rename."""
+    extracted = _extracted(controls=[_wb_control("GOV-01", "Program", ["GOV-01"])])
+    assert cd.build_legacy_crosswalk(extracted) == {}
+
+
+def test_crosswalk_records_a_merge_as_two_predecessors():
+    """Two retired controls collapsing into one both point at the survivor."""
+    extracted = _extracted(
+        controls=[_wb_control("AST-22", "Assets", ["AST-09", "TDA-11.2"])]
+    )
+    assert cd.build_legacy_crosswalk(extracted) == {
+        "AST-09": "AST-22",
+        "TDA-11.2": "AST-22",
+    }
+
+
+def test_crosswalk_empty_for_workbooks_without_the_column():
+    """Pre-2026.3 workbooks carry no crosswalk; behaviour is unchanged."""
+    extracted = _extracted(controls=[_wb_control("GOV-01", "Program")])
+    assert cd.build_legacy_crosswalk(extracted) == {}
+
+
+def test_deprecation_takes_superseded_by_from_the_crosswalk():
+    workbook = {"GOV-02": _control_cols("Program")}
+    live = {"GOV-01": _live_control("GOV-01", "Program")}
+    diff = cd.compute_entity_diff(
+        workbook,
+        live,
+        cd.CONTROL_COMPARED_FIELDS,
+        name_field="control_name",
+        suggestion_candidates={"GOV-02": "Program"},
+        legacy_crosswalk={"GOV-01": "GOV-02"},
+    )
+    assert len(diff.deprecated) == 1
+    assert diff.deprecated[0].superseded_by == "GOV-02"
+    assert diff.deprecated[0].superseded_source == "workbook_crosswalk"
+
+
+def test_crosswalk_suggestion_ranks_first_with_full_score():
+    workbook = {"GOV-02": _control_cols("Totally Different Name")}
+    live = {"GOV-01": _live_control("GOV-01", "Program")}
+    diff = cd.compute_entity_diff(
+        workbook,
+        live,
+        cd.CONTROL_COMPARED_FIELDS,
+        name_field="control_name",
+        suggestion_candidates={"GOV-02": "Totally Different Name"},
+        legacy_crosswalk={"GOV-01": "GOV-02"},
+    )
+    suggestions = diff.deprecated[0].suggestions
+    assert suggestions[0].scf_id == "GOV-02"
+    assert suggestions[0].score == 1.0
+
+
+def test_existing_admin_pairing_outranks_the_crosswalk():
+    workbook = {"GOV-02": _control_cols("Program"), "GOV-09": _control_cols("Other")}
+    live = {"GOV-01": _live_control("GOV-01", "Program", superseded_by="GOV-09")}
+    diff = cd.compute_entity_diff(
+        workbook,
+        live,
+        cd.CONTROL_COMPARED_FIELDS,
+        name_field="control_name",
+        legacy_crosswalk={"GOV-01": "GOV-02"},
+    )
+    assert diff.deprecated[0].superseded_by == "GOV-09"
+    assert diff.deprecated[0].superseded_source is None
+
+
+def test_crosswalk_successor_absent_from_workbook_is_ignored():
+    """A crosswalk pointing outside this catalog is stale, not authoritative."""
+    workbook = {"GOV-02": _control_cols("Program")}
+    live = {"GOV-01": _live_control("GOV-01", "Program")}
+    diff = cd.compute_entity_diff(
+        workbook,
+        live,
+        cd.CONTROL_COMPARED_FIELDS,
+        name_field="control_name",
+        legacy_crosswalk={"GOV-01": "SOMEWHERE-ELSE"},
+    )
+    assert diff.deprecated[0].superseded_by is None
+    assert diff.deprecated[0].superseded_source is None
+
+
+def _churn_catalogs(n: int, explained: bool):
+    """n live controls all renumbered; crosswalk present only if `explained`."""
+    live = {
+        f"OLD-{i}": _live_control(f"OLD-{i}", f"Control {i}") for i in range(n)
+    }
+    controls = [
+        _wb_control(f"NEW-{i}", f"Control {i}", [f"OLD-{i}"] if explained else [])
+        for i in range(n)
+    ]
+    return _extracted(version="2026.3", controls=controls), _live_catalog(live)
+
+
+def test_churn_gate_passes_when_the_crosswalk_explains_the_renumbering():
+    extracted, live = _churn_catalogs(200, explained=True)
+    report = cd.run_sanity_checks(extracted, live)
+    check = _check(report, "control_churn")
+    assert check.passed is True
+    assert "200 explained" in check.detail
+
+
+def test_churn_gate_fails_on_unexplained_mass_retirement():
+    """The 2026.3 shape: net count barely moves, the whole catalog is replaced."""
+    extracted, live = _churn_catalogs(200, explained=False)
+    report = cd.run_sanity_checks(extracted, live)
+    assert _check(report, "control_churn").passed is False
+    assert report.passed is False
+    # The net-count gate cannot see it: 200 out, 200 in.
+    assert _check(report, "control_count_drop").passed is True
+
+
+def test_churn_gate_ignores_a_handful_of_genuine_retirements():
+    live = {f"OLD-{i}": _live_control(f"OLD-{i}", f"Control {i}") for i in range(10)}
+    extracted = _extracted(
+        version="2026.3",
+        controls=[_wb_control(f"OLD-{i}", f"Control {i}") for i in range(5)],
+    )
+    assert _check(cd.run_sanity_checks(extracted, _live_catalog(live)), "control_churn").passed
+
+
+def test_count_check_names_a_rise_as_a_rise():
+    """A signed percentage beside the word 'drop' rendered a rise as a drop."""
+    live = _live_catalog(
+        {f"OLD-{i}": _live_control(f"OLD-{i}", f"Control {i}") for i in range(100)}
+    )
+    extracted = _extracted(
+        controls=[_wb_control(f"OLD-{i}", f"Control {i}") for i in range(104)]
+    )
+    detail = _check(cd.run_sanity_checks(extracted, live), "control_count_drop").detail
+    assert "rise" in detail
+    assert "drop" not in detail
+
+
+def test_count_check_still_names_a_drop_as_a_drop():
+    live = _live_catalog(
+        {f"OLD-{i}": _live_control(f"OLD-{i}", f"Control {i}") for i in range(100)}
+    )
+    extracted = _extracted(
+        controls=[_wb_control(f"OLD-{i}", f"Control {i}") for i in range(96)]
+    )
+    detail = _check(cd.run_sanity_checks(extracted, live), "control_count_drop").detail
+    assert "fewer" in detail and "drop" in detail
+
+
+@pytest.mark.asyncio
+async def test_load_live_catalog_decorates_frameworks_from_the_stored_registry(
+    tmp_path, monkeypatch
+):
+    """load_live_catalog reads the registry row, not the mounted JSON artifact.
+
+    The whole seam the framework_churn gate depends on: the live focal-document
+    identifiers must come from the row that committed with the catalogue rows,
+    so a stale or foreign DATA_DIR cannot decide whether an upgrade is blocked.
+    """
+    import catalog_seeder
+
+    import extract_scf_data
+
+    aicpa = extract_scf_data.normalize_framework_id(AICPA_HEADER)
+    (tmp_path / "framework_registry.json").write_text(
+        '{"%s": {"name": "STALE", "focal_document_id": "stale-identifier"}}' % aicpa
+    )
+    monkeypatch.setattr(catalog_seeder, "DATA_DIR", tmp_path)
+
+    control = _orm_control(
+        "GOV-A1", "Governance", framework_mappings={aicpa: ["CC1.1"]}
+    )
+
+    from_file = await cd.load_live_catalog(FakeSession(controls=[control]))
+    assert from_file.frameworks[aicpa].fields["focal_document_id"] == "stale-identifier"
+
+    from_db = await cd.load_live_catalog(
+        FakeSession(
+            controls=[control],
+            live_version="2026.1",
+            registry={
+                aicpa: {
+                    "name": "AICPA Trust Services Criteria",
+                    "focal_document_id": "general-aicpa-tsc-2017",
+                }
+            },
+        )
+    )
+    assert from_db.frameworks[aicpa].fields["focal_document_id"] == (
+        "general-aicpa-tsc-2017"
+    )
+    assert from_db.frameworks[aicpa].name == "AICPA Trust Services Criteria"

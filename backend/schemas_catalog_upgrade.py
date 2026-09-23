@@ -29,6 +29,12 @@ class CatalogEntityType(str, Enum):
     ASSESSMENT_OBJECTIVES = "assessment_objectives"
     CAPABILITY_THEMES = "capability_themes"
     FRAMEWORK_MAPPINGS = "framework_mappings"
+    # The framework REGISTRY: which focal documents the catalogue offers at all.
+    # Distinct from FRAMEWORK_MAPPINGS, which is the per-control view of how a
+    # control's mapping set moved. A framework can be retired from the registry
+    # while every surviving control keeps mappings, and vice versa, so the two
+    # are not derivable from one another.
+    FRAMEWORKS = "frameworks"
 
 
 class ChangeClass(str, Enum):
@@ -96,6 +102,22 @@ class SupersededSuggestion(BaseModel):
     scf_id: str
     name: Optional[str] = None
     score: float = Field(..., ge=0.0, le=1.0)
+    # Share of the predecessor's controls that also map to this candidate, once
+    # control renumbering is undone. Reviewable evidence a non-expert can check
+    # without knowing the instrument: "410 of 412 controls carried over".
+    # None where either side has too small a control set for the ratio to mean
+    # anything.
+    control_overlap: Optional[float] = None
+    # Which independent signals produced this suggestion (e.g. ["id_stem",
+    # "display_name"]). Frameworks have no publisher-declared crosswalk, so the
+    # suggestion is derived; naming the signals is what lets a reviewer weigh it
+    # rather than take it on faith. Optional so pre-existing stored diffs still
+    # validate.
+    signals: List[str] = Field(default_factory=list)
+    # Present when the suggestion is one of several plausible successors, so a
+    # one-to-many ambiguity is visible instead of silently collapsed to the top
+    # scorer.
+    ambiguous: bool = False
 
 
 class AddedEntity(BaseModel):
@@ -117,6 +139,11 @@ class DeprecatedEntity(BaseModel):
     key: str
     name: Optional[str] = None
     superseded_by: Optional[str] = None
+    # Where superseded_by came from. 'workbook_crosswalk' means the publisher
+    # declared the renumbering in the workbook's Legacy SCF # column, so this
+    # row is a rename rather than a retirement. None means the value (if any)
+    # predates this run as an admin pairing.
+    superseded_source: Optional[str] = None
     suggestions: List[SupersededSuggestion] = Field(default_factory=list)
 
 
@@ -140,19 +167,34 @@ class EntityDiff(BaseModel):
 
 
 class DiffDetail(BaseModel):
-    """The complete stored diff object for a platform import run."""
+    """The complete stored diff object for a platform import run.
+
+    ``framework_registry`` is the workbook's own registry
+    (``{framework_id: {name, focal_document_id, geography}}``), carried here so
+    the apply transaction can persist it without re-reading the workbook — the
+    diff is the only thing that survives staging. Defaulted so diffs stored
+    before the field existed still validate.
+    """
     from_version: str
     to_version: str
     entities: Dict[CatalogEntityType, EntityDiff] = Field(default_factory=dict)
+    framework_registry: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
 
 
 class EntityDiffCounts(BaseModel):
-    """Count-only view of one entity's diff."""
+    """Count-only view of one entity's diff.
+
+    ``renamed`` is a subset of ``deprecated``, not a sixth disjoint class: it
+    counts the deprecations the workbook itself identifies as renumberings.
+    deprecated - renamed is the true retirement count. Defaulted so summaries
+    stored before the crosswalk existed still validate.
+    """
     added: int = 0
     changed: int = 0
     deprecated: int = 0
     resurrected: int = 0
     unchanged: int = 0
+    renamed: int = 0
 
 
 class DiffSummary(BaseModel):
@@ -167,7 +209,9 @@ class DiffSummary(BaseModel):
 # =============================================================================
 
 class SanityCheck(BaseModel):
-    check: str  # e.g. "version_parseable", "control_count_drop", "zero_rows", "framework_names"
+    # e.g. "version_parseable", "control_count_drop", "control_churn",
+    #      "zero_rows", "framework_names"
+    check: str
     passed: bool
     detail: Optional[str] = None
 
@@ -473,6 +517,37 @@ class FrameworkConfirmation(BaseModel):
     selections: List[FrameworkSelectionItem] = Field(default_factory=list)
 
 
+class FrameworkImpactItem(BaseModel):
+    """(f) a framework the org selected that this upgrade retires.
+
+    The catalogue encodes the edition in the framework id, so an ordinary
+    version bump presents as an unrelated removal plus an unrelated addition:
+    an org scoped to ``apac_australia_ism_march_2026`` would simply lose its
+    framework, with the June edition offered as something new. This item is the
+    decision that replaces that silence.
+
+    ``superseded_source`` says how much the successor is worth: a
+    ``workbook_focal_document`` pairing is the publisher's own statement that
+    the two ids are the same document, a ``derived_succession`` pairing is this
+    platform's inference from the id and the display name. Both are proposals —
+    nothing rebinds a selection until an admin sets the action and applies.
+    """
+    framework_id: str
+    name: Optional[str] = None
+    superseded_by: Optional[str] = None
+    superseded_by_name: Optional[str] = None
+    superseded_source: Optional[str] = None
+    confidence: Optional[float] = None
+    signals: List[str] = Field(default_factory=list)
+    ambiguous: bool = False
+    control_overlap: Optional[float] = None
+    # Other candidates the matcher considered. Present so a one-to-many match
+    # is visible to the reviewer rather than silently collapsed to the winner.
+    alternatives: List[SupersededSuggestion] = Field(default_factory=list)
+    suggested_action: PlannedActionType = PlannedActionType.RETAIN
+    planned_action: Optional[PlannedAction] = None
+
+
 class ReconciliationPreviewRequest(BaseModel):
     """POST .../preview body. target_version defaults to the platform's
     current (ledger) version; skip-version catch-up unions ledger diffs."""
@@ -487,6 +562,13 @@ class ReconciliationPreviewResponse(BaseModel):
     changed_in_scope: List[ChangedInScopeItem] = Field(default_factory=list)
     orphans: OrphanReport
     framework_confirmation: FrameworkConfirmation
+    # (f) frameworks the org has selected that this upgrade retires, each with
+    # a proposed action. Additive: framework_confirmation above is unchanged.
+    framework_impacts: List[FrameworkImpactItem] = Field(default_factory=list)
+    # Retired frameworks the org never selected. A count, not a list: they are
+    # not this tenant's decision, but a reviewer seeing 1 impact out of 75
+    # retirements is better informed than one seeing 1 out of nothing.
+    frameworks_retired_outside_scope: int = 0
 
 
 # =============================================================================

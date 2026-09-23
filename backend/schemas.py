@@ -3,10 +3,56 @@ Pydantic schemas for request/response validation.
 These define the API contract and handle data validation.
 """
 from enum import Enum
-from pydantic import BaseModel, Field, ConfigDict, computed_field, field_validator, model_validator
-from typing import Optional, Any, List, Dict, Literal, Union
-from datetime import date, datetime, timedelta
+from pydantic import (
+    BaseModel,
+    Field,
+    ConfigDict,
+    PlainSerializer,
+    computed_field,
+    field_validator,
+    model_validator,
+)
+from typing import Annotated, Optional, Any, List, Dict, Literal, Union
+from datetime import date, datetime as _datetime, timedelta, timezone
 from uuid import UUID
+
+
+# =============================================================================
+# UTC wire contract for datetime fields
+# =============================================================================
+# Most datetime columns in models.py are ``DateTime(timezone=False)`` holding
+# naive UTC instants (written with ``datetime.utcnow()``). Pydantic renders a
+# naive datetime with no offset designator, and ECMAScript parses an
+# offset-less date-time as *local* time -- so any client outside UTC reads
+# those instants shifted by its own offset.
+#
+# ``UtcDateTime`` stamps a naive value as UTC at serialisation time and emits
+# RFC 3339 with an explicit ``+00:00`` offset. Values that are already
+# timezone-aware (the ``DateTime(timezone=True)`` columns) pass through
+# unshifted -- they are only normalised to the ``+00:00`` spelling, because
+# Pydantic's own aware-datetime output uses ``Z``, which
+# ``datetime.fromisoformat()`` cannot parse before Python 3.11 and which some
+# downstream consumers therefore cannot read.
+#
+# This only annotates; it never converts. The stored instants are already UTC.
+#
+# ``when_used="json"`` confines the change to the wire: ``model_dump()`` in
+# Python mode still yields real ``datetime`` objects for in-process callers,
+# while the FastAPI response path (JSON mode) gets the designated string.
+UtcDateTime = Annotated[
+    _datetime,
+    PlainSerializer(
+        lambda v: (v.replace(tzinfo=timezone.utc) if v.tzinfo is None else v).isoformat(),
+        return_type=str,
+        when_used="json",
+    ),
+]
+
+# Deliberate module-level rebinding: every ``x: datetime`` annotation in this
+# file resolves to UtcDateTime, so the contract covers all existing schemas and
+# cannot be forgotten when a new one is added. ``datetime`` is never used as a
+# value in this module; code needing the class itself should use ``_datetime``.
+datetime = UtcDateTime
 
 
 # System type and status constants for validation
@@ -162,8 +208,13 @@ class ScopedControlUpdate(BaseModel):
         description="Implementation status. Valid values: not_started, in_progress, implemented, ready_for_review, monitored, not_applicable, at_risk, deferred"
     )
     priority: Optional[str] = None
-    owner: Optional[str] = None
-    assigned_to: Optional[str] = None
+    #: Free-text ``owner`` and ``assigned_to`` are NOT accepted here.
+    #: Controls are assignable to teams only, through ControlTeamAssignment,
+    #: and an unstructured second answer to "who owns this" is what let the
+    #: first one go stale unnoticed. The COLUMNS stay and are still returned
+    #: on the read schema: they carry pre-cutover ownership that other
+    #: readers still count, and blanking them would destroy history that no
+    #: team row replaces.
     maturity_level: Optional[str] = None
     target_date: Optional[date] = None
     completion_date: Optional[date] = None
@@ -417,8 +468,9 @@ def _validate_collection_frequency(value: Optional[str]) -> Optional[str]:
 #   2. evidence_tracking.assigned_user_id   FK, read by the task generator, the
 #      evidence_tracking.owner_user_id      due-date notifier and the work queue,
 #                                           written ONLY by the bulk-import path
-#   3. the polymorphic `assignments` table  written by AssignmentPicker, read by
-#                                           nothing downstream
+#   3. the polymorphic `assignments` table  written by a per-user picker on the
+#                                           control workspace, read by nothing
+#                                           downstream
 #
 # So every auto-generated task was created with assigned_user_id=None, the
 # notifier skipped it at notifications.py:296, and ?assigned_to_me=true matched
@@ -439,8 +491,20 @@ def _validate_collection_frequency(value: Optional[str]) -> Optional[str]:
 # place (see models.py) — dropping it would destroy team labels that never
 # resolve to a user, and that deletion is not reversible.
 #
-# The `assignments` table stays as the multi-user COLLABORATOR list — a
-# different concept, shared with controls, not a duplicate of this field.
+# The `assignments` table was kept here as a multi-user COLLABORATOR list — a
+# different concept, shared with controls, not a duplicate of this field. That
+# carve-out has since been withdrawn, and the reason is worth recording: the
+# rationale did not survive contact with the screen. The control that wrote the
+# table was headed `Assigned To`, its button said `+ Assign User`, and every row
+# it created carried `role: 'primary'`. Whatever the table was designed to be,
+# what shipped was a direct-assignment screen sitting above the team picker.
+#
+# `POST /api/assignments` now returns 410 Gone. The TABLE and its rows stay, and
+# both reads and the DELETE stay with them: those rows are the only record of who
+# held what before the cutover, and deleting one is how an org clears an
+# inherited individual assignment deliberately. If a genuine collaborator
+# concept is wanted later it comes back as its own feature, with no
+# `role: 'primary'` and no `Assigned To` heading — not by reviving this one.
 #
 # Both FK fields are guarded by assert_user_in_org at every write site: a user id
 # arriving in a request body must belong to the target organisation, or an editor
@@ -457,6 +521,14 @@ def _validate_collection_frequency(value: Optional[str]) -> Optional[str]:
 # being added. A control with no writable per-user owner is therefore the
 # intended state, not a gap, and dashboard.py's filter on those two always-NULL
 # columns is the thing that needs revisiting, not the schema.
+#
+# THAT SWEEP IS NOW FINISHED, and it had stopped two doors short. Free-text
+# `owner`/`assigned_to` are gone from ScopedControlUpdate and from the batch
+# operation schema, the polymorphic `assignments` create is 410, and a new
+# evidence collection task can no longer name a person at all. The COLUMNS are
+# all still there and still read: removing a schema field withdraws a
+# capability, whereas blanking a column destroys the only record of who held
+# the work before the rule changed. Only the first of those is reversible.
 #
 # TEAM-ONLY ASSIGNMENT, AND WHY THESE TWO FIELDS SURVIVE IT (#1052).
 # The two user foreign keys below stay writable on EvidenceTrackingBase, which
@@ -755,7 +827,17 @@ class EvidenceCollectionTaskBase(BaseModel):
 
 class EvidenceCollectionTaskCreate(EvidenceCollectionTaskBase):
     evidence_tracking_id: UUID
-    assigned_user_id: Optional[UUID] = None
+    #: ``assigned_user_id`` is deliberately ABSENT here. A task is work on an
+    #: evidence item, and evidence is assigned to teams only -- the same rule
+    #: that emptied the control and evidence write schemas. A brand new task has
+    #: no history to preserve, so there is nothing to be gentle about: the field
+    #: is gone rather than accepted-and-ignored. Pydantic drops an extra key in
+    #: the request body, so a client still sending one is not broken by this; it
+    #: simply stops having an effect, which is the whole intent.
+    #:
+    #: The COLUMN survives (models.py) and so does the field on the Update and
+    #: Response schemas -- see ``EvidenceCollectionTaskUpdate`` below for why the
+    #: one remaining write must stay.
     #: The team that owns the task, or ``None`` to inherit the accountable team
     #: from the parent evidence item (#822 §6). ``None`` is the right default
     #: and the common case: a task created without a team is not unowned, it is
@@ -774,6 +856,23 @@ class EvidenceCollectionTaskUpdate(BaseModel):
     description: Optional[str] = None
     completion_notes: Optional[str] = None
     completed_date: Optional[date] = None
+    #: CLEAR-ONLY. The endpoint accepts an explicit ``null`` and rejects any
+    #: non-null value with a 422; omitting the key leaves an existing assignee
+    #: exactly as it was.
+    #:
+    #: This is the most load-bearing line in the team-only cutover, and it reads
+    #: like a contradiction of it, so: keeping the field is what makes the rule
+    #: survivable. ``assigned_user_id`` is tier 1 of the owner-resolution chain,
+    #: so a task stamped with someone who has since left would route its
+    #: notifications to a dead account forever if there were no way to blank it.
+    #: Removing the field outright takes away the only exit; keeping it settable
+    #: keeps the door the requirement closes. Clear-only is the one shape that is
+    #: neither.
+    #:
+    #: Like ``owning_team_id`` below, this consults ``model_fields_set`` rather
+    #: than the ``if x is not None`` house style, because that idiom cannot tell
+    #: an explicit ``null`` from an absent key -- and here the difference between
+    #: those two is the difference between clearing and doing nothing.
     assigned_user_id: Optional[UUID] = None
     dependencies: Optional[List[UUID]] = None
     attachments: Optional[List[Dict[str, str]]] = None
@@ -3003,8 +3102,13 @@ class BatchScopedControlOperation(BaseModel):
     )
     selection_reason: Optional[str] = None
     priority: Optional[str] = None
-    owner: Optional[str] = None
-    assigned_to: Optional[str] = None
+    #: Free-text ``owner`` and ``assigned_to`` are NOT accepted here.
+    #: Controls are assignable to teams only, through ControlTeamAssignment,
+    #: and an unstructured second answer to "who owns this" is what let the
+    #: first one go stale unnoticed. The COLUMNS stay and are still returned
+    #: on the read schema: they carry pre-cutover ownership that other
+    #: readers still count, and blanking them would destroy history that no
+    #: team row replaces.
     maturity_level: Optional[str] = None
     target_date: Optional[date] = None
     completion_date: Optional[date] = None

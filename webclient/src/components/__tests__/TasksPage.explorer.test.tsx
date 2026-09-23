@@ -483,36 +483,102 @@ describe('TasksPage — row display fields', () => {
     expect(screen.getByText('Document backup results')).toBeInTheDocument()
   })
 
-  it('shows assignee display name in all-tasks view', async () => {
+  /**
+   * These two replace a pair that asserted an individual assignee was shown in
+   * all-tasks and hidden in my-tasks. That pair encoded a real rule, and the
+   * rule has changed shape rather than disappeared -- so it is restated here
+   * rather than deleted.
+   *
+   * The old rule was view-dependent for a good reason: under individual
+   * assignment every my-tasks row was yours personally, so naming you on each
+   * one was noise, and the column was suppressed. Ownership by TEAM is not
+   * redundant in that view. A task reaches my-tasks through any of three
+   * routes -- assigned to me, my owning team, or a team inherited from the
+   * evidence item -- so which team put it in front of you is the one thing the
+   * row cannot leave unsaid. The badge therefore renders in BOTH views, and
+   * that difference from the old behaviour is the assertion, not an accident.
+   */
+  function withAccountableTeam() {
+    mockListTeams.mockResolvedValue([
+      {
+        id: 'team-soc',
+        organization_id: ORG,
+        function_id: 'fn-soc',
+        name: 'Security Operations',
+        description: null,
+        is_active: true,
+      },
+    ])
+    mockListAssignments.mockResolvedValue({
+      'tracking-a': [
+        {
+          id: 'assign-a',
+          type: 'evidence',
+          item_id: 'tracking-a',
+          team_id: 'team-soc',
+          organization_id: ORG,
+          is_accountable: true,
+          assigned_at: '2026-01-01T00:00:00',
+          team: {
+            id: 'team-soc',
+            name: 'Security Operations',
+            is_active: true,
+            function_id: 'fn-soc',
+            function: { id: 'fn-soc', key: 'sec_ops', name: 'Security Operations', is_active: true },
+            primary: null,
+            delegate: null,
+          },
+        },
+      ],
+    })
+  }
+
+  // Scoped to the ROW deliberately. The page also renders a team FILTER built
+  // from the same list, so an unscoped getByText('Security Operations') passes
+  // even when the row cell renders nothing at all -- verified by mutation.
+  function teamCell(title: string): HTMLElement {
+    const row = screen.getByText(title).closest('[role="listitem"]')
+    expect(row).not.toBeNull()
+    const cell = (row as HTMLElement).querySelector('.tasks-col-team')
+    expect(cell).not.toBeNull()
+    return cell as HTMLElement
+  }
+
+  it('names the owning team, not an individual, in all-tasks view', async () => {
     const user = userEvent.setup()
+    withAccountableTeam()
     renderPage()
 
     await screen.findByText('Collect CloudTrail logs')
 
-    // Switch to all-tasks view
     const allTasksBtn = screen.getByRole('button', { name: 'All Tasks' })
     await user.click(allTasksBtn)
 
-    // Alice Smith is the assignee for TASK_COLLECTION
-    expect(screen.getByText('Alice Smith')).toBeInTheDocument()
+    await waitFor(() =>
+      expect(
+        within(teamCell('Collect CloudTrail logs')).getByText('Security Operations')
+      ).toBeInTheDocument()
+    )
+    // TASK_COLLECTION still carries Alice from before the rule changed. The row
+    // receives the field and declines to answer with it.
+    expect(screen.queryByText('Alice Smith')).not.toBeInTheDocument()
   })
 
-  it('hides assignee in my-tasks view', async () => {
-    const user = userEvent.setup()
+  it('still names the owning team in my-tasks view, where the assignee was suppressed', async () => {
+    withAccountableTeam()
     renderPage()
 
     await screen.findByText('Collect CloudTrail logs')
 
-    // Default view is my-tasks: assignee should not be visible
+    // The view that used to show nothing here. A row is in my-tasks because a
+    // team of mine owns it; hiding which one would leave the whole view
+    // unexplained.
+    await waitFor(() =>
+      expect(
+        within(teamCell('Collect CloudTrail logs')).getByText('Security Operations')
+      ).toBeInTheDocument()
+    )
     expect(screen.queryByText('Alice Smith')).not.toBeInTheDocument()
-
-    // Switch to all-tasks: assignee should now be visible
-    const allTasksBtn = screen.getByRole('button', { name: 'All Tasks' })
-    await user.click(allTasksBtn)
-
-    await waitFor(() => {
-      expect(screen.getByText('Alice Smith')).toBeInTheDocument()
-    })
   })
 
   it('formats due date with year (month, day, year)', async () => {

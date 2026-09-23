@@ -23,6 +23,17 @@
   --accent: hsl(222.2, 47.4%, 11.2%);
   --accent-foreground: hsl(210, 40%, 98%);
   --muted: hsl(215.4, 16.3%, 46.9%);
+  /* UIP-005: 14 declarations in this file say `var(--text-secondary)` and
+     nothing ever defined it. Thirteen carry no fallback, so they were invalid
+     at computed-value time and inherited the parent's dark `--text` instead of
+     rendering muted; aliasing the established token fixes all thirteen at once.
+     The fourteenth (~1746, `.evidence-status-files`) passes `#64748b` as a
+     fallback and was never broken -- light `--muted` computes to exactly that,
+     so it is a byte-exact no-op there, and in dark it gains contrast rather
+     than losing it. Sibling tokens `--text-primary`, `--text-tertiary`,
+     `--surface-bedrock`, `--surface-raised` and `--error` are still undefined;
+     out of scope for this finding. */
+  --text-secondary: var(--muted);
   --border: hsl(214.3, 31.8%, 91.4%);
   --text: hsl(222.2, 84%, 4.9%);
   --secondary: hsl(210, 40%, 96.1%);
@@ -190,6 +201,7 @@
   --accent-foreground: #283044;
   --text: #dae2fd;                     /* on-surface */
   --muted: #bfc7d3;                    /* on-surface-variant */
+  --text-secondary: var(--muted);      /* UIP-005 — see the :root note */
   --border: rgba(64, 71, 81, 0.15);   /* outline-variant at 15% — ghost border */
   --border-visible: #404751;           /* outline-variant at full opacity */
 
@@ -2113,7 +2125,24 @@ summary{
 .btn,
 .btn-primary,
 .btn-secondary,
-.btn-outline{
+.btn-outline,
+/* `.btn-danger` joined this list for UIP-001. Seven callsites spell
+   `className="btn-danger"` with no `btn`, and no rule below supplies the box
+   treatment -- so those buttons rendered at browser-default padding in Arial.
+   The 18 callsites already spelling `btn btn-danger` match `.btn` and are
+   unaffected: verified by measuring one on this branch against the same button
+   on `main`, identical in rest, hover and disabled across both themes.
+   The three bespoke `.btn-danger` rules sit below this point and still win for
+   anything they set, so the destructive treatment survives. What each actually
+   contributes, after their own overrides resolve:
+     ~5275  DEAD -- every declaration is overridden by the two rules below it.
+     ~18863 background:transparent, border:1px solid, cursor, transition,
+            and `border-radius:4px`, which beats this rule's 8px. That is why a
+            danger button is 4px-cornered beside an 8px `.btn-secondary`;
+            pre-existing, unchanged here, not this finding's to fix.
+     ~24569 color and border-color, both `var(--danger)`.
+   Net: danger is an outline button, not a red fill. */
+.btn-danger{
   padding:8px 14px;
   border-radius:8px;
   border:none;
@@ -2145,7 +2174,8 @@ summary{
 .btn:disabled,
 .btn-primary:disabled,
 .btn-secondary:disabled,
-.btn-outline:disabled{
+.btn-outline:disabled,
+.btn-danger:disabled{
   opacity:0.5;
   cursor:not-allowed;
 }
@@ -2154,15 +2184,29 @@ summary{
   font-size:12px;
   flex:1;
 }
+/* UIP-004: one primary treatment. This rule used to be a pale-blue gradient
+   with dark #003355 text, while `.btn-team-primary`, the register actions and
+   -- crucially -- three container scopes already in this file
+   (`.modal-footer .btn-primary`, `.settings-actions .btn-primary`,
+   `.trust-portal-actions .btn-primary`) painted the same class solid
+   `var(--primary)`. The gradient was the outlier, so it goes; the base now
+   agrees with what those scopes were already doing. `.tactile-btn` keeps the
+   gradient -- it is a deliberately distinct CTA, not a primary button. */
 .btn-primary{
-  background: linear-gradient(135deg, #99cbff 0%, #42a5f5 100%);
-  color: #003355;
+  background: var(--primary);
+  color: var(--primary-foreground);
   border: none;
   font-weight: 600;
-  box-shadow: 0 4px 12px rgba(66, 165, 245, 0.2);
 }
-.btn-primary:hover{
-  box-shadow: 0 6px 20px rgba(66, 165, 245, 0.35);
+.btn-primary:hover:not(:disabled){
+  background: var(--primary-hover);
+  /* The gradient version of this rule signalled hover with a shadow bloom and a
+     1px lift, and nothing else -- no colour change at all. Replacing it with a
+     colour change alone would have silently removed the lift from every
+     `.btn-primary` in the app, including the three container scopes
+     (`.modal-footer`, `.settings-actions`, `.trust-portal-actions`) whose own
+     hover rules set only `background` and inherited the movement from here. The
+     shadow went with the gradient it was tinted for; the lift stays. */
   transform: translateY(-1px);
 }
 .btn-outline{
@@ -8949,10 +8993,16 @@ textarea.form-control{
 
 .notification-bell-button {
   position: relative;
+  /* The bell is an inline SVG (UIP-007), not the emoji it replaced. Flex centring
+     plus line-height:0 stops the button box growing by the font's descender space,
+     which would have shifted the absolutely-positioned unread badge. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
   background: none;
   border: none;
   cursor: pointer;
-  font-size: 1.5rem;
   padding: 0.5rem;
   color: var(--text);
 }
@@ -26683,6 +26733,11 @@ button.assessment-queue-link:hover {
 
 .btn-team-primary {
   padding: 8px 16px;
+  /* UIP-003: without this the browser default (Arial) won. Measured before the
+     fix: "New team" rendered Arial 14px/500 beside "+ Create Key" in IBM Plex
+     Sans 13px/600. The shared base at the top of this file carries
+     `font-family: inherit`; these bespoke button classes never did. */
+  font-family: inherit;
   background: var(--primary);
   color: var(--primary-foreground);
   border: none;
@@ -26695,6 +26750,11 @@ button.assessment-queue-link:hover {
 
 .btn-team-primary:hover:not(:disabled) {
   background: var(--primary-hover);
+  /* UIP-004: converging the two primary treatments means converging their
+     hover, not just their resting fill. `.btn-primary` lifts on hover and this
+     one never did, so without this line "New team" and "Invite user" would sit
+     side by side behaving differently on the same screen. */
+  transform: translateY(-1px);
 }
 
 .btn-team-primary:disabled {
@@ -26704,6 +26764,7 @@ button.assessment-queue-link:hover {
 
 .btn-team-secondary {
   padding: 6px 12px;
+  font-family: inherit;  /* UIP-003 */
   background: var(--card);
   color: var(--text);
   border: 1px solid var(--border);
@@ -26719,6 +26780,7 @@ button.assessment-queue-link:hover {
 .btn-team-archive,
 .btn-team-remove {
   padding: 6px 12px;
+  font-family: inherit;  /* UIP-003 */
   background: transparent;
   color: var(--muted);
   border: 1px solid var(--border);
@@ -28377,16 +28439,82 @@ button.assessment-queue-link:hover {
   gap: 6px;
 }
 
+/* UIP-002. This chip used to hard-code `--warning-bg`/`--warning` for every
+   status, so an Implemented control turned yellow the moment its detail was
+   opened while the list showed it neutral grey.
+
+   The colours below are the same tokens the canonical implementation-status
+   block near the top of this file uses, but they are NOT reached by adding a
+   bare `status-<value>` class: `.status-in_progress` and `.status-not_started`
+   are re-declared further down (~13383/13388) with task-priority colours that
+   would win by source order, and `ready_for_review` -- a real value of the
+   `ImplementationStatus` union -- has no `.status-*` rule at all and would have
+   rendered transparent. An `is-<value>` namespace scoped to the two chips that
+   show this status avoids both traps, and covers all eight union members.
+
+   `.explorer-row-chip` is the shared list-row primitive, so its tone classes
+   apply only when a caller passes one; every existing caller is unchanged. */
 .control-detail-status-chip {
   display: inline-flex;
   align-items: center;
-  background: var(--warning-bg);
-  color: var(--warning);
+  background: var(--secondary);
+  color: var(--muted);
   border-radius: 4px;
   padding: 3px 10px;
   font-size: 0.8125rem;
   font-weight: 500;
   width: fit-content;
+}
+
+.control-detail-status-chip.is-not_started,
+.explorer-row-chip.is-not_started {
+  background: var(--secondary);
+  color: var(--muted);
+}
+.control-detail-status-chip.is-in_progress,
+.explorer-row-chip.is-in_progress {
+  background: var(--info-bg);
+  color: var(--info);
+}
+.control-detail-status-chip.is-implemented,
+.explorer-row-chip.is-implemented {
+  background: var(--success-bg);
+  color: var(--success);
+}
+.control-detail-status-chip.is-ready_for_review,
+.explorer-row-chip.is-ready_for_review {
+  background: var(--purple-bg);
+  color: var(--purple);
+}
+.control-detail-status-chip.is-monitored,
+.explorer-row-chip.is-monitored {
+  background: var(--purple-bg);
+  color: var(--purple);
+}
+.control-detail-status-chip.is-at_risk,
+.explorer-row-chip.is-at_risk {
+  background: var(--error-bg);
+  color: var(--destructive);
+}
+/* `not_applicable` and `deferred` are the other two members of the union
+   (types.ts:263-271) and both are real backend values (schemas.py:34,
+   models.py:26). Neither callsite filters the value before it reaches the class
+   name, so without these two rules they match nothing and fall through to the
+   two *different* base rules -- `.control-detail-status-chip` here
+   (`--secondary`/`--muted`) and `.explorer-row-chip` at ~27936
+   (`--surface-lowest`/`--text`). Those are near-identical in light and
+   `#222a3d` vs `#060e20` in dark, which re-creates the exact list/detail
+   divergence this finding closed, for two of eight statuses. Colours follow the
+   app's own mapping at 2431/2435 rather than inventing new ones. */
+.control-detail-status-chip.is-not_applicable,
+.explorer-row-chip.is-not_applicable {
+  background: var(--secondary);
+  color: var(--muted);
+}
+.control-detail-status-chip.is-deferred,
+.explorer-row-chip.is-deferred {
+  background: var(--warning-bg);
+  color: var(--warning);
 }
 
 .control-detail-maturity {
@@ -29818,7 +29946,6 @@ button.risk-list-header-cell:hover {
 .tasks-col-type    { width: 96px; flex-shrink: 0; }
 .tasks-col-status  { width: 100px; flex-shrink: 0; }
 .tasks-col-priority { width: 64px; flex-shrink: 0; }
-.tasks-col-assignee { width: 130px; flex-shrink: 0; }
 .tasks-col-due     { width: 120px; flex-shrink: 0; }
 .tasks-col-team    { width: 160px; flex-shrink: 0; }
 .tasks-col-expand  { width: 28px; flex-shrink: 0; }
@@ -29969,19 +30096,6 @@ button.risk-list-header-cell:hover {
 .task-priority-medium   { color: var(--muted); }
 .task-priority-high     { color: var(--priority-high); }
 .task-priority-critical { color: var(--priority-critical); }
-
-/* ── Assignee ────────────────────────────────────────────── */
-.tasks-assignee {
-  font-size: 13px;
-  color: var(--muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.tasks-assignee-none {
-  color: var(--border);
-}
 
 /* ── Due date ────────────────────────────────────────────── */
 .tasks-due-date {
@@ -31385,9 +31499,13 @@ button.risk-list-header-cell:hover {
   font-weight: 500;
 }
 
-.task-detail-unassigned {
+/* A task with no owning team is a gap somebody has to close, so it reads as a
+   warning rather than as the neutral grey the old per-person "Unassigned" used.
+   Muted was right when the missing thing was optional; it is not. */
+.task-detail-no-team {
   font-size: 13px;
-  color: var(--muted);
+  font-weight: 500;
+  color: var(--warning);
 }
 
 .task-detail-card-note {
@@ -33711,8 +33829,7 @@ button.risk-list-header-cell:hover {
   color: var(--text);
 }
 
-.evidence-task-row-due,
-.evidence-task-row-assignee {
+.evidence-task-row-due {
   flex: none;
   white-space: nowrap;
   font-size: 12px;
@@ -33754,16 +33871,15 @@ button.risk-list-header-cell:hover {
 }
 
 /* Below this width the row cannot hold the trailing metadata on one line, so it
-   drops the parts the title and status already imply. */
-@media (max-width: 1100px) {
-  .evidence-task-row .task-owning-team-badge {
-    display: none;
-  }
-}
+   drops the parts the title and status already imply.
 
+   Ownership is never one of those parts. An earlier revision hid the owning-team
+   badge first, at a width where the row still had room for the rest -- so in that
+   band the only thing a collapsed row said about ownership was the one thing the
+   product no longer means by it. A narrow viewport may drop a date; it may not
+   answer "who has this" with a field that is on its way out. */
 @media (max-width: 860px) {
-  .evidence-task-row-due,
-  .evidence-task-row-assignee {
+  .evidence-task-row-due {
     display: none;
   }
 }
@@ -34471,6 +34587,22 @@ button.risk-list-header-cell:hover {
 .library-mode-header,
 .framework-scoping-header {
   margin: 0 0 20px;
+  /* UIP-005: the introduction started flush against the content/sidebar
+     boundary. The inset goes on the header, not on the `p`, so the mode tabs on
+     the right stay aligned with it rather than drifting inward. */
+  padding: 0 4px;
+}
+
+/* Same 4px inset, no margin. The `p` rule below sizes the section headings'
+   supporting copy identically to the page header's, so without this they ran
+   down the same column at two different left edges -- 4px for the header, 0 for
+   each section. `.framework-section-heading` is a flex row with an action on
+   the right (see the group above), so padding insets both ends the way
+   `.library-mode-header` does for its mode tabs. Margin is left alone: this
+   element never had one. `.framework-danger-zone` is deliberately excluded --
+   it is a bordered card with its own 18px padding and is meant to sit inboard. */
+.framework-section-heading {
+  padding: 0 4px;
 }
 
 .library-mode-header h1,
@@ -34487,6 +34619,13 @@ button.risk-list-header-cell:hover {
 .framework-section-heading p,
 .framework-danger-zone p {
   margin: 6px 0 0;
+  /* UIP-005: `--text-secondary` now resolves (see :root) so this finally renders
+     muted instead of inheriting dark `--text`. The explicit size is the other
+     half of the finding -- without it the paragraph fell back to the 16px
+     document default and read larger than the supporting copy on every other
+     list page. */
+  font-size: 13px;
+  line-height: 1.5;
   color: var(--text-secondary);
 }
 
@@ -34501,6 +34640,10 @@ button.risk-list-header-cell:hover {
 }
 
 .library-mode-selector button {
+  /* UIP-003 sibling the QA pass did not measure: these tabs rendered Arial
+     13.33px (the browser default) for the same reason the team buttons did. */
+  font-family: inherit;
+  font-size: 13px;
   padding: 8px 16px;
   border: 0;
   border-radius: 7px;

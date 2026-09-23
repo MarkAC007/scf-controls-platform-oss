@@ -127,6 +127,8 @@ async def create_reconciliation_preview(
         changed_in_scope=result.changed_in_scope,
         orphans=result.orphans,
         framework_confirmation=result.framework_confirmation,
+        framework_impacts=result.framework_impacts,
+        frameworks_retired_outside_scope=result.frameworks_retired_outside_scope,
     )
 
 

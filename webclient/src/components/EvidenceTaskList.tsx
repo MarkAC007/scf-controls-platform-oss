@@ -23,6 +23,11 @@ interface Task {
   completion_notes?: string;
   dependencies?: string[];
   attachments?: any[];
+  /**
+   * Kept so rows written before evidence work became team-owned still type-check
+   * on the way in. Nothing on this list reads it any more: the row shows the
+   * owning team, which is the answer to the question the field used to be asked.
+   */
   assigned_user?: {
     id: string;
     email: string;
@@ -231,11 +236,6 @@ export const EvidenceTaskList: React.FC<EvidenceTaskListProps> = ({
                                 ({daysUntilDue} days)
                               </span>
                             )}
-                          </span>
-                          <span className="evidence-task-row-assignee">
-                            {task.assigned_user
-                              ? task.assigned_user.display_name || task.assigned_user.email
-                              : 'Unassigned'}
                           </span>
                         </button>
 

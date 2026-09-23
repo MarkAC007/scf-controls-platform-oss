@@ -1,15 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { apiClient } from '../data/apiClient';
-import { withContractorSuffix } from './ContractorBadge';
-import { useOrgMemberTypes } from '../hooks/useOrgMemberTypes';
 import TaskOwningTeamField from './TaskOwningTeamField';
 import { useModalDismiss } from '../hooks/useModalDismiss';
-
-interface User {
-  id: string;
-  email: string;
-  display_name: string | null;
-}
 
 interface TaskCreationModalProps {
   evidenceTrackingId: string;
@@ -49,23 +41,15 @@ export const TaskCreationModal: React.FC<TaskCreationModalProps> = ({
   const [description, setDescription] = useState('');
   const [priority, setPriority] = useState('medium');
   const [dueDate, setDueDate] = useState('');
-  const [assignedUserId, setAssignedUserId] = useState('');
   // Null, not '': a new task inherits its evidence item's accountable team
   // unless the operator deliberately splits it off (#822 §6). Creating tasks
   // that all override onto whatever the picker happened to default to is the
   // failure this default exists to avoid.
   const [owningTeamId, setOwningTeamId] = useState<string | null>(null);
-  const [members, setMembers] = useState<User[]>([]);
 
-  // The assignee picker names a person, so it says when that person is an
-  // external contractor (#822 phase 2). A suffix rather than the badge
-  // component because an <option> holds only text. Everyone stays assignable:
-  // this describes who somebody is, never whether work may go to them.
-  const { memberTypeOf } = useOrgMemberTypes(organizationId);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    loadOrganizationMembers();
     // Set default due date to 30 days from now
     const defaultDate = new Date();
     defaultDate.setDate(defaultDate.getDate() + 30);
@@ -79,15 +63,6 @@ export const TaskCreationModal: React.FC<TaskCreationModalProps> = ({
       setTitle(`${selectedType.label}: ${evidenceId}`);
     }
   }, [taskType, evidenceId]);
-
-  const loadOrganizationMembers = async () => {
-    try {
-      const data = await apiClient.get(`/organizations/${organizationId}/members`);
-      setMembers(data.map((m: any) => m.user).filter(Boolean));
-    } catch (error) {
-      console.error('Failed to load members:', error);
-    }
-  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -107,7 +82,11 @@ export const TaskCreationModal: React.FC<TaskCreationModalProps> = ({
         priority: priority,
         due_date: dueDate,
         status: 'not_started',
-        assigned_user_id: assignedUserId || null,
+        // No `assigned_user_id`. A task is work on an evidence item and evidence
+        // is owned by a team, so a new one has no individual to name; the create
+        // schema has dropped the field entirely. The owning team below -- or
+        // null, meaning inherit the evidence item's accountable team -- is the
+        // whole answer to who has this.
         owning_team_id: owningTeamId,
         dependencies: [],
         attachments: []
@@ -213,26 +192,6 @@ export const TaskCreationModal: React.FC<TaskCreationModalProps> = ({
                 className="task-modal-input"
               />
             </div>
-          </div>
-
-          {/* Assign To */}
-          <div className="task-modal-form-group">
-            <label className="task-modal-label">Assign To</label>
-            <select
-              value={assignedUserId}
-              onChange={(e) => setAssignedUserId(e.target.value)}
-              className="task-modal-select"
-            >
-              <option value="">Unassigned</option>
-              {members.map((member) => (
-                <option key={member.id} value={member.id}>
-                  {withContractorSuffix(
-                    member.display_name || member.email,
-                    memberTypeOf(member.id)
-                  )}
-                </option>
-              ))}
-            </select>
           </div>
 
           {/* Owning team — inherit from the evidence item, or override it */}

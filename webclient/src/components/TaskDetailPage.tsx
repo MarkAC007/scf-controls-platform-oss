@@ -357,25 +357,30 @@ export default function TaskDetailPage({
           {/* ASSIGNMENT card */}
           <div className="task-detail-page-card">
             <div className="task-detail-page-card-label">ASSIGNMENT</div>
-            {task.assigned_user ? (
+            {/* The team is the card's subject, not a footnote under a person.
+                An earlier revision led with the individual and said "Unassigned"
+                when there was none — which read as "nobody has this" on tasks a
+                team plainly owned, and put the field the product is retiring
+                above the one that answers the question. */}
+            {task.owner ? (
               <div className="task-detail-assignee">
-                <div className="task-detail-assignee-avatar" aria-hidden="true">
-                  {task.assigned_user.display_name.charAt(0).toUpperCase()}
-                </div>
-                <span className="task-detail-assignee-name">
-                  {task.assigned_user.display_name || task.assigned_user.email}
-                </span>
+                <span className="task-detail-assignee-name">{task.owner}</span>
               </div>
             ) : (
-              <span className="task-detail-unassigned">Unassigned</span>
-            )}
-            {task.owner && (
-              <p className="task-detail-card-note">
-                Owning team — <span className="task-detail-card-note-em">{task.owner}</span>
-              </p>
+              <span className="task-detail-no-team">No owning team</span>
             )}
             {!task.owning_team_id && (
               <p className="task-detail-card-note">Inherits from evidence item</p>
+            )}
+            {/* Shown only when a pre-cutover row still carries one, and labelled
+                so it is never mistaken for who the work belongs to now. */}
+            {task.assigned_user && (
+              <p className="task-detail-card-note">
+                Legacy assignee —{' '}
+                <span className="task-detail-card-note-em">
+                  {task.assigned_user.display_name || task.assigned_user.email}
+                </span>
+              </p>
             )}
           </div>
 

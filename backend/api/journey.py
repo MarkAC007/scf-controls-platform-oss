@@ -21,7 +21,7 @@ from datetime import date, datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Body, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,6 +30,7 @@ from sqlalchemy.orm import selectinload
 from auth import OrgMembership, require_org_role
 from database import get_db
 from models import (
+    AuditLog,
     ConsultantClientRelationship,
     ConsultantProfile,
     JourneyStage,
@@ -38,10 +39,31 @@ from models import (
     User,
 )
 from services import journey as journey_service
+from services.audit_service import detect_action_source, get_request_id, log_entity_changes
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["journey"])
+
+# What an attestation writes on the stage it passes, and therefore what the
+# audit trail records field by field.
+JOURNEY_STAGE_TRACKED_FIELDS = (
+    'state', 'attested_by_user_id', 'attested_at', 'attestation_note', 'target_date',
+)
+
+# What the attestation cascades onto the next stone when it opens.
+JOURNEY_UNLOCK_TRACKED_FIELDS = ('state', 'started_at')
+
+#: `audit_log.scf_id` is sized for an SCF control id. A stage key is a template
+#: author's free text and may be longer, so it is carried as a readable label
+#: only when it fits whole — half a key names nothing, and the stage's real
+#: `entity_id` is the identity either way.
+_MAX_AUDIT_LABEL = AuditLog.scf_id.type.length
+
+
+def _stage_label(key: Optional[str]) -> Optional[str]:
+    """The stage key, if the audit column can hold all of it."""
+    return key if key is not None and len(key) <= _MAX_AUDIT_LABEL else None
 
 
 class StageSpec(BaseModel):
@@ -344,6 +366,7 @@ async def import_journey(
 async def attest_stage(
     org_id: UUID,
     stage_id: UUID,
+    request: Request,
     payload: AttestRequest = Body(...),
     membership: OrgMembership = Depends(require_org_role("editor")),
     db: AsyncSession = Depends(get_db),
@@ -382,6 +405,7 @@ async def attest_stage(
         raise HTTPException(status_code=403, detail="Attestation requires an identified user")
 
     now = datetime.now(timezone.utc)
+    old_values = {f: getattr(stage, f) for f in JOURNEY_STAGE_TRACKED_FIELDS}
     stage.state = (
         JourneyStageState.PASSED_CONDITIONAL.value if payload.conditional
         else JourneyStageState.PASSED.value
@@ -400,9 +424,38 @@ async def attest_stage(
             )
         )
     ).scalar_one_or_none()
+    unlock_old_values = None
     if next_stage is not None and next_stage.state == JourneyStageState.LOCKED.value:
+        unlock_old_values = {f: getattr(next_stage, f) for f in JOURNEY_UNLOCK_TRACKED_FIELDS}
         next_stage.state = JourneyStageState.ACTIVE.value
         next_stage.started_at = now
+
+    # Field-level record, in the same transaction as the change itself. The
+    # request-level baseline row says this endpoint was called and by whom;
+    # these say which stage moved, from what, to what.
+    await log_entity_changes(
+        db=db, organization_id=org_id, entity_type='journey_stage',
+        entity_id=stage.id, action='update', changed_by_user_id=UUID(user_db_id),
+        old_values=old_values,
+        new_values={f: getattr(stage, f) for f in JOURNEY_STAGE_TRACKED_FIELDS},
+        tracked_fields=set(JOURNEY_STAGE_TRACKED_FIELDS),
+        scf_id=_stage_label(stage.key),
+        action_source=detect_action_source(request),
+        request_id=get_request_id(request),
+    )
+    if unlock_old_values is not None:
+        # The unlock changes a different stone. Without its own rows a stage
+        # becomes active with nothing recording why.
+        await log_entity_changes(
+            db=db, organization_id=org_id, entity_type='journey_stage',
+            entity_id=next_stage.id, action='update', changed_by_user_id=UUID(user_db_id),
+            old_values=unlock_old_values,
+            new_values={f: getattr(next_stage, f) for f in JOURNEY_UNLOCK_TRACKED_FIELDS},
+            tracked_fields=set(JOURNEY_UNLOCK_TRACKED_FIELDS),
+            scf_id=_stage_label(next_stage.key),
+            action_source=detect_action_source(request),
+            request_id=get_request_id(request),
+        )
 
     await db.commit()
 

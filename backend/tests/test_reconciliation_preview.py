@@ -61,6 +61,7 @@ from schemas_catalog_upgrade import (  # noqa: E402
     PlannedAction,
     PlannedActionType,
     ResurrectedEntity,
+    SupersededSuggestion,
 )
 from services import reconciliation_service as rs  # noqa: E402
 
@@ -453,6 +454,30 @@ def _preview_world(first_run=False):
             EVIDENCE: EntityDiff(
                 deprecated=[DeprecatedEntity(key="erl-a1", name="Dep evidence")],
             ),
+            CatalogEntityType.FRAMEWORKS: EntityDiff(
+                added=[AddedEntity(key="fw_alpha_2026", name="Alpha 2026")],
+                deprecated=[
+                    # Selected by this org: an edition bump it must decide on.
+                    DeprecatedEntity(
+                        key="fw_alpha",
+                        name="Alpha 2025",
+                        superseded_by="fw_alpha_2026",
+                        superseded_source="workbook_focal_document",
+                        suggestions=[
+                            SupersededSuggestion(
+                                scf_id="fw_alpha_2026", name="Alpha 2026",
+                                score=1.0, signals=["focal_document_id"],
+                            ),
+                            SupersededSuggestion(
+                                scf_id="fw_gamma", name="Gamma",
+                                score=0.62, signals=["id_stem"],
+                            ),
+                        ],
+                    ),
+                    # Never selected by this org: count-only.
+                    DeprecatedEntity(key="fw_gamma_old", name="Gamma Old"),
+                ],
+            ),
         },
     )
     state_rows = [] if first_run else [_org_state(V1)]
@@ -563,6 +588,53 @@ async def test_preview_branch_e_framework_confirmation():
 
 
 @pytest.mark.asyncio
+async def test_preview_branch_f_framework_succession_proposes_an_action():
+    """A framework whose edition bumped gets a decision, not silent removal."""
+    session, _, details = _preview_world()
+    result = await rs.build_preview(session, ORG, detail_loader=_loader(details))
+
+    assert [i.framework_id for i in result.framework_impacts] == ["fw_alpha"]
+    impact = result.framework_impacts[0]
+    assert impact.superseded_by == "fw_alpha_2026"
+    # The publisher's own statement, distinguished from an inference of ours.
+    assert impact.superseded_source == "workbook_focal_document"
+    assert impact.confidence == 1.0
+    assert impact.signals == ["focal_document_id"]
+    assert impact.ambiguous is False
+    # A rival candidate is shown, not silently collapsed into the winner.
+    assert [a.scf_id for a in impact.alternatives] == ["fw_gamma"]
+    assert impact.suggested_action == PlannedActionType.MIGRATE
+
+    # Retired frameworks the org never selected are counted, not listed.
+    assert result.frameworks_retired_outside_scope == 1
+
+    # The action is editable through the same PUT that governs the rest.
+    stored = [
+        PlannedAction.model_validate(a) for a in (result.run.planned_actions or [])
+    ]
+    fw_actions = [
+        a for a in stored if a.entity == CatalogEntityType.FRAMEWORKS
+    ]
+    assert len(fw_actions) == 1
+    assert fw_actions[0].key == "fw_alpha"
+    assert fw_actions[0].successor_scf_id == "fw_alpha_2026"
+
+
+@pytest.mark.asyncio
+async def test_preview_framework_impact_defaults_to_retain_without_a_successor():
+    session, _, details = _preview_world()
+    fw_diff = details[next(iter(details))].entities[CatalogEntityType.FRAMEWORKS]
+    fw_diff.deprecated[0].superseded_by = None
+    fw_diff.deprecated[0].superseded_source = None
+    result = await rs.build_preview(session, ORG, detail_loader=_loader(details))
+    impact = result.framework_impacts[0]
+    assert impact.superseded_by is None
+    # A removal the matcher cannot explain is a decision, not silence.
+    assert impact.suggested_action == PlannedActionType.RETAIN
+    assert impact.alternatives, "the candidates considered stay visible"
+
+
+@pytest.mark.asyncio
 async def test_preview_persists_run():
     session, platform_run, details = _preview_world()
     result = await rs.build_preview(
@@ -580,6 +652,7 @@ async def test_preview_persists_run():
     actions = [PlannedAction.model_validate(a) for a in run.planned_actions]
     assert {(a.entity, a.key) for a in actions} == {
         (CONTROLS, "GOV-C1"), (CONTROLS, "GOV-D1"), (EVIDENCE, "erl-a1"),
+        (CatalogEntityType.FRAMEWORKS, "fw_alpha"),
     }
     counts = run.diff_summary["entities"]["controls"]
     assert counts["added"] == 2 and counts["changed"] == 2 and counts["deprecated"] == 3

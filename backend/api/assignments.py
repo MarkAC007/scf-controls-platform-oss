@@ -15,7 +15,6 @@ from schemas import (
     AssignmentResponse,
     SuccessResponse
 )
-from services.notifications import create_assignment_notification
 from services.audit_service import log_entity_changes, detect_action_source, get_request_id, ASSIGNMENT_TRACKED_FIELDS
 
 router = APIRouter(
@@ -24,152 +23,37 @@ router = APIRouter(
 )
 
 
-@router.post("/api/assignments", response_model=AssignmentResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/api/assignments", status_code=status.HTTP_410_GONE)
 async def create_assignment(
-    request: Request,
     assignment_data: AssignmentCreate,
-    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_auth)
 ):
-    """Assign a user to a control or evidence item."""
-    # Get user's accessible organisation IDs for tenant isolation
-    accessible_org_ids = await get_accessible_org_ids(current_user, db)
+    """Refuse to create a new individual assignment.
 
-    # Verify assignable exists AND belongs to user's accessible organisations
-    # Return 404 (not 403) to avoid leaking existence of entities in other orgs
-    if assignment_data.assignable_type == "control":
-        result = await db.execute(
-            select(ScopedControl)
-            .where(ScopedControl.id == assignment_data.assignable_id)
-            .where(ScopedControl.organization_id.in_(accessible_org_ids))
-        )
-        assignable = result.scalar_one_or_none()
-    elif assignment_data.assignable_type == "evidence":
-        result = await db.execute(
-            select(EvidenceTracking)
-            .where(EvidenceTracking.id == assignment_data.assignable_id)
-            .where(EvidenceTracking.organization_id.in_(accessible_org_ids))
-        )
-        assignable = result.scalar_one_or_none()
-    elif assignment_data.assignable_type == "task":
-        # Tasks inherit org access from their parent EvidenceTracking
-        result = await db.execute(
-            select(EvidenceCollectionTask)
-            .join(EvidenceTracking, EvidenceCollectionTask.evidence_tracking_id == EvidenceTracking.id)
-            .where(EvidenceCollectionTask.id == assignment_data.assignable_id)
-            .where(EvidenceTracking.organization_id.in_(accessible_org_ids))
-        )
-        assignable = result.scalar_one_or_none()
-    else:
-        raise HTTPException(status_code=400, detail="Invalid assignable_type. Must be 'control', 'evidence', or 'task'")
+    Controls and evidence are assignable to TEAMS ONLY (see the assignment
+    commentary in schemas.py). This endpoint was the last write path that could
+    still name a person as the assignee of a control or an evidence item, so it
+    is gone rather than quietly inert: a caller that posts here and got a 201
+    would believe it had assigned somebody, and nothing downstream would have
+    changed hands.
 
-    if not assignable:
-        raise HTTPException(status_code=404, detail=f"{assignment_data.assignable_type.capitalize()} not found")
+    Deliberately 410 and not 422. The body is not wrong; the capability has been
+    withdrawn. Any integration still on this path surfaces loudly and once.
 
-    # The assignee must belong to the assignable's OWN organisation (#781).
-    # Verifying only that the user exists let an editor assign another tenant's
-    # account to their control or evidence item; that account would then see the
-    # item in /api/users/me/assignments.
-    if assignment_data.assignable_type == 'task':
-        target_org_result = await db.execute(
-            select(EvidenceTracking.organization_id).where(
-                EvidenceTracking.id == assignable.evidence_tracking_id
-            )
-        )
-        target_org_id = target_org_result.scalar_one_or_none()
-    else:
-        target_org_id = getattr(assignable, 'organization_id', None)
-
-    if target_org_id is None:
-        raise HTTPException(status_code=404, detail=f"{assignment_data.assignable_type.capitalize()} not found")
-
-    await assert_user_in_org(assignment_data.user_id, target_org_id, db)
-
-    # Load the user for the response. This runs AFTER the membership check and
-    # raises the identical 404, deliberately: a distinct "User not found" ahead
-    # of it would let any authenticated user distinguish "this UUID is a platform
-    # account in some other tenant" from "this UUID does not exist" — an account
-    # oracle assembled out of two individually reasonable checks (#781).
-    result = await db.execute(select(DBUser).where(DBUser.id == assignment_data.user_id))
-    user = result.scalar_one_or_none()
-    if not user:
-        raise HTTPException(
-            status_code=404, detail="Assigned user not found in this organisation"
-        )
-
-    # Check if assignment already exists
-    result = await db.execute(
-        select(Assignment).where(
-            and_(
-                Assignment.assignable_type == assignment_data.assignable_type,
-                Assignment.assignable_id == assignment_data.assignable_id,
-                Assignment.user_id == assignment_data.user_id
-            )
+    GET and DELETE below are untouched on purpose. Rows written before the
+    cutover stay readable and, crucially, removable -- they are tier 1 of the
+    owner-resolution chain, so clearing one is the only way to stop work routing
+    to a named individual who may have left.
+    """
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail=(
+            "Individual assignment has been withdrawn. Controls and evidence are "
+            "assigned to teams: use POST /api/organizations/{organization_id}/team-assignments. "
+            "Existing assignments remain readable at GET /api/assignments and removable at "
+            "DELETE /api/assignments/{assignment_id}."
         )
     )
-    existing = result.scalar_one_or_none()
-    if existing:
-        raise HTTPException(status_code=400, detail="User is already assigned to this item")
-
-    # Create assignment
-    assignment = Assignment(
-        assignable_type=assignment_data.assignable_type,
-        assignable_id=assignment_data.assignable_id,
-        user_id=assignment_data.user_id,
-        role=assignment_data.role,
-        assigned_by_user_id=UUID(current_user.db_id) if current_user.db_id else None
-    )
-    db.add(assignment)
-    await db.flush()
-
-    # Org for audit logging is the one already resolved for the membership check
-    # above — deriving it twice from the polymorphic parent invited the two to
-    # disagree.
-    audit_org_id = target_org_id
-
-    if audit_org_id is not None:
-        new_values = {f: getattr(assignment, f) for f in ASSIGNMENT_TRACKED_FIELDS if hasattr(assignment, f)}
-        await log_entity_changes(
-            db=db,
-            organization_id=audit_org_id,
-            entity_type='assignment',
-            entity_id=assignment.id,
-            action='create',
-            changed_by_user_id=UUID(current_user.db_id) if current_user.db_id else None,
-            old_values={},
-            new_values=new_values,
-            tracked_fields=ASSIGNMENT_TRACKED_FIELDS,
-            action_source=detect_action_source(request),
-            request_id=get_request_id(request),
-        )
-
-    await db.commit()
-    await db.refresh(assignment)
-
-    # Create notification (includes email if enabled)
-    await create_assignment_notification(
-        db=db,
-        user_id=assignment_data.user_id,
-        assignable_type=assignment_data.assignable_type,
-        assignable_id=assignment_data.assignable_id,
-        assigned_by_user_id=UUID(current_user.db_id) if current_user.db_id else None
-    )
-
-    # Return with user data
-    return {
-        "id": assignment.id,
-        "assignable_type": assignment.assignable_type,
-        "assignable_id": assignment.assignable_id,
-        "user_id": assignment.user_id,
-        "role": assignment.role,
-        "assigned_at": assignment.assigned_at,
-        "assigned_by_user_id": assignment.assigned_by_user_id,
-        "user": {
-            "id": user.id,
-            "email": user.email,
-            "display_name": user.display_name
-        }
-    }
 
 
 async def _verify_assignment_access(

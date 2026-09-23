@@ -411,6 +411,56 @@ class TestM6EngagementVersion:
 
 
 # ---------------------------------------------------------------------------
+# fwreg001 — per-version framework registry
+# ---------------------------------------------------------------------------
+
+FRAMEWORK_REGISTRY_MIGRATION = "20260922_210000_catalog_framework_registries.py"
+
+
+class TestFrameworkRegistryTable:
+    """The table that makes framework succession a declared fact.
+
+    The live side of an upgrade diff reads focal-document identifiers from this
+    row. Before it existed the only source was a JSON file on a mounted volume
+    that no apply path writes, so the declared succession tier could never fire
+    and the framework_churn gate blocked every real upgrade.
+    """
+
+    def test_revision_extends_the_org_journey_head(self):
+        module = _load_migration(FRAMEWORK_REGISTRY_MIGRATION)
+        assert module.revision == "fwreg001"
+        assert module.down_revision == "orgjourney1"
+
+    def test_creates_the_table_with_its_columns(self):
+        module = _load_migration(FRAMEWORK_REGISTRY_MIGRATION)
+        recorder = _run(module, "upgrade")
+        assert set(recorder.tables_created["catalog_framework_registries"]) == {
+            "catalog_version", "registry", "source", "created_at", "updated_at",
+        }
+
+    def test_source_check_names_the_three_writers(self):
+        module = _load_migration(FRAMEWORK_REGISTRY_MIGRATION)
+        assert set(module.SOURCES) == {"seed", "apply", "backfill"}
+        source = (MIGRATIONS_DIR / FRAMEWORK_REGISTRY_MIGRATION).read_text()
+        assert "ck_catalog_framework_registries_source" in source
+
+    def test_downgrade_drops_the_table(self):
+        module = _load_migration(FRAMEWORK_REGISTRY_MIGRATION)
+        up = _run(module, "upgrade")
+        down = _run(module, "downgrade")
+        assert set(up.tables_created) == set(down.tables_dropped)
+        assert up.columns_added == down.columns_dropped == set()
+
+    def test_orm_model_matches_the_table(self):
+        import catalog_models
+
+        model = catalog_models.CatalogFrameworkRegistry
+        assert model.__tablename__ == "catalog_framework_registries"
+        for column in ("catalog_version", "registry", "source", "created_at", "updated_at"):
+            assert hasattr(model, column), f"CatalogFrameworkRegistry.{column} missing"
+
+
+# ---------------------------------------------------------------------------
 # Up/down round-trip symmetry (all six)
 # ---------------------------------------------------------------------------
 

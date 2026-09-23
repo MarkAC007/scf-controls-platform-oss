@@ -1,15 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { apiClient } from '../data/apiClient';
-import { withContractorSuffix } from './ContractorBadge';
-import { useOrgMemberTypes } from '../hooks/useOrgMemberTypes';
 import TaskOwningTeamField from './TaskOwningTeamField';
 import { useModalDismiss } from '../hooks/useModalDismiss';
-
-interface User {
-  id: string;
-  email: string;
-  display_name: string | null;
-}
 
 interface TaskEditModalProps {
   task: any;
@@ -54,7 +46,6 @@ export const TaskEditModal: React.FC<TaskEditModalProps> = ({
   const [priority, setPriority] = useState(task.priority || 'medium');
   const [status, setStatus] = useState(task.status || 'not_started');
   const [dueDate, setDueDate] = useState(task.due_date || '');
-  const [assignedUserId, setAssignedUserId] = useState(task.assigned_user_id || '');
   // Tri-state, and the empty string is NOT one of its values: null means
   // inherit from the evidence item and a team id means override (#822 §6).
   // Normalising an absent key to null rather than to '' matters — a server
@@ -63,27 +54,8 @@ export const TaskEditModal: React.FC<TaskEditModalProps> = ({
   const [owningTeamId, setOwningTeamId] = useState<string | null>(
     task.owning_team_id ?? null
   );
-  const [members, setMembers] = useState<User[]>([]);
 
-  // The assignee picker names a person, so it says when that person is an
-  // external contractor (#822 phase 2). A suffix rather than the badge
-  // component because an <option> holds only text. Everyone stays assignable:
-  // this describes who somebody is, never whether work may go to them.
-  const { memberTypeOf } = useOrgMemberTypes(organizationId);
   const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    loadOrganizationMembers();
-  }, []);
-
-  const loadOrganizationMembers = async () => {
-    try {
-      const data = await apiClient.get(`/organizations/${organizationId}/members`);
-      setMembers(data.map((m: any) => m.user).filter(Boolean));
-    } catch (error) {
-      console.error('Failed to load members:', error);
-    }
-  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -102,7 +74,13 @@ export const TaskEditModal: React.FC<TaskEditModalProps> = ({
         priority: priority,
         status: status,
         due_date: dueDate,
-        assigned_user_id: assignedUserId || null,
+        // `assigned_user_id` is deliberately NOT sent, and its absence is the
+        // point. This modal used to re-send the stored value on every save; now
+        // that the API refuses a non-null assignee, re-sending one would 422 an
+        // edit to an unrelated field on any task carrying a pre-cutover
+        // assignee. Omitting the key leaves that value untouched, which is what
+        // a title edit should do to it. Clearing one is a deliberate act with
+        // its own path, not a side effect of saving this form.
         // Always sent, including as null. Null is a value here, not an
         // omission: returning an overriding task to inheriting is a thing a
         // user must be able to do, so the field cannot be one the client only
@@ -213,26 +191,6 @@ export const TaskEditModal: React.FC<TaskEditModalProps> = ({
                 className="task-modal-input"
               />
             </div>
-          </div>
-
-          {/* Assign To */}
-          <div className="task-modal-form-group">
-            <label className="task-modal-label">Assign To</label>
-            <select
-              value={assignedUserId}
-              onChange={(e) => setAssignedUserId(e.target.value)}
-              className="task-modal-select"
-            >
-              <option value="">Unassigned</option>
-              {members.map((member) => (
-                <option key={member.id} value={member.id}>
-                  {withContractorSuffix(
-                    member.display_name || member.email,
-                    memberTypeOf(member.id)
-                  )}
-                </option>
-              ))}
-            </select>
           </div>
 
           {/* Owning team — inherit from the evidence item, or override it */}

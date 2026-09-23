@@ -36,13 +36,10 @@ vi.mock('../../maturity', () => ({
 vi.mock('../WindowReviewPanel', () => ({
   WindowReviewPanel: () => <div data-testid="window-review-panel" />,
 }))
-// Rendered with its real label so an assertion on the words "Collaborators"
-// fails if the section is reinstated under a different testid.
-vi.mock('../../AssignmentPicker', () => ({
-  AssignmentPicker: ({ label }: { label?: string }) => (
-    <div data-testid="assignment-picker">{label ?? 'Assigned To'}</div>
-  ),
-}))
+// The per-user picker this page once mounted no longer exists to mock: it was
+// withdrawn with the rest of individual assignment. The assertions below still
+// hold, and now hold more strongly -- the section cannot be reinstated here
+// under any testid, because there is no component left to reinstate.
 vi.mock('../../OwningTeams', () => ({
   default: () => <div data-testid="owning-teams">Owning teams</div>,
 }))

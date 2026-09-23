@@ -154,19 +154,15 @@ def _download_json(object_key: str) -> dict:
 
 
 async def _resolve_from_version(session) -> Optional[str]:
-    """Ledger version, else max stamped row version (pre-first-upgrade bootstrap)."""
-    from sqlalchemy import func as sa_func
+    """Ledger version, else max stamped row version (pre-first-upgrade bootstrap).
 
-    from catalog_models import SCFCatalogControl
-    from services.catalog_apply import get_current_catalog_version
+    Delegates to ``catalog_diff.resolve_live_catalog_version`` so the version a
+    run is staged FROM is by construction the same one whose framework registry
+    row the diff's live side reads.
+    """
+    from services.catalog_diff import resolve_live_catalog_version
 
-    version = await get_current_catalog_version(session)
-    if version:
-        return version
-    result = await session.execute(
-        select(sa_func.max(SCFCatalogControl.catalog_version))
-    )
-    return result.scalar()
+    return await resolve_live_catalog_version(session)
 
 
 async def _run_upgrade_stage(run_id: str, force: bool) -> dict:
@@ -227,6 +223,13 @@ async def _run_upgrade_stage(run_id: str, force: bool) -> dict:
             )
             run.diff_detail_object_key = detail_key
             run.diff_summary = staged.diff_summary.model_dump(mode="json")
+            # Seed the workbook-declared renumbering so apply can migrate
+            # scoped controls without an admin hand-pairing every successor.
+            # Only ever seeds an empty slot: an admin PUT is never clobbered.
+            if staged.suggested_pairings and not run.superseded_pairings:
+                run.superseded_pairings = [
+                    p.model_dump() for p in staged.suggested_pairings
+                ]
             run.status = "staged"
             if staged.forced:
                 # Forced-and-recorded (plan §4.2.2): surface it in the report.

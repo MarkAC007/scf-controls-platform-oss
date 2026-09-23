@@ -53,6 +53,7 @@ if str(TESTS_DIR) not in sys.path:
 from catalog_models import (  # noqa: E402
     CapabilityTheme,
     CapabilityThemeMapping,
+    CatalogFrameworkRegistry,
     SCFCatalogAssessmentObjective,
     SCFCatalogControl,
     SCFCatalogDomain,
@@ -94,6 +95,7 @@ EVIDENCE = CatalogEntityType.EVIDENCE
 # ---------------------------------------------------------------------------
 
 TABLES = (
+    CatalogFrameworkRegistry,
     SCFCatalogControl,
     SCFCatalogDomain,
     SCFCatalogEvidence,
@@ -296,6 +298,14 @@ class FakeSession:
             if len(descriptions) == 1 and descriptions[0]["name"] == entity.__name__:
                 self.events.append(("select", entity.__tablename__))
                 return _FakeResult(rows)
+            if len(descriptions) == 1 and descriptions[0]["name"].startswith("max"):
+                # max(catalog_version) — the live-version bootstrap when no run
+                # has ever been applied (catalog_diff.resolve_live_catalog_version).
+                column = str(stmt.selected_columns[0]).split("(")[-1].rstrip(")")
+                attr = column.split(".")[-1]
+                values = [v for v in (getattr(r, attr, None) for r in rows) if v]
+                self.events.append(("select_max", entity.__tablename__))
+                return _FakeResult([max(values)] if values else [])
             # Column select ((scf_id, selected) read, OrganizationMember.user_id).
             keys = [d["name"] for d in descriptions]
             self.events.append(("select_cols", entity.__tablename__))

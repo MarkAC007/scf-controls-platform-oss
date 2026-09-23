@@ -282,18 +282,31 @@ class TestEveryOwnershipChangeIsAudited:
         assert new == "null"
 
     @pytest.mark.asyncio
-    async def test_reassigning_a_person_is_audited(self, task, caller, org_id):
-        assignee = uuid4()
-        update = EvidenceCollectionTaskUpdate(assigned_user_id=assignee)
+    async def test_clearing_a_person_is_audited(self, task, caller, org_id):
+        """Replaces a case that assigned a person and asserted the audit row.
 
-        with patch("api.evidence_tasks.assert_user_in_org", _noop_membership()):
-            db, _ = await _patch(
-                task, update, caller, org_id, results=[org_id, None],
-            )
+        Assigning one is no longer reachable (JQA-001 -- evidence work is owned
+        by a team), so the set of ownership changes this field can still undergo
+        has shrunk from {assign, reassign, clear} to {clear}. The invariant this
+        class exists for is unchanged and is asserted on what remains: releasing
+        a legacy assignee is an ownership event, and an ownership event that goes
+        unrecorded leaves "who owned this in March?" unanswerable either way.
+
+        No membership patch is needed any more. The handler that this case used
+        to reach through ``assert_user_in_org`` performs no user lookup at all
+        now, which is itself asserted in ``test_evidence_assignment.py``.
+        """
+        departed = uuid4()
+        task.assigned_user_id = departed
+        update = EvidenceCollectionTaskUpdate(assigned_user_id=None)
+
+        db, _ = await _patch(task, update, caller, org_id, results=[None])
 
         audit = _ownership_audit(db)
         assert "assigned_user_id" in audit
-        assert str(assignee) in audit["assigned_user_id"][1]
+        old, new = audit["assigned_user_id"]
+        assert str(departed) in old
+        assert new == "null"
 
     @pytest.mark.asyncio
     async def test_a_patch_that_changes_no_ownership_writes_no_ownership_rows(
@@ -322,13 +335,6 @@ class TestEveryOwnershipChangeIsAudited:
 
         source = inspect.getsource(update_evidence_task)
         assert source.index("log_entity_changes(") < source.index("db.commit()")
-
-
-def _noop_membership():
-    async def _assert(user_id, org_id, db):
-        return None
-
-    return _assert
 
 
 # ---------------------------------------------------------------------------

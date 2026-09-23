@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { getAuditLog } from '../data/apiClient'
 import type { AuditLogEntry } from '../types'
+import { decodeAuditValue, formatAuditDate, isDateField } from '../utils/auditValue'
 
 interface AuditLogPanelProps {
   scfId: string
@@ -36,18 +37,15 @@ function friendlyError(message?: string): string {
   return message
 }
 
-/** Format a raw field value for display */
-function formatValue(field: string, value: string | undefined): string {
-  if (!value || value === 'None') return '\u2014'
-  if (field === 'selected') return value === 'True' ? 'Yes' : 'No'
+/** Format a stored audit value for display */
+function formatValue(field: string, raw: string | undefined): string {
+  const value = decodeAuditValue(raw)
+  if (value === null) return '\u2014'
+  if (field === 'selected') return value.toLowerCase() === 'true' ? 'Yes' : 'No'
   if (field === 'implementation_status') return value.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
   if (field === 'priority') return value.charAt(0).toUpperCase() + value.slice(1)
   if (field === 'maturity_level') return value.toUpperCase()
-  if (field.includes('date') && value !== '\u2014') {
-    try {
-      return new Date(value + 'T00:00:00').toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
-    } catch { return value }
-  }
+  if (isDateField(field)) return formatAuditDate(value)
   return value.length > 60 ? value.substring(0, 57) + '...' : value
 }
 

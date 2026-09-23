@@ -152,6 +152,17 @@ router = APIRouter(tags=["audit_engagements"])
 
 ENGAGEMENT_TRACKED_FIELDS = ['name', 'frameworks', 'status', 'start_date', 'end_date']
 
+# A query's lifecycle lives in these two columns together. Recorded as a pair
+# because a close and a reopen are the same PATCH and only their values differ:
+# status answered->closed with closed_at set, against status closed->open with
+# closed_at cleared.
+QUERY_TRACKED_FIELDS = ['status', 'closed_at']
+QUERY_CREATE_TRACKED_FIELDS = ['scf_id', 'title', 'status']
+
+# An auditor grant is an access-control record; who, on what, and live or not.
+AUDITOR_GRANT_TRACKED_FIELDS = ['user_id', 'status', 'revoked_at']
+AUDITOR_GRANT_CREATE_FIELDS = ['user_id', 'status']
+
 
 class AuditEngagementVersionedResponse(AuditEngagementResponse):
     """Engagement response + the catalog version it was assessed under.
@@ -881,6 +892,7 @@ async def grant_engagement_auditor(
     org_id: UUID,
     engagement_id: UUID,
     payload: EngagementAuditorCreate,
+    request: Request,
     membership: OrgMembership = Depends(require_org_role("admin")),
     db: AsyncSession = Depends(get_db),
 ):
@@ -911,10 +923,16 @@ async def grant_engagement_auditor(
     )
     grant = existing_result.scalar_one_or_none()
     if grant is not None:
+        audit_action = 'update'  # re-granting a revoked auditor reactivates the row
+        audit_fields = AUDITOR_GRANT_TRACKED_FIELDS
+        old_values = {f: getattr(grant, f) for f in audit_fields}
         grant.status = EngagementAuditorStatus.ACTIVE.value
         grant.revoked_at = None
         grant.accepted_at = grant.accepted_at or now
     else:
+        audit_action = 'create'
+        audit_fields = AUDITOR_GRANT_CREATE_FIELDS
+        old_values = {}
         grant = EngagementAuditor(
             engagement_id=engagement_id,
             user_id=payload.user_id,
@@ -923,6 +941,22 @@ async def grant_engagement_auditor(
             accepted_at=now,
         )
         db.add(grant)
+
+    await db.flush()  # the grant's own id, for the audit record to name
+
+    # Letting an outsider see this org's control evidence is an access-control
+    # event. Recorded against the grant itself so the trail says which auditor
+    # and which engagement, not merely that the endpoint was called.
+    if granter_id is not None:
+        await log_entity_changes(
+            db=db, organization_id=org_id, entity_type='engagement_auditor',
+            entity_id=grant.id, action=audit_action, changed_by_user_id=granter_id,
+            old_values=old_values,
+            new_values={f: getattr(grant, f) for f in audit_fields},
+            tracked_fields=set(audit_fields),
+            action_source=detect_action_source(request),
+            request_id=get_request_id(request),
+        )
 
     await db.commit()
     await db.refresh(grant)
@@ -938,6 +972,7 @@ async def revoke_engagement_auditor(
     org_id: UUID,
     engagement_id: UUID,
     auditor_id: UUID,
+    request: Request,
     membership: OrgMembership = Depends(require_org_role("admin")),
     db: AsyncSession = Depends(get_db),
 ):
@@ -957,8 +992,26 @@ async def revoke_engagement_auditor(
     if not grant:
         raise HTTPException(status_code=404, detail="Auditor grant not found")
 
+    old_values = {f: getattr(grant, f) for f in AUDITOR_GRANT_TRACKED_FIELDS}
     grant.status = EngagementAuditorStatus.REVOKED.value
     grant.revoked_at = datetime.utcnow()
+
+    revoking_user = membership.user
+    revoker_id = UUID(revoking_user.db_id) if revoking_user and revoking_user.db_id else None
+    if revoker_id is not None:
+        # 'update', not 'delete': the grant survives as a revoked record, and a
+        # delete row renders as a bare "deleted" with none of the before/after
+        # that makes a withdrawal of access identifiable.
+        await log_entity_changes(
+            db=db, organization_id=org_id, entity_type='engagement_auditor',
+            entity_id=grant.id, action='update', changed_by_user_id=revoker_id,
+            old_values=old_values,
+            new_values={f: getattr(grant, f) for f in AUDITOR_GRANT_TRACKED_FIELDS},
+            tracked_fields=set(AUDITOR_GRANT_TRACKED_FIELDS),
+            action_source=detect_action_source(request),
+            request_id=get_request_id(request),
+        )
+
     await db.commit()
     logger.info("Auditor revoked: engagement=%s grant=%s", engagement_id, auditor_id)
 
@@ -1093,6 +1146,7 @@ async def create_engagement_query(
     org_id: UUID,
     engagement_id: UUID,
     payload: EngagementQueryCreate,
+    request: Request,
     access: EngagementAccess = Depends(require_engagement_read()),
     db: AsyncSession = Depends(get_db),
 ):
@@ -1106,6 +1160,21 @@ async def create_engagement_query(
         status=EngagementQueryStatus.OPEN.value,
     )
     db.add(query)
+    await db.flush()  # the query's id, before the audit record names it
+
+    raised_by = _access_user_id(access)
+    if raised_by is not None:
+        await log_entity_changes(
+            db=db, organization_id=org_id, entity_type='engagement_query',
+            entity_id=query.id, action='create', changed_by_user_id=raised_by,
+            old_values={},
+            new_values={f: getattr(query, f) for f in QUERY_CREATE_TRACKED_FIELDS},
+            tracked_fields=set(QUERY_CREATE_TRACKED_FIELDS),
+            scf_id=query.scf_id,
+            action_source=detect_action_source(request),
+            request_id=get_request_id(request),
+        )
+
     await db.commit()
     await db.refresh(query)
     logger.info("Query raised: engagement=%s scf=%s by=%s", engagement_id, payload.scf_id, _access_user_id(access))
@@ -1170,6 +1239,7 @@ async def respond_to_engagement_query(
     engagement_id: UUID,
     query_id: UUID,
     payload: EngagementQueryResponseCreate,
+    request: Request,
     access: EngagementAccess = Depends(require_engagement_read()),
     db: AsyncSession = Depends(get_db),
 ):
@@ -1189,7 +1259,19 @@ async def respond_to_engagement_query(
 
     new_status = status_after_response(query.status)
     if new_status != query.status:
+        old_status = query.status
         query.status = new_status
+        # A response advances the lifecycle silently; without this the only
+        # trace of open -> answered is that the endpoint was called.
+        await log_entity_changes(
+            db=db, organization_id=org_id, entity_type='engagement_query',
+            entity_id=query.id, action='update', changed_by_user_id=user_id,
+            old_values={'status': old_status}, new_values={'status': new_status},
+            tracked_fields={'status'},
+            scf_id=query.scf_id,
+            action_source=detect_action_source(request),
+            request_id=get_request_id(request),
+        )
 
     await db.commit()
     await db.refresh(query)
@@ -1207,6 +1289,7 @@ async def update_engagement_query_status(
     engagement_id: UUID,
     query_id: UUID,
     payload: EngagementQueryStatusUpdate,
+    request: Request,
     access: EngagementAccess = Depends(require_engagement_read()),
     db: AsyncSession = Depends(get_db),
 ):
@@ -1221,8 +1304,25 @@ async def update_engagement_query_status(
             detail=f"Cannot move query from '{query.status}' to '{payload.status}'.",
         )
 
+    old_values = {f: getattr(query, f) for f in QUERY_TRACKED_FIELDS}
     query.status = payload.status
     query.closed_at = datetime.utcnow() if payload.status == EngagementQueryStatus.CLOSED.value else None
+
+    # Close and reopen arrive on the same route; the recorded values are what
+    # tell a reader which one happened.
+    actor_id = _access_user_id(access)
+    if actor_id is not None:
+        await log_entity_changes(
+            db=db, organization_id=org_id, entity_type='engagement_query',
+            entity_id=query.id, action='update', changed_by_user_id=actor_id,
+            old_values=old_values,
+            new_values={f: getattr(query, f) for f in QUERY_TRACKED_FIELDS},
+            tracked_fields=set(QUERY_TRACKED_FIELDS),
+            scf_id=query.scf_id,
+            action_source=detect_action_source(request),
+            request_id=get_request_id(request),
+        )
+
     await db.commit()
     await db.refresh(query)
 

@@ -46,6 +46,7 @@ if str(BACKEND_DIR) not in sys.path:
 from catalog_models import (  # noqa: E402
     CapabilityTheme,
     CapabilityThemeMapping,
+    CatalogFrameworkRegistry,
     SCFCatalogAssessmentObjective,
     SCFCatalogControl,
     SCFCatalogDomain,
@@ -71,6 +72,7 @@ from services.catalog_diff import CONTROL_COMPARED_FIELDS  # noqa: E402
 # ---------------------------------------------------------------------------
 
 TABLES = (
+    CatalogFrameworkRegistry,
     SCFCatalogControl,
     SCFCatalogDomain,
     SCFCatalogEvidence,
@@ -196,7 +198,6 @@ class FakeSession:
                     self.tables[model] = []
             return _FakeResult([])
         if isinstance(stmt, Select):
-            await self.flush()  # autoflush semantics
             entity = stmt.column_descriptions[0]["entity"]
             self.events.append(("select", entity.__tablename__))
             return _FakeResult(self.tables[entity])
@@ -668,6 +669,27 @@ async def test_invalid_pairing_successor_rolls_back_apply():
     assert _state(session) == before
 
 
+@pytest.mark.asyncio
+async def test_pairing_to_a_successor_added_by_the_same_run():
+    """A renumbering release pairs a retiring control to a brand-new one.
+
+    Production runs autoflush=False (database.py), so the successor INSERT is
+    still pending when _apply_pairings validates it with a SELECT. Without an
+    explicit flush the successor is invisible and the whole apply rolls back.
+    FakeSession models the same semantics, so removing that flush fails here.
+    """
+    retired = _control_row("GOV-A3", "Retiring")
+    session = _session(controls=[retired])
+    run = _run(pairings=[{"deprecated_scf_id": "GOV-A3", "superseded_by": "GOV-A9"}])
+    detail = _controls_diff(
+        added=[AddedEntity(key="GOV-A9", name="Successor", data={})],
+        deprecated=[DeprecatedEntity(key="GOV-A3")],
+    )
+    await ca.apply_catalog_run(session, run, detail, themes_json=THEMES_JSON)
+    assert retired.superseded_by == "GOV-A9"
+    assert retired.status == "deprecated"
+
+
 # ---------------------------------------------------------------------------
 # Revert
 # ---------------------------------------------------------------------------
@@ -834,3 +856,111 @@ def test_trust_portal_purge_patterns_match_cache_key_shapes():
     long_key = make_cache_key("x" * 300, prefix="trust_portal")
     assert any(fnmatch.fnmatch(short_key, p) for p in ca.TRUST_PORTAL_CACHE_PATTERNS)
     assert any(fnmatch.fnmatch(long_key, p) for p in ca.TRUST_PORTAL_CACHE_PATTERNS)
+
+
+# ---------------------------------------------------------------------------
+# Framework registry (the record the NEXT upgrade's diff reads)
+# ---------------------------------------------------------------------------
+
+REGISTRY = {
+    "nist_800_53_r5": {
+        "name": "NIST 800-53 rev5",
+        "focal_document_id": "usa-federal-nist-800-53-r5",
+        "geography": "USA",
+    },
+    "iso_27002_2022": {
+        "name": "ISO 27002:2022",
+        "focal_document_id": "international-iso-27002-2022",
+        "geography": "International",
+    },
+}
+
+
+def _registry_rows(session):
+    return session.tables[CatalogFrameworkRegistry]
+
+
+@pytest.mark.asyncio
+async def test_apply_upserts_framework_registry_for_to_version():
+    """The row lands against to_version, sourced 'apply', and re-apply updates it.
+
+    Without this row the live side of the NEXT upgrade's diff has no
+    focal-document identifiers, the declared succession tier cannot fire and the
+    framework_churn gate blocks the upgrade.
+    """
+    session = FakeSession({SCFCatalogControl: [_control_row("GOV-A1", "Governance")]})
+    detail = _detail(
+        {CatalogEntityType.CONTROLS: EntityDiff()},
+    )
+    detail.framework_registry = copy.deepcopy(REGISTRY)
+
+    report = await ca.apply_catalog_run(
+        session, _run(), detail, themes_json=THEMES_JSON
+    )
+
+    rows = _registry_rows(session)
+    assert len(rows) == 1
+    assert rows[0].catalog_version == TO_V
+    assert rows[0].source == "apply"
+    assert rows[0].registry == REGISTRY
+    assert rows[0].created_at is not None and rows[0].updated_at is not None
+    assert report.registry_rows_upserted == 1
+    assert report.as_dict()["registry_rows_upserted"] == 1
+
+    # Re-apply the same staged diff: same single row, updated in place.
+    first_created = rows[0].created_at
+    await ca.apply_catalog_run(session, _run(), detail, themes_json=THEMES_JSON)
+    rows = _registry_rows(session)
+    assert len(rows) == 1
+    assert rows[0].created_at == first_created
+    assert rows[0].source == "apply"
+
+
+@pytest.mark.asyncio
+async def test_apply_without_a_workbook_registry_writes_no_row():
+    """A pre-2026.1 workbook carries no registry; an empty row would lie."""
+    session = FakeSession({SCFCatalogControl: [_control_row("GOV-A1", "Governance")]})
+    report = await ca.apply_catalog_run(
+        session,
+        _run(),
+        _detail({CatalogEntityType.CONTROLS: EntityDiff()}),
+        themes_json=THEMES_JSON,
+    )
+    assert _registry_rows(session) == []
+    assert report.registry_rows_upserted == 0
+
+
+@pytest.mark.asyncio
+async def test_revert_leaves_framework_registry_untouched():
+    """Rows are keyed by version, so a revert simply stops pointing at this one."""
+    existing = CatalogFrameworkRegistry(
+        catalog_version=TO_V,
+        registry=copy.deepcopy(REGISTRY),
+        source="apply",
+        created_at=T0,
+        updated_at=T0,
+    )
+    session = FakeSession(
+        {
+            SCFCatalogControl: [_control_row("GOV-A1", "Governance", catalog_version=TO_V)],
+            CatalogFrameworkRegistry: [existing],
+            CatalogImportRun: [],
+        }
+    )
+    run = _run(status="applied", completed_at=T0 + timedelta(hours=1))
+    session.tables[CatalogImportRun] = [run]
+
+    await ca.revert_catalog_run(
+        session,
+        run,
+        _detail({CatalogEntityType.CONTROLS: EntityDiff()}),
+        themes_json=THEMES_JSON,
+    )
+
+    rows = _registry_rows(session)
+    assert len(rows) == 1
+    assert rows[0] is existing
+    assert rows[0].registry == REGISTRY
+    assert rows[0].source == "apply"
+    assert rows[0].updated_at == T0
+    assert "catalog_framework_registries" not in session.deleted_tables

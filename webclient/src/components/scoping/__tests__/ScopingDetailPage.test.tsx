@@ -71,12 +71,6 @@ vi.mock('../../AuditLogPanel', () => ({
   ),
 }))
 
-vi.mock('../../AssignmentPicker', () => ({
-  AssignmentPicker: ({ assignableType, assignableId }: { assignableType: string; assignableId: string }) => (
-    <div data-testid="assignment-picker" data-type={assignableType} data-id={assignableId} />
-  ),
-}))
-
 vi.mock('../../OwningTeams', () => ({
   default: ({ assignableType, assignableId }: { assignableType: string; assignableId: string }) => (
     <div data-testid="owning-teams" data-type={assignableType} data-id={assignableId} />
@@ -617,12 +611,23 @@ describe('ScopingDetailPage', () => {
   // ── Tab: ASSIGNMENTS ─────────────────────────────────────────────────────────
 
   describe('Tab: ASSIGNMENTS', () => {
-    it('renders AssignmentPicker on Assignments tab when scopingEntry has id', () => {
+    it('offers team assignment and no individual-user path', () => {
+      // This case replaces one that asserted a per-user picker rendered here.
+      // Controls are assignable to teams only, so the tab still has to OFFER
+      // assignment -- it is the screen where a control gets an owner -- and the
+      // affordance it offers has to be the team one. Asserting only that the
+      // user picker is gone would pass just as happily on a tab that had lost
+      // the ability to assign anything at all.
       render(<ScopingDetailPage {...makeProps()} />)
       clickTab('ASSIGNMENTS')
-      const picker = screen.getByTestId('assignment-picker')
-      expect(picker).toHaveAttribute('data-type', 'control')
-      expect(picker).toHaveAttribute('data-id', 'db-id-123')
+
+      expect(screen.getByTestId('owning-teams')).toBeInTheDocument()
+
+      expect(screen.queryByTestId('assignment-picker')).not.toBeInTheDocument()
+      expect(
+        screen.queryByRole('button', { name: /assign user/i })
+      ).not.toBeInTheDocument()
+      expect(screen.queryByText(/^assigned to$/i)).not.toBeInTheDocument()
     })
 
     it('renders OwningTeams on Assignments tab when scopingEntry has id', () => {

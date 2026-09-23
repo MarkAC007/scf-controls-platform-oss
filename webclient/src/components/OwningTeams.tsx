@@ -8,9 +8,11 @@
  * assigned is legal, and is the state every item starts in, so the missing
  * accountable team is a warning badge and never a block.
  *
- * Sits beside the existing per-user pickers rather than replacing them. Those
- * name a person; this names a team. Both are true at once and neither is
- * derived from the other.
+ * This is the only assignment. An earlier revision sat beside a per-user picker
+ * and said both were true at once; they were not, and having two answers is what
+ * let the one nothing read look filled in. Controls and evidence are owned by
+ * teams, people belong to teams, and the individual columns that remain in the
+ * database are history rather than a second way to answer the question.
  *
  * Teams grant no permissions. Naming a team here changes nothing about what
  * its members may do, in this screen or anywhere else: access is decided by

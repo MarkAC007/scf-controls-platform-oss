@@ -207,6 +207,35 @@ Output includes:
 - Users active in last 30 days
 - Organisations created in last 30 days
 
+### Catalogue Maintenance
+
+#### Backfilling the framework registry after upgrading to a build that has it
+
+`catalog_framework_registries` holds, per catalogue version, each framework's
+display name and the publisher's Focal Document Identifier. The catalogue
+upgrade diff reads that row for the LIVE side: without the identifiers it cannot
+tell a renamed framework id from an unrelated addition, so the `framework_churn`
+sanity gate blocks the upgrade.
+
+The seeder writes the row on a fresh install and every catalogue apply writes it
+for the version it applies. An install seeded BEFORE this table existed has no
+row, and the fix is a one-off backfill from the workbook matching the live
+catalogue version:
+
+```bash
+# Copy the matching workbook into the container first
+docker compose cp ~/Downloads/scf-2026.1.xlsx backend:/tmp/scf.xlsx
+
+docker compose exec backend python -m cli.admin backfill-framework-registry \
+    --workbook /tmp/scf.xlsx
+```
+
+The command refuses (exit 1) when the workbook's catalogue version differs from
+the live one, naming both — backfilling the wrong workbook writes identifiers
+that do not describe the live rows. `--allow-version-mismatch` overrides that if
+you know the two registries are equivalent. Catalogue control rows are never
+touched.
+
 ## Safety Features
 
 ### Dry Run Mode

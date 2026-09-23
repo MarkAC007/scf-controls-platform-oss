@@ -131,7 +131,7 @@ export default function AppearanceSettings({ organizationId }: AppearanceSetting
 
   return (
     <div className="appearance-settings settings-card">
-      <h2>Organization Branding</h2>
+      <h2>Organisation Branding</h2>
 
       <section className="appearance-section">
         <h3>Organisation Details</h3>

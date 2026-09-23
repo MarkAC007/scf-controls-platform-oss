@@ -1,21 +1,19 @@
-# v0.40.1
+# v0.41.0
 
 .
 
 ## What's new
 
-- Bundle OIDC into the published frontend image (PR 1059)
+- Give frameworks a first-class succession signal (PR 1067)
 
 ## Fixes and improvements
 
-- Add a guided journey surface for practitioner-led engagements (PR 1058)
-
-## Migrations
-
-- `orgjourney1` — Organisational journey: an ordered path of stages an org walks.
-
-`scripts/upgrade.sh` runs these after its backup. A plain `docker compose up -d` refuses to migrate an existing database until `SCF_MIGRATE_ACK` is set, so read `UPGRADING.md` before upgrading a deployment you cannot restore.
+- Read the Legacy SCF # crosswalk so a renumbering release migrates instead of retiring (PR 1065)
+- Remediate the seven UI polish findings from UIQA-20260922-01 (PR 1063)
+- Remediate nine Journey defects found in v0.40.1 walkthrough (PR 1064)
+- Select the journey template by enumeration, not by path (PR 1062)
+- Refuse a journey template key that names a path (PR 1061)
 
 ## Upgrading
 
-- Run `scripts/upgrade.sh v0.40.1` (read `UPGRADING.md` first).
+- Run `scripts/upgrade.sh v0.41.0` (read `UPGRADING.md` first).

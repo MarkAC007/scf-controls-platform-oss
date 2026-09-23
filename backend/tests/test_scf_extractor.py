@@ -499,3 +499,131 @@ def test_unrecognisable_workbook_raises(tmp_path):
     )
     with pytest.raises(ValueError, match="catalog version"):
         extractor.extract_to_dir(workbook, tmp_path / "out")
+
+
+ERL_ROW = [
+    "1",
+    "E-GOV-01",
+    "Governance",
+    "Security Program Documentation",
+    "The documented security programme.",
+    "GOV-01, GOV-02",
+    "AC.L2-3.1.1",
+]
+
+
+@pytest.mark.parametrize(
+    "title_header,desc_header,era",
+    [
+        ("Documentation Artifact", "Artifact Description", "2026.2"),
+        (
+            "ERL Artifact",
+            "Evidence Request List (ERL) Artifact Description",
+            "2026.3",
+        ),
+    ],
+)
+def test_erl_artifact_columns_read_in_both_eras(
+    tmp_path, title_header, desc_header, era
+):
+    """2026.3 renamed both ERL artifact columns.
+
+    Reading only the 2026.2 spelling silently emptied the title and description
+    of every evidence item in 2026.3 — 422 of 422 — which an apply would then
+    have written over the live catalogue.
+    """
+    import pandas as pd
+
+    sheet = f"Evidence Request List {era}"
+    wb = Workbook()
+    wb.remove(wb.active)
+    headers = [
+        "#",
+        "ERL #",
+        "Area of Focus",
+        title_header,
+        desc_header,
+        "SCF Control Mappings",
+        "Relevant CMMC 2.0 L2 Control",
+    ]
+    _add_sheet(wb, sheet, headers, [ERL_ROW])
+    path = tmp_path / f"erl-{era}.xlsx"
+    wb.save(path)
+
+    evidence = extractor.extract_evidence(pd.ExcelFile(path), sheet)
+
+    item = evidence["E-GOV-01"]
+    assert item["artifact_title"] == "Security Program Documentation"
+    assert item["artifact_description"] == "The documented security programme."
+    assert item["control_mappings"] == ["GOV-01", "GOV-02"]
+
+
+def test_erl_missing_artifact_columns_warns_rather_than_silently_emptying(
+    tmp_path, capsys
+):
+    """A future rename must announce itself; silence is what cost us 2026.3."""
+    import pandas as pd
+
+    sheet = "Evidence Request List 2027.1"
+    wb = Workbook()
+    wb.remove(wb.active)
+    headers = [
+        "#",
+        "ERL #",
+        "Area of Focus",
+        "Some Future Artifact Column",
+        "Some Future Description Column",
+        "SCF Control Mappings",
+        "Relevant CMMC 2.0 L2 Control",
+    ]
+    _add_sheet(wb, sheet, headers, [ERL_ROW])
+    path = tmp_path / "erl-future.xlsx"
+    wb.save(path)
+
+    evidence = extractor.extract_evidence(pd.ExcelFile(path), sheet)
+
+    assert evidence["E-GOV-01"]["artifact_title"] == ""
+    assert evidence["E-GOV-01"]["artifact_description"] == ""
+    out = capsys.readouterr().out
+    assert "no artifact title column" in out
+    assert "no artifact description column" in out
+
+
+# ---------------------------------------------------------------------------
+# Registry-only extraction (cli.admin backfill-framework-registry)
+# ---------------------------------------------------------------------------
+
+
+def test_extract_framework_registry_only_returns_version_and_identifiers(tmp_path):
+    """The backfill path: registry + version, no controls parsed, nothing written."""
+    workbook = build_workbook(tmp_path / "scf.xlsx", version="2026.2")
+
+    version, registry = extractor.extract_framework_registry_only(workbook)
+
+    assert version == "2026.2"
+    assert registry[AICPA_SLUG]["focal_document_id"] == "general-aicpa-tsc-2017"
+    assert registry[AICPA_SLUG]["name"] == AICPA_NAME_NEW
+    assert registry[AICPA_SLUG]["geography"] == "General"
+    # Framework columns the Focal Documents sheet does not list still appear,
+    # with no identifier — the registry covers every id frameworks.json holds.
+    assert GDPR_SLUG in registry
+    assert registry[GDPR_SLUG]["focal_document_id"] is None
+    assert list(tmp_path.iterdir()) == [tmp_path / "scf.xlsx"]
+
+
+def test_framework_columns_for_matches_extract_controls(tmp_path):
+    """One implementation: the cheap header read agrees with the full extraction."""
+    import pandas as pd
+
+    workbook = build_workbook(tmp_path / "scf.xlsx", version="2026.2")
+    xl = pd.ExcelFile(workbook)
+    sheets = extractor.resolve_catalog_sheets(xl)
+    focal_headers = extractor.read_focal_document_headers(
+        xl, sheets["authoritative_sources"]
+    )
+
+    cheap = extractor.framework_columns_for(xl, sheets["controls"], focal_headers)
+    _controls, _mappings, full, _excluded = extractor.extract_controls(
+        xl, sheets["controls"], focal_headers
+    )
+    assert cheap == full

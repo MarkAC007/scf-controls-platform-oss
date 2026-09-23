@@ -360,7 +360,7 @@ export const ScopeByFrameworkModal: React.FC<ScopeByFrameworkModalProps> = ({
                 ) : (
                   <div className="reset-confirm-panel">
                     <p className="reset-warning">
-                      This will remove <strong>all {existingScopedCount} controls</strong> from scope.
+                      This will remove <strong>all {existingScopedCount} {existingScopedCount === 1 ? 'control' : 'controls'}</strong> from scope.
                       Implementation data will be preserved but no controls will be in scope.
                     </p>
                     <div className="reset-confirm-input">

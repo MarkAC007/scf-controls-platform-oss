@@ -9,6 +9,8 @@ Tables seeded:
 - scf_catalog_domains: 33 SCF domain definitions
 - scf_catalog_evidence: Evidence Request List (ERL) entries
 - scf_catalog_assessment_objectives: ~5,736 assessment objectives
+- catalog_framework_registries: per-version framework registry (names + focal
+  document identifiers) — read by the catalogue upgrade diff's live side
 """
 import json
 import os
@@ -20,6 +22,7 @@ from sqlalchemy.dialects.postgresql import insert
 
 from database import AsyncSessionLocal
 from catalog_models import (
+    CatalogFrameworkRegistry,
     SCFCatalogControl,
     SCFCatalogDomain,
     SCFCatalogEvidence,
@@ -84,6 +87,7 @@ async def seed_catalog_if_empty() -> dict:
             "evidence": await seed_evidence_if_empty(session),
             "assessment_objectives": await seed_assessment_objectives_if_empty(session),
             "capability_themes": await seed_capability_themes_if_empty(session),
+            "framework_registry": await seed_framework_registry_if_empty(session),
             "system_catalog": await seed_system_catalog(session),
         }
         return results
@@ -621,6 +625,83 @@ async def seed_capability_themes_if_empty(session: AsyncSession) -> dict:
     return {"status": "seeded", "count": len(theme_code_to_id), "mappings": mapping_count}
 
 
+async def seed_framework_registry_if_empty(session: AsyncSession) -> dict:
+    """
+    Seed the framework registry for this catalog version from framework_registry.json.
+
+    The registry carries each framework's publisher focal-document identifier.
+    ``services/catalog_diff`` reads this row for the LIVE side of an upgrade
+    diff; without it the declared succession tier cannot fire and the
+    framework_churn sanity gate blocks every real upgrade. The JSON file is a
+    frontend cache derived from the same extraction — this row is the record.
+
+    Pre-2026.1 extractions have no registry file, so frameworks.json
+    (``{id: name}``) is accepted as a fallback with no identifiers.
+    """
+    catalog_version = _resolve_catalog_version()
+
+    # Check if this version already has a row
+    count_result = await session.execute(
+        select(func.count())
+        .select_from(CatalogFrameworkRegistry)
+        .where(CatalogFrameworkRegistry.catalog_version == catalog_version)
+    )
+    existing_count = count_result.scalar()
+
+    if existing_count > 0:
+        logger.info(
+            f"Framework registry already seeded for catalog version {catalog_version}"
+        )
+        return {"status": "skipped", "existing": existing_count}
+
+    registry_path = DATA_DIR / "framework_registry.json"
+    names_path = DATA_DIR / "frameworks.json"
+
+    if registry_path.exists():
+        with open(registry_path, "r") as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            logger.error(f"Framework registry JSON is not an object: {registry_path}")
+            return {"status": "error", "message": f"Not a JSON object: {registry_path}"}
+        registry = {
+            fw_id: {
+                "name": (entry or {}).get("name"),
+                "focal_document_id": (entry or {}).get("focal_document_id"),
+                "geography": (entry or {}).get("geography"),
+            }
+            for fw_id, entry in data.items()
+        }
+    elif names_path.exists():
+        with open(names_path, "r") as f:
+            names = json.load(f)
+        if not isinstance(names, dict):
+            logger.error(f"Frameworks JSON is not an object: {names_path}")
+            return {"status": "error", "message": f"Not a JSON object: {names_path}"}
+        registry = {
+            fw_id: {"name": name, "focal_document_id": None, "geography": None}
+            for fw_id, name in names.items()
+        }
+    else:
+        logger.error(f"Framework registry JSON not found: {registry_path}")
+        return {"status": "error", "message": f"File not found: {registry_path}"}
+
+    with_fdi = sum(1 for entry in registry.values() if entry["focal_document_id"])
+    logger.info(
+        f"Seeding framework registry for {catalog_version}: {len(registry)} entries, "
+        f"{with_fdi} carrying a focal-document identifier"
+    )
+
+    session.add(
+        CatalogFrameworkRegistry(
+            catalog_version=catalog_version,
+            registry=registry,
+            source="seed",
+        )
+    )
+    await session.commit()
+    return {"status": "seeded", "count": len(registry), "with_focal_document_id": with_fdi}
+
+
 async def reseed_catalog(force: bool = False) -> dict:
     """
     Reseed catalog tables. If force=True, drops existing data first.
@@ -639,6 +720,7 @@ async def reseed_catalog(force: bool = False) -> dict:
     async with AsyncSessionLocal() as session:
         # Delete existing data (order matters for foreign keys)
         logger.info("Clearing existing catalog data...")
+        await session.execute(CatalogFrameworkRegistry.__table__.delete())
         await session.execute(CapabilityThemeMapping.__table__.delete())
         await session.execute(CapabilityTheme.__table__.delete())
         await session.execute(SCFCatalogAssessmentObjective.__table__.delete())

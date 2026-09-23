@@ -13,19 +13,21 @@ is for, and collapsing the two would make the practitioner decoration.
 """
 import json
 import logging
+import math
 import re
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import false, func, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from catalog_models import SCFCatalogControl, SCFCatalogDomain
 from models import (
     AuditEngagement,
+    ControlTeamAssignment,
     EvidenceFile,
     EvidenceTracking,
     GeneratedDocument,
@@ -183,38 +185,135 @@ async def _in_scope_counts(db: AsyncSession, org_id: UUID) -> Dict[str, int]:
     return {"in_scope": int(total or 0)}
 
 
-def _domain_clause(domains: Optional[List[str]]):
+async def _domain_lookup(db: AsyncSession) -> Dict[str, str]:
+    """Every spelling of a domain the catalogue will answer to, lower-cased.
+
+    Three spellings reach the same domain, because a template author who wrote
+    out a name instead of a code has not made a mistake worth failing a gate
+    over:
+
+    * the code itself, ``GOV``;
+    * the domains sheet's name, ``Cybersecurity & Data Protection Governance``;
+    * the *controls* sheet's name, ``Security, Compliance & Resilience
+      Governance`` — which is what a generated report prints, so it is what
+      gets copied.
+
+    The domains sheet is loaded first and the controls sheet only fills gaps,
+    so a name the domains sheet already claims can never be reassigned by a
+    stray control row. Ordering by prefix keeps the result of a genuinely
+    ambiguous controls-sheet name deterministic rather than dependent on scan
+    order; there is no such name in the shipped catalogue, and if one appears
+    a deterministic answer is far easier to diagnose than a shifting one.
+    """
+    lookup: Dict[str, str] = {}
+    rows = await db.execute(
+        select(SCFCatalogDomain.identifier, SCFCatalogDomain.name)
+    )
+    for identifier, name in rows:
+        if identifier:
+            lookup[identifier.strip().lower()] = identifier
+        if name and name.strip():
+            lookup[name.strip().lower()] = identifier
+
+    prefix = func.split_part(SCFCatalogControl.scf_id, "-", 1)
+    rows = await db.execute(
+        select(SCFCatalogControl.scf_domain, prefix).distinct().order_by(prefix)
+    )
+    for scf_domain, code in rows:
+        if scf_domain and scf_domain.strip() and code:
+            lookup.setdefault(scf_domain.strip().lower(), code)
+    return lookup
+
+
+def _prefix_predicate(column, codes: List[str]):
+    """Controls belonging to any of ``codes``, keyed on the ``scf_id`` prefix.
+
+    The prefix is the SCF's own construction rule and the only total, sound
+    attribution in this schema: every catalogue control is ``XXX-…`` and every
+    prefix names a live domain. The alternative — matching the controls
+    sheet's ``scf_domain`` against the domains sheet's ``name`` — is the bug
+    this replaces. That join carries both of the catalogue's disagreements:
+    the whole of GOV, whose 38 controls are named differently in the two
+    sheets, and ``CHG-08``, one control whose ``scf_domain`` cell says
+    Embedded Technology while every one of its siblings, and its own subject
+    matter, say Change Management. The prefix carries neither.
+
+    **Named consequence, decided rather than stumbled into:** this moves
+    ``CHG-08`` out of Embedded Technology and into Change Management. That is
+    a deliberate behaviour change beyond the GOV fix. The prefix is treated as
+    authoritative because it is provably total — every one of the catalogue's
+    controls is ``XXX-…`` and every prefix names a live domain, asserted in
+    the test suite so it fails loudly if that ever stops being true — while
+    ``scf_domain`` is a display string from a different workbook sheet that
+    already carries both known divergences. A domain renamed upstream cannot
+    break a prefix; it broke the name join outright.
+
+    Shared with the tests on purpose, so what they assert about the catalogue
+    is the predicate the gate actually runs rather than a restatement of it.
+
+    ``istartswith`` with ``autoescape`` rather than string interpolation: an
+    identifier containing ``_`` or ``%`` would otherwise be a wildcard, and a
+    prefix LIKE stays index-usable where ``split_part`` would not.
+    """
+    return or_(*[
+        column.istartswith(f"{code}-", autoescape=True) for code in sorted(codes)
+    ])
+
+
+async def _domain_clause(
+    db: AsyncSession, domains: Optional[List[str]], label: str = "unnamed check"
+):
     """Restrict a scoped-control query to a set of SCF domains, or not at all.
 
-    A practitioner's wave gate reads "GOV, RSK and CPL are done", so the filter
-    speaks in domain codes. The catalog does not: ``scf_catalog_controls``
-    stores the domain's *name*, and the code lives on ``scf_catalog_domains``.
-    Hence two hops. Both spellings are accepted, because a template author who
-    writes "Asset Management" instead of "AST" has not made a mistake worth
-    failing a gate over.
+    A practitioner's wave gate reads "GOV, RSK and CPL are done", so the
+    filter speaks in domain codes. Resolution is one move — token to domain
+    identifier, in any of its three spellings — and attribution is then by
+    ``scf_id`` prefix.
 
     Returns None when no domains were named — an unfiltered check keeps its
-    original org-wide meaning, so existing templates are unaffected.
+    org-wide meaning, so templates written before domain scoping evaluate
+    exactly as they did.
+
+    **A named domain that resolves to nothing returns ``false()``, never
+    None.** None would make this function a no-op and silently widen the check
+    to the entire organisation, so a typo in a template would read as a green
+    gate over data nobody asked about — a false pass, which is worse than any
+    wrong number. Failing closed makes the gate unmeetable instead, and the
+    warning says why; the ``in_scope == 0`` guard in each branch then reports
+    "No controls scoped in …", which is the truth about what was asked for.
+
+    A named domain with zero scoped controls needs no special case: it
+    resolves, contributes its predicate, matches nothing, and invents nothing.
     """
     if not domains:
         return None
     wanted = [d.strip() for d in domains if d and d.strip()]
     if not wanted:
         return None
-    names = (
-        select(SCFCatalogDomain.name)
-        .where(
-            (SCFCatalogDomain.identifier.in_(wanted))
-            | (SCFCatalogDomain.name.in_(wanted))
+
+    lookup = await _domain_lookup(db)
+    codes: List[str] = []
+    unresolved: List[str] = []
+    for token in wanted:
+        code = lookup.get(token.lower())
+        if code is None:
+            unresolved.append(token)
+        elif code not in codes:
+            codes.append(code)
+
+    if unresolved:
+        # Loud on purpose. A domain quietly dropped from a gate is how an
+        # entire slice of the catalogue went missing from both halves of a
+        # fraction without anybody noticing.
+        logger.warning(
+            "Journey check %r names domain(s) this catalogue cannot resolve: "
+            "%s. The check is failed closed rather than widened.",
+            label,
+            ", ".join(sorted(unresolved)),
         )
-        .scalar_subquery()
-    )
-    scf_ids = (
-        select(SCFCatalogControl.scf_id)
-        .where(SCFCatalogControl.scf_domain.in_(names))
-        .scalar_subquery()
-    )
-    return ScopedControl.scf_id.in_(scf_ids)
+    if not codes:
+        return false()
+    return _prefix_predicate(ScopedControl.scf_id, codes)
 
 
 async def _denominator(db: AsyncSession, org_id: UUID, clause, totals: Dict[str, int]) -> int:
@@ -237,6 +336,66 @@ async def _denominator(db: AsyncSession, org_id: UUID, clause, totals: Dict[str,
     return int(got or 0)
 
 
+def _accountable_team_clause():
+    """A control is owned when a team is accountable for it (#1052).
+
+    EXISTS, not a join. One control can carry several team rows — one
+    accountable, the rest consulted — and a join would count that control once
+    per row, letting the numerator exceed the denominator. The semi-join stops
+    at the first match, so one control is one control.
+
+    ``is_accountable`` is the whole test. A consulted team is informed, not
+    responsible: ``services/owner_resolution.py`` keeps consulted teams off its
+    notification tier for that reason, and an ownership gate has to agree with
+    the chain that decides who actually gets paged — otherwise a stage reads
+    green while nobody is answerable for it. ``uq_control_accountable_team``
+    makes at most one row per control satisfy this, so the count is of
+    controls, not of relationships.
+
+    A team's internal staffing — primary, delegate, member — is deliberately
+    not consulted. That is a property of how a team is manned, not of who owns
+    the control, and folding it in would make ownership blink out whenever
+    somebody went on leave.
+
+    The organisation predicate is repeated inside the subquery for the reason
+    ``services.team_assignments`` gives: defence in depth, and it lets the
+    planner use the assignment table's organisation index.
+    """
+    return (
+        select(literal(1))
+        .select_from(ControlTeamAssignment)
+        .where(
+            ControlTeamAssignment.scoped_control_id == ScopedControl.id,
+            ControlTeamAssignment.organization_id == ScopedControl.organization_id,
+            ControlTeamAssignment.is_accountable.is_(True),
+        )
+        .exists()
+    )
+
+
+def _required_count(total: int, need: float) -> int:
+    """The smallest numerator that satisfies this check's own gate.
+
+    Defined in terms of the gate expression ``k / total >= need`` rather than
+    ``ceil(total * need)``, because those two disagree under float rounding —
+    25 controls at 0.28 gives 8 by ceil, but 7/25 already passes. A label that
+    demanded a control the gate does not want would be the same defect this
+    number exists to remove, moved one line across.
+
+    The two corrections run at most once each and make the printed
+    requirement true by construction: whatever ``frac >= need`` decides, this
+    is the count it decided it on.
+    """
+    if total <= 0:
+        return 0
+    k = max(0, min(total, math.ceil(total * need)))
+    while k > 0 and (k - 1) / total >= need:
+        k -= 1
+    while k < total and k / total < need:
+        k += 1
+    return k
+
+
 async def _evaluate_one(
     db: AsyncSession,
     org_id: UUID,
@@ -257,7 +416,7 @@ async def _evaluate_one(
     # A wave gate names its domains; an org-wide check names none. Everything
     # below divides by `in_scope`, which is now the count for whatever slice
     # this check is about.
-    domain_clause = _domain_clause(check.get("domains"))
+    domain_clause = await _domain_clause(db, check.get("domains"), label)
     scope_label = ""
     if domain_clause is not None:
         named = ", ".join(str(d) for d in check.get("domains") or [])
@@ -289,7 +448,12 @@ async def _evaluate_one(
         decided = int(await db.scalar(select(func.count(ScopedControl.id)).where(*conds)) or 0)
         frac = decided / in_scope
         need = float(check.get("min_fraction", 1.0))
-        return result(frac >= need, f"{decided} of {in_scope}{scope_label} ({frac:.0%})")
+        required = _required_count(in_scope, need)
+        short = "" if decided >= required else f", {required - decided} more needed"
+        return result(
+            frac >= need,
+            f"{decided} of {in_scope}{scope_label} ({frac:.1%}) — {required} required{short}",
+        )
 
     if ctype == "controls_with_owner":
         if in_scope == 0:
@@ -297,15 +461,19 @@ async def _evaluate_one(
         conds = [
             ScopedControl.organization_id == org_id,
             ScopedControl.selected.is_(True),
-            ScopedControl.owner.isnot(None),
-            ScopedControl.owner != "",
+            _accountable_team_clause(),
         ]
         if domain_clause is not None:
             conds.append(domain_clause)
         owned = int(await db.scalar(select(func.count(ScopedControl.id)).where(*conds)) or 0)
         frac = owned / in_scope
         need = float(check.get("min_fraction", 1.0))
-        return result(frac >= need, f"{owned} of {in_scope}{scope_label} ({frac:.0%})")
+        required = _required_count(in_scope, need)
+        short = "" if owned >= required else f", {required - owned} more needed"
+        return result(
+            frac >= need,
+            f"{owned} of {in_scope}{scope_label} ({frac:.1%}) — {required} required{short}",
+        )
 
     if ctype == "controls_at_status":
         if in_scope == 0:
@@ -321,7 +489,12 @@ async def _evaluate_one(
         at = int(await db.scalar(select(func.count(ScopedControl.id)).where(*conds)) or 0)
         frac = at / in_scope
         need = float(check.get("min_fraction", 1.0))
-        return result(frac >= need, f"{at} of {in_scope}{scope_label} ({frac:.0%})")
+        required = _required_count(in_scope, need)
+        short = "" if at >= required else f", {required - at} more needed"
+        return result(
+            frac >= need,
+            f"{at} of {in_scope}{scope_label} ({frac:.1%}) — {required} required{short}",
+        )
 
     if ctype == "controls_at_risk_max":
         conds = [

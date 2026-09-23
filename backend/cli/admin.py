@@ -26,6 +26,10 @@ Commands:
     rotate-secret-key   Re-encrypt stored credentials under the primary SCF_SECRET_KEY
     backfill-encrypt    Encrypt legacy plaintext credential values in place
     secrets-status      Show integration credential health (no values)
+    backfill-framework-registry
+                        Populate the framework registry for the live catalog
+                        version from an SCF workbook (installs seeded before
+                        catalog_framework_registries existed)
 
 Examples:
     # Initial setup (run this first on a fresh deployment!)
@@ -51,11 +55,15 @@ Examples:
 
     # Show platform statistics
     python -m cli.admin stats
+
+    # Backfill the framework registry so catalogue upgrades can use declared succession
+    python -m cli.admin backfill-framework-registry --workbook /tmp/scf-2026.1.xlsx
 """
 import asyncio
 import argparse
 import sys
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Optional
 from uuid import UUID
 
@@ -1057,6 +1065,89 @@ async def cmd_secrets_status(args: argparse.Namespace) -> int:
     return 0
 
 
+# =============================================================================
+# FRAMEWORK REGISTRY BACKFILL
+# =============================================================================
+
+# The extractor ships at /app/scripts in the backend image and at <repo>/scripts
+# in a source checkout — same two candidates tasks_catalog.py resolves.
+_EXTRACTOR_DIRS = (
+    "/app/scripts",
+    str(Path(__file__).resolve().parents[2] / "scripts"),
+)
+
+
+def _load_extractor():
+    """Import the SCF workbook extractor from wherever it ships."""
+    try:
+        import extract_scf_data
+    except ImportError:
+        for candidate in _EXTRACTOR_DIRS:
+            if candidate not in sys.path and Path(candidate).is_dir():
+                sys.path.insert(0, candidate)
+        import extract_scf_data
+    return extract_scf_data
+
+
+async def cmd_backfill_framework_registry(args: argparse.Namespace) -> int:
+    """Write the framework registry for the live catalog version from a workbook.
+
+    Installs seeded before catalog_framework_registries existed have correct
+    catalogue rows but no stored focal-document identifiers, so the next
+    upgrade's diff cannot recognise a renamed framework as the same document and
+    the framework_churn sanity gate blocks the upgrade. This reads the registry
+    out of the matching workbook and writes that one row. The catalogue control
+    rows are never touched.
+    """
+    from services.catalog_apply import _upsert_framework_registry, _now
+    from services.catalog_diff import resolve_live_catalog_version
+
+    extractor = _load_extractor()
+
+    try:
+        workbook_version, registry = extractor.extract_framework_registry_only(
+            args.workbook
+        )
+    except Exception as exc:
+        print(f"❌ Could not read framework registry from {args.workbook}: {exc}")
+        return 1
+
+    if not registry:
+        print(f"❌ No framework registry in {args.workbook} (pre-2026.1 workbook?)")
+        return 1
+
+    async with AsyncSessionLocal() as session:
+        live_version = await resolve_live_catalog_version(session)
+        if not live_version:
+            print("❌ No live catalog version — seed the catalog first")
+            return 1
+
+        if workbook_version != live_version and not args.allow_version_mismatch:
+            print(
+                f"❌ Workbook is catalog version {workbook_version!r} but the live "
+                f"catalog is {live_version!r}.\n"
+                "   Backfilling the wrong workbook writes focal-document identifiers "
+                "that do not describe the live rows.\n"
+                "   Supply the matching workbook, or pass --allow-version-mismatch "
+                "if you know the registries are equivalent."
+            )
+            return 1
+
+        count = await _upsert_framework_registry(
+            session, live_version, registry, "backfill", _now()
+        )
+        await session.commit()
+
+    with_fdi = sum(1 for entry in registry.values() if entry.get("focal_document_id"))
+    print(f"✅ Framework registry backfilled for catalog version {live_version}")
+    print(f"   Entries:                        {len(registry)}")
+    print(f"   Carrying a focal-document id:   {with_fdi}")
+    print(f"   Rows written:                   {count}")
+    if workbook_version != live_version:
+        print(f"   ⚠️  Workbook version {workbook_version} accepted via --allow-version-mismatch")
+    return 0
+
+
 def create_parser() -> argparse.ArgumentParser:
     """Create the argument parser."""
     parser = argparse.ArgumentParser(
@@ -1147,6 +1238,14 @@ def create_parser() -> argparse.ArgumentParser:
     setup.add_argument("--dry-run", action="store_true", help="Show what would be done without making changes")
 
     # seed-catalog command
+    # backfill-framework-registry command
+    backfill_registry = subparsers.add_parser(
+        "backfill-framework-registry",
+        help="Populate the framework registry for the live catalog version from a workbook",
+    )
+    backfill_registry.add_argument("--workbook", required=True, help="Path to the SCF workbook (.xlsx) matching the live catalog version")
+    backfill_registry.add_argument("--allow-version-mismatch", action="store_true", help="Accept a workbook whose catalog version differs from the live one")
+
     seed_catalog = subparsers.add_parser("seed-catalog", help="Seed the SCF catalog from JSON files")
     seed_catalog.add_argument("--force", action="store_true", help="Force reseed (deletes existing catalog data)")
     seed_catalog.add_argument("--confirm", action="store_true", help="Confirm force reseed")
@@ -1181,6 +1280,7 @@ def main():
         "rotate-secret-key": cmd_rotate_secret_key,
         "backfill-encrypt": cmd_backfill_encrypt,
         "secrets-status": cmd_secrets_status,
+        "backfill-framework-registry": cmd_backfill_framework_registry,
     }
 
     handler = commands.get(args.command)

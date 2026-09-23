@@ -37,7 +37,6 @@ import RiskThreatContext from '../RiskThreatContext'
 import DeprecatedBadge, { getCatalogLifecycle } from '../DeprecatedBadge'
 import { ModernCommentThread } from '../ModernCommentThread'
 import { AuditLogPanel } from '../AuditLogPanel'
-import { AssignmentPicker } from '../AssignmentPicker'
 import OwningTeams from '../OwningTeams'
 import TabRow from '../explorer/TabRow'
 import ControlStatusHelp from './ControlStatusHelp'
@@ -729,23 +728,15 @@ export default function ScopingDetailPage({
             </div>
             <div className="container-content">
               {controlDbId && organizationId ? (
-                <>
-                  {!readOnly && <AssignmentPicker
-                    organizationId={organizationId}
-                    assignableType="control"
-                    assignableId={controlDbId}
-                    onAssignmentChange={() => {}}
-                  />}
-                  <OwningTeams
-                    organizationId={organizationId}
-                    assignableType="control"
-                    assignableId={controlDbId}
-                    canManage={canManageTeams && !readOnly}
-                    onChange={() => {
-                      onReloadTeamAssignments()
-                    }}
-                  />
-                </>
+                <OwningTeams
+                  organizationId={organizationId}
+                  assignableType="control"
+                  assignableId={controlDbId}
+                  canManage={canManageTeams && !readOnly}
+                  onChange={() => {
+                    onReloadTeamAssignments()
+                  }}
+                />
               ) : (
                 <span className="form-hint">Save control to enable assignment</span>
               )}

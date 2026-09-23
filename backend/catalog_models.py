@@ -10,6 +10,8 @@ Catalog Tables:
 - scf_catalog_assessment_objectives: Assessment objectives for controls
 - capability_themes: KSI-aligned capability theme definitions
 - capability_theme_mappings: SCF control to capability theme mappings
+- catalog_framework_registries: per-version framework registry (names + focal
+  document identifiers) — the transactional record the upgrade diff reads
 """
 from sqlalchemy import CheckConstraint, Column, String, Boolean, Text, Integer, DateTime, ForeignKey, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -336,3 +338,40 @@ class SystemCatalogRecipe(Base):
 
     def __repr__(self):
         return f"<SystemCatalogRecipe(template={self.template_id}, level={self.maturity_level})>"
+
+
+class CatalogFrameworkRegistry(Base):
+    """The framework registry for one catalogue version.
+
+    ``registry`` is ``{framework_id: {"name", "focal_document_id",
+    "geography"}}`` — byte-identical to what
+    ``scripts/extract_scf_data.extract_framework_registry`` emits. The
+    focal-document identifier is the publisher's stable identity for a
+    framework, so this row is what lets an upgrade diff recognise a renamed
+    framework id as the SAME document rather than an unrelated addition.
+
+    Written by the seeder on first boot, by ``services/catalog_apply`` inside
+    the apply transaction, and by ``cli.admin backfill-framework-registry`` on
+    installs seeded before the table existed. ``webclient/public/data/
+    framework_registry.json`` is a frontend cache derived from the same
+    extraction; this table is the record.
+    """
+    __tablename__ = "catalog_framework_registries"
+    __table_args__ = (
+        CheckConstraint(
+            "source IN ('seed', 'apply', 'backfill')",
+            name="ck_catalog_framework_registries_source",
+        ),
+    )
+
+    catalog_version = Column(String(20), primary_key=True)
+    registry = Column(JSONB, nullable=False, default=dict, server_default="{}")
+    source = Column(String(32), nullable=False)
+    created_at = Column(DateTime(timezone=False), server_default=func.now())
+    updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now())
+
+    def __repr__(self):
+        return (
+            f"<CatalogFrameworkRegistry(version={self.catalog_version}, "
+            f"entries={len(self.registry or {})}, source={self.source})>"
+        )

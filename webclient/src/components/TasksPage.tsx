@@ -473,7 +473,6 @@ export const TasksPage: React.FC<TasksPageProps> = ({
             <div className="tasks-col-type">TYPE</div>
             <div className="tasks-col-status">STATUS</div>
             <div className="tasks-col-priority">PRIORITY</div>
-            {view === 'all-tasks' && <div className="tasks-col-assignee">ASSIGNEE</div>}
             <div className="tasks-col-due">DUE</div>
             <div className="tasks-col-team">TEAM</div>
             <div className="tasks-col-expand" />
@@ -598,18 +597,10 @@ export const TasksPage: React.FC<TasksPageProps> = ({
                         </span>
                       </div>
 
-                      {/* Assignee — only visible in all-tasks view */}
-                      {view === 'all-tasks' && (
-                        <div className="tasks-col-assignee">
-                          {task.assigned_user ? (
-                            <span className="tasks-assignee">
-                              {task.assigned_user.display_name || task.assigned_user.email}
-                            </span>
-                          ) : (
-                            <span className="tasks-assignee-none">—</span>
-                          )}
-                        </div>
-                      )}
+                      {/* No assignee column. The all-tasks view used to carry one
+                          beside TEAM, which made the same row answer "who has
+                          this" twice and disagree with itself on every task whose
+                          individual had moved on. TEAM is the answer. */}
 
                       {/* Due date + days remaining */}
                       <div className="tasks-col-due">

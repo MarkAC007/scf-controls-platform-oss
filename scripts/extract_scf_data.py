@@ -23,6 +23,7 @@ import sys
 from pathlib import Path
 
 import pandas as pd
+from collections import Counter
 
 
 DOCKER_OUTPUT_DIR = Path('/app/data/json')
@@ -57,6 +58,13 @@ COL_CMM_CANDIDATES = [
     for level, name in enumerate(_CMM_LEVEL_NAMES)
 ]
 
+# Legacy crosswalk column, introduced in the 2026.3 catalogue to carry the
+# old->new control renumbering. Absent from 2026.2 and earlier, where every
+# control simply keeps its id. The header is 'Legacy\nSCF #' in the workbook;
+# clean_column_name collapses the newline.
+COL_LEGACY_SCF_ID = 'Legacy SCF #'
+LEGACY_NONE_SENTINEL = 'NONE'
+
 # Risk/Threat Mapping columns
 COL_RISK_SUMMARY = 'Risk Threat Summary'
 COL_THREAT_SUMMARY = 'Control Threat Summary'
@@ -74,12 +82,195 @@ COL_FW_NAME_CANDIDATES = [
     'Authoritative Source - Law, Regulation or Framework (LRF)',
     'Focal Document Name (FDN)',
 ]
+# The publisher's own stable identifier for a focal document, introduced on the
+# Authoritative Sources sheet in 2026.1. It is the framework equivalent of the
+# control sheet's 'Legacy SCF #' -- better, in fact, because it is a stable
+# identity rather than a backward pointer: when 'US CA CCPA 2025' becomes
+# 'USA California CCPA 2025' the mapping column header changes and the FDI does
+# not. 2025.4 predates it, so every consumer must tolerate its absence.
+COL_FW_FDI_CANDIDATES = [
+    'Focal Document Identifier (FDI)',
+]
+COL_FW_GEOGRAPHY_CANDIDATES = [
+    'Geography',
+]
+
+# Columns that sit inside the positional framework range but are NOT frameworks.
+#
+# The controls sheet has no end-of-frameworks marker, so the importer takes
+# every column from the first framework column to the end of the sheet. That
+# sweeps in the per-risk and per-threat likelihood columns, the two summary
+# columns, and the per-release errata column — in every release, not just one.
+# The cost is not cosmetic. Each becomes a framework id an organisation can be
+# scoped to; each one whose name moves between releases ("Errata 2026.2" ->
+# "Errata 2026.3") manufactures a phantom retirement plus a phantom addition;
+# and the count of them changes per release (39 -> 65 "Risk R-*" in 2026.3),
+# which inflates framework churn with pure noise. Measured on the four shipped
+# workbooks: 86 / 86 / 87 / 114 pseudo-framework columns in 2025.4 / 2026.1 /
+# 2026.2 / 2026.3 respectively, against 269 / 250 / 252 / 270 genuine ones —
+# so better than a quarter of the positional slice was never a framework.
+#
+# These are structural families, not a denylist of specific names.
+NON_FRAMEWORK_COLUMN_PATTERNS = [
+    (re.compile(r'^risk\s+r-', re.I), 'risk_likelihood'),
+    (re.compile(r'^threat\s+(mt|nt)-', re.I), 'threat_likelihood'),
+    (re.compile(r'^(risk|control)\s+threat\s+summary$', re.I), 'risk_threat_summary'),
+    (re.compile(r'^errata\b', re.I), 'errata'),
+    # SCF's own requirement-tier designators, not authoritative source documents.
+    # The Focal Documents sheet does not list them in any release 2025.4-2026.3,
+    # and every runtime consumer already hides them behind its own denylist
+    # (`identify_`, `minimum_security_requirements_mcr_dsr`).
+    (re.compile(r'^identify\s+(minimum\s+compliance|discretionary\s+security)\s+requirements',
+                re.I), 'requirement_tier'),
+    (re.compile(r'^minimum\s+security\s+requirements\b', re.I), 'requirement_tier'),
+]
+
+
+def non_framework_reason(column: str) -> str | None:
+    """Which non-framework family ``column`` belongs to, or None."""
+    return next(
+        (why for rx, why in NON_FRAMEWORK_COLUMN_PATTERNS if rx.search(column)),
+        None,
+    )
+
+
+# The same families as NON_FRAMEWORK_COLUMN_PATTERNS, matched against a
+# NORMALISED id rather than a raw column header. Needed because the live side
+# of a diff has only ids: a platform seeded before the column partition existed
+# carries 'risk_r_1' and 'errata_2026_2' in its framework mappings, and those
+# must not be reported as framework retirements when a clean extraction drops
+# them. They were never frameworks; their disappearance is a correction.
+NON_FRAMEWORK_ID_PATTERNS = [
+    (re.compile(r'^risk_r_'), 'risk_likelihood'),
+    (re.compile(r'^threat_(mt|nt)_'), 'threat_likelihood'),
+    (re.compile(r'^(risk|control)_threat_summary$'), 'risk_threat_summary'),
+    (re.compile(r'^errata(_|$)'), 'errata'),
+    # The requirement-tier family, which the column patterns also exclude. Its
+    # three ids are stable across 2025.4-2026.3 and are spelled out rather than
+    # matched loosely, because a bare `^identify_` prefix would swallow any
+    # genuine focal document whose name begins with that word.
+    (re.compile(r'^identify_(minimum_compliance|discretionary_security)'
+                r'_requirements(_|$)'), 'requirement_tier'),
+    (re.compile(r'^minimum_security_requirements(_|$)'), 'requirement_tier'),
+]
+
+
+def non_framework_id_reason(framework_id: str) -> str | None:
+    """Which non-framework family ``framework_id`` belongs to, or None."""
+    return next(
+        (why for rx, why in NON_FRAMEWORK_ID_PATTERNS if rx.match(framework_id)),
+        None,
+    )
+
+
+def partition_framework_columns(
+    candidate_columns: list,
+    focal_document_headers: set | None = None,
+) -> tuple[list, dict]:
+    """Split the positional range into framework columns and exclusions.
+
+    A column is excluded when it matches a ``NON_FRAMEWORK_COLUMN_PATTERNS``
+    family AND the workbook's own Focal Documents / Authoritative Sources sheet
+    does not list it as a mapping column. That second clause is the safety
+    valve: the sheet is the workbook's own declaration of what a framework is,
+    so it overrides our pattern wherever the two disagree. Verified across all
+    four shipped workbooks — the sheet lists no column matching any pattern, so
+    the veto never fires on today's data, but a future release that promotes one
+    of these shapes to a genuine focal document keeps working.
+
+    Returns ``(framework_columns, {excluded_column: reason})``.
+    """
+    focal_document_headers = focal_document_headers or set()
+    kept, excluded = [], {}
+    for col in candidate_columns:
+        reason = non_framework_reason(col)
+        if reason and col not in focal_document_headers:
+            excluded[col] = reason
+        else:
+            kept.append(col)
+    return kept, excluded
+
+
+def framework_column_start_index(columns: list) -> int:
+    """First column of the positional framework range on a controls sheet.
+
+    Framework mapping columns follow the ~25 control-metadata columns; the
+    AICPA/TSC column is the reliable landmark for where they begin, with a
+    positional fallback for a workbook that drops it.
+    """
+    for i, col in enumerate(columns):
+        if 'AICPA' in col or 'TSC' in col:
+            return i
+    return 24  # Default fallback
+
+
+def framework_columns_in(
+    columns: list,
+    focal_document_headers: set | None = None,
+) -> tuple[list, dict]:
+    """``(framework_columns, {excluded: reason})`` for a cleaned header list.
+
+    The one implementation of "which columns of a controls sheet are
+    frameworks", shared by ``extract_controls`` and ``framework_columns_for``.
+    """
+    positional = columns[framework_column_start_index(columns):]
+    return partition_framework_columns(positional, focal_document_headers)
+
+
+def framework_columns_for(
+    xl: pd.ExcelFile,
+    sheet_name: str,
+    focal_document_headers: set | None = None,
+) -> list:
+    """The framework mapping columns of a controls sheet, without extracting it.
+
+    For callers that want only the framework registry: reading the header row
+    is cheap, parsing 1,451 control rows is not.
+    """
+    df = pd.read_excel(xl, sheet_name, nrows=0)
+    columns = [clean_column_name(c) for c in df.columns]
+    framework_columns, _excluded = framework_columns_in(columns, focal_document_headers)
+    return framework_columns
+
+
+def read_focal_document_headers(xl: pd.ExcelFile, sheet_name: str) -> set:
+    """The mapping-column headers the workbook itself declares as frameworks."""
+    try:
+        df = pd.read_excel(xl, sheet_name)
+    except Exception:  # pragma: no cover - an unreadable sheet is not fatal
+        return set()
+    df.columns = [clean_column_name(c) for c in df.columns]
+    header_col = next(
+        (c for c in COL_FW_HEADER_CANDIDATES if c in df.columns), None
+    )
+    if header_col is None:
+        return set()
+    return {
+        str(v).strip()
+        for v in df[header_col].dropna()
+        if str(v).strip() and str(v).strip().lower() != 'nan'
+    }
+
 
 # Domains principle column, renamed in the 2026.2 catalogue. Candidates tried
 # in order.
 COL_DOMAIN_PRINCIPLE_CANDIDATES = [
     'Cybersecurity & Data Privacy by Design (C|P) Principles',
     'Security, Compliance & Resilience (SCR) Principles',
+]
+
+# Evidence Request List artifact columns, renamed in the 2026.3 catalogue
+# ('Documentation Artifact' -> 'ERL Artifact', 'Artifact Description' ->
+# 'Evidence Request List (ERL) Artifact Description'). Candidates tried in
+# order; a missing column silently emptied every artifact title and
+# description in 2026.3, so absence is warned about rather than tolerated.
+COL_ERL_TITLE_CANDIDATES = [
+    'Documentation Artifact',
+    'ERL Artifact',
+]
+COL_ERL_DESCRIPTION_CANDIDATES = [
+    'Artifact Description',
+    'Evidence Request List (ERL) Artifact Description',
 ]
 
 # Assessment Objectives columns
@@ -273,6 +464,27 @@ def parse_erl_refs(erl_str: str | None) -> list:
     return [ref.strip() for ref in refs if ref.strip()]
 
 
+def parse_legacy_ids(legacy_str: str | None) -> list:
+    """Parse the ``Legacy SCF #`` crosswalk cell into predecessor SCF ids.
+
+    SCF ships this column from 2026.3 onward to carry the old->new control
+    renumbering. A cell holds one predecessor, several (newline-separated —
+    a merge, where two retired controls collapse into this one), or the
+    literal sentinel ``NONE`` meaning the control has no predecessor and is
+    genuinely new. ``NONE`` yields an empty list so callers can treat
+    "no predecessor" and "column absent" identically.
+    """
+    if legacy_str is None or pd.isna(legacy_str):
+        return []
+
+    ids = re.split(r'[,;\n]+', str(legacy_str))
+    return [
+        cleaned
+        for cleaned in (ref.strip() for ref in ids)
+        if cleaned and cleaned.upper() != LEGACY_NONE_SENTINEL
+    ]
+
+
 def parse_control_mappings(control_str: str | None) -> list:
     """Parse control mappings from string."""
     if not control_str or pd.isna(control_str):
@@ -429,7 +641,11 @@ def normalize_framework_id(col_name: str) -> str:
     return slug
 
 
-def extract_controls(xl: pd.ExcelFile, sheet_name: str) -> tuple[list, dict, list]:
+def extract_controls(
+    xl: pd.ExcelFile,
+    sheet_name: str,
+    focal_document_headers: set | None = None,
+) -> tuple[list, dict, list, dict]:
     """Extract controls from SCF sheet."""
     print("Reading controls sheet...")
     df = pd.read_excel(xl, sheet_name)
@@ -448,19 +664,21 @@ def extract_controls(xl: pd.ExcelFile, sheet_name: str) -> tuple[list, dict, lis
         orig_cleaned = clean_column_name(orig)
         col_map[orig_cleaned] = cleaned
 
-    # Identify framework columns (columns after NIST CSF Function Grouping that have references)
-    # Skip the first ~25 columns which are control metadata
-    framework_start_idx = None
-    for i, col in enumerate(df.columns):
-        if 'AICPA' in col or 'TSC' in col:
-            framework_start_idx = i
-            break
-
-    if framework_start_idx is None:
-        framework_start_idx = 24  # Default fallback
-
-    framework_columns = list(df.columns[framework_start_idx:])
-    print(f"Found {len(framework_columns)} framework columns starting at index {framework_start_idx}")
+    framework_start_idx = framework_column_start_index(list(df.columns))
+    framework_columns, excluded_columns = framework_columns_in(
+        list(df.columns), focal_document_headers
+    )
+    print(
+        f"Found {len(framework_columns)} framework columns starting at index "
+        f"{framework_start_idx}"
+    )
+    if excluded_columns:
+        tally = Counter(excluded_columns.values())
+        breakdown = ', '.join(f'{n} {why}' for why, n in sorted(tally.items()))
+        print(
+            f"  excluded {len(excluded_columns)} non-framework columns from the "
+            f"framework range ({breakdown})"
+        )
 
     controls = []
     all_framework_mappings = {}
@@ -511,6 +729,7 @@ def extract_controls(xl: pd.ExcelFile, sheet_name: str) -> tuple[list, dict, lis
 
         control = {
             'scf_id': scf_id,
+            'legacy_scf_ids': parse_legacy_ids(row.get(COL_LEGACY_SCF_ID)),
             'scf_domain': str(row.get('SCF Domain', '')).strip(),
             'control_name': str(row.get('SCF Control', '')).strip(),
             'control_description': str(row.get('Secure Controls Framework (SCF) Control Description', '')).strip(),
@@ -531,7 +750,7 @@ def extract_controls(xl: pd.ExcelFile, sheet_name: str) -> tuple[list, dict, lis
         controls.append(control)
 
     print(f"Extracted {len(controls)} controls")
-    return controls, all_framework_mappings, framework_columns
+    return controls, all_framework_mappings, framework_columns, excluded_columns
 
 
 def extract_evidence(xl: pd.ExcelFile, sheet_name: str) -> dict:
@@ -542,6 +761,28 @@ def extract_evidence(xl: pd.ExcelFile, sheet_name: str) -> dict:
     # Clean column names
     df.columns = [clean_column_name(c) for c in df.columns]
 
+    title_col = next((c for c in COL_ERL_TITLE_CANDIDATES if c in df.columns), None)
+    desc_col = next(
+        (c for c in COL_ERL_DESCRIPTION_CANDIDATES if c in df.columns), None
+    )
+    if title_col is None:
+        print(
+            f"  WARNING: no artifact title column on '{sheet_name}' "
+            f"(looked for {COL_ERL_TITLE_CANDIDATES}); titles will be empty"
+        )
+    if desc_col is None:
+        print(
+            f"  WARNING: no artifact description column on '{sheet_name}' "
+            f"(looked for {COL_ERL_DESCRIPTION_CANDIDATES}); "
+            f"descriptions will be empty"
+        )
+
+    def cell(row, col):
+        if col is None:
+            return ''
+        value = row.get(col)
+        return '' if pd.isna(value) else str(value).strip()
+
     evidence = {}
     for _, row in df.iterrows():
         erl_id = str(row.get('ERL #', '')).strip()
@@ -551,8 +792,8 @@ def extract_evidence(xl: pd.ExcelFile, sheet_name: str) -> dict:
         evidence[erl_id] = {
             'evidence_id': erl_id,
             'area_of_focus': str(row.get('Area of Focus', '')).strip() if not pd.isna(row.get('Area of Focus')) else '',
-            'artifact_title': str(row.get('Documentation Artifact', '')).strip() if not pd.isna(row.get('Documentation Artifact')) else '',
-            'artifact_description': str(row.get('Artifact Description', '')).strip() if not pd.isna(row.get('Artifact Description')) else '',
+            'artifact_title': cell(row, title_col),
+            'artifact_description': cell(row, desc_col),
             'control_mappings': parse_control_mappings(row.get('SCF Control Mappings'))
         }
 
@@ -713,14 +954,102 @@ def extract_framework_names(
             fw_id = normalize_framework_id(col_header)
             framework_names[fw_id] = source_name
 
-    # Also add entries for the framework columns we found
+    # Also add entries for the framework columns we found. ``framework_columns``
+    # has already had the non-framework families stripped out by
+    # ``partition_framework_columns``; the guard below is belt-and-braces so a
+    # future caller that passes the raw positional slice cannot reintroduce
+    # pseudo-frameworks through this door.
     for col in framework_columns:
+        if non_framework_reason(col):
+            continue
         fw_id = normalize_framework_id(col)
         if fw_id not in framework_names:
             framework_names[fw_id] = clean_column_name(col)
 
     print(f"Extracted {len(framework_names)} framework names")
     return framework_names
+
+
+def extract_framework_registry(
+    xl: pd.ExcelFile,
+    framework_names: dict,
+    sheet_name: str,
+) -> dict:
+    """The framework registry, keyed by framework id.
+
+    ``frameworks.json`` is ``{id: display_name}`` and is consumed by the
+    webclient, so its shape is fixed. This is the richer sidecar: it carries the
+    publisher's Focal Document Identifier alongside the name, which is what lets
+    a later release's diff recognise ``usa_california_ccpa_2025`` as the same
+    document as ``us_ca_ccpa_2025`` instead of an unrelated addition.
+
+    Every id in ``framework_names`` appears here. ``focal_document_id`` is None
+    for ids the sheet does not list, and for every id in a pre-2026.1 workbook
+    where the column does not exist at all.
+    """
+    registry = {
+        fw_id: {'name': name, 'focal_document_id': None, 'geography': None}
+        for fw_id, name in framework_names.items()
+    }
+    try:
+        df = pd.read_excel(xl, sheet_name)
+    except Exception:  # pragma: no cover - an unreadable sheet is not fatal
+        return registry
+    df.columns = [clean_column_name(c) for c in df.columns]
+    header_col = next((c for c in COL_FW_HEADER_CANDIDATES if c in df.columns), None)
+    fdi_col = next((c for c in COL_FW_FDI_CANDIDATES if c in df.columns), None)
+    geo_col = next((c for c in COL_FW_GEOGRAPHY_CANDIDATES if c in df.columns), None)
+    if header_col is None or fdi_col is None:
+        print(
+            f"Note: sheet {sheet_name!r} carries no focal-document identifier "
+            f"column; framework succession for this workbook falls back to "
+            f"derived matching"
+        )
+        return registry
+
+    for _, row in df.iterrows():
+        header = row.get(header_col)
+        if pd.isna(header) or not str(header).strip():
+            continue
+        fw_id = normalize_framework_id(str(header))
+        if fw_id not in registry:
+            continue
+        fdi = row.get(fdi_col)
+        if not pd.isna(fdi) and str(fdi).strip():
+            registry[fw_id]['focal_document_id'] = str(fdi).strip()
+        if geo_col is not None and not pd.isna(row.get(geo_col)):
+            registry[fw_id]['geography'] = str(row.get(geo_col)).strip()
+
+    with_fdi = sum(1 for v in registry.values() if v['focal_document_id'])
+    print(
+        f"Framework registry: {len(registry)} entries, {with_fdi} carrying a "
+        f"focal-document identifier"
+    )
+    return registry
+
+
+def extract_framework_registry_only(excel_path) -> tuple[str, dict]:
+    """``(catalog_version, framework_registry)`` for one workbook.
+
+    The registry alone — no controls, no evidence, nothing written to disk. Used
+    by ``cli.admin backfill-framework-registry`` to populate
+    ``catalog_framework_registries`` on an install that was seeded before the
+    table existed, where the live catalogue rows are already correct and only
+    the focal-document identifiers are missing.
+    """
+    xl = pd.ExcelFile(excel_path)
+    sheets = resolve_catalog_sheets(xl)
+    focal_headers = read_focal_document_headers(xl, sheets['authoritative_sources'])
+    framework_columns = framework_columns_for(
+        xl, sheets['controls'], focal_headers
+    )
+    framework_names = extract_framework_names(
+        xl, framework_columns, sheets['authoritative_sources']
+    )
+    registry = extract_framework_registry(
+        xl, framework_names, sheets['authoritative_sources']
+    )
+    return str(sheets['catalog_version']), registry
 
 
 def extract_to_dir(excel_path, output_dir):
@@ -742,8 +1071,11 @@ def extract_to_dir(excel_path, output_dir):
     catalog_version = sheet_names['catalog_version']
 
     # Extract all data
-    controls, framework_mappings, framework_columns = extract_controls(
-        xl, sheet_names['controls']
+    focal_document_headers = read_focal_document_headers(
+        xl, sheet_names['authoritative_sources']
+    )
+    controls, framework_mappings, framework_columns, excluded_columns = extract_controls(
+        xl, sheet_names['controls'], focal_document_headers
     )
     evidence = extract_evidence(xl, sheet_names['evidence'])
     domains = extract_domains(xl, sheet_names['domains'])
@@ -752,6 +1084,9 @@ def extract_to_dir(excel_path, output_dir):
     )
     framework_names = extract_framework_names(
         xl, framework_columns, sheet_names['authoritative_sources']
+    )
+    framework_registry = extract_framework_registry(
+        xl, framework_names, sheet_names['authoritative_sources']
     )
 
     # Write control_guidance.json
@@ -775,6 +1110,13 @@ def extract_to_dir(excel_path, output_dir):
         json.dump(framework_names, f, indent=2)
     print(f"Wrote {output_dir / 'frameworks.json'}")
 
+    # Write framework_registry.json (names + focal-document identifiers).
+    # Additive: frameworks.json above keeps its {id: name} shape for the
+    # webclient, this carries the succession signal for the diff engine.
+    with open(output_dir / 'framework_registry.json', 'w') as f:
+        json.dump(framework_registry, f, indent=2)
+    print(f"Wrote {output_dir / 'framework_registry.json'}")
+
     # Write domains.json
     with open(output_dir / 'domains.json', 'w') as f:
         json.dump(domains, f, indent=2)
@@ -794,6 +1136,13 @@ def extract_to_dir(excel_path, output_dir):
         'domains': len(domains),
         'evidence': len(evidence),
         'assessment_objectives': len(assessment_objectives),
+        'frameworks': len(framework_names),
+        # Every column the framework partition refused, and why. Without this the
+        # exclusion is invisible: a column that silently stops being ingested
+        # looks identical to a column the publisher removed.
+        'framework_columns_excluded': {
+            col: reason for col, reason in sorted(excluded_columns.items())
+        },
     }
     with open(output_dir / 'catalog_meta.json', 'w') as f:
         json.dump(catalog_meta, f, indent=2)
