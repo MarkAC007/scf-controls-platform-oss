@@ -9,7 +9,7 @@
  * every retire-only row justified and, on the org's first reconciliation,
  * the framework selections explicitly confirmed (plan §4.3e).
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'react-hot-toast'
 import {
   applyOrgReconciliation,
@@ -24,6 +24,7 @@ import {
 import type {
   OrgCatalogStatusResponse,
   OrgReconciliationRunDetail,
+  OrgRunStatus,
   PlannedAction,
   ReconciliationPreviewResponse,
 } from '../../types/catalogUpgrade'
@@ -38,9 +39,21 @@ import OrgApplyProgress from './OrgApplyProgress'
 import OrgRollbackDialog from './OrgRollbackDialog'
 
 const POLL_INTERVAL_MS = 2500
+/** How long a queued apply/rollback may keep reading its pre-flight status
+ * before the wizard stops treating it as in flight. */
+const QUEUE_GRACE_MS = 30_000
 
 function isInFlight(status: string | undefined): boolean {
   return status === 'applying' || status === 'rolling_back'
+}
+
+/** An apply or rollback the API has accepted (202) but the worker has not yet
+ * picked up: the run row still carries its pre-flight status. */
+interface QueuedTransition {
+  runId: string
+  from: OrgRunStatus
+  to: 'applying' | 'rolling_back'
+  queuedAt: number
 }
 
 /** Default decision for a deprecated impact: migrate when a successor is
@@ -82,6 +95,7 @@ export default function OrgReconciliationWizard({
 }: OrgReconciliationWizardProps) {
   const [orgStatus, setOrgStatus] = useState<OrgCatalogStatusResponse | null>(null)
   const [latestRun, setLatestRun] = useState<OrgReconciliationRunDetail | null>(null)
+  const queuedRef = useRef<QueuedTransition | null>(null)
   const [loading, setLoading] = useState(true)
   const [preview, setPreview] = useState<ReconciliationPreviewResponse | null>(null)
   const [actions, setActions] = useState<Record<string, PlannedAction>>({})
@@ -131,8 +145,19 @@ export default function OrgReconciliationWizard({
     const timer = setInterval(async () => {
       try {
         const detail = await getOrgReconciliationRun(organizationId, runId)
+        const queued = queuedRef.current
+        if (
+          queued?.runId === runId &&
+          detail.status === queued.from &&
+          Date.now() - queued.queuedAt < QUEUE_GRACE_MS
+        ) {
+          // Accepted by the API but not yet picked up by the worker — the row
+          // still shows its pre-flight status. Keep polling.
+          return
+        }
         setLatestRun(current => (current?.id === runId ? detail : current))
         if (!isInFlight(detail.status)) {
+          queuedRef.current = null
           onRunSettled()
           const status = await getOrgReconciliationStatus(organizationId)
           setOrgStatus(status)
@@ -199,13 +224,40 @@ export default function OrgReconciliationWizard({
     }
   }
 
+  /** Adopt the run after the API accepted an apply or rollback. The route
+   * answers 202 once the worker task is enqueued; the run row only moves to
+   * `to` when the worker picks it up, so a read that still shows `from`
+   * means "queued", not "left over from another session" — the wizard shows
+   * the in-flight state and lets the poll catch the transition. A run that
+   * has already settled (fast worker) is adopted as-is and the board and
+   * eligibility refreshed at once. */
+  const adoptTransition = async (
+    runId: string,
+    from: OrgRunStatus,
+    to: 'applying' | 'rolling_back'
+  ) => {
+    const run = await getOrgReconciliationRun(organizationId, runId)
+    if (run.status === from) {
+      queuedRef.current = { runId, from, to, queuedAt: Date.now() }
+      setLatestRun({ ...run, status: to })
+      return
+    }
+    queuedRef.current = null
+    setLatestRun(run)
+    if (!isInFlight(run.status)) {
+      onRunSettled()
+      setOrgStatus(await getOrgReconciliationStatus(organizationId))
+    }
+  }
+
   const handleApply = async () => {
     if (!preview?.run.to_version) return
+    const runId = preview.run.id
     try {
-      await applyOrgReconciliation(organizationId, preview.run.id, preview.run.to_version)
+      await applyOrgReconciliation(organizationId, runId, preview.run.to_version)
       toast.success(`Applying reconciliation to ${preview.run.to_version}…`)
-      setLatestRun(await getOrgReconciliationRun(organizationId, preview.run.id))
       setPreview(null)
+      await adoptTransition(runId, 'previewed', 'applying')
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Apply failed')
     }
@@ -230,12 +282,59 @@ export default function OrgReconciliationWizard({
       await rollbackOrgReconciliation(organizationId, latestRun.id, confirmText)
       setShowRollbackDialog(false)
       toast.success('Rollback started')
-      setLatestRun(await getOrgReconciliationRun(organizationId, latestRun.id))
+      await adoptTransition(latestRun.id, 'applied', 'rolling_back')
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Rollback failed')
     } finally {
       setRollingBack(false)
     }
+  }
+
+  /** The newest run once it has settled (applied / failed / rolled back), or
+   * null while there is no such run. Rendered on its own when the org is up to
+   * date, and beneath the preview offer when the platform has moved on. */
+  const renderSettledRun = () => {
+    if (latestRun?.status === 'applied') {
+      return (
+        <div>
+          <p>
+            <strong>Reconciliation applied.</strong> {organizationName} moved from catalog{' '}
+            {latestRun.from_version || 'unversioned'} to {latestRun.to_version}
+            {latestRun.applied_at && ` on ${new Date(latestRun.applied_at).toLocaleString()}`}.
+          </p>
+          <p style={{ color: 'var(--muted)', fontSize: '0.85rem' }}>
+            {latestRun.actions_log.length} action{latestRun.actions_log.length === 1 ? '' : 's'}{' '}
+            executed. Organisation admins have been notified.
+          </p>
+          <button className="btn btn-danger" onClick={() => setShowRollbackDialog(true)}>
+            Roll back…
+          </button>
+        </div>
+      )
+    }
+
+    if (latestRun?.status === 'failed') {
+      return (
+        <div role="alert">
+          <p>
+            <strong>Run failed.</strong> {latestRun.error || 'No error detail was recorded.'}
+          </p>
+        </div>
+      )
+    }
+
+    if (latestRun?.status === 'rolled_back') {
+      return (
+        <p style={{ color: 'var(--muted)' }}>
+          The reconciliation to {latestRun.to_version} was rolled back
+          {latestRun.rolled_back_at &&
+            ` on ${new Date(latestRun.rolled_back_at).toLocaleString()}`}
+          . The organisation is back on {latestRun.from_version || 'its previous version'}.
+        </p>
+      )
+    }
+
+    return null
   }
 
   const renderBody = () => {
@@ -318,45 +417,11 @@ export default function OrgReconciliationWizard({
       )
     }
 
-    if (latestRun?.status === 'applied') {
-      return (
-        <div>
-          <p>
-            <strong>Reconciliation applied.</strong> {organizationName} moved from catalog{' '}
-            {latestRun.from_version || 'unversioned'} to {latestRun.to_version}
-            {latestRun.applied_at && ` on ${new Date(latestRun.applied_at).toLocaleString()}`}.
-          </p>
-          <p style={{ color: 'var(--muted)', fontSize: '0.85rem' }}>
-            {latestRun.actions_log.length} action{latestRun.actions_log.length === 1 ? '' : 's'}{' '}
-            executed. Organisation admins have been notified.
-          </p>
-          <button className="btn btn-danger" onClick={() => setShowRollbackDialog(true)}>
-            Roll back…
-          </button>
-        </div>
-      )
-    }
-
-    if (latestRun?.status === 'failed') {
-      return (
-        <div role="alert">
-          <p>
-            <strong>Run failed.</strong> {latestRun.error || 'No error detail was recorded.'}
-          </p>
-        </div>
-      )
-    }
-
-    if (latestRun?.status === 'rolled_back') {
-      return (
-        <p style={{ color: 'var(--muted)' }}>
-          The reconciliation to {latestRun.to_version} was rolled back
-          {latestRun.rolled_back_at &&
-            ` on ${new Date(latestRun.rolled_back_at).toLocaleString()}`}
-          . The organisation is back on {latestRun.from_version || 'its previous version'}.
-        </p>
-      )
-    }
+    // The newest run has settled. Its summary stays visible (and an applied
+    // run stays rollback-able), but it must never hide the offer to start the
+    // NEXT reconciliation: once the platform moves on again the org is
+    // eligible again, and the only way forward is a fresh preview.
+    const settledRun = renderSettledRun()
 
     if (orgStatus?.eligible) {
       return (
@@ -369,8 +434,26 @@ export default function OrgReconciliationWizard({
           <button className="btn btn-primary" disabled={previewing} onClick={handlePreview}>
             {previewing ? 'Building preview…' : 'Preview reconciliation'}
           </button>
+          {settledRun && (
+            <div
+              style={{
+                marginTop: '1.25rem',
+                paddingTop: '1rem',
+                borderTop: '1px solid var(--border)',
+              }}
+            >
+              <p style={{ color: 'var(--muted)', fontSize: '0.8rem', marginBottom: '0.5rem' }}>
+                Last reconciliation
+              </p>
+              {settledRun}
+            </div>
+          )}
         </div>
       )
+    }
+
+    if (settledRun) {
+      return settledRun
     }
 
     return (
