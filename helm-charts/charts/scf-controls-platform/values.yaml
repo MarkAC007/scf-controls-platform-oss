@@ -686,6 +686,12 @@ catalogData:
       tag: ""
       digest: ""
       pullPolicy: IfNotPresent
+    # When the import runs. post-install,post-upgrade suits the documented
+    # flow, where the workbook is copied onto the volume after the release
+    # exists. Use pre-install,pre-upgrade with a pre-staged existingClaim so the
+    # backend finds the catalogue on its first start and needs no restart.
+    hook: post-install,post-upgrade
+
     # Name of the SCF workbook on the shared volume. Copy it there before
     # running the import; the extracted catalogue is written alongside it.
     workbookFile: scf.xlsx

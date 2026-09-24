@@ -13,7 +13,11 @@ metadata:
   labels:
     {{- include "scf.componentLabels" (dict "ctx" . "component" "catalog-importer") | nindent 4 }}
   annotations:
-    "helm.sh/hook": post-install,post-upgrade
+    # post-* by default: the workbook is copied onto the volume after the
+    # release exists, so the import cannot run before that. Set
+    # catalogData.importer.hook to a pre-* phase when the volume is pre-staged
+    # (existingClaim), which lets the backend find the catalogue on first start.
+    "helm.sh/hook": {{ .Values.catalogData.importer.hook | quote }}
     "helm.sh/hook-weight": "0"
     "helm.sh/hook-delete-policy": before-hook-creation
 spec:

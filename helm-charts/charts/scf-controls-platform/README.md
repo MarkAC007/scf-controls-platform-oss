@@ -202,6 +202,31 @@ kubectl -n scf rollout restart deploy/scf-scf-controls-platform-backend
 Leave `catalogData.importer.enabled: true` and the import re-runs on every
 upgrade. Set it back to `false` once the catalogue is loaded.
 
+### Loading it in a single step
+
+If you would rather not copy a file into a running pod, create the volume
+yourself, put the workbook on it, and point the chart at it:
+
+```yaml
+catalogData:
+  enabled: true
+  existingClaim: scf-catalogue
+  importer:
+    enabled: true
+    hook: pre-install,pre-upgrade
+```
+
+`hook` is what makes this a single step: the import runs before the backend
+starts, so it finds the catalogue on first boot and needs no restart. Leave it
+at the default for the sequence above, where the workbook does not exist yet
+when the release is first installed.
+
+The sequence above is the documented one because it has fewer ways to go wrong:
+a volume you create by hand has to land in the right namespace, match the
+storage class and access mode the chart expects, and be bound before you
+install. Get any of that wrong and the failure appears as a pod that will not
+schedule. Copying into a running pod needs none of that to be right in advance.
+
 ## Branding
 
 Applied when the container starts, so changing any of these is a restart rather

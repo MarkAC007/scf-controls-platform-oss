@@ -302,6 +302,10 @@
             "workbookFile": {
               "type": "string",
               "minLength": 1
+            },
+            "hook": {
+              "type": "string",
+              "minLength": 1
             }
           }
         }
