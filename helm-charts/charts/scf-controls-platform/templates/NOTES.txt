@@ -1,0 +1,62 @@
+{{ .Chart.Name }} {{ .Chart.Version }} installed as {{ .Release.Name }} in {{ .Release.Namespace }}.
+
+Deployed
+  backend          {{ .Values.backend.replicaCount }} replica(s)
+  celery worker    {{ .Values.celery.worker.replicaCount }} replica(s)
+  celery beat      1 replica
+  frontend         {{ .Values.frontend.replicaCount }} replica(s)
+
+Depends on (not deployed by this chart)
+  database         {{ if .Values.database.urlFromSecret }}DSN from the secret store{{ else }}{{ .Values.database.username }}@{{ .Values.database.host }}:{{ .Values.database.port }}/{{ .Values.database.name }}{{ end }}
+  redis            {{ if .Values.redis.urlFromSecret }}URLs from the secret store{{ else }}{{ .Values.redis.host }}:{{ .Values.redis.port }} (db {{ .Values.redis.cacheDatabase }} cache, db {{ .Values.redis.celeryDatabase }} celery){{ end }}
+  object storage   {{ .Values.evidenceStorage.bucket }} at {{ .Values.evidenceStorage.endpoint | default (printf "AWS S3 (%s)" .Values.evidenceStorage.region) }}
+  identity         OIDC ({{ .Values.oidc.issuer }})
+
+Reach it
+{{- if .Values.ingress.enabled }}
+{{- range .Values.ingress.hosts }}
+  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host }}
+{{- end }}
+{{- else }}
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "scf.frontendServiceName" . }} 8080:{{ .Values.frontend.service.port }}
+{{- end }}
+
+{{- if .Values.smokeTest.enabled }}
+Checked automatically
+  A smoke test ran after this release and had to pass for it to succeed:
+
+  kubectl -n {{ .Release.Namespace }} logs job/{{ include "scf.fullname" . }}-smoke-test
+{{- end }}
+
+{{- if .Values.allowLatestTag }}
+
+WARNING: allowLatestTag is set, so the `latest` tag check is disabled. A
+restarted pod can land on different code than its neighbours.
+{{- end }}
+
+
+Credentials are read from the Secret {{ .Values.secretName }}, which this chart
+does not create. Pods stay in CreateContainerConfigError until it exists:
+
+  kubectl -n {{ .Release.Namespace }} get secret {{ .Values.secretName }}
+
+
+{{- if .Values.migrations.enabled }}
+Migrations ran as a pre-install/pre-upgrade hook, before anything rolled:
+
+  kubectl -n {{ .Release.Namespace }} logs job/{{ include "scf.fullname" . }}-migrate
+
+{{- if not .Values.migrations.acknowledge }}
+
+migrations.acknowledge is unset. That is correct for a fresh install and for any
+sync with nothing pending — the guard permits both outright. But the next
+release that carries a migration will REFUSE until you set it to that release's
+version, in the same change that bumps the image tag.
+{{- end }}
+{{- else }}
+WARNING: migrations.enabled is false. The backend still migrates from its own
+startup path, so a schema change is applied by whichever replica wins the race,
+and the Celery worker may start against a half-migrated schema. Keep
+backend.replicaCount at 1, or turn the migration Job back on.
+{{- end }}
+

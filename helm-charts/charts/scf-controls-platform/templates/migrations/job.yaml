@@ -1,0 +1,83 @@
+{{- if .Values.migrations.enabled }}
+{{/*
+Applies pending migrations once per release, before anything else rolls.
+
+HERE BE DRAGONS: defining any Argo hook makes Argo ignore every Helm hook on the release.
+*/}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "scf.fullname" . }}-migrate
+  labels:
+    {{- include "scf.componentLabels" (dict "ctx" . "component" "migrate") | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "0"
+    # Kept after a success so the last run's logs are still readable.
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: {{ .Values.migrations.backoffLimit }}
+  {{- with .Values.migrations.activeDeadlineSeconds }}
+  activeDeadlineSeconds: {{ . }}
+  {{- end }}
+  template:
+    metadata:
+      labels:
+        {{- include "scf.componentSelectorLabels" (dict "ctx" . "component" "migrate") | nindent 8 }}
+        {{- with .Values.migrations.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.migrations.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      restartPolicy: Never
+      {{- include "scf.imagePullSecrets" . | nindent 6 }}
+      serviceAccountName: {{ include "scf.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- with .Values.migrations.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.migrations.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: migrate
+          image: {{ include "scf.image" (dict "image" .Values.migrations.image "root" $) }}
+          imagePullPolicy: {{ .Values.migrations.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          command: ["python", "-m", "scf_upgrade"]
+          args: ["migrate"]
+          {{- include "scf.appEnvFrom" . | nindent 10 }}
+          env:
+            - name: SCF_MIGRATE_ACK
+              value: {{ .Values.migrations.acknowledge | quote }}
+            {{- with .Values.migrations.cdmDropAcknowledge }}
+            - name: SCF_CDM_DROP_ACK
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.migrations.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.migrations.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: fontconfig-cache
+              mountPath: /home/apiuser/.cache
+      volumes:
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
+        - name: fontconfig-cache
+          emptyDir:
+            sizeLimit: 16Mi
+{{- end }}

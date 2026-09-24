@@ -1,0 +1,17 @@
+# Smallest configuration the chart will accept: external database and cache,
+# a bucket, a Secret, and OIDC — which is not optional, because it is the only
+# sign-in path the frontend bundle contains.
+# Anything the chart lets you omit is omitted here on purpose, so this file
+# fails the day a new required value is added without a default.
+secretName: scf-platform-credentials
+database:
+  host: postgres.example.internal
+redis:
+  host: redis.example.internal
+evidenceStorage:
+  bucket: scf-evidence
+
+oidc:
+  issuer: https://idp.example.com/realms/scf
+  clientId: scf-platform
+  redirectUri: https://scf.example.com/auth/callback

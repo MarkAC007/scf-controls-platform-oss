@@ -98,6 +98,31 @@ jobs:
             echo "  ok  docs PLATFORM_VERSION row = $V  ($DOCS)"
           fi
 
+          # helm-charts/ is OSS-only, the mirror image of the docs-site/ case
+          # above: the chart ships from this repo and Argo CD consumes it straight
+          # from a git tag, so Chart.yaml's two version fields are release
+          # artefacts exactly like the rows above. Absent tree means "not this
+          # repo" and the rows are skipped rather than failed.
+          #
+          # Both fields track the product version: `version` bare, because Helm
+          # requires semver, and `appVersion` with the leading v, because that is
+          # how the images are tagged and it is what the chart defaults image tags
+          # to. A stale appVersion silently deploys the previous release.
+          CHART="helm-charts/charts/scf-controls-platform/Chart.yaml"
+          if [ ! -d helm-charts ]; then
+            echo "  --  helm-charts/ absent — skipping the chart version rows"
+          else
+            check "Chart.yaml version" \
+              "$(sed -n 's/^version: //p' "$CHART" | head -1)" \
+              "$CHART" \
+              "sed -i 's/^version: .*/version: $V/' $CHART"
+
+            check "Chart.yaml appVersion" \
+              "$(sed -n 's/^appVersion: v//p' "$CHART" | head -1)" \
+              "$CHART" \
+              "sed -i 's/^appVersion: .*/appVersion: v$V/' $CHART"
+          fi
+
           exit "$fail"
 
       - name: Require release notes when the version is bumped

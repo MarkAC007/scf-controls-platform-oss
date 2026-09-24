@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react'
 import { GoogleOAuthProvider } from '@react-oauth/google'
+import { getConfig } from '../data/runtimeConfig'
 import {
   OIDC_ENABLED,
   OIDC_TOKEN_KEY,
@@ -50,7 +51,7 @@ const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID
 const API_KEY = import.meta.env.VITE_API_KEY || ''
 
 // Marketing website URL for signup redirects
-const MARKETING_WEBSITE_URL = import.meta.env.VITE_MARKETING_WEBSITE_URL || 'https://scfcontrolsplatform.com'
+const MARKETING_WEBSITE_URL = getConfig('MARKETING_WEBSITE_URL') || 'https://scfcontrolsplatform.com'
 
 // Error type for account not provisioned
 interface AccountNotProvisionedError {

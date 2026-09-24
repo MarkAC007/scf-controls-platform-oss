@@ -1,0 +1,110 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "scf.fullname" . }}-celery-worker
+  labels:
+    {{- include "scf.componentLabels" (dict "ctx" . "component" "celery-worker") | nindent 4 }}
+spec:
+  {{- if not .Values.celery.worker.autoscaling.enabled }}
+  replicas: {{ .Values.celery.worker.replicaCount }}
+  {{- end }}
+  revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      {{- include "scf.componentSelectorLabels" (dict "ctx" . "component" "celery-worker") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "scf.componentSelectorLabels" (dict "ctx" . "component" "celery-worker") | nindent 8 }}
+        {{- with .Values.celery.worker.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.celery.worker.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- include "scf.imagePullSecrets" . | nindent 6 }}
+      serviceAccountName: {{ include "scf.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      # Celery stops prefetching on SIGTERM and finishes what it already holds.
+      # Too short a grace period can result in tasks being killed mid-execution.
+      # A sensible value here is 60s.
+      terminationGracePeriodSeconds: {{ .Values.celery.worker.terminationGracePeriodSeconds }}
+      {{- with .Values.celery.worker.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      {{- with .Values.celery.worker.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.celery.worker.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.celery.worker.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.celery.worker.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: celery-worker
+          image: {{ include "scf.image" (dict "image" .Values.celery.worker.image "root" $) }}
+          imagePullPolicy: {{ .Values.celery.worker.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          # Starts at -A: `command` already supplies the executable, and
+          # Kubernetes concatenates the two. Repeating it here renders
+          # `celery celery -A ...`, which exits on the duplicate subcommand.
+          args:
+            - -A
+            - celery_app
+            - worker
+            - --loglevel={{ .Values.celery.worker.logLevel }}
+            - --concurrency={{ .Values.celery.worker.concurrency }}
+            - -Q
+            - {{ join "," .Values.celery.worker.queues }}
+            {{- with .Values.celery.worker.extraArgs }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          command: ["celery"]
+          {{- include "scf.appEnvFrom" . | nindent 10 }}
+          {{- with .Values.celery.worker.extraEnv }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if .Values.celery.worker.livenessProbe.enabled }}
+          livenessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - celery -A celery_app inspect ping -d celery@$HOSTNAME
+            initialDelaySeconds: {{ .Values.celery.worker.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.celery.worker.livenessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.celery.worker.livenessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.celery.worker.livenessProbe.failureThreshold }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.celery.worker.resources | nindent 12 }}
+          volumeMounts:
+            {{- include "scf.backendVolumeMounts" . | nindent 12 }}
+            {{- with .Values.celery.worker.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        {{- include "scf.backendVolumes" . | nindent 8 }}
+        {{- with .Values.celery.worker.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}

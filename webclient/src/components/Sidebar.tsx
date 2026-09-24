@@ -4,6 +4,7 @@ import { useOrgLogo } from '../hooks/useOrgLogo'
 import { useOrganization } from '../contexts/OrganizationContext'
 import { getCatalogStatusExtended } from '../data/catalogUpgradeApi'
 import { DEFAULT_APP_TITLE, getAppLogo } from '../branding'
+import { getConfig } from '../data/runtimeConfig'
 
 type Tab = 'dashboard' | 'journey' | 'capability-posture' | 'library' | 'scoping' | 'evidence' | 'mapping-matrix' | 'tasks' | 'systems' | 'users' | 'consultant-portal' | 'risk-register' | 'vendors' | 'settings' | 'webhooks' | 'audit-log' | 'engagements' | 'documents' | 'platform-catalog' | 'platform-tenants' | 'catalog-changelog'
 
@@ -296,9 +297,9 @@ function SidebarBrandBlock() {
     setLogoBroken(false)
   }, [logoSrc])
 
-  // White-label: when VITE_APP_TITLE is set to a non-default value, render
+  // White-label: when APP_TITLE is set to a non-default value, render
   // that title instead of the stylized "SCF Controls" wordmark.
-  const appTitleEnv = import.meta.env.VITE_APP_TITLE
+  const appTitleEnv = getConfig('APP_TITLE')
   const isCustomTitle = appTitleEnv && appTitleEnv !== DEFAULT_APP_TITLE
 
   return (
