@@ -11,6 +11,7 @@ import { getOrgCatalogChangelog } from '../data/catalogUpgradeApi'
 import type { ChangelogEntry } from '../types/catalogUpgrade'
 import DeprecatedBadge from './DeprecatedBadge'
 import { ORG_RECONCILIATION_DOC_URL } from './CatalogVersionCard'
+import AppLink, { type AppDestination } from './AppLink'
 
 export const PLATFORM_UPGRADE_DOC_URL =
   'https://docs.scfcontrolsplatform.app/admin-guide/platform-catalog-upgrade/'
@@ -32,6 +33,34 @@ const ENTITY_LABELS: Record<string, string> = {
   assessment_objectives: 'Assessment objective',
   capability_themes: 'Capability theme',
   framework_mappings: 'Framework mapping',
+}
+
+/**
+ * Where a changelog identifier leads, or null when it names nothing with a
+ * detail page of its own (domains, themes, mapping rows). Resolved from the
+ * entity type, never by assuming every key is a control ID. Controls open in
+ * the full library: retired ones stay resolvable there, and following the
+ * link says nothing about scope.
+ */
+export function changelogDestination(
+  entity: string,
+  key: string,
+): { to: AppDestination; label: string } | null {
+  switch (entity) {
+    case 'controls':
+      return { to: { kind: 'control', id: key, mode: 'full-library' }, label: `Open control ${key}` }
+    case 'evidence':
+      return { to: { kind: 'evidence', id: key }, label: `Open evidence ${key}` }
+    case 'assessment_objectives': {
+      // Objective keys are `<control>_A<n>`; open the parent control.
+      const parent = key.replace(/_A\d+$/, '')
+      return parent !== key
+        ? { to: { kind: 'control', id: parent, mode: 'full-library' }, label: `Open parent control ${parent}` }
+        : null
+    }
+    default:
+      return null
+  }
 }
 
 interface CatalogChangelogPageProps {
@@ -162,7 +191,16 @@ export default function CatalogChangelogPage({ organizationId }: CatalogChangelo
                         <span className={change.className}>{change.label}</span>
                       </td>
                       <td style={{ fontFamily: 'var(--font-mono, monospace)', whiteSpace: 'nowrap' }}>
-                        {entry.key}
+                        {(() => {
+                          const dest = changelogDestination(entry.entity, entry.key)
+                          return dest ? (
+                            <AppLink to={dest.to} title={dest.label} aria-label={dest.label}>
+                              {entry.key}
+                            </AppLink>
+                          ) : (
+                            entry.key
+                          )
+                        })()}
                       </td>
                       <td>{entry.name ?? '—'}</td>
                       <td>{entry.summary ?? '—'}</td>

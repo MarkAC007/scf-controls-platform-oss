@@ -146,9 +146,10 @@
   --graph-highlight: #2563eb;
   --graph-background: #aaaaaa;
 
-  /* Surface states */
-  --surface: #ffffff;
-  --surface-hover: #f5f5f5;
+  /* Surface states — derived from the palette so custom light themes carry
+     them (UIP-017); light.ts pins the historic Light values. */
+  --surface: var(--card);
+  --surface-hover: color-mix(in srgb, var(--card) 96%, var(--text));
   --primary-light: #e3f2fd;
 
   /* SCF Components - Maturity Levels (L0=red → L5=violet progression) */
@@ -318,9 +319,11 @@
   --graph-highlight: #3b82f6;
   --graph-background: #555555;
 
-  /* Surface states - dark mode */
-  --surface: hsl(222.2, 47%, 11.2%);
-  --surface-hover: hsl(222.2, 47%, 14%);
+  /* Surface states - dark mode. Derived from the palette so custom dark
+     themes (Ember, Phosphor…) do not keep navy surfaces (UIP-017); dark.ts
+     pins the historic Dark values. */
+  --surface: color-mix(in srgb, var(--bg) 50%, var(--panel));
+  --surface-hover: color-mix(in srgb, var(--panel) 50%, var(--card));
   --primary-light: hsl(217, 40%, 18%);
 
   /* SCF Components - Maturity Levels (brighter for dark mode) */
@@ -1761,13 +1764,16 @@ button.footer-version:disabled {
 }
 
 .evidence-status-tracked.tracked {
-  background: rgba(34, 197, 94, 0.12);
-  color: #16a34a;
+  background: #dcfce7;
+  color: #15803d;
 }
 
+/* --muted is a text colour, never a fill. --muted on --muted-bg clears 4.5:1
+   at this size, where --secondary falls just short; the border keeps the pill. */
 .evidence-status-tracked.not-tracked {
-  background: var(--muted, #f1f5f9);
-  color: var(--muted-foreground, #64748b);
+  background: var(--muted-bg);
+  color: var(--muted);
+  box-shadow: inset 0 0 0 1px var(--border);
 }
 
 .artifact-status-indicator-compact{
@@ -10005,13 +10011,15 @@ textarea.form-control{
      ============================================ */
 
   .tracking-label.tracked,
-  .artifact-tracking-label.label-tracked {
+  .artifact-tracking-label.label-tracked,
+  .evidence-status-tracked.tracked {
     background: rgba(34, 197, 94, 0.2) !important;
     color: #86efac !important;
   }
 
   .tracking-label.not-tracked,
-  .artifact-tracking-label.label-not-tracked {
+  .artifact-tracking-label.label-not-tracked,
+  .evidence-status-tracked.not-tracked {
     background: var(--secondary) !important;
     color: var(--muted) !important;
   }
@@ -19203,6 +19211,46 @@ textarea.form-control{
   font-weight: 700;
 }
 
+/* Risk appetite slider (RiskProfileSettings) — labels sit on the five stops.
+   The side padding keeps the centred end labels inside the card. */
+.appetite-slider-container {
+  padding: 4px 28px 0;
+  margin-bottom: 24px;
+}
+.appetite-slider {
+  display: block;
+  width: 100%;
+  margin: 0;
+  accent-color: var(--primary);
+  cursor: pointer;
+}
+.appetite-slider:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 4px;
+}
+/* Zero-width, evenly spaced anchors align with the stops; the inset
+   matches half the native thumb so each label centres on its stop. */
+.appetite-slider-labels {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 10px;
+  padding: 0 8px;
+}
+.appetite-slider-label {
+  flex: 0 0 0;
+  width: 0;
+  display: flex;
+  justify-content: center;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+}
+.appetite-slider-label-active {
+  color: var(--primary);
+  font-weight: 700;
+}
+
 /* Settings Section Icon Header */
 .settings-section-icon-header {
   display: flex;
@@ -24281,7 +24329,10 @@ button.assessment-queue-link:hover {
   --bedrock-kicker: hsl(215, 18%, 42%);
   --bedrock-rule: hsla(215, 25%, 30%, 0.22);
   --ref-tag: hsl(33, 45%, 37%);                 /* brass — the app's only warm hue */
-  --bench-bg: #ffffff;
+  /* Bench and field surfaces derive from the active palette, so a custom
+     theme's cards and inputs follow it (UIP-017). light.ts / dark.ts pin the
+     historic default values. */
+  --bench-bg: var(--card);
   --bench-edge: rgba(15, 23, 42, 0.07);
   --bench-shadow: 0 0 0 1px var(--bench-edge), 0 8px 24px -10px rgba(30, 41, 72, 0.16);
   --bench-shadow-sm: 0 0 0 1px var(--bench-edge), 0 3px 10px -6px rgba(30, 41, 72, 0.22);
@@ -24297,10 +24348,10 @@ button.assessment-queue-link:hover {
   --warning-ink: hsl(30, 88%, 29%);
   --pip-off-ink: hsl(215, 22%, 37%);
   --oos-ink: hsl(215, 20%, 38%);
-  --field-bg: hsl(216, 45%, 98.5%);
+  --field-bg: color-mix(in srgb, var(--card) 97%, var(--primary));
   --field-border: hsla(222, 30%, 30%, 0.24);
-  --field-border-hover: hsla(210, 80%, 45%, 0.60);
-  --field-ring: 0 0 0 3px rgba(25, 118, 210, 0.22);
+  --field-border-hover: color-mix(in srgb, var(--primary) 60%, transparent);
+  --field-ring: 0 0 0 3px color-mix(in srgb, var(--primary) 22%, transparent);
   --field-readonly-ink: hsl(220, 15%, 42%);
 }
 
@@ -24309,7 +24360,7 @@ button.assessment-queue-link:hover {
   --bedrock-kicker: #7e8bb0;
   --bedrock-rule: rgba(126, 139, 176, 0.22);
   --ref-tag: #c9a86a;
-  --bench-bg: #1c2540;
+  --bench-bg: color-mix(in srgb, var(--card) 60%, var(--secondary));
   --bench-edge: rgba(158, 182, 235, 0.16);
   --bench-shadow: 0 1px 0 var(--bench-edge) inset, 0 10px 28px -12px rgba(3, 7, 18, 0.65);
   --bench-shadow-sm: 0 1px 0 var(--bench-edge) inset, 0 4px 12px -8px rgba(3, 7, 18, 0.7);
@@ -24320,10 +24371,10 @@ button.assessment-queue-link:hover {
   --warning-ink: #fbbf24;
   --pip-off-ink: #bfc7d3;
   --oos-ink: #9aa5bd;
-  --field-bg: #101a35;
-  --field-border: rgba(120, 150, 210, 0.28);
-  --field-border-hover: rgba(66, 165, 245, 0.55);
-  --field-ring: 0 0 0 3px rgba(66, 165, 245, 0.30);
+  --field-bg: color-mix(in srgb, var(--bg) 40%, var(--panel));
+  --field-border: color-mix(in srgb, var(--text) 24%, transparent);
+  --field-border-hover: color-mix(in srgb, var(--primary) 55%, transparent);
+  --field-ring: 0 0 0 3px color-mix(in srgb, var(--primary) 30%, transparent);
   --field-readonly-ink: #a9b4d4;
 }
 
@@ -25048,8 +25099,10 @@ button.assessment-queue-link:hover {
 }
 
 @media (max-width: 400px) {
-  /* Risk appetite slider labels: wrap on very narrow phones */
-  .appetite-slider-labels { flex-wrap: wrap; font-size: 11px; }
+  /* Risk appetite slider labels: tighter type on very narrow phones
+     (labels are stop-anchored, so they shrink rather than wrap) */
+  .appetite-slider-container { padding: 4px 22px 0; }
+  .appetite-slider-label { font-size: 10px; }
 }
 
 @media (max-width: 640px) {
@@ -26877,7 +26930,14 @@ button.assessment-queue-link:hover {
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: 6px;
+  font-family: inherit;
   font-size: 14px;
+}
+
+/* A full-width row under the fields, so the form's flex-end alignment lines
+   up the controls themselves rather than the hint with the inputs. */
+.team-create-hint {
+  flex-basis: 100%;
 }
 
 /* ---- Function groups ---- */
@@ -27580,20 +27640,32 @@ button.assessment-queue-link:hover {
 }
 
 .explorer-toolbar-search {
-  /* borderless search input */
+  /* Bounded field, same language as the drawer/modal inputs: the former
+     borderless, zero-padding input read as plain placeholder text in Light
+     and as a bare strip in dark palettes (UIP-021). Colours are tokens, so
+     every theme carries it. */
   flex: 1;
-  background: transparent;
-  border: none;
+  min-width: 0;
+  box-sizing: border-box;
+  background: var(--field-bg, var(--panel));
+  border: 1px solid var(--field-border, var(--border));
+  border-radius: 8px;
   outline: none;
-  font-size: 16px;
+  font-size: 15px;
   font-family: var(--font-sans);
   color: var(--text);
-  padding: 0;
+  padding: 8px 12px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.explorer-toolbar-search:hover {
+  border-color: var(--field-border-hover, var(--primary));
 }
 
 .explorer-toolbar-search:focus-visible {
-  outline: 2px solid var(--primary);
-  outline-offset: -2px;
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 20%, transparent);
 }
 
 .explorer-toolbar-search::placeholder {
@@ -28580,6 +28652,67 @@ button.assessment-queue-link:hover {
   outline: 2px solid var(--primary);
   outline-offset: 2px;
   border-radius: 2px;
+}
+
+a.control-detail-evidence-link {
+  text-decoration: none;
+}
+
+/* Several requirements: one link each, never a silent "first item". */
+.control-detail-evidence-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-top: 4px;
+}
+
+/* ── Cross-links (AppLink) ────────────────────────────────────────────────
+   Rows and cells that became real anchors keep their existing look; the
+   link shows itself on hover and, for keyboard users, on focus. */
+a.evidence-status-row,
+a.artifact-item-link,
+a.control-info-link {
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+a.artifact-item-link:hover,
+a.control-info-link:hover .control-id {
+  text-decoration: underline;
+}
+
+a.evidence-status-row:focus-visible,
+a.artifact-item-link:focus-visible,
+a.control-info-link:focus-visible,
+a.cp-controls-id-link:focus-visible,
+a.deprecated-badge-successor:focus-visible,
+.popover-record a:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+a.cp-controls-id-link,
+.popover-record a {
+  color: var(--primary);
+  font-weight: 500;
+}
+
+a.deprecated-badge-successor {
+  color: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.popover-record {
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+.popover-record-muted {
+  color: var(--muted);
+  font-style: italic;
 }
 
 /* ============================================================================
@@ -29768,6 +29901,7 @@ button.risk-list-header-cell:hover {
   color: var(--primary-foreground);
   border: none;
   border-radius: 6px;
+  font-family: inherit;
   font-size: 0.8125rem;
   font-weight: 600;
   cursor: pointer;
@@ -32604,18 +32738,23 @@ button.risk-list-header-cell:hover {
   min-height: 0;
 }
 
-/* Quiet left index — purely presentational anchor links */
+/* Left index. Sticky inside the scrolling .app-content pane: it must be only
+   as tall as that pane (not stretched to the whole page, which left sticky no
+   room to stick — UIP-018), so the scope note at its foot stays visible too.
+   The divider lives on the content so it still runs the full page height. */
 .settings-section-nav {
   width: 220px;
   flex-shrink: 0;
   position: sticky;
   top: 0;
+  align-self: flex-start;
+  box-sizing: border-box;
+  height: calc(100vh - 44px - var(--app-footer-height, 28px));
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 2px;
   padding: 20px 16px;
-  border-right: 1px solid var(--border);
-  align-self: stretch;
 }
 
 .settings-section-nav-item {
@@ -32659,6 +32798,12 @@ button.risk-list-header-cell:hover {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  border-left: 1px solid var(--border);
+}
+
+/* Anchor jumps land with breathing room above the section's card */
+.settings-page-content > div[id] {
+  scroll-margin-top: 16px;
 }
 
 /* Unify card appearance for all five settings sections:
@@ -32673,8 +32818,11 @@ button.risk-list-header-cell:hover {
   max-width: 100%;
 }
 
-/* Align card headings to artboard weight/size */
+/* Align card headings to artboard weight/size. Document Generation wraps its
+   title in .doc-settings-head beside the status pill, so it is not a direct
+   child — name it explicitly rather than widening to every nested h2 (UIP-019). */
 .settings-page-content .settings-card > h2,
+.settings-page-content .doc-settings-head h2,
 .settings-page-content .settings-group > .settings-group-header h1 {
   font-size: 15px;
   font-weight: 600;
@@ -32684,6 +32832,18 @@ button.risk-list-header-cell:hover {
 /* Tighten the inner settings sections within a group */
 .settings-page-content .settings-section {
   padding: 12px 0;
+}
+
+/* RiskProfileSettings wraps its two groups in .risk-profile-settings, which
+   carries a standalone-page 900px inset. Inside Settings it must take the
+   same width as its peers and space its groups at the page rhythm (UIP-019). */
+.settings-page-content .risk-profile-settings {
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 /* BackupRestore and RiskProfileSettings use .settings-group directly */
@@ -32707,6 +32867,8 @@ button.risk-list-header-cell:hover {
   }
   .settings-section-nav {
     width: 100%;
+    height: auto;
+    overflow-y: visible;
     position: static;
     flex-direction: row;
     flex-wrap: wrap;
@@ -32720,6 +32882,7 @@ button.risk-list-header-cell:hover {
   }
   .settings-page-content {
     padding: 16px;
+    border-left: none;
   }
 }
 
@@ -35451,4 +35614,32 @@ button.risk-list-header-cell:hover {
   .journey-stone-state,
   .journey-stone-pre { grid-column: 2; justify-self: start; }
   .journey-focus-item { flex-direction: column; gap: 2px; }
+}
+
+/* ============================================================================
+   Engagements drawer fields
+   `input.` / `textarea.` qualifiers match the base `input[type="text"]` rule's
+   weight so these win on order. Font is inherited: the UA default is Arial,
+   and monospace for date inputs.
+   ============================================================================ */
+input.engagement-input,
+textarea.engagement-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 14px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+/* Same treatment as the system and vendor modal fields. The ring is a
+   box-shadow, so the framework list's overflow does not clip an outline. */
+.engagement-input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 20%, transparent);
 }

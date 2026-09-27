@@ -197,7 +197,7 @@ export default function AppearanceSettings({ organizationId }: AppearanceSetting
           </div>
           <div className="appearance-actions">
             <button
-              className="btn"
+              className="btn btn-secondary"
               disabled={isUploadingLogo}
               onClick={() => logoFileInputRef.current?.click()}
             >

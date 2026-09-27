@@ -18,6 +18,7 @@ import { toast } from 'react-hot-toast'
 import RiskMatrix from './RiskMatrix'
 import RiskAssessmentList from './RiskAssessmentList'
 import RiskDetailPage from './RiskDetailPage'
+import CustomRiskModal, { type CustomRiskForm } from './CustomRiskModal'
 import type {
   RiskAssessment,
   RiskAssessmentUpdate,
@@ -66,7 +67,7 @@ export default function RiskDashboard({ organizationId, onNavigateToControl, ris
   const [users, setUsers] = useState<UserSimple[]>([])
   const [customDefs, setCustomDefs] = useState<CustomRiskDefinition[]>([])
   const [showCreateModal, setShowCreateModal] = useState(false)
-  const [createForm, setCreateForm] = useState({ title: '', description: '', category_name: 'Custom', category_color: '#6b7280' })
+  const [createForm, setCreateForm] = useState<CustomRiskForm>({ title: '', description: '', category_name: 'Custom', category_color: '#6b7280' })
   const [creating, setCreating] = useState(false)
 
   // One call covers both renderings of the create-risk modal — the detail view
@@ -92,11 +93,14 @@ export default function RiskDashboard({ organizationId, onNavigateToControl, ris
     return merged
   }, [scfRiskCodes, customDefs])
 
-  // Compute risk level counts for summary strip
+  // Compute risk level counts for summary strip. Unassessed records are
+  // counted under "Not Assessed", never as Low — the same rule RiskMatrix's
+  // own summary applies, so the two strips agree (UIP-016).
   const riskLevelCounts = useMemo(() => {
     const counts = { low: 0, medium: 0, high: 0, critical: 0 }
     for (const a of assessments) {
-      const score = (a.likelihood ?? 1) * (a.impact ?? 1)
+      if (a.likelihood == null || a.impact == null) continue
+      const score = a.likelihood * a.impact
       const level = getRiskLevel(score, riskThresholds)
       counts[level]++
     }
@@ -351,73 +355,13 @@ export default function RiskDashboard({ organizationId, onNavigateToControl, ris
 
         {/* Create Custom Risk Modal */}
         {showCreateModal && (
-          <div className="modal-overlay" onClick={() => setShowCreateModal(false)}>
-            <div className="modal-content custom-risk-modal" onClick={e => e.stopPropagation()}>
-              <div className="modal-header">
-                <h2>Add Custom Risk</h2>
-                <button className="modal-close" onClick={() => setShowCreateModal(false)} aria-label="Close">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <line x1="18" y1="6" x2="6" y2="18" />
-                    <line x1="6" y1="6" x2="18" y2="18" />
-                  </svg>
-                </button>
-              </div>
-              <div className="modal-body">
-                <div className="form-group">
-                  <label>Title *</label>
-                  <input
-                    type="text"
-                    value={createForm.title}
-                    onChange={e => setCreateForm(f => ({ ...f, title: e.target.value }))}
-                    placeholder="e.g., Physical Security Breach"
-                    maxLength={100}
-                  />
-                </div>
-                <div className="form-group">
-                  <label>Description *</label>
-                  <textarea
-                    value={createForm.description}
-                    onChange={e => setCreateForm(f => ({ ...f, description: e.target.value }))}
-                    placeholder="Describe the risk scenario..."
-                    rows={3}
-                  />
-                </div>
-                <div className="form-group">
-                  <label>Category Name</label>
-                  <input
-                    type="text"
-                    value={createForm.category_name}
-                    onChange={e => setCreateForm(f => ({ ...f, category_name: e.target.value }))}
-                    placeholder="e.g., Physical Security"
-                    maxLength={50}
-                  />
-                </div>
-                <div className="form-group">
-                  <label>Category Color</label>
-                  <input
-                    type="color"
-                    value={createForm.category_color}
-                    onChange={e => setCreateForm(f => ({ ...f, category_color: e.target.value }))}
-                  />
-                </div>
-              </div>
-              <div className="modal-footer">
-                <button
-                  className="btn-secondary"
-                  onClick={() => setShowCreateModal(false)}
-                >
-                  Cancel
-                </button>
-                <button
-                  className="btn-primary"
-                  onClick={handleCreateCustomRisk}
-                  disabled={creating || !createForm.title.trim() || !createForm.description.trim()}
-                >
-                  {creating ? 'Creating...' : 'Create Risk'}
-                </button>
-              </div>
-            </div>
-          </div>
+          <CustomRiskModal
+            form={createForm}
+            setForm={setCreateForm}
+            creating={creating}
+            onCreate={handleCreateCustomRisk}
+            onClose={() => setShowCreateModal(false)}
+          />
         )}
       </div>
     )
@@ -555,73 +499,13 @@ export default function RiskDashboard({ organizationId, onNavigateToControl, ris
 
       {/* Create Custom Risk Modal */}
       {showCreateModal && (
-        <div className="modal-overlay" onClick={() => setShowCreateModal(false)}>
-          <div className="modal-content custom-risk-modal" onClick={e => e.stopPropagation()}>
-            <div className="modal-header">
-              <h2>Add Custom Risk</h2>
-              <button className="modal-close" onClick={() => setShowCreateModal(false)} aria-label="Close">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <line x1="18" y1="6" x2="6" y2="18" />
-                  <line x1="6" y1="6" x2="18" y2="18" />
-                </svg>
-              </button>
-            </div>
-            <div className="modal-body">
-              <div className="form-group">
-                <label>Title *</label>
-                <input
-                  type="text"
-                  value={createForm.title}
-                  onChange={e => setCreateForm(f => ({ ...f, title: e.target.value }))}
-                  placeholder="e.g., Physical Security Breach"
-                  maxLength={100}
-                />
-              </div>
-              <div className="form-group">
-                <label>Description *</label>
-                <textarea
-                  value={createForm.description}
-                  onChange={e => setCreateForm(f => ({ ...f, description: e.target.value }))}
-                  placeholder="Describe the risk scenario..."
-                  rows={3}
-                />
-              </div>
-              <div className="form-group">
-                <label>Category Name</label>
-                <input
-                  type="text"
-                  value={createForm.category_name}
-                  onChange={e => setCreateForm(f => ({ ...f, category_name: e.target.value }))}
-                  placeholder="e.g., Physical Security"
-                  maxLength={50}
-                />
-              </div>
-              <div className="form-group">
-                <label>Category Color</label>
-                <input
-                  type="color"
-                  value={createForm.category_color}
-                  onChange={e => setCreateForm(f => ({ ...f, category_color: e.target.value }))}
-                />
-              </div>
-            </div>
-            <div className="modal-footer">
-              <button
-                className="btn-secondary"
-                onClick={() => setShowCreateModal(false)}
-              >
-                Cancel
-              </button>
-              <button
-                className="btn-primary"
-                onClick={handleCreateCustomRisk}
-                disabled={creating || !createForm.title.trim() || !createForm.description.trim()}
-              >
-                {creating ? 'Creating...' : 'Create Risk'}
-              </button>
-            </div>
-          </div>
-        </div>
+        <CustomRiskModal
+          form={createForm}
+          setForm={setCreateForm}
+          creating={creating}
+          onCreate={handleCreateCustomRisk}
+          onClose={() => setShowCreateModal(false)}
+        />
       )}
     </div>
   )

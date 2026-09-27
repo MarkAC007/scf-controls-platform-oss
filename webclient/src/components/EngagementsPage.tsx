@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef, useId, createContext, useContext } from 'react'
 import ListToolbar from './explorer/ListToolbar'
 import {
   listEngagements,
@@ -25,6 +25,7 @@ import {
 } from '../data/apiClient'
 import { fetchFrameworks, type FrameworkInfo } from '../data/catalogApi'
 import { useModalDismiss } from '../hooks/useModalDismiss'
+import { useFocusTrap } from '../hooks/useFocusTrap'
 import DeprecatedBadge, { getCatalogLifecycle } from './DeprecatedBadge'
 
 interface EngagementsPageProps {
@@ -72,11 +73,9 @@ const QUERY_STATUS_META: Record<EngagementQueryStatus, { label: string; bg: stri
 // Shared building blocks
 // ---------------------------------------------------------------------------
 
-const inputStyle: React.CSSProperties = {
-  padding: '9px 12px', border: '1px solid var(--border)', borderRadius: 8,
-  fontSize: 14, outline: 'none', width: '100%', boxSizing: 'border-box',
-  background: 'var(--panel)', color: 'var(--text)',
-}
+// Border, colours and the focus ring live in `.engagement-input` (styles.css):
+// an inline border would override the stylesheet's :focus rule.
+const INPUT_CLASS = 'engagement-input'
 
 /** A quiet, consistent contextual-help block. */
 function HelpNote({ children }: { children: React.ReactNode }) {
@@ -97,6 +96,9 @@ function HelpNote({ children }: { children: React.ReactNode }) {
   )
 }
 
+/** Lets `DrawerHeader` label the dialog it sits in without every caller passing an id. */
+const DrawerTitleIdContext = createContext<string | undefined>(undefined)
+
 /**
  * Right-anchored slide-over shell shared by every engagement drawer.
  *
@@ -108,6 +110,10 @@ function HelpNote({ children }: { children: React.ReactNode }) {
 function Drawer({ width = 560, onClose, children }: { width?: number; onClose: () => void; children: React.ReactNode }) {
   // Mounted only while open, so the overlay is always the active one.
   useModalDismiss(true, onClose)
+  // Keyboard focus stays inside the open drawer and returns to the opener (UIP-015).
+  const panelRef = useRef<HTMLDivElement>(null)
+  useFocusTrap(panelRef, true)
+  const titleId = useId()
 
   return (
     <div
@@ -115,20 +121,27 @@ function Drawer({ width = 560, onClose, children }: { width?: number; onClose: (
       onClick={onClose}
     >
       <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
         style={{
+          outline: 'none',
           width, maxWidth: '100vw', height: '100%',
           background: 'var(--card)', boxShadow: '-4px 0 24px rgba(0,0,0,0.25)',
           display: 'flex', flexDirection: 'column', overflowY: 'auto',
         }}
         onClick={e => e.stopPropagation()}
       >
-        {children}
+        <DrawerTitleIdContext.Provider value={titleId}>{children}</DrawerTitleIdContext.Provider>
       </div>
     </div>
   )
 }
 
 function DrawerHeader({ title, subtitle, onClose }: { title: string; subtitle?: React.ReactNode; onClose: () => void }) {
+  const titleId = useContext(DrawerTitleIdContext)
   return (
     <div style={{
       padding: '20px 24px', borderBottom: '1px solid var(--border)',
@@ -136,7 +149,7 @@ function DrawerHeader({ title, subtitle, onClose }: { title: string; subtitle?: 
       position: 'sticky', top: 0, background: 'var(--card)', zIndex: 1,
     }}>
       <div style={{ minWidth: 0 }}>
-        <h2 style={{ margin: 0, fontSize: 18, fontWeight: 600, color: 'var(--text)' }}>{title}</h2>
+        <h2 id={titleId} style={{ margin: 0, fontSize: 18, fontWeight: 600, color: 'var(--text)' }}>{title}</h2>
         {subtitle && <p style={{ margin: '4px 0 0', fontSize: 13, color: 'var(--muted)', lineHeight: 1.5 }}>{subtitle}</p>}
       </div>
       <button onClick={onClose} aria-label="Close"
@@ -230,7 +243,7 @@ function CreateEngagementDrawer({ organizationId, frameworks, onClose, onCreated
           <input
             id="eng-name" type="text" value={name} onChange={e => setName(e.target.value)}
             placeholder="e.g. ISO 27001:2022 Certification — FY26"
-            style={inputStyle} autoFocus
+            className={INPUT_CLASS} autoFocus
           />
         </div>
 
@@ -266,7 +279,7 @@ function CreateEngagementDrawer({ organizationId, frameworks, onClose, onCreated
           <input
             type="search" value={search} onChange={e => setSearch(e.target.value)}
             placeholder="Search frameworks (e.g. ISO, SOC 2, NIST)…"
-            style={{ ...inputStyle, fontSize: 13 }}
+            className={INPUT_CLASS} style={{ fontSize: 13 }}
           />
 
           {/* Selectable list */}
@@ -288,9 +301,10 @@ function CreateEngagementDrawer({ organizationId, frameworks, onClose, onCreated
                     background: isSel ? 'var(--accent-muted)' : 'transparent',
                   }}>
                     <input type="checkbox" checked={isSel} onChange={() => toggle(fw.id)} style={{ cursor: 'pointer' }} />
-                    <span style={{ flex: 1, minWidth: 0 }}>
-                      <span style={{ display: 'block', fontSize: 13, color: 'var(--text)', fontWeight: isSel ? 600 : 400 }}>{fw.name}</span>
-                      <span style={{ display: 'block', fontSize: 11, color: 'var(--muted)', fontFamily: 'var(--font-mono, monospace)' }}>{fw.id}</span>
+                    {/* The internal id stays searchable and in the tooltip for
+                        support, but is not a second line on every row (UIP-022). */}
+                    <span title={fw.id} style={{ flex: 1, minWidth: 0, fontSize: 13, color: 'var(--text)', fontWeight: isSel ? 600 : 400 }}>
+                      {fw.name}
                     </span>
                     <span style={{ fontSize: 11, color: 'var(--muted)', whiteSpace: 'nowrap' }}>{fw.control_count} controls</span>
                   </label>
@@ -306,11 +320,11 @@ function CreateEngagementDrawer({ organizationId, frameworks, onClose, onCreated
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               <span style={{ fontSize: 12, color: 'var(--muted)' }}>Start</span>
-              <input type="date" value={startDate} max={endDate || undefined} onChange={e => setStartDate(e.target.value)} style={inputStyle} />
+              <input type="date" value={startDate} max={endDate || undefined} onChange={e => setStartDate(e.target.value)} className={INPUT_CLASS} />
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               <span style={{ fontSize: 12, color: 'var(--muted)' }}>End</span>
-              <input type="date" value={endDate} min={startDate || undefined} onChange={e => setEndDate(e.target.value)} style={inputStyle} />
+              <input type="date" value={endDate} min={startDate || undefined} onChange={e => setEndDate(e.target.value)} className={INPUT_CLASS} />
             </div>
           </div>
           <HelpNote>
@@ -323,13 +337,13 @@ function CreateEngagementDrawer({ organizationId, frameworks, onClose, onCreated
           <button type="submit" disabled={submitting} style={{
             flex: 1, padding: '11px 0', borderRadius: 8, border: 'none',
             background: submitting ? 'var(--muted-bg)' : 'var(--primary)', color: 'var(--primary-foreground)',
-            fontSize: 14, fontWeight: 600, cursor: submitting ? 'not-allowed' : 'pointer',
+            fontSize: 14, fontWeight: 600, fontFamily: 'inherit', cursor: submitting ? 'not-allowed' : 'pointer',
           }}>
             {submitting ? 'Creating…' : 'Create engagement'}
           </button>
           <button type="button" onClick={onClose} style={{
             padding: '11px 20px', borderRadius: 8, border: '1px solid var(--border)',
-            background: 'var(--secondary)', color: 'var(--text)', fontSize: 14, cursor: 'pointer',
+            background: 'var(--secondary)', color: 'var(--text)', fontSize: 14, fontFamily: 'inherit', cursor: 'pointer',
           }}>Cancel</button>
         </div>
       </form>
@@ -638,7 +652,7 @@ function AuditorsDrawer({ organizationId, engagement, onClose }: AuditorsDrawerP
           <label htmlFor="auditor-user" style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>Grant access</label>
           <div style={{ display: 'flex', gap: 8 }}>
             <input id="auditor-user" type="text" value={userId} onChange={e => setUserId(e.target.value)}
-              placeholder="Auditor's user ID" style={{ ...inputStyle, fontSize: 13 }} />
+              placeholder="Auditor's user ID" className={INPUT_CLASS} style={{ fontSize: 13 }} />
             <button type="submit" disabled={busy || !userId.trim()} style={{
               padding: '9px 16px', borderRadius: 8, border: 'none',
               background: busy || !userId.trim() ? 'var(--muted-bg)' : 'var(--primary)',
@@ -788,7 +802,7 @@ function QueriesDrawer({ organizationId, engagement, onClose }: QueriesDrawerPro
             </div>
 
             <form onSubmit={handleReply} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <textarea value={reply} onChange={e => setReply(e.target.value)} placeholder="Write a response…" rows={3} style={{ ...inputStyle, resize: 'vertical' }} />
+              <textarea value={reply} onChange={e => setReply(e.target.value)} placeholder="Write a response…" rows={3} className={INPUT_CLASS} style={{ resize: 'vertical' }} />
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 <button type="submit" disabled={busy || !reply.trim()} style={{
                   padding: '9px 16px', borderRadius: 8, border: 'none',
@@ -820,9 +834,9 @@ function QueriesDrawer({ organizationId, engagement, onClose }: QueriesDrawerPro
 
             {showNew && (
               <form onSubmit={handleCreate} style={{ display: 'flex', flexDirection: 'column', gap: 8, border: '1px solid var(--border)', borderRadius: 8, padding: 16 }}>
-                <input style={{ ...inputStyle, fontSize: 13 }} placeholder="Control SCF ID (e.g. GOV-01)" value={form.scf_id} onChange={e => setForm(f => ({ ...f, scf_id: e.target.value }))} />
-                <input style={{ ...inputStyle, fontSize: 13 }} placeholder="Query title" value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} />
-                <textarea style={{ ...inputStyle, fontSize: 13, resize: 'vertical' }} rows={3} placeholder="What are you asking the control owner?" value={form.body} onChange={e => setForm(f => ({ ...f, body: e.target.value }))} />
+                <input className={INPUT_CLASS} style={{ fontSize: 13 }} placeholder="Control SCF ID (e.g. GOV-01)" value={form.scf_id} onChange={e => setForm(f => ({ ...f, scf_id: e.target.value }))} />
+                <input className={INPUT_CLASS} style={{ fontSize: 13 }} placeholder="Query title" value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} />
+                <textarea className={INPUT_CLASS} style={{ fontSize: 13, resize: 'vertical' }} rows={3} placeholder="What are you asking the control owner?" value={form.body} onChange={e => setForm(f => ({ ...f, body: e.target.value }))} />
                 <button type="submit" disabled={busy} style={{ alignSelf: 'flex-start', padding: '9px 16px', borderRadius: 8, border: 'none', background: 'var(--primary)', color: 'var(--primary-foreground)', fontSize: 13, fontWeight: 600, cursor: busy ? 'not-allowed' : 'pointer' }}>Raise query</button>
               </form>
             )}

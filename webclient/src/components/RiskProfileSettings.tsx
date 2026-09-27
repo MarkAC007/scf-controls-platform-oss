@@ -347,6 +347,13 @@ export default function RiskProfileSettings({ organizationId }: RiskProfileSetti
             <input
               type="range"
               className="appetite-slider"
+              aria-label="Risk appetite level"
+              aria-valuetext={`${(['Minimal', 'Cautious', 'Moderate', 'Flexible', 'Open'] as const)[
+                acceptableRiskLevel === 'low' ? 0 :
+                acceptableRiskLevel === 'medium' ? 2 :
+                acceptableRiskLevel === 'high' ? 3 :
+                acceptableRiskLevel === 'critical' ? 4 : 2
+              ]} risk`}
               min={1}
               max={5}
               step={1}

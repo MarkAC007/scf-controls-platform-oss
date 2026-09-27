@@ -11,13 +11,60 @@ from typing import Optional
 from uuid import UUID
 
 from database import get_db
-from models import AuditLog, User
+from models import (
+    AuditLog,
+    EvidenceCollectionTask,
+    EvidenceTracking,
+    RiskAssessment,
+    System,
+    User,
+    Vendor,
+)
 from schemas import AuditLogResponse, AuditLogListResponse, ChangeCursorResponse
 from auth import require_org_role, OrgMembership
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["audit_log"])
+
+
+# entity_type -> (model, label column, ref column). The ref is whatever the
+# webclient's deep link for that object keys on: a risk register row opens by
+# risk code, an evidence item by its ERL ID, vendors/systems/tasks by UUID.
+_ENTITY_RESOLVERS = {
+    "risk_assessment": (RiskAssessment, RiskAssessment.risk_code, RiskAssessment.risk_code),
+    "evidence_tracking": (EvidenceTracking, EvidenceTracking.evidence_id, EvidenceTracking.evidence_id),
+    "vendor": (Vendor, Vendor.name, Vendor.id),
+    "system": (System, System.name, System.id),
+    "evidence_collection_task": (EvidenceCollectionTask, EvidenceCollectionTask.title, EvidenceCollectionTask.id),
+}
+
+
+async def _resolve_entity_refs(
+    db: AsyncSession, org_id: UUID, entries
+) -> dict[tuple[str, UUID], tuple[Optional[str], str]]:
+    """Map (entity_type, entity_id) to (label, ref) for navigable entities.
+
+    One query per entity type present on the page, always filtered to the
+    requesting organisation, so a row can never resolve to another tenant's
+    object. Deleted objects simply do not resolve.
+    """
+    ids_by_type: dict[str, set[UUID]] = {}
+    for e in entries:
+        if e.entity_type in _ENTITY_RESOLVERS:
+            ids_by_type.setdefault(e.entity_type, set()).add(e.entity_id)
+
+    resolved: dict[tuple[str, UUID], tuple[Optional[str], str]] = {}
+    for entity_type, ids in ids_by_type.items():
+        model, label_col, ref_col = _ENTITY_RESOLVERS[entity_type]
+        rows = await db.execute(
+            select(model.id, label_col, ref_col).where(
+                model.id.in_(ids), model.organization_id == org_id
+            )
+        )
+        for obj_id, label, ref in rows.fetchall():
+            resolved[(entity_type, obj_id)] = (label, str(ref))
+    return resolved
 
 
 @router.get(
@@ -110,10 +157,15 @@ async def list_audit_log(
         )
         user_emails = {row[0]: row[1] for row in user_result.fetchall()}
 
+    entity_refs = await _resolve_entity_refs(db, org_id, entries)
+
     response_entries = []
     for entry in entries:
         entry_dict = AuditLogResponse.model_validate(entry)
         entry_dict.changed_by_email = user_emails.get(entry.changed_by_user_id)
+        ref = entity_refs.get((entry.entity_type, entry.entity_id))
+        if ref is not None:
+            entry_dict.entity_label, entry_dict.entity_ref = ref
         response_entries.append(entry_dict)
 
     return AuditLogListResponse(

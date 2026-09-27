@@ -34,6 +34,7 @@ import VendorManagement from './components/VendorManagement'
 import CapabilityPosture from './components/CapabilityPosture'
 import JourneyPage from './components/journey/JourneyPage'
 import RiskProfileSettings from './components/RiskProfileSettings'
+import SettingsSectionNav from './components/SettingsSectionNav'
 import AppearanceSettings from './components/AppearanceSettings'
 import ApiKeyManagement from './components/ApiKeyManagement'
 import WebhookManagement from './components/WebhookManagement'
@@ -931,22 +932,20 @@ function AppContent() {
           )}
           {activeTab === 'settings' && scopingData && (
             <div className="settings-page-layout">
-              <nav className="settings-section-nav" aria-label="Settings sections">
-                <a className="settings-section-nav-item" href="#settings-catalog-version">CATALOG VERSION</a>
-                <a className="settings-section-nav-item" href="#settings-branding">ORGANISATION BRANDING</a>
-                <a className="settings-section-nav-item" href="#settings-risk">RISK &amp; GOVERNANCE</a>
-                <a className="settings-section-nav-item" href="#settings-docgen">DOCUMENT GENERATION</a>
-                <a className="settings-section-nav-item" href="#settings-backups">BACKUPS</a>
-                <a className="settings-section-nav-item" href="#settings-evidence-storage">EVIDENCE STORAGE</a>
-                {canManageIntegrations && (
-                  <a className="settings-section-nav-item" href="#settings-integrations">INTEGRATIONS</a>
-                )}
-                <p className="settings-section-nav-note">
-                  {canManageIntegrations
-                    ? 'Settings apply to this organisation only, except Integrations, which is platform-wide. Platform-wide catalog administration lives under Platform → Catalog.'
-                    : 'Settings apply to this organisation only. Platform-wide catalog administration lives under Platform → Catalog.'}
-                </p>
-              </nav>
+              <SettingsSectionNav
+                sections={[
+                  { id: 'settings-catalog-version', label: 'CATALOG VERSION' },
+                  { id: 'settings-branding', label: 'ORGANISATION BRANDING' },
+                  { id: 'settings-risk', label: 'RISK & GOVERNANCE' },
+                  { id: 'settings-docgen', label: 'DOCUMENT GENERATION' },
+                  { id: 'settings-backups', label: 'BACKUPS' },
+                  { id: 'settings-evidence-storage', label: 'EVIDENCE STORAGE' },
+                  ...(canManageIntegrations ? [{ id: 'settings-integrations', label: 'INTEGRATIONS' }] : []),
+                ]}
+                note={canManageIntegrations
+                  ? 'Settings apply to this organisation only, except Integrations, which is platform-wide. Platform-wide catalog administration lives under Platform → Catalog.'
+                  : 'Settings apply to this organisation only. Platform-wide catalog administration lives under Platform → Catalog.'}
+              />
               <div className="settings-page-content">
                 <div id="settings-catalog-version">
                   <CatalogVersionCard

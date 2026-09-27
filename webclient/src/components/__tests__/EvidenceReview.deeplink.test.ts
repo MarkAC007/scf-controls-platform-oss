@@ -131,12 +131,16 @@ describe('no other screen was quietly made URL-aware', () => {
   // container/list; App remains the sole writer for Library mode and items.
   // Task 6 added Header.tsx: it reads TAB_TITLES and the Tab type from appUrl
   // but does NOT write the address bar — it is a read-only consumer.
+  // AppLink is the one writer for cross-links (2026-09-25 cross-link QA): screens name
+  // a destination object and AppLink alone turns it into a URL, so the list
+  // grows by one file rather than by every screen that links out.
   it('only the intended components import the URL module', () => {
     const importers = PRODUCTION.filter(([, source]) => /from '.*data\/appUrl'/.test(source))
       .map(([key]) => underSrc(key))
       .sort()
     expect(importers).toEqual([
       'App.tsx',
+      'components/AppLink.tsx',
       'components/EvidenceReview.tsx',
       'components/EvidenceWorkspace.tsx',
       'components/Header.tsx',

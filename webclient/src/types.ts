@@ -1625,6 +1625,10 @@ export interface AuditLogEntry {
   new_value?: string
   changed_by_user_id: string | null
   changed_by_email?: string
+  /** Human-readable name of the changed object, when the API could resolve it. */
+  entity_label?: string | null
+  /** Deep-link key for the changed object (risk code, evidence ID, UUID), when it still exists. */
+  entity_ref?: string | null
   changed_at: string
   ip_address?: string
   action_source?: string

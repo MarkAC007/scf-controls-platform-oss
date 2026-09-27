@@ -19,6 +19,7 @@ import SCRMFocusBadges from '../SCRMFocusBadges'
 import RiskThreatContext from '../RiskThreatContext'
 import AssessmentObjectivesList from '../AssessmentObjectivesList'
 import DeprecatedBadge, { getCatalogLifecycle } from '../DeprecatedBadge'
+import AppLink from '../AppLink'
 import TabRow from '../explorer/TabRow'
 
 import ScopingDetailPage, {
@@ -448,13 +449,32 @@ export default function ControlDetailPage({
               {linkedCount} {linkedCount === 1 ? 'item' : 'items'} linked
               {trackedCount > 0 && <> · {trackedCount} tracked</>}
             </div>
-            {onNavigateToEvidence && control.artifactsResolved.length > 0 && (
-              <button
+            {/* One requirement: go straight to it. Several: offer each, so the
+                header never silently picks the first. */}
+            {onNavigateToEvidence && control.artifactsResolved.length === 1 && (
+              <AppLink
                 className="control-detail-evidence-link"
-                onClick={() => onNavigateToEvidence(control.artifactsResolved[0].id)}
+                to={{ kind: 'evidence', id: control.artifactsResolved[0].id }}
+                onNavigate={() => onNavigateToEvidence(control.artifactsResolved[0].id)}
               >
                 Open in Evidence workspace
-              </button>
+              </AppLink>
+            )}
+            {onNavigateToEvidence && control.artifactsResolved.length > 1 && (
+              <div className="control-detail-evidence-choices" aria-label="Open an evidence requirement">
+                {control.artifactsResolved.map((a) => (
+                  <AppLink
+                    key={a.id}
+                    className="control-detail-evidence-link"
+                    to={{ kind: 'evidence', id: a.id }}
+                    onNavigate={() => onNavigateToEvidence(a.id)}
+                    title={a.title}
+                    aria-label={`Open ${a.id} — ${a.title} in Evidence workspace`}
+                  >
+                    {a.id}
+                  </AppLink>
+                ))}
+              </div>
             )}
           </div>
         </div>
@@ -565,12 +585,24 @@ export default function ControlDetailPage({
                           <div key={domain} className="artifact-domain-group">
                             <div className="artifact-domain-title">{domain}</div>
                             <div className="artifact-items">
-                              {items.map((it) => (
-                                <div key={it.id} className="artifact-item-compact">
-                                  <span className="artifact-id-badge">{it.id}</span>
-                                  <span className="artifact-title-text">{it.title}</span>
-                                </div>
-                              ))}
+                              {items.map((it) =>
+                                onNavigateToEvidence ? (
+                                  <AppLink
+                                    key={it.id}
+                                    className="artifact-item-compact artifact-item-link"
+                                    to={{ kind: 'evidence', id: it.id }}
+                                    onNavigate={() => onNavigateToEvidence(it.id)}
+                                  >
+                                    <span className="artifact-id-badge">{it.id}</span>
+                                    <span className="artifact-title-text">{it.title}</span>
+                                  </AppLink>
+                                ) : (
+                                  <div key={it.id} className="artifact-item-compact">
+                                    <span className="artifact-id-badge">{it.id}</span>
+                                    <span className="artifact-title-text">{it.title}</span>
+                                  </div>
+                                ),
+                              )}
                             </div>
                           </div>
                         ))}
@@ -589,27 +621,39 @@ export default function ControlDetailPage({
                     </div>
                     <div className="container-content">
                       <div className="evidence-status-grid">
-                        {evidenceStatusItems.map((item) => (
-                          <div
-                            key={item.id}
-                            className={`evidence-status-row${onNavigateToEvidence ? ' cursor-pointer' : ''}`}
-                            onClick={() => onNavigateToEvidence?.(item.id)}
-                          >
-                            <span className={`ehd-status-dot ehd-dot-${item.status}`} />
-                            <span className="evidence-status-id">{item.id}</span>
-                            <span className="evidence-status-title">{item.title}</span>
-                            <span className="evidence-status-files">
-                              {item.fileCount > 0
-                                ? `${item.fileCount} file${item.fileCount !== 1 ? 's' : ''}`
-                                : 'No files'}
-                            </span>
-                            <span
-                              className={`evidence-status-tracked ${item.isTracked ? 'tracked' : 'not-tracked'}`}
+                        {evidenceStatusItems.map((item) => {
+                          const cells = (
+                            <>
+                              <span className={`ehd-status-dot ehd-dot-${item.status}`} />
+                              <span className="evidence-status-id">{item.id}</span>
+                              <span className="evidence-status-title">{item.title}</span>
+                              <span className="evidence-status-files">
+                                {item.fileCount > 0
+                                  ? `${item.fileCount} file${item.fileCount !== 1 ? 's' : ''}`
+                                  : 'No files'}
+                              </span>
+                              <span
+                                className={`evidence-status-tracked ${item.isTracked ? 'tracked' : 'not-tracked'}`}
+                              >
+                                {item.isTracked ? 'Tracked' : 'Not tracked'}
+                              </span>
+                            </>
+                          )
+                          return onNavigateToEvidence ? (
+                            <AppLink
+                              key={item.id}
+                              className="evidence-status-row evidence-status-link"
+                              to={{ kind: 'evidence', id: item.id }}
+                              onNavigate={() => onNavigateToEvidence(item.id)}
                             >
-                              {item.isTracked ? 'Tracked' : 'Not tracked'}
-                            </span>
-                          </div>
-                        ))}
+                              {cells}
+                            </AppLink>
+                          ) : (
+                            <div key={item.id} className="evidence-status-row">
+                              {cells}
+                            </div>
+                          )
+                        })}
                       </div>
                     </div>
                   </div>

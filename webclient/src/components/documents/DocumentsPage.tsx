@@ -227,7 +227,7 @@ export default function DocumentsPage({ organizationId, onOpenSettings }: Props)
         <div className="doc-notice doc-notice-warning">
           <strong>Document generation is not enabled.</strong> An administrator
           can enable it in Org Settings, where the SCF licence position is
-          confirmed.
+          confirmed.{' '}
           {onOpenSettings && (
             <button type="button" className="btn-link" onClick={onOpenSettings}>
               Open settings

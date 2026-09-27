@@ -40,7 +40,7 @@ from api.capability_themes import (
     _compute_axis_bundle,
     _fetch_evidence_metrics_per_theme,
 )
-from api.catalog import format_framework_name, INTERNAL_MAPPING_PREFIXES
+from api.catalog import format_framework_name, live_framework_names, INTERNAL_MAPPING_PREFIXES
 from cache import make_cache_key
 from rate_limiting import rate_limit_trust_portal
 
@@ -269,12 +269,13 @@ async def get_trust_portal(
     # 7. Query scoped frameworks
     # ------------------------------------------------------------------
     fw_result = await db.execute(_FRAMEWORK_QUERY, {"org_id": str(org_id)})
+    live_names = await live_framework_names(db)
     frameworks = []
     for row in fw_result.all():
         if row.fw_key.startswith(INTERNAL_MAPPING_PREFIXES):
             continue
         frameworks.append(TrustPortalFramework(
-            name=format_framework_name(row.fw_key),
+            name=format_framework_name(row.fw_key, live_names),
             control_count=row.control_count,
         ))
 

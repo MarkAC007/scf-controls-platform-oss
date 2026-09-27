@@ -20,7 +20,9 @@ import { beforeAll, describe, expect, it } from 'vitest'
 let APP = ''
 
 /** The section anchor and the section body, as they appear in App.tsx. */
-const NAV_ANCHOR = 'href="#settings-integrations"'
+// The nav is data handed to SettingsSectionNav, which renders each entry's href.
+const NAV_ANCHOR = "{ id: 'settings-integrations',"
+const NAV_GUARD = '...(canManageIntegrations ? ['
 const SECTION = '<div id="settings-integrations">'
 const GUARD = '{canManageIntegrations && ('
 
@@ -55,7 +57,9 @@ describe('Settings → Integrations is platform-admin only', () => {
 
   it('renders the nav entry only behind the canManageIntegrations guard', () => {
     expect(APP.split(NAV_ANCHOR)).toHaveLength(2) // exactly one occurrence
-    expect(isAdminGuarded(APP, NAV_ANCHOR)).toBe(true)
+    // The entry is spread into the sections list only when the flag is set.
+    const at = APP.indexOf(NAV_ANCHOR)
+    expect(APP.slice(at - NAV_GUARD.length, at)).toBe(NAV_GUARD)
   })
 
   it('takes canManageIntegrations from useAuth(), next to the isPlatformAdmin Sidebar gets', () => {

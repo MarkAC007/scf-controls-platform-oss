@@ -8,6 +8,7 @@
  */
 import type { CSSProperties } from 'react'
 import type { CatalogLifecycleFields } from '../types/catalogUpgrade'
+import AppLink from './AppLink'
 
 /**
  * Safely extract the lifecycle badge fields from an arbitrary API row.
@@ -68,7 +69,23 @@ export default function DeprecatedBadge({
       style={compact ? { ...badgeStyle, fontSize: '0.62rem', padding: '0.1rem 0.35rem' } : badgeStyle}
       title={title}
     >
-      Deprecated{superseded_by && !compact ? ` → ${superseded_by}` : ''}
+      Deprecated
+      {superseded_by && !compact && (
+        <>
+          {' → '}
+          {/* The successor opens read-only: full library for a control, so
+              following it never implies or changes scope. */}
+          <AppLink
+            className="deprecated-badge-successor"
+            to={superseded_by.startsWith('E-')
+              ? { kind: 'evidence', id: superseded_by }
+              : { kind: 'control', id: superseded_by, mode: 'full-library' }}
+            aria-label={`Open successor ${superseded_by}`}
+          >
+            {superseded_by}
+          </AppLink>
+        </>
+      )}
     </span>
   )
 }

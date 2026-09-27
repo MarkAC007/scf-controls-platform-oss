@@ -1,7 +1,11 @@
 import { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import type { RiskThreatMapping } from '../types'
 import riskCodesData from '../data/risk_codes.json'
 import threatCodesData from '../data/threat_codes.json'
+import { getRiskAssessments } from '../data/apiClient'
+import { useOrganization } from '../contexts/OrganizationContext'
+import AppLink from './AppLink'
 
 interface Props {
   mapping?: RiskThreatMapping
@@ -46,7 +50,42 @@ function getThreatInfo(code: string): CodeInfo | null {
   }
 }
 
-function CodeBadge({ info, isExpanded, onToggle }: { info: CodeInfo; isExpanded: boolean; onToggle: () => void }) {
+/**
+ * The popover describes the SCF catalogue definition of a risk code. Whether
+ * this organisation holds its own record for that code is a separate fact, so
+ * say which: link to the record when it exists, and say plainly when it does
+ * not. Following the link never creates an assessment.
+ */
+function RiskRecordLink({ code }: { code: string }) {
+  const { currentOrg } = useOrganization()
+  const orgId = currentOrg?.id
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ['risk-assessments', orgId],
+    queryFn: () => getRiskAssessments(undefined, orgId),
+    enabled: !!orgId,
+    staleTime: 60_000,
+  })
+  if (!orgId || isLoading) {
+    return <div className="popover-record popover-record-muted">Checking risk register…</div>
+  }
+  if (isError) {
+    return <div className="popover-record popover-record-muted">Risk register could not be checked.</div>
+  }
+  if (!data?.some((a) => a.risk_code === code)) {
+    return (
+      <div className="popover-record popover-record-muted">
+        Catalogue definition only — no {code} record in this organisation's risk register.
+      </div>
+    )
+  }
+  return (
+    <div className="popover-record">
+      <AppLink to={{ kind: 'risk', id: code }}>Open risk record</AppLink>
+    </div>
+  )
+}
+
+function CodeBadge({ info, isExpanded, onToggle, isRisk = false }: { info: CodeInfo; isExpanded: boolean; onToggle: () => void; isRisk?: boolean }) {
   return (
     <div className="risk-threat-badge-container">
       <button
@@ -65,6 +104,7 @@ function CodeBadge({ info, isExpanded, onToggle }: { info: CodeInfo; isExpanded:
           </div>
           <div className="popover-title">{info.title}</div>
           <div className="popover-description">{info.description}</div>
+          {isRisk && <RiskRecordLink code={info.code} />}
         </div>
       )}
     </div>
@@ -111,6 +151,7 @@ export default function RiskThreatContext({ mapping }: Props) {
                   info={info}
                   isExpanded={expandedCode === info.code}
                   onToggle={() => handleToggle(info.code)}
+                  isRisk
                 />
               ))}
             </div>
