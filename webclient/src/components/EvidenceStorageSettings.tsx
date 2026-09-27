@@ -805,7 +805,7 @@ export default function EvidenceStorageSettings({
             </button>
             <button
               type="button"
-              className="btn"
+              className="btn btn-secondary"
               data-testid="evidence-storage-cancel"
               disabled={busy}
               onClick={closePanels}
@@ -875,7 +875,7 @@ export default function EvidenceStorageSettings({
                     <div className="integration-row-actions">
                       <button
                         type="button"
-                        className="btn"
+                        className="btn btn-secondary"
                         data-testid={`evidence-storage-test-${row.id}`}
                         disabled={busy}
                         onClick={() => handleTest(row.id)}
@@ -901,7 +901,7 @@ export default function EvidenceStorageSettings({
                       {row.status === 'draft' && (
                         <button
                           type="button"
-                          className="btn"
+                          className="btn btn-secondary"
                           data-testid={`evidence-storage-edit-${row.id}`}
                           disabled={busy}
                           onClick={() => openEdit(row)}
@@ -911,7 +911,7 @@ export default function EvidenceStorageSettings({
                       )}
                       <button
                         type="button"
-                        className="btn"
+                        className="btn btn-secondary"
                         data-testid={`evidence-storage-rotate-${row.id}`}
                         disabled={busy}
                         onClick={() => openRotate(row.id)}
@@ -921,7 +921,7 @@ export default function EvidenceStorageSettings({
                       {row.status === 'active' && (
                         <button
                           type="button"
-                          className="btn"
+                          className="btn btn-secondary"
                           data-testid={`evidence-storage-retire-${row.id}`}
                           disabled={busy}
                           onClick={() => handleRetire(row.id)}
@@ -1018,7 +1018,7 @@ export default function EvidenceStorageSettings({
                         </button>
                         <button
                           type="button"
-                          className="btn"
+                          className="btn btn-secondary"
                           data-testid={`evidence-storage-rotate-cancel-${row.id}`}
                           disabled={busy}
                           onClick={closePanels}
@@ -1059,7 +1059,7 @@ export default function EvidenceStorageSettings({
                       </button>
                       <button
                         type="button"
-                        className="btn"
+                        className="btn btn-secondary"
                         data-testid={`evidence-storage-delete-cancel-${row.id}`}
                         disabled={busy}
                         onClick={closePanels}

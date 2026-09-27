@@ -35,6 +35,7 @@ import BusinessSizeGuidance from '../BusinessSizeGuidance'
 import SCRMFocusBadges from '../SCRMFocusBadges'
 import RiskThreatContext from '../RiskThreatContext'
 import DeprecatedBadge, { getCatalogLifecycle } from '../DeprecatedBadge'
+import AppLink from '../AppLink'
 import { ModernCommentThread } from '../ModernCommentThread'
 import { AuditLogPanel } from '../AuditLogPanel'
 import OwningTeams from '../OwningTeams'
@@ -773,7 +774,11 @@ export default function ScopingDetailPage({
                             : null
                           const isTracked = evidenceTracking?.is_tracked ?? false
                           return (
-                            <div key={artifact.id} className="artifact-item-compact">
+                            <AppLink
+                              key={artifact.id}
+                              className="artifact-item-compact artifact-item-link"
+                              to={{ kind: 'evidence', id: artifact.id }}
+                            >
                               <span className="artifact-status-indicator-compact">
                                 {isTracked ? '✅' : '⚪'}
                               </span>
@@ -784,7 +789,7 @@ export default function ScopingDetailPage({
                                   {evidenceTracking.collecting_system}
                                 </span>
                               )}
-                            </div>
+                            </AppLink>
                           )
                         })}
                       </div>

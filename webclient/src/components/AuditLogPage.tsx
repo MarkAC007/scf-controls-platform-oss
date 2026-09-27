@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { getOrgAuditLog } from '../data/apiClient'
 import type { AuditLogEntry, AuditLogListResponse } from '../types'
 import { decodeAuditValue, formatAuditDate, isDateField } from '../utils/auditValue'
+import AppLink, { type AppDestination } from './AppLink'
 
 interface AuditLogPageProps {
   organizationId: string
@@ -14,6 +15,38 @@ interface AuditLogPageProps {
  * name one entity. Printed raw it reads like a broken id, so it is labelled.
  */
 const BASELINE_ENTITY_ID = '00000000-0000-0000-0000-000000000000'
+
+/**
+ * Where an audit row's entity opens, or null when it has no page of its own
+ * or no longer exists. Controls key on the row's scf_id; everything else on
+ * the `entity_ref` the API resolved inside this organisation.
+ */
+export function auditEntityDestination(
+  entry: AuditLogEntry,
+): { to: AppDestination; label: string } | null {
+  if (entry.entity_type === 'scoped_control' && entry.scf_id) {
+    const id = entry.scf_id
+    return { to: { kind: 'control', id }, label: id }
+  }
+  const ref = entry.entity_ref
+  if (!ref) return null
+  const label = entry.entity_label || ref
+  const kind = AUDIT_ENTITY_KINDS[entry.entity_type]
+  return kind ? { to: { kind, id: ref }, label } : null
+}
+
+// Audit entity types whose objects have a page, keyed as the API resolves them.
+const AUDIT_ENTITY_KINDS: Record<string, Exclude<AppDestination['kind'], 'control'>> = {
+  risk_assessment: 'risk',
+  evidence_tracking: 'evidence',
+  vendor: 'vendor',
+  system: 'system',
+  evidence_collection_task: 'task',
+}
+
+function shortId(id: string): string {
+  return id.length > 12 ? id.substring(0, 12) + '...' : id
+}
 
 const FIELD_LABELS: Record<string, string> = {
   selected: 'Scoped',
@@ -129,9 +162,11 @@ const tdStyle: React.CSSProperties = {
   color: 'var(--text)', verticalAlign: 'top',
 }
 
+// fontFamily: form controls take the UA font (Arial; monospace for dates)
+// unless told to inherit.
 const inputStyle: React.CSSProperties = {
   padding: '5px 8px', borderRadius: 6, border: '1px solid var(--border)',
-  fontSize: 12, color: 'var(--text)', background: 'var(--surface)', minWidth: 0,
+  fontFamily: 'inherit', fontSize: 12, color: 'var(--text)', background: 'var(--surface)', minWidth: 0,
 }
 
 const selectStyle: React.CSSProperties = {
@@ -140,11 +175,14 @@ const selectStyle: React.CSSProperties = {
 
 const btnStyle: React.CSSProperties = {
   padding: '5px 12px', borderRadius: 6, border: '1px solid var(--border)',
-  fontSize: 12, cursor: 'pointer', background: 'var(--surface)', color: 'var(--muted)',
+  fontFamily: 'inherit', fontSize: 12, cursor: 'pointer', background: 'var(--surface)', color: 'var(--muted)',
 }
 
-const btnPrimaryStyle: React.CSSProperties = {
-  ...btnStyle, background: 'var(--info)', color: 'white', border: '1px solid var(--info)',
+// Size only: colour, border and hover come from the shared .btn-primary, so
+// Apply matches every other primary action. The border keeps it level with Clear.
+const btnPrimaryCompactStyle: React.CSSProperties = {
+  padding: '5px 12px', borderRadius: 6, border: '1px solid transparent',
+  fontFamily: 'inherit', fontSize: 12, cursor: 'pointer',
 }
 
 // ── Component ──
@@ -334,7 +372,7 @@ export default function AuditLogPage({ organizationId }: AuditLogPageProps) {
         </div>
 
         <div style={{ display: 'flex', gap: 6 }}>
-          <button onClick={handleApplyFilters} style={btnPrimaryStyle}>Apply</button>
+          <button onClick={handleApplyFilters} className="btn-primary" style={btnPrimaryCompactStyle}>Apply</button>
           <button onClick={handleClearFilters} style={btnStyle}>Clear</button>
         </div>
       </div>
@@ -415,16 +453,37 @@ export default function AuditLogPage({ organizationId }: AuditLogPageProps) {
                       {entry.entity_type.replace(/_/g, ' ')}
                     </td>
                     <td style={{ ...tdStyle, fontSize: 11, fontFamily: 'monospace', color: 'var(--muted)' }}>
-                      {entry.scf_id || (entry.entity_id === BASELINE_ENTITY_ID ? (
-                        <span
-                          style={{ fontStyle: 'italic' }}
-                          title="Recorded against the request rather than a single entity."
-                        >
-                          request-level record
-                        </span>
-                      ) : entry.entity_id.length > 12
-                        ? entry.entity_id.substring(0, 12) + '...'
-                        : entry.entity_id)}
+                      {(() => {
+                        if (entry.entity_id === BASELINE_ENTITY_ID && !entry.scf_id) {
+                          return (
+                            <span
+                              style={{ fontStyle: 'italic' }}
+                              title="Recorded against the request rather than a single entity."
+                            >
+                              request-level record
+                            </span>
+                          )
+                        }
+                        const dest = auditEntityDestination(entry)
+                        if (dest) {
+                          return (
+                            <AppLink
+                              to={dest.to}
+                              title={`${entry.entity_type.replace(/_/g, ' ')} ${entry.entity_id}`}
+                              aria-label={`Open ${entry.entity_type.replace(/_/g, ' ')} ${dest.label}`}
+                            >
+                              {dest.label}
+                            </AppLink>
+                          )
+                        }
+                        return (
+                          <span
+                            title={`${entry.entity_id} — no page to open: this type has no detail view, or the object has since been deleted.`}
+                          >
+                            {entry.entity_label || entry.scf_id || shortId(entry.entity_id)}
+                          </span>
+                        )
+                      })()}
                     </td>
                     <td style={{ ...tdStyle, fontSize: 12 }}>
                       {entry.field_name

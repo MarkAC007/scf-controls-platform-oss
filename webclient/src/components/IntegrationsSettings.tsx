@@ -259,7 +259,7 @@ export default function IntegrationsSettings() {
                 <div className="integration-row-actions">
                   <button
                     type="button"
-                    className="btn"
+                    className="btn btn-secondary"
                     data-testid={`integration-replace-${row.name}`}
                     disabled={row.managed_by_operator || isBusy}
                     title={row.managed_by_operator ? OPERATOR_MANAGED_HINT : undefined}
@@ -325,7 +325,7 @@ export default function IntegrationsSettings() {
                     </button>
                     <button
                       type="button"
-                      className="btn"
+                      className="btn btn-secondary"
                       data-testid={`integration-cancel-${row.name}`}
                       disabled={isBusy}
                       onClick={closeEditor}
@@ -357,7 +357,7 @@ export default function IntegrationsSettings() {
                   </button>
                   <button
                     type="button"
-                    className="btn"
+                    className="btn btn-secondary"
                     data-testid={`integration-clear-cancel-${row.name}`}
                     disabled={isBusy}
                     onClick={() => setConfirmingClear(null)}

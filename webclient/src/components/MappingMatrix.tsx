@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { EnrichedControl, ScopedControlsFile, ImplementationStatus } from '../types'
+import AppLink from './AppLink'
 
 interface MappingMatrixProps {
   controls: EnrichedControl[]
@@ -37,6 +38,13 @@ export default function MappingMatrix({ controls, scopingData }: MappingMatrixPr
       return scopedControl?.selected === true
     })
   }, [controls, hideUnscoped, hasActiveScopingData, scopingData])
+
+  // Controls in scope open in the in-scope library; everything else opens in
+  // the full library, so following a link never implies (or changes) scope.
+  const selectedIds = useMemo(
+    () => new Set((scopingData?.scoped_controls ?? []).filter(sc => sc.selected).map(sc => sc.scf_id)),
+    [scopingData],
+  )
 
   // Extract unique frameworks from filtered controls
   const frameworks = useMemo(() => {
@@ -198,10 +206,17 @@ export default function MappingMatrix({ controls, scopingData }: MappingMatrixPr
               return (
                 <tr key={control.scf_id} className={getStatusClass(status)}>
                   <td className="control-cell sticky-col">
-                    <div className="control-info">
+                    <AppLink
+                      className="control-info control-info-link"
+                      to={{
+                        kind: 'control',
+                        id: control.scf_id,
+                        mode: selectedIds.has(control.scf_id) ? 'in-scope' : 'full-library',
+                      }}
+                    >
                       <span className="control-id">{control.scf_id}</span>
                       <span className="control-name">{control.control_name}</span>
-                    </div>
+                    </AppLink>
                   </td>
                 {frameworks.map(fw => (
                   <td key={fw} className="mapping-cell">

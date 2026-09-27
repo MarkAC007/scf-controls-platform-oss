@@ -21,7 +21,8 @@ import { beforeAll, describe, expect, it } from 'vitest'
 
 let APP = ''
 
-const NAV_ANCHOR = 'href="#settings-evidence-storage"'
+// The nav is data handed to SettingsSectionNav, which renders each entry's href.
+const NAV_ANCHOR = "{ id: 'settings-evidence-storage',"
 const SECTION = '<div id="settings-evidence-storage">'
 const PLATFORM_GUARD = '{canManageIntegrations && ('
 

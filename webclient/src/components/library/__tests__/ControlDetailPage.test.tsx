@@ -289,12 +289,50 @@ describe('ControlDetailPage', () => {
 
   // ── Evidence card ─────────────────────────────────────────────────────────
 
-  it('evidence card "Open in Evidence workspace" fires onNavigateToEvidence with first artifact id', () => {
+  it('evidence card with one requirement links straight to it', () => {
+    const onNavigateToEvidence = vi.fn()
+    const control = makeControl({
+      artifactsResolved: [{ id: 'EVI-001', title: 'Security Policy', domain: 'Governance' }],
+    })
+    render(<ControlDetailPage {...makeProps({ control, onNavigateToEvidence })} />)
+    const evidenceLink = screen.getByRole('link', { name: /Open in Evidence workspace/i })
+    expect(evidenceLink.getAttribute('href')).toMatch(/item=EVI-001/)
+    fireEvent.click(evidenceLink)
+    expect(onNavigateToEvidence).toHaveBeenCalledWith('EVI-001')
+  })
+
+  // With several requirements the header never silently picks the first.
+  it('evidence card with several requirements offers each one', () => {
     const onNavigateToEvidence = vi.fn()
     render(<ControlDetailPage {...makeProps({ onNavigateToEvidence })} />)
-    const evidenceLink = screen.getByText(/Open in Evidence workspace/i)
-    fireEvent.click(evidenceLink)
-    expect(onNavigateToEvidence).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('link', { name: /^Open in Evidence workspace$/i })).toBeNull()
+    const second = screen.getByRole('link', { name: 'Open EVI-002 — Role Definitions in Evidence workspace' })
+    expect(second.getAttribute('href')).toMatch(/item=EVI-002/)
+    fireEvent.click(second)
+    expect(onNavigateToEvidence).toHaveBeenCalledWith('EVI-002')
+  })
+
+  // Every evidence reference on the details tab is a real
+  // link to its own item, so it is a tab stop and can open in a new tab.
+  it('audit artifacts and evidence status rows are links to their own items', () => {
+    const onNavigateToEvidence = vi.fn()
+    render(<ControlDetailPage {...makeProps({ onNavigateToEvidence })} />)
+    const toSecond = screen
+      .getAllByRole('link')
+      .filter((a) => /item=EVI-002/.test(a.getAttribute('href') ?? ''))
+    // header choice + Audit Artifacts row + Evidence Status row
+    expect(toSecond).toHaveLength(3)
+    for (const link of toSecond) expect(link.textContent).toMatch(/EVI-002/)
+    fireEvent.click(toSecond[2])
+    expect(onNavigateToEvidence).toHaveBeenCalledWith('EVI-002')
+  })
+
+  it('a modified click is left to the browser (new tab)', () => {
+    const onNavigateToEvidence = vi.fn()
+    render(<ControlDetailPage {...makeProps({ onNavigateToEvidence })} />)
+    const link = screen.getByRole('link', { name: 'Open EVI-002 — Role Definitions in Evidence workspace' })
+    fireEvent.click(link, { metaKey: true })
+    expect(onNavigateToEvidence).not.toHaveBeenCalled()
   })
 
   // ── Implementation card ───────────────────────────────────────────────────

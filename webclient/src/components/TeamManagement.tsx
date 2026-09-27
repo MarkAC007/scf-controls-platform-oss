@@ -111,12 +111,14 @@ function FunctionChips({
   functions,
   selectedIds,
   onChange,
+  describedBy,
 }: {
   selectId: string
   addLabel: string
   functions: OrgFunction[]
   selectedIds: string[]
   onChange: (next: string[]) => void
+  describedBy?: string
 }) {
   const unselected = functions.filter(fn => !selectedIds.includes(fn.id))
   return (
@@ -159,6 +161,7 @@ function FunctionChips({
         id={selectId}
         className="team-function-chip-add"
         aria-label={addLabel}
+        aria-describedby={describedBy}
         value=""
         onChange={event => {
           const id = event.currentTarget.value
@@ -781,10 +784,8 @@ export default function TeamManagement({ organizationId }: TeamManagementProps) 
               functions={sortedFunctions}
               selectedIds={newFunctionIds}
               onChange={setNewFunctionIds}
+              describedBy="team-function-hint"
             />
-            <span className="team-add-hint">
-              Add one or more functions. The first one added is the team's primary function.
-            </span>
           </div>
           <div className="team-create-field team-create-field-wide">
             <label htmlFor="team-description">Description</label>
@@ -805,6 +806,11 @@ export default function TeamManagement({ organizationId }: TeamManagementProps) 
               {isCreating ? 'Creating…' : 'Create team'}
             </button>
           </div>
+          {/* Its own row: inside the field column it lifted the dropdown
+              above the inputs beside it. */}
+          <span id="team-function-hint" className="team-add-hint team-create-hint">
+            Add one or more functions. The first one added is the team's primary function.
+          </span>
         </form>
       )}
 

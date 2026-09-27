@@ -10,6 +10,7 @@ import MaturityHistogram from './MaturityHistogram'
 import ThemeEvidenceCards from './ThemeEvidenceCards'
 import { bandToClass, formatAxisPercent } from './axisHelpers'
 import DeprecatedBadge, { getCatalogLifecycle } from '../DeprecatedBadge'
+import AppLink from '../AppLink'
 
 // Raised from 50 to 200 so the maturity histogram has the full picture for
 // typical themes (issue #549 Phase 2). Server caps the upper bound.
@@ -382,7 +383,12 @@ function ControlsTable({
           {controls.map((ctrl) => (
             <tr key={ctrl.scf_id}>
               <td className="cp-controls-id">
-                {ctrl.scf_id}{' '}
+                <AppLink
+                  className="cp-controls-id-link"
+                  to={{ kind: 'control', id: ctrl.scf_id, mode: ctrl.selected ? 'in-scope' : 'full-library' }}
+                >
+                  {ctrl.scf_id}
+                </AppLink>{' '}
                 <DeprecatedBadge compact {...getCatalogLifecycle(ctrl)} />
               </td>
               <td>{ctrl.control_name || '--'}</td>

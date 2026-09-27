@@ -3155,6 +3155,11 @@ class AuditLogResponse(BaseModel):
     ip_address: Optional[str] = None
     action_source: Optional[str] = None
     request_id: Optional[UUID] = None
+    # Resolved at read time for entity types with a detail page of their own
+    # (risk code, vendor/system/task name, evidence ID). Both stay null when
+    # the type has no page or the object no longer exists in this org.
+    entity_label: Optional[str] = None
+    entity_ref: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 

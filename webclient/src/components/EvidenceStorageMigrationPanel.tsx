@@ -350,7 +350,7 @@ export default function EvidenceStorageMigrationPanel({
               </button>
               <button
                 type="button"
-                className="btn"
+                className="btn btn-secondary"
                 data-testid="evidence-storage-copy-cancel"
                 disabled={starting}
                 onClick={() => setConfirming(false)}

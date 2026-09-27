@@ -312,6 +312,21 @@ export function withLibraryItem(search: string, itemId: string | null): string {
   return p.toString()
 }
 
+/**
+ * A full deep link to one control, for handing to `history` or an `href`.
+ *
+ * Mode defaults to `in-scope`, as the dashboard and risk links have always
+ * used; a caller that knows the control is outside scope passes
+ * `full-library` so the link lands without implying it is scoped.
+ */
+export function controlItemSearch(
+  search: string,
+  scfId: string,
+  mode: LibraryMode = DEFAULT_LIBRARY_MODE,
+): string {
+  return withLibraryItem(withLibraryMode(search, mode), scfId)
+}
+
 /** Change Control Library mode without losing unrelated URL state. */
 export function withLibraryMode(search: string, mode: LibraryMode): string {
   const onLibrary = readAppLocation(search).tab === 'library'
@@ -407,4 +422,18 @@ export function replaceSearch(search: string): void {
 /** Same page, new query string, and an entry for Back to return to. */
 export function pushSearch(search: string): void {
   window.history.pushState(window.history.state, '', href(search))
+}
+
+/**
+ * Go to `search` in place, as a link click would, and tell every URL reader.
+ *
+ * App, EvidenceWorkspace, EvidenceReview and DocumentsPage each resync their
+ * slice of state from the address bar on `popstate` — the path Back already
+ * takes. Dispatching it after the push lets a component with no navigation
+ * callback (a table cell, a badge) link anywhere without prop-drilling App's
+ * handlers into it.
+ */
+export function navigateToSearch(search: string): void {
+  pushSearch(search)
+  window.dispatchEvent(new PopStateEvent('popstate', { state: window.history.state }))
 }

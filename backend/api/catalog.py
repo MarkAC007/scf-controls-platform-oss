@@ -46,12 +46,43 @@ except FileNotFoundError:
     logging.warning(f"frameworks.json not found at {_frameworks_json_path}")
 
 
-def format_framework_name(key: str) -> str:
-    """Format a framework key into a readable name."""
+def format_framework_name(key: str, live_names: Optional[dict] = None) -> str:
+    """Format a framework key into a readable name.
+
+    Order: the curated short names in ``frameworks.json``; then ``live_names``
+    (from :func:`live_framework_names`) — the live catalogue's own registry,
+    which still names frameworks whose column header changed in an upgrade but
+    carries the publisher's full titles, so it is the fallback, not the
+    default; then the title-cased id. ``frameworks.json`` is seeded once, so
+    after 2026.3 keys such as ``americas_bahamas_dpa_2003`` fell straight
+    through to "Americas Bahamas Dpa 2003" (UIP-022).
+    """
     if key in FRAMEWORK_DISPLAY_NAMES:
         return FRAMEWORK_DISPLAY_NAMES[key]
+    if live_names and live_names.get(key):
+        return live_names[key]
     # Default: replace underscores with spaces and title case
     return key.replace('_', ' ').title()
+
+
+async def live_framework_names(db: AsyncSession) -> dict:
+    """``{framework_id: display name}`` from the live catalogue's registry row.
+
+    Best-effort: an install with no stored registry row (or any read failure)
+    gets ``{}`` and :func:`format_framework_name` falls back as before.
+    """
+    from services.framework_registry import read_live_framework_registry
+
+    try:
+        status = await read_live_framework_registry(db)
+    except Exception:  # noqa: BLE001 — naming must never fail the listing
+        logging.getLogger(__name__).warning("live framework registry unreadable", exc_info=True)
+        return {}
+    return {
+        fid: entry["name"]
+        for fid, entry in (status.registry or {}).items()
+        if isinstance(entry, dict) and entry.get("name")
+    }
 
 logger = logging.getLogger(__name__)
 
@@ -845,6 +876,7 @@ async def list_frameworks(
     result = await db.execute(query)
     rows = result.fetchall()
 
+    live_names = await live_framework_names(db)
     frameworks = []
     for row in rows:
         framework_id = row[0]
@@ -857,7 +889,7 @@ async def list_frameworks(
 
         frameworks.append({
             "id": framework_id,
-            "name": format_framework_name(framework_id),
+            "name": format_framework_name(framework_id, live_names),
             "control_count": control_count,
         })
 
