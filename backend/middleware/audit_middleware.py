@@ -9,7 +9,8 @@ Design decisions:
 - Uses a SEPARATE database session to avoid coupling with the request transaction.
 - Captures audit AFTER call_next so request.state.user is populated by auth deps.
 - Wraps audit writes in try/except so failures never break the request.
-- Skips GET/HEAD/OPTIONS and non-API/health/docs paths.
+- Skips GET/HEAD/OPTIONS, non-API/health/docs paths, and read-only POST
+  calculations/previews listed in _READ_ONLY_POST_PATTERNS.
 """
 import re
 import uuid as uuid_mod
@@ -37,6 +38,17 @@ _SKIP_PATH_PREFIXES = (
     "/redoc",
     "/openapi.json",
     "/",  # root endpoint exactly
+)
+
+# POST endpoints that only compute and return a result. They are POST because
+# the input travels in the body, not because they write — so they must not
+# produce a baseline "create" row, which would also advance the change cursor
+# and tell the web client that data changed when nothing did.
+# Explicit, anchored routes only: a "preview" suffix is not proof of a
+# read-only call (catalog-reconciliation/preview persists a run).
+_READ_ONLY_POST_PATTERNS = (
+    re.compile(r'^/api/organizations/[^/]+/framework-readiness/?$'),
+    re.compile(r'^/api/organizations/[^/]+/framework-scoping/preview/?$'),
 )
 
 # HTTP method -> audit action mapping
@@ -120,6 +132,9 @@ def _should_skip(method: str, path: str) -> bool:
     for prefix in _SKIP_PATH_PREFIXES:
         if prefix != "/" and path.startswith(prefix):
             return True
+    # Calculations and previews sent as POST are reads, not mutations
+    if method == "POST" and any(p.match(path) for p in _READ_ONLY_POST_PATTERNS):
+        return True
     return False
 
 

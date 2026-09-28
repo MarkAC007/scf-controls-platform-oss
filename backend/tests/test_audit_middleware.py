@@ -111,6 +111,37 @@ class TestShouldSkip:
         assert _should_skip("POST", "/") is True
 
 
+class TestReadOnlyPostSkip:
+    """Calculations sent as POST must not look like writes to the change cursor."""
+
+    ORG = "/api/organizations/11111111-2222-3333-4444-555555555555"
+
+    def test_framework_readiness_post_skipped(self):
+        assert _should_skip("POST", f"{self.ORG}/framework-readiness") is True
+
+    def test_framework_readiness_trailing_slash_skipped(self):
+        assert _should_skip("POST", f"{self.ORG}/framework-readiness/") is True
+
+    def test_framework_scoping_preview_post_skipped(self):
+        assert _should_skip("POST", f"{self.ORG}/framework-scoping/preview") is True
+
+    def test_catalog_reconciliation_preview_still_audited(self):
+        """It is called a preview but it persists a run."""
+        assert _should_skip("POST", f"{self.ORG}/catalog-reconciliation/preview") is False
+
+    def test_other_org_post_still_audited(self):
+        assert _should_skip("POST", f"{self.ORG}/systems") is False
+
+    def test_non_post_methods_on_read_only_paths_still_audited(self):
+        for method in ("PUT", "PATCH", "DELETE"):
+            assert _should_skip(method, f"{self.ORG}/framework-readiness") is False
+            assert _should_skip(method, f"{self.ORG}/framework-scoping/preview") is False
+
+    def test_nested_paths_are_not_skipped(self):
+        assert _should_skip("POST", f"{self.ORG}/framework-readiness/extra") is False
+        assert _should_skip("POST", f"{self.ORG}/framework-scoping/preview/apply") is False
+
+
 class TestMethodActionMap:
     """Test HTTP method -> action mapping."""
 
