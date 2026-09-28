@@ -63,6 +63,7 @@ interface Props {
 }
 
 const ITEM_HEIGHT = 76
+const COMPACT_ITEM_HEIGHT = 144
 const DEFAULT_LIST_HEIGHT = 600
 const INTERNAL_PREFIXES = [
   'risk_',
@@ -116,6 +117,10 @@ export default function UnifiedLibraryList({
 }: Props): JSX.Element {
   const [filtersCollapsed, setFiltersCollapsed] = useState(defaultFiltersCollapsed)
   const [listHeight, setListHeight] = useState(DEFAULT_LIST_HEIGHT)
+  const [compactRows, setCompactRows] = useState(() =>
+    typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 1100px)').matches,
+  )
+  const itemHeight = compactRows ? COMPACT_ITEM_HEIGHT : ITEM_HEIGHT
   const listContainerRef = useRef<HTMLDivElement>(null)
   const debouncedSearch = useDebounce(search, 300)
   const { domains, nistCsfFunctions, controlWeights } = useCatalogFilters()
@@ -168,20 +173,26 @@ export default function UnifiedLibraryList({
   }, [isMyTeams, organizationId])
 
   useEffect(() => {
+    const container = listContainerRef.current
+    if (!container) return
     const updateHeight = () => {
-      if (!listContainerRef.current) return
-      const rect = listContainerRef.current.getBoundingClientRect()
-      setListHeight(Math.max(400, window.innerHeight - rect.top - 40))
+      setListHeight(Math.max(1, container.clientHeight))
+      setCompactRows(typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 1100px)').matches)
     }
     updateHeight()
+    const observer = new ResizeObserver(updateHeight)
+    observer.observe(container)
     window.addEventListener('resize', updateHeight)
-    return () => window.removeEventListener('resize', updateHeight)
-  }, [filtersCollapsed])
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', updateHeight)
+    }
+  }, [])
 
   const handleScroll = useCallback(
     ({ scrollOffset, scrollUpdateWasRequested }: { scrollOffset: number; scrollUpdateWasRequested: boolean }) => {
       if (!scrollUpdateWasRequested) onScrollOffsetChange(scrollOffset)
-      const threshold = controls.length * ITEM_HEIGHT - listHeight - ITEM_HEIGHT * 5
+      const threshold = controls.length * itemHeight - listHeight - itemHeight * 5
       if (
         !scrollUpdateWasRequested &&
         scrollOffset > threshold &&
@@ -191,7 +202,7 @@ export default function UnifiedLibraryList({
         query.fetchNextPage()
       }
     },
-    [controls.length, listHeight, onScrollOffsetChange, query],
+    [controls.length, itemHeight, listHeight, onScrollOffsetChange, query],
   )
 
   const frameworkOptions = useMemo(
@@ -226,18 +237,19 @@ export default function UnifiedLibraryList({
             onClick={() => onOpenControl(control.scf_id)}
           >
             {mode === 'in-scope' && canEdit && (
-              <input
-                type="checkbox"
-                aria-label={`Select ${control.scf_id}`}
-                checked={checked}
-                onClick={(event) => event.stopPropagation()}
-                onChange={() => {
-                  const next = new Set(selection)
-                  if (checked) next.delete(control.scf_id)
-                  else next.add(control.scf_id)
-                  onSelectionChange(next)
-                }}
-              />
+              <label className="explorer-row-select-target" onClick={(event) => event.stopPropagation()}>
+                <input
+                  type="checkbox"
+                  aria-label={`Select ${control.scf_id}`}
+                  checked={checked}
+                  onChange={() => {
+                    const next = new Set(selection)
+                    if (checked) next.delete(control.scf_id)
+                    else next.add(control.scf_id)
+                    onSelectionChange(next)
+                  }}
+                />
+              </label>
             )}
             {lifecycle.catalog_status === 'deprecated' && (
               <DeprecatedBadge {...lifecycle} compact />
@@ -300,7 +312,7 @@ export default function UnifiedLibraryList({
   }
 
   return (
-    <div className="library-page">
+    <div className="library-page unified-library-page">
       <FilterSidebar
         collapsed={filtersCollapsed}
         onToggleCollapsed={() => setFiltersCollapsed((value) => !value)}
@@ -392,7 +404,7 @@ export default function UnifiedLibraryList({
               <List
                 height={listHeight}
                 itemCount={controls.length}
-                itemSize={ITEM_HEIGHT}
+                itemSize={itemHeight}
                 width="100%"
                 onScroll={handleScroll}
                 initialScrollOffset={initialScrollOffset}

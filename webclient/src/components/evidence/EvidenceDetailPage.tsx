@@ -283,7 +283,7 @@ export default function EvidenceDetailPage({
       {/* ── Scrollable body ────────────────────────────────────────────────── */}
       <div className="evidence-detail-body">
         {/* ── Header ─────────────────────────────────────────────────────────── */}
-        <div className="detail-header-compact">
+        <div className="detail-header-compact evidence-detail-heading">
           <div className="detail-header-main surface-bedrock" data-source="SCF Evidence Requirements">
             <span className="scf-source-tag">SCF ERL</span>
             <div className="detail-id-compact">{evidenceItem.id}</div>

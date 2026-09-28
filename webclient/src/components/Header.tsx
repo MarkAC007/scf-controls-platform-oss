@@ -1,3 +1,4 @@
+import { useLayoutEffect, useRef } from 'react'
 import { NotificationBell } from './NotificationBell'
 import RefreshControl from './RefreshControl'
 import UserProfileDropdown from './UserProfileDropdown'
@@ -44,19 +45,38 @@ export default function Header({
   mobileNavOpen = false
 }: HeaderProps) {
   const { user } = useAuth()
+  const headerRef = useRef<HTMLDivElement>(null)
+
+  // The utility bar wraps on phones and at browser zoom. Keep the content
+  // offset tied to its real height, including changes to the signed-in tools.
+  useLayoutEffect(() => {
+    const header = headerRef.current
+    if (!header) return
+    const updateHeight = () => document.documentElement.style.setProperty(
+      '--app-header-height', `${header.getBoundingClientRect().height}px`,
+    )
+    updateHeight()
+    const observer = new ResizeObserver(updateHeight)
+    observer.observe(header)
+    return () => {
+      observer.disconnect()
+      document.documentElement.style.removeProperty('--app-header-height')
+    }
+  }, [])
 
   const showOrgSwitcher = isConsultant && clientOrgIds && clientOrgIds.length > 0
 
   const pageTitle = TAB_TITLES[activeTab]
 
   return (
-    <div className="header header-streamlined">
+    <div className="header header-streamlined" ref={headerRef}>
       {/* Left: mobile hamburger (hidden on desktop via CSS) + page title */}
       <div className="header-left">
         <button
           className="mobile-nav-toggle"
           aria-label={mobileNavOpen ? 'Close navigation' : 'Open navigation'}
           aria-expanded={mobileNavOpen}
+          aria-controls="primary-navigation"
           onClick={onMobileNavToggle}
         >
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

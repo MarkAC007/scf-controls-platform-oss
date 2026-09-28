@@ -38,6 +38,22 @@ function renderSidebar(props: Partial<Parameters<typeof Sidebar>[0]> = {}) {
   )
 }
 
+describe('Sidebar mobile keyboard navigation', () => {
+  it('focuses the close button, handles Escape and returns focus to the opener', () => {
+    const opener = document.createElement('button')
+    document.body.appendChild(opener)
+    opener.focus()
+    const onMobileClose = vi.fn()
+    const { unmount } = renderSidebar({ mobileOpen: true, onMobileClose })
+    expect(screen.getByRole('button', { name: 'Close navigation' })).toHaveFocus()
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(onMobileClose).toHaveBeenCalledOnce()
+    unmount()
+    expect(opener).toHaveFocus()
+    opener.remove()
+  })
+})
+
 describe('Sidebar platform gating', () => {
   it('hides the Platform section for non-platform-admins', () => {
     renderSidebar()

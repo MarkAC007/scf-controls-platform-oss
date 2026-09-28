@@ -63,6 +63,31 @@ function renderHeader(props: Partial<Parameters<typeof Header>[0]> = {}) {
   )
 }
 
+it('keeps content below the utility bar when its height changes and releases its observer', () => {
+  let resize = () => {}
+  const disconnect = vi.fn()
+  vi.stubGlobal('ResizeObserver', class {
+    constructor(callback: () => void) { resize = callback }
+    observe() {}
+    disconnect = disconnect
+  })
+  const bounds = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+    .mockReturnValue({ height: 96 } as DOMRect)
+  try {
+    const { unmount } = renderHeader({ activeTab: 'evidence' })
+    expect(document.documentElement.style.getPropertyValue('--app-header-height')).toBe('96px')
+    bounds.mockReturnValue({ height: 144 } as DOMRect)
+    resize()
+    expect(document.documentElement.style.getPropertyValue('--app-header-height')).toBe('144px')
+    unmount()
+    expect(disconnect).toHaveBeenCalledOnce()
+    expect(document.documentElement.style.getPropertyValue('--app-header-height')).toBe('')
+  } finally {
+    bounds.mockRestore()
+    vi.unstubAllGlobals()
+  }
+})
+
 // ----------- Page title -----------
 
 describe('Header utility bar: page title', () => {

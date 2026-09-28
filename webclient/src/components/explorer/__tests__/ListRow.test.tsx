@@ -109,6 +109,19 @@ describe('ExplorerListRow', () => {
     expect(onClick).not.toHaveBeenCalled()
   })
 
+  it.each(['Enter', ' '])('does not open the detail when a nested control receives %s', (key) => {
+    const onClick = vi.fn()
+    render(
+      <ExplorerListRow monoId="GOV-01" title="Title" onClick={onClick}>
+        <input type="checkbox" aria-label="Select GOV-01" />
+        <button type="button">Scope control</button>
+      </ExplorerListRow>,
+    )
+    fireEvent.keyDown(screen.getByRole('checkbox'), { key })
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Scope control' }), { key })
+    expect(onClick).not.toHaveBeenCalled()
+  })
+
   it('has explorer-row class', () => {
     const { container } = render(<ExplorerListRow monoId="GOV-01" title="Title" />)
     expect(container.querySelector('.explorer-row')).toBeInTheDocument()

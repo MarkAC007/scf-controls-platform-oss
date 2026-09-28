@@ -1,4 +1,4 @@
-import type { JSX, KeyboardEvent, ReactNode } from 'react'
+import { useId, type JSX, type ReactNode } from 'react'
 
 export interface FilterSidebarProps {
   children: ReactNode
@@ -13,6 +13,7 @@ export default function FilterSidebar({
   onToggleCollapsed,
   'aria-label': ariaLabel = 'Filters',
 }: FilterSidebarProps): JSX.Element {
+  const contentId = useId()
   return (
     <aside
       className={`explorer-filters${collapsed ? ' explorer-filters--collapsed' : ''}`}
@@ -23,8 +24,10 @@ export default function FilterSidebar({
         type="button"
         aria-label={collapsed ? 'Expand filters' : 'Collapse filters'}
         aria-expanded={!collapsed}
+        aria-controls={contentId}
         onClick={onToggleCollapsed}
       >
+        <span className="explorer-filters-toggle-label">Filters</span>
         <svg
           width="16"
           height="16"
@@ -52,7 +55,7 @@ export default function FilterSidebar({
         </svg>
       </button>
       {!collapsed && (
-        <div className="explorer-filters-content">{children}</div>
+        <div id={contentId} className="explorer-filters-content">{children}</div>
       )}
     </aside>
   )
@@ -78,9 +81,10 @@ export function FilterGroup({
   label: string
   children: ReactNode
 }): JSX.Element {
+  const labelId = useId()
   return (
-    <div className="explorer-filter-group">
-      <div className="explorer-filter-label">{label}</div>
+    <div className="explorer-filter-group" role="group" aria-labelledby={labelId}>
+      <div id={labelId} className="explorer-filter-label">{label}</div>
       {children}
     </div>
   )
@@ -124,13 +128,16 @@ export function FilterSelect({
   onChange: (value: string) => void
   options: { value: string; label: string }[]
 }): JSX.Element {
+  const selectId = useId()
   return (
     <div className="explorer-filter-select-wrap">
       {label !== undefined && (
-        <div className="explorer-filter-label">{label}</div>
+        <label htmlFor={selectId} className="explorer-filter-label">{label}</label>
       )}
       <div className="explorer-filter-select-chrome">
         <select
+          id={selectId}
+          aria-label={label ?? options[0]?.label}
           className="explorer-filter-select"
           value={value}
           onChange={(e) => onChange(e.target.value)}
