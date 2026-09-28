@@ -1,11 +1,11 @@
-# v0.41.5
+# v0.41.6
 
 .
 
 ## Fixes and improvements
 
-- Align Controls and Evidence headers and improve mobile layout
+- Stop read-only POST calculations advancing the change cursor (PR 1091)
 
 ## Upgrading
 
-- Run `scripts/upgrade.sh v0.41.5` (read `UPGRADING.md` first).
+- Run `scripts/upgrade.sh v0.41.6` (read `UPGRADING.md` first).

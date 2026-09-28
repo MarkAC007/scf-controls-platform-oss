@@ -51,6 +51,8 @@ asyncio_test = pytest.mark.asyncio
 
 CURSOR_PATH = "/api/organizations/{org_id}/changes/cursor"
 SYSTEMS_PATH = "/api/organizations/{org_id}/systems"
+READINESS_PATH = "/api/organizations/{org_id}/framework-readiness"
+SCOPING_PREVIEW_PATH = "/api/organizations/{org_id}/framework-scoping/preview"
 ZERO_UUID = uuid.UUID("00000000-0000-0000-0000-000000000000")
 
 
@@ -179,6 +181,57 @@ class TestTheMiddlewareAttributesMutations:
         detailed = [r for r in rows if r.entity_id != ZERO_UUID]
         assert baseline and detailed
         assert {r.request_id for r in detailed} == {baseline[-1].request_id}
+
+
+# ---------------------------------------------------------------------------
+# Read-only POSTs — a calculation is not a change
+# ---------------------------------------------------------------------------
+
+@asyncio_test
+class TestReadOnlyPostsDoNotMoveTheCursor:
+    """The dashboard's readiness call used to write a ``framework_readiness``
+    "create" row on every visit, which advanced the cursor and made the header
+    say "Updates available" with nobody else in the app."""
+
+    async def _cursor(self, api, estate):
+        api.as_("viewer")
+        response = await api.client.get(CURSOR_PATH.format(org_id=estate.org_id))
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    async def test_framework_readiness_does_not_advance_the_cursor(self, api, estate):
+        await api.create_system()  # a non-null cursor, so the timestamp is compared too
+        before = await self._cursor(api, estate)
+        assert before["cursor"] is not None
+        for body in (
+            {"frameworks": {}},
+            {"frameworks": {"sample-framework": {"controls": ["ctl_a"], "evidence": ["evd_a"]}}},
+        ):
+            response = await api.client.post(READINESS_PATH.format(org_id=estate.org_id), json=body)
+            assert response.status_code == 200, response.text
+        after = await self._cursor(api, estate)
+        assert after == before
+
+    async def test_framework_scoping_preview_does_not_advance_the_cursor(self, api, estate):
+        before = await self._cursor(api, estate)
+        response = await api.client.post(
+            SCOPING_PREVIEW_PATH.format(org_id=estate.org_id),
+            json={"operation": "add", "frameworks": ["sample-framework"]},
+        )
+        assert response.status_code == 200, response.text
+        after = await self._cursor(api, estate)
+        assert after == before
+
+    async def test_a_real_mutation_after_a_calculation_still_advances_it(self, api, estate):
+        api.as_("viewer")
+        await api.client.post(READINESS_PATH.format(org_id=estate.org_id),
+                              json={"frameworks": {}})
+        before = await self._cursor(api, estate)
+        await api.create_system()
+        after = await self._cursor(api, estate)
+        assert after["count"] > before["count"]
+        assert after["cursor"] is not None
+        assert before["cursor"] is None or after["cursor"] > before["cursor"]
 
 
 # ---------------------------------------------------------------------------
