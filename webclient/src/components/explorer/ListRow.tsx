@@ -20,6 +20,9 @@ export default function ExplorerListRow({
   children,
 }: ExplorerListRowProps): JSX.Element {
   function handleKeyDown(e: KeyboardEvent<HTMLDivElement>): void {
+    // Nested checkboxes/actions own their keyboard events. Activating one must
+    // not also navigate to the row's detail page.
+    if (e.target !== e.currentTarget) return
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault()
       onClick?.()

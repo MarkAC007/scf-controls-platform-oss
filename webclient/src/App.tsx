@@ -757,7 +757,7 @@ function AppContent() {
         mobileNavOpen={mobileNavOpen}
       />
       <main className="app-main">
-        <div className="app-content">
+        <div className={`app-content${activeTab === 'library' || activeTab === 'evidence' ? ' app-content--explorer' : ''}`}>
           {activeTab === 'dashboard' && scopingData && (
             <Dashboard
               controls={controls}

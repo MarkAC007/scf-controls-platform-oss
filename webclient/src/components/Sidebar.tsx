@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useState, useMemo, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useOrgLogo } from '../hooks/useOrgLogo'
 import { useOrganization } from '../contexts/OrganizationContext'
@@ -352,6 +352,50 @@ function SidebarFooter({ showRoleGateNote }: { showRoleGateNote: boolean }) {
 const NAV_COLLAPSED_KEY = 'scf-nav-collapsed'
 
 export default function Sidebar({ activeTab, onTabChange, showConsultantPortal = false, isPlatformAdmin = false, mobileOpen = false, onMobileClose }: SidebarProps) {
+  const navRef = useRef<HTMLElement>(null)
+  const closeRef = useRef(onMobileClose)
+  closeRef.current = onMobileClose
+  useEffect(() => {
+    if (!mobileOpen) return
+    const nav = navRef.current
+    if (!nav) return
+    const opener = document.activeElement as HTMLElement | null
+    nav.querySelector<HTMLButtonElement>('.mobile-nav-close')?.focus()
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        event.stopImmediatePropagation()
+        closeRef.current?.()
+      }
+      if (event.key === 'Tab') {
+        const buttons = Array.from(nav.querySelectorAll<HTMLButtonElement>('button')).filter(
+          button => !button.disabled && button.getClientRects().length > 0,
+        )
+        const first = buttons[0]
+        const last = buttons[buttons.length - 1]
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault()
+          last?.focus()
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault()
+          first?.focus()
+        }
+      }
+    }
+    document.addEventListener('keydown', onKeyDown, true)
+    const desktop = typeof window.matchMedia === 'function'
+      ? window.matchMedia('(min-width: 901px)')
+      : null
+    const closeOnDesktop = () => {
+      if (desktop?.matches) closeRef.current?.()
+    }
+    desktop?.addEventListener('change', closeOnDesktop)
+    return () => {
+      document.removeEventListener('keydown', onKeyDown, true)
+      desktop?.removeEventListener('change', closeOnDesktop)
+      if (opener?.isConnected) opener.focus()
+    }
+  }, [mobileOpen])
   // Expanded (labels visible) by default; the toggle pins it either way.
   // Hover no longer drives expansion — 20+ icon-only entries were unlearnable.
   const [isExpanded, setIsExpanded] = useState(() => {
@@ -406,11 +450,16 @@ export default function Sidebar({ activeTab, onTabChange, showConsultantPortal =
         />
       )}
       <nav
+        id="primary-navigation"
+        ref={navRef}
         className={`sidebar-nav ${isExpanded ? 'expanded' : ''} ${mobileOpen ? 'mobile-open' : ''}`}
         aria-label="Primary navigation"
       >
         {/* Brand block */}
         <SidebarBrandBlock />
+        <button type="button" className="mobile-nav-close" onClick={onMobileClose}>
+          Close navigation <span aria-hidden="true">×</span>
+        </button>
 
         <div className="sidebar-nav-items">
           {visibleSections.map((section) => (

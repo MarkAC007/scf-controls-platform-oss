@@ -999,13 +999,15 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
                 hand-rolled contract.)
               */
               <div key={evidenceItem.id} className="evidence-card-select-row">
-                <input
-                  type="checkbox"
-                  className="evidence-card-select"
-                  checked={bulkSelected}
-                  onChange={() => toggleBulkSelection(evidenceItem.id)}
-                  aria-label={`Select ${evidenceItem.id} for bulk actions`}
-                />
+                <label className="explorer-row-select-target">
+                  <input
+                    type="checkbox"
+                    className="evidence-card-select"
+                    checked={bulkSelected}
+                    onChange={() => toggleBulkSelection(evidenceItem.id)}
+                    aria-label={`Select ${evidenceItem.id} for bulk actions`}
+                  />
+                </label>
                 <div
                   data-evidence-id={evidenceItem.id}
                   className={`evidence-card-modern ${selectedEvidenceId === evidenceItem.id ? 'active' : ''} ${bulkSelected ? 'bulk-selected' : ''}`}

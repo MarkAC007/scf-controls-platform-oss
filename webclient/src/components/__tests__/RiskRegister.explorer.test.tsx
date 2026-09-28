@@ -149,7 +149,8 @@ describe('RiskAssessmentList — Explorer chrome (Phase 3 Task 5)', () => {
   it('fires onUpdateRisk when inline status select changes', () => {
     const onUpdateRisk = vi.fn()
     renderList({ onUpdateRisk })
-    const statusSelects = screen.getAllByRole('combobox', { name: /status/i })
+    // The filter also has an accessible name containing "status".
+    const statusSelects = screen.getAllByRole('combobox', { name: 'Status' })
     // R-GV-1 is second row (index 1), change status to 'treating'
     fireEvent.change(statusSelects[1], { target: { value: 'treating' } })
     expect(onUpdateRisk).toHaveBeenCalledWith('R-GV-1', { treatment_status: 'treating' })
