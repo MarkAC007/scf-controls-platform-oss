@@ -398,6 +398,15 @@ services:
       WINDOW_ASSESSMENT_ON_INGEST: ${WINDOW_ASSESSMENT_ON_INGEST:-true}
       WINDOW_ASSESSMENT_INGEST_DEBOUNCE_SECONDS: ${WINDOW_ASSESSMENT_INGEST_DEBOUNCE_SECONDS:-120}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # Jev (TypeSafe System One) — the shadow / alternative evidence
+      # assessment engine. Optional; also settable under Settings → Integrations.
+      # The cutoff and state budget are read by the API (engine status) and
+      # the worker alike, so both forward them.
+      TYPESAFE_API_KEY: ${TYPESAFE_API_KEY:-}
+      TYPESAFE_API_URL: ${TYPESAFE_API_URL:-}
+      EVIDENCE_JEV_MODEL: ${EVIDENCE_JEV_MODEL:-}
+      JEV_CONFIDENCE_CUTOFF: ${JEV_CONFIDENCE_CUTOFF:-0.85}
+      JEV_STATE_CHAR_BUDGET: ${JEV_STATE_CHAR_BUDGET:-90000}
       # Model ids for every AI path live in backend/services/model_registry.py
       # (#782). These override that registry's defaults without a rebuild —
       # forwarded here because a variable documented in .env.example that never
@@ -538,6 +547,13 @@ services:
       EVIDENCE_INTEGRITY_SWEEP_BATCH: ${EVIDENCE_INTEGRITY_SWEEP_BATCH:-}
       # AI Assessment (Anthropic Claude)
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # AI Assessment shadow / alternative engine (TypeSafe Jev) — same set
+      # as the backend; the worker is where the calls are made.
+      TYPESAFE_API_KEY: ${TYPESAFE_API_KEY:-}
+      TYPESAFE_API_URL: ${TYPESAFE_API_URL:-}
+      EVIDENCE_JEV_MODEL: ${EVIDENCE_JEV_MODEL:-}
+      JEV_CONFIDENCE_CUTOFF: ${JEV_CONFIDENCE_CUTOFF:-0.85}
+      JEV_STATE_CHAR_BUDGET: ${JEV_STATE_CHAR_BUDGET:-90000}
       # Assurance/KSI feature flags (#787) — same three as the backend. The
       # worker imports the same api modules through the doc-gen and
       # assessment task paths, so a flag set on one service and not the other
@@ -990,6 +1006,29 @@ services:
       # Raise it only if you also raise the backend cap. Evidence files bypass
       # this entirely — they go browser-to-S3/MinIO via a presigned URL.
       MAX_UPLOAD_SIZE: ${MAX_UPLOAD_SIZE:-64m}
+      # Runtime application config (#112). The entrypoint renders these into
+      # /config.js, which the page loads before the app bundle — so branding and
+      # the review mode are deployment settings rather than properties of the
+      # image, and changing one is a restart rather than a rebuild.
+      #
+      # Compose cannot express "unset" for a listed key: each default below
+      # renders as set-but-empty. The entrypoint treats an empty value as unset
+      # for these keys, so a title or URL baked in at build time (VITE_APP_TITLE
+      # or VITE_MARKETING_WEBSITE_URL in webclient/.env, read by Vite during the
+      # image build) still applies when the SCF_* key is left blank here. SCF_APP_LOGO is the one key where "" has a meaning
+      # of its own ("no logo at all"), so it is deliberately NOT listed — set it
+      # in an override file when you want to hide the logo.
+      SCF_APP_TITLE: ${SCF_APP_TITLE:-}
+      SCF_MARKETING_WEBSITE_URL: ${SCF_MARKETING_WEBSITE_URL:-}
+      # Follows the BACKEND flag when the operator sets it, so the two sides
+      # cannot disagree; left empty otherwise, so an install that only ever set
+      # the build-time VITE_ENABLE_PER_WINDOW_REVIEW keeps the review mode it
+      # had. A hard `:-true` here would flip such an install on upgrade. When
+      # neither is set each side falls back to its own default (backend true,
+      # frontend the build-time value); the feature-flag check in the UI
+      # reports that mismatch rather than hiding it.
+      SCF_ENABLE_PER_WINDOW_REVIEW: ${ENABLE_PER_WINDOW_REVIEW:-}
+      SCF_DEBUG_API: ${SCF_DEBUG_API:-}
       # Only consumed by the Vite DEV server (docker-compose.dev.yml overlay),
       # where vite.config.ts is evaluated by Node at container start. Set it
       # when the dev UI is reached under a hostname Vite would otherwise reject

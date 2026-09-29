@@ -34178,6 +34178,81 @@ button.risk-list-header-cell:hover {
   word-break: break-word;
 }
 
+/* ---- Jev shadow verdict (beside Claude's, in the file preview) ----
+   Tokens only, so both themes follow. A low confidence is marked by weight and
+   a leading marker as well as colour, the same commitment the .ai-chip styles
+   make. */
+
+.shadow-verdict {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  font-size: 0.78rem;
+}
+
+.shadow-verdict-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.shadow-verdict-title {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--text);
+}
+
+.shadow-verdict-summary {
+  margin: 6px 0 8px;
+  color: var(--muted);
+}
+
+.shadow-verdict-summary.failed {
+  color: var(--destructive);
+}
+
+.shadow-verdict-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.shadow-verdict-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.shadow-verdict-ao {
+  font-family: var(--font-mono);
+  min-width: 64px;
+}
+
+.shadow-verdict-confidence {
+  font-family: var(--font-mono);
+  color: var(--muted);
+}
+
+.shadow-verdict-confidence.low {
+  color: var(--warning);
+  font-weight: 600;
+}
+
+.shadow-verdict-confidence.low::before {
+  content: '▾ ';
+}
+
+.shadow-verdict-claude {
+  color: var(--muted);
+  font-style: italic;
+}
+
 /* ---- Bulk assess bar (evidence file list) ---- */
 
 .evidence-files-select-col {
@@ -34312,6 +34387,92 @@ button.risk-list-header-cell:hover {
 .integration-banner code {
   font-family: var(--font-mono);
   font-size: 12px;
+}
+
+/* ---- Settings → AI assessment engine ---- */
+
+.assessment-engine-options {
+  border: none;
+  margin: 16px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.assessment-engine-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.assessment-engine-option.selected {
+  border-color: var(--primary);
+  background: var(--accent-muted);
+}
+
+.assessment-engine-options:disabled .assessment-engine-option {
+  cursor: default;
+}
+
+.assessment-engine-option input {
+  margin-top: 3px;
+}
+
+.assessment-engine-option-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.assessment-engine-option-label {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.assessment-engine-option-desc {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.assessment-engine-muted {
+  color: var(--muted);
+}
+
+.assessment-engine-stats {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.assessment-engine-stats h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.assessment-engine-stats dl {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 8px 16px;
+  margin: 0;
+}
+
+.assessment-engine-stat dt {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.assessment-engine-stat dd {
+  margin: 2px 0 0;
+  font-family: var(--font-mono);
+  color: var(--text);
 }
 
 .integration-list {

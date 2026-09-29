@@ -68,12 +68,20 @@ AO_TWO = "AO0002"
 class FakeSession:
     """Recording session that answers the task's SELECTs by statement shape."""
 
-    def __init__(self, file_row=None, prior_row=None, current_version_number=0):
+    def __init__(
+        self, file_row=None, prior_row=None, current_version_number=0, org_settings=None,
+        shadow_exists=False,
+    ):
         self.file_row = file_row if file_row is not None else _file_row()
         self.prior_row = prior_row
         self.current_version_number = current_version_number
+        # What `SELECT settings FROM organizations` answers — the engine choice.
+        self.org_settings = org_settings
+        # Whether the cached verdict's version already has its shadow row.
+        self.shadow_exists = shadow_exists
         self.updates: list[tuple[str, dict]] = []
         self.version_inserts: list[dict] = []
+        self.shadow_inserts: list[dict] = []
         self.committed = 0
         self.rolled_back = 0
         self.closed = False
@@ -85,10 +93,18 @@ class FakeSession:
         if "INSERT INTO evidence_assessment_versions" in sql:
             self.version_inserts.append(params)
             return result
+        if "INSERT INTO evidence_assessment_shadow_verdicts" in sql:
+            self.shadow_inserts.append(params)
+            return result
         if "UPDATE evidence_assessments" in sql:
             self.updates.append((sql, params))
             return result
-        if "FROM evidence_files" in sql:
+        if "FROM organizations" in sql:
+            result.first.return_value = (self.org_settings,)
+        elif "FROM evidence_assessment_shadow_verdicts" in sql:
+            # The cache-hit path asks whether this version was shadowed already.
+            result.first.return_value = (1,) if self.shadow_exists else None
+        elif "FROM evidence_files" in sql:
             result.mappings.return_value.first.return_value = self.file_row
         elif "FOR UPDATE" in sql:
             # The write protocol's row lock, which also reads the version the
@@ -156,13 +172,22 @@ def _file_row(**overrides):
     return row
 
 
+PRIOR_VERSION_ID = "55555555-5555-5555-5555-555555555555"
+
+
 def _prior_row(**overrides):
     row = {
+        "id": ASSESSMENT_ID,
         "status": "sufficient",
         "prompt_hash": "p" * 64,
         "prompt_version": PROMPT_VERSION,
         "control_context_hash": CONTEXT_HASH,
         "assessed_file_sha256": FILE_SHA,
+        "current_version_id": PRIOR_VERSION_ID,
+        "ao_findings": [
+            {"ao_id": AO_ONE, "suggested_designation": "appears_satisfied"},
+            {"ao_id": AO_TWO, "suggested_designation": "appears_satisfied"},
+        ],
     }
     row.update(overrides)
     return row
@@ -1081,3 +1106,339 @@ def _execute_without_lock_row(session):
         return original(stmt, params)
 
     return execute
+
+
+# ---------------------------------------------------------------------------
+# Engine selection: llm / jev_shadow / jev
+# ---------------------------------------------------------------------------
+
+from services import jev_assessment as ja  # noqa: E402
+from services import jev_client as jc  # noqa: E402
+
+
+def _jev_answers(**per_ao):
+    """Answers for both default objectives plus relevance, as the client lifts them."""
+    answers = {}
+    for ao_id in (AO_ONE, AO_TWO):
+        designation, confidence = per_ao.get(ao_id, ("appears_satisfied", 0.95))
+        answers[ao_id] = jc.JevAnswer(
+            question_id=ao_id, type="choice", value=designation, confidence=confidence,
+            probabilities={designation: confidence},
+        )
+    answers[ja.RELEVANCE_QUESTION_ID] = jc.JevAnswer(
+        question_id=ja.RELEVANCE_QUESTION_ID, type="score", value=4.0, confidence=0.9,
+    )
+    return answers
+
+
+def _jev_ok(**per_ao):
+    """An `ask` stub that answers like TypeSafe would."""
+    return MagicMock(return_value=jc.JevResponse(
+        model="jev-1.13.0", answers=_jev_answers(**per_ao),
+        input_tokens=800, output_tokens=0, latency_ms=95,
+    ))
+
+
+def _engine(name):
+    return {ja.ENGINE_SETTING_KEY: name}
+
+
+class TestEngineSelection:
+    def test_default_engine_never_touches_jev(self, monkeypatch):
+        ask = _jev_ok()
+        monkeypatch.setattr(jc, "ask", ask)
+        session = FakeSession(org_settings={})
+        outcome = _run(monkeypatch, session, llm=MagicMock(return_value=_llm_ok())).result
+
+        assert outcome["status"] == "sufficient"
+        ask.assert_not_called()
+        assert session.shadow_inserts == []
+        assert session.last_version()["prompt_version"] == PROMPT_VERSION
+
+    def test_unreadable_setting_falls_back_to_llm(self, monkeypatch):
+        ask = _jev_ok()
+        monkeypatch.setattr(jc, "ask", ask)
+        session = FakeSession(org_settings='{"evidence_assessment_engine": "jev"')  # broken JSON text
+        outcome = _run(monkeypatch, session, llm=MagicMock(return_value=_llm_ok())).result
+        assert outcome["status"] == "sufficient"
+        ask.assert_not_called()
+
+    def test_json_text_setting_is_read(self, monkeypatch):
+        ask = _jev_ok()
+        monkeypatch.setattr(jc, "ask", ask)
+        session = FakeSession(org_settings=json.dumps(_engine("jev")))
+        llm = MagicMock(return_value=_llm_ok())
+        _run(monkeypatch, session, llm=llm)
+        ask.assert_called_once()
+        llm.assert_not_called()
+
+
+class TestJevShadow:
+    def test_llm_verdict_stands_and_jev_is_recorded_beside_it(self, monkeypatch):
+        ask = _jev_ok(**{AO_TWO: ("gap_identified", 0.6)})
+        monkeypatch.setattr(jc, "ask", ask)
+        session = FakeSession(org_settings=_engine("jev_shadow"), current_version_number=2)
+        outcome = _run(monkeypatch, session, llm=MagicMock(return_value=_llm_ok())).result
+
+        # The primary verdict is the LLM's, byte for byte as before.
+        assert outcome["status"] == "sufficient"
+        assert "engine" not in outcome
+        version = session.last_version()
+        assert version["status"] == "sufficient"
+        assert version["model_id"] == "claude-sonnet-4-6"
+        assert version["prompt_version"] == PROMPT_VERSION
+
+        # Jev was asked once, with the same objectives.
+        ask.assert_called_once()
+        model, state, questions = ask.call_args.args
+        assert model == "jev-1.13.0"
+        assert [q for q in questions if q != ja.RELEVANCE_QUESTION_ID] == [AO_ONE, AO_TWO]
+        assert state["document_text"] == "policy body"
+
+        # And its answer sits beside the version just written, by the id the
+        # writer handed over — not one looked up again afterwards.
+        (shadow,) = session.shadow_inserts
+        assert shadow["assessment_id"] == ASSESSMENT_ID
+        assert shadow["version_id"] == version["version_id"]
+        assert version["version_number"] == 3
+        assert shadow["engine"] == "jev"
+        assert shadow["model_id"] == "jev-1.13.0"
+        assert shadow["question_set_version"] == ja.QUESTION_SET_VERSION
+        assert shadow["status"] == "partial"
+        assert shadow["error"] is None
+        assert shadow["low_confidence_count"] == 1
+        assert shadow["input_token_count"] == 800
+        comparison = json.loads(shadow["comparison"])
+        assert comparison["compared"] == 2 and comparison["agreed"] == 1
+        assert comparison["confident_agreement_rate"] == 1.0
+        assert comparison["llm_status"] == "sufficient" and comparison["jev_status"] == "partial"
+        assert comparison["disagreements"][0]["ao_id"] == AO_TWO
+        findings = json.loads(shadow["ao_findings"])
+        assert findings[1]["confidence"] == 0.6
+
+    @pytest.mark.parametrize("exc", [
+        jc.JevUnavailableError("TYPESAFE_API_KEY not set"),
+        jc.JevCallError("Jev answered HTTP 500", status_code=500),
+        jc.JevResponseError("missing answer"),
+        RuntimeError("anything at all"),
+    ])
+    def test_shadow_failure_is_recorded_and_never_fails_the_task(self, monkeypatch, exc):
+        monkeypatch.setattr(jc, "ask", MagicMock(side_effect=exc))
+        session = FakeSession(org_settings=_engine("jev_shadow"))
+        outcome = _run(monkeypatch, session, llm=MagicMock(return_value=_llm_ok())).result
+
+        assert outcome["status"] == "sufficient"
+        assert session.last_version()["status"] == "sufficient"
+        (shadow,) = session.shadow_inserts
+        assert shadow["status"] is None
+        assert shadow["comparison"] is None
+        assert type(exc).__name__ in shadow["error"]
+        assert str(exc) in shadow["error"]
+
+    def test_shadow_row_failure_is_swallowed(self, monkeypatch):
+        monkeypatch.setattr(jc, "ask", _jev_ok())
+        session = FakeSession(org_settings=_engine("jev_shadow"))
+        original = session.execute
+
+        def execute(stmt, params=None):
+            if "INSERT INTO evidence_assessment_shadow_verdicts" in str(stmt):
+                raise RuntimeError("relation does not exist")
+            return original(stmt, params)
+
+        monkeypatch.setattr(session, "execute", execute)
+        outcome = _run(monkeypatch, session, llm=MagicMock(return_value=_llm_ok())).result
+        assert outcome["status"] == "sufficient"
+        assert session.rolled_back == 1
+
+    def test_no_shadow_when_no_model_ran(self, monkeypatch):
+        ask = _jev_ok()
+        monkeypatch.setattr(jc, "ask", ask)
+        session = FakeSession(org_settings=_engine("jev_shadow"))
+        _run(
+            monkeypatch, session,
+            extracted=ExtractedContent(text="", extraction_method="unsupported", error="no text layer"),
+            llm=MagicMock(),
+        )
+        ask.assert_not_called()
+        assert session.shadow_inserts == []
+
+    # -- A cached LLM verdict is exactly what shadow mode wants to compare --
+
+    def test_cache_hit_shadows_the_reused_verdict_once(self, monkeypatch):
+        ask = _jev_ok(**{AO_TWO: ("gap_identified", 0.6)})
+        monkeypatch.setattr(jc, "ask", ask)
+        session = FakeSession(org_settings=_engine("jev_shadow"), prior_row=_prior_row())
+        llm = MagicMock()
+        outcome = _run(monkeypatch, session, llm=llm).result
+
+        # The cached verdict is still the answer: no model call, no write to
+        # the assessment row.
+        assert outcome["cached"] is True
+        assert outcome["shadow"] == "ran"
+        llm.assert_not_called()
+        assert session.updates == []
+        assert session.version_inserts == []
+
+        # Jev was asked, and the comparison is against the stored findings,
+        # attached to the version the cache is serving.
+        ask.assert_called_once()
+        (shadow,) = session.shadow_inserts
+        assert shadow["assessment_id"] == ASSESSMENT_ID
+        assert shadow["version_id"] == PRIOR_VERSION_ID
+        comparison = json.loads(shadow["comparison"])
+        assert comparison["llm_status"] == "sufficient"
+        assert comparison["compared"] == 2 and comparison["agreed"] == 1
+        assert comparison["disagreements"][0]["ao_id"] == AO_TWO
+
+    def test_cache_hit_does_not_shadow_a_version_twice(self, monkeypatch):
+        ask = _jev_ok()
+        monkeypatch.setattr(jc, "ask", ask)
+        session = FakeSession(
+            org_settings=_engine("jev_shadow"), prior_row=_prior_row(), shadow_exists=True,
+        )
+        outcome = _run(monkeypatch, session, llm=MagicMock()).result
+        assert outcome["cached"] is True
+        assert outcome["shadow"] == "present"
+        ask.assert_not_called()
+        assert session.shadow_inserts == []
+
+    def test_cache_hit_shadow_failure_is_a_row_not_a_task_failure(self, monkeypatch):
+        monkeypatch.setattr(jc, "ask", MagicMock(side_effect=jc.JevUnavailableError("no key")))
+        session = FakeSession(org_settings=_engine("jev_shadow"), prior_row=_prior_row())
+        outcome = _run(monkeypatch, session, llm=MagicMock()).result
+        assert outcome["cached"] is True
+        assert outcome["shadow"] == "ran"
+        (shadow,) = session.shadow_inserts
+        assert "JevUnavailableError" in shadow["error"]
+
+    def test_cache_hit_shadow_skips_when_the_bytes_cannot_be_read_back(self, monkeypatch):
+        ask = _jev_ok()
+        monkeypatch.setattr(jc, "ask", ask)
+        session = FakeSession(org_settings=_engine("jev_shadow"), prior_row=_prior_row())
+        monkeypatch.setattr(ta, "_get_sync_session", lambda: session)
+        monkeypatch.setattr(ta, "assemble_control_context_sync", lambda s, eid: _context())
+        monkeypatch.setattr(
+            ta, "download_evidence_bytes", lambda key, org_id=None, storage_config_id=None: None,
+        )
+        outcome = ta.assess_evidence_task.apply(
+            args=(FILE_ID, ORG_ID, USER_ID, "on_demand", False), throw=False,
+        ).result
+        assert outcome["cached"] is True
+        assert outcome["shadow"] == "skipped"
+        ask.assert_not_called()
+        assert session.shadow_inserts == []
+
+    def test_cache_hit_under_the_llm_engine_reports_no_shadow(self, monkeypatch):
+        ask = _jev_ok()
+        monkeypatch.setattr(jc, "ask", ask)
+        session = FakeSession(org_settings=_engine("llm"), prior_row=_prior_row())
+        outcome = _run(monkeypatch, session, llm=MagicMock()).result
+        assert outcome["cached"] is True
+        assert "shadow" not in outcome
+        ask.assert_not_called()
+
+
+class TestPromptVersionForEngine:
+    @pytest.mark.parametrize("engine,expected", [
+        ("llm", PROMPT_VERSION),
+        ("jev_shadow", PROMPT_VERSION),
+        ("jev", ja.QUESTION_SET_VERSION),
+    ])
+    def test_maps_the_engine_to_the_release_its_verdicts_carry(self, engine, expected):
+        assert ta.prompt_version_for_engine(engine) == expected
+
+
+class TestJevPrimary:
+    def test_jev_verdict_is_stored_with_its_own_provenance(self, monkeypatch):
+        ask = _jev_ok(**{AO_TWO: ("gap_identified", 0.6)})
+        monkeypatch.setattr(jc, "ask", ask)
+        session = FakeSession(org_settings=_engine("jev"))
+        llm = MagicMock(return_value=_llm_ok())
+        outcome = _run(monkeypatch, session, llm=llm).result
+
+        llm.assert_not_called()
+        assert outcome["status"] == "partial"
+        assert outcome["engine"] == "jev"
+        assert outcome["gap_count"] == 1
+        assert outcome["relevance_score"] == 100.0
+        assert session.shadow_inserts == []
+
+        version = session.last_version()
+        assert version["status"] == "partial"
+        assert version["model_id"] == "jev-1.13.0"
+        assert version["prompt_version"] == ja.QUESTION_SET_VERSION
+        assert len(version["prompt_hash"]) == 64
+        assert version["control_context_hash"] == CONTEXT_HASH
+        assert version["input_token_count"] == 800
+        assert version["cost_cents"] == round(800 * 0.042 / 1_000_000 * 100, 4)
+        assert version["evidence_effective_date"] is None
+        ao_findings = json.loads(version["ao_findings"])
+        assert [f["suggested_designation"] for f in ao_findings] == ["appears_satisfied", "gap_identified"]
+        assert ao_findings[1]["confidence"] == 0.6
+        assert "below the cutoff" in ao_findings[1]["suggestion"]
+        messages = " ".join(f["message"] for f in json.loads(version["findings"]))
+        assert "Jev" in messages and AO_TWO in messages
+        assert session.status_writes[-1] == "partial"
+
+    def test_cache_gate_reassesses_when_the_engine_changes(self, monkeypatch):
+        # A valid LLM verdict is on file, but the organisation now uses Jev:
+        # the stored prompt_version is the LLM's, so the gate misses.
+        ask = _jev_ok()
+        monkeypatch.setattr(jc, "ask", ask)
+        session = FakeSession(org_settings=_engine("jev"), prior_row=_prior_row())
+        outcome = _run(monkeypatch, session, llm=MagicMock()).result
+        assert outcome["cached"] is False
+        ask.assert_called_once()
+
+    def test_cache_gate_hits_on_a_jev_verdict(self, monkeypatch):
+        ask = _jev_ok()
+        monkeypatch.setattr(jc, "ask", ask)
+        session = FakeSession(
+            org_settings=_engine("jev"),
+            prior_row=_prior_row(prompt_version=ja.QUESTION_SET_VERSION),
+        )
+        outcome = _run(monkeypatch, session, llm=MagicMock()).result
+        assert outcome["cached"] is True
+        ask.assert_not_called()
+
+    def test_llm_engine_does_not_reuse_a_jev_verdict(self, monkeypatch):
+        session = FakeSession(
+            org_settings=_engine("llm"),
+            prior_row=_prior_row(prompt_version=ja.QUESTION_SET_VERSION),
+        )
+        llm = MagicMock(return_value=_llm_ok())
+        outcome = _run(monkeypatch, session, llm=llm).result
+        assert outcome["cached"] is False
+        llm.assert_called_once()
+
+    def test_missing_key_is_terminal_not_retried(self, monkeypatch):
+        monkeypatch.setattr(jc, "ask", MagicMock(side_effect=jc.JevUnavailableError("TYPESAFE_API_KEY not set")))
+        session = FakeSession(org_settings=_engine("jev"))
+        outcome = _run(monkeypatch, session, llm=MagicMock()).result
+
+        assert outcome == {"status": "error", "message": "TYPESAFE_API_KEY not set", "retryable": False}
+        assert len(session.version_inserts) == 1
+        version = session.last_version()
+        assert version["status"] == "error"
+        finding = json.loads(version["findings"])[0]
+        assert finding["exception_class"] == "JevUnavailableError"
+        assert finding["retryable"] is False
+
+    def test_api_failure_raises_for_celery_retry(self, monkeypatch):
+        monkeypatch.setattr(jc, "ask", MagicMock(side_effect=jc.JevCallError("Jev answered HTTP 529", status_code=529)))
+        session = FakeSession(org_settings=_engine("jev"))
+        result = _run(monkeypatch, session, llm=MagicMock())
+        assert result.failed()
+        assert any("Jev call failed (HTTP 529)" in p.get("summary", "") for _, p in session.updates)
+
+    def test_bad_answer_is_an_honest_error(self, monkeypatch):
+        answers = _jev_answers()
+        answers[AO_ONE].value = "satisfied"
+        monkeypatch.setattr(jc, "ask", MagicMock(return_value=jc.JevResponse(
+            model="jev-1.13.0", answers=answers, input_tokens=1, output_tokens=0, latency_ms=1,
+        )))
+        session = FakeSession(org_settings=_engine("jev"))
+        result = _run(monkeypatch, session, llm=MagicMock())
+        assert result.failed()
+        assert any("Jev response could not be read" in p.get("summary", "") for _, p in session.updates)
+        assert session.version_inserts == [] or session.last_version()["status"] == "error"

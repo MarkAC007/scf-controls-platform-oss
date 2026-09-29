@@ -56,6 +56,87 @@ if ! grep "proxy_pass" "$NGINX_CONF" | grep -qE "https?://"; then
   exit 1
 fi
 
+# ---------------------------------------------------------------------------
+# Runtime application config (/config.js).
+#
+# Vite compiles VITE_* values into the JS bundle, so anything that varies per
+# deployment would otherwise mean a rebuild per deployment. index.html loads
+# /config.js before the app bundle; this renders it from the SCF_* environment,
+# and src/data/runtimeConfig.ts falls back to the build-time value for any key
+# not written here.
+#
+# Rendered to /tmp for the same reason the nginx config is: the container runs
+# with a read-only root, so the document root cannot be written. nginx serves it
+# through `location = /config.js`.
+#
+# An UNSET variable is omitted rather than written as "". For SCF_APP_LOGO the
+# two are not the same: "" hides the logo, while unset means "use the bundled
+# default", and collapsing them would make it impossible to ask for no logo.
+#
+# For EVERY OTHER key an empty value is also omitted. Compose cannot express
+# "unset" for a listed `environment:` key — `${SCF_APP_TITLE:-}` renders as
+# set-but-empty — and a written "" wins over the build-time VITE_* value in
+# src/data/runtimeConfig.ts. Without this rule the compose passthrough would
+# silently discard a title baked in at build time (VITE_APP_TITLE in
+# webclient/.env, which Vite reads during `npm run build`). Nothing is lost by
+# omitting: every consumer of these keys treats "" and
+# undefined identically (`getConfig(...) || default`, `=== 'true'`,
+# `!== 'false'`); only APP_LOGO gives "" a meaning of its own.
+#
+# The object is built by jq and emitted as a single JSON.parse() argument rather
+# than hand-escaped. This is environment-to-JavaScript codegen, where a value is
+# arbitrary operator input: a newline breaks the file, and a `</script>` ends it
+# early, which is worse than breaking it. jq -Rn owns the escaping, and JSON is
+# a subset of JavaScript object syntax, so a correctly escaped JSON string is a
+# correct JavaScript string.
+# ---------------------------------------------------------------------------
+CONFIG_JS=/tmp/config.js
+CONFIG_KEYS="APP_TITLE APP_LOGO MARKETING_WEBSITE_URL ENABLE_PER_WINDOW_REVIEW DEBUG_API"
+
+_config_json() {
+  # Built one key at a time and merged. `eval` is used only to dereference the
+  # variable NAME; the value itself is passed to jq as an ordinary argument, so
+  # it is never re-parsed by the shell. Interpolating it into an eval'd jq
+  # command line instead silently eats any quote the operator set.
+  _json='{}'
+  for _key in $CONFIG_KEYS; do
+    eval "_isset=\${SCF_${_key}+yes}"
+    [ "${_isset:-}" = yes ] || continue
+    eval "_value=\$SCF_${_key}"
+    # Empty means unset for every key but APP_LOGO (see above).
+    if [ -z "$_value" ] && [ "$_key" != APP_LOGO ]; then
+      echo "Runtime config: ${_key} empty, using the build-time value" >&2
+      continue
+    fi
+    _json="$(printf '%s' "$_json" | jq --arg k "$_key" --arg v "$_value" '. + {($k): $v}')"
+    # A failed jq leaves _json empty. Return non-zero ourselves rather than
+    # relying on `set -e` inside the assignment, which bash would not honour.
+    [ -n "$_json" ] || return 1
+    echo "Runtime config: ${_key} set" >&2
+  done
+  printf '%s' "$_json"
+}
+
+# The JSON is embedded as a JavaScript string literal, so jq escapes it a second
+# time. `<` then becomes \u003c, which decodes to the same character but cannot
+# spell `</script>` — this file is external, where that is already harmless, but
+# the escape keeps it harmless if it is ever inlined.
+#
+# Rendered in two steps rather than one pipeline: inside `$( a | b | c )` the
+# exit status is c's, so a jq failure in _config_json would slip past `set -e`
+# and the file would carry `JSON.parse("")`, which throws on every page load
+# while the container reports healthy. Refusing to start is the honest failure.
+# Two guards: _config_json returns non-zero on a failed merge, and the object
+# check below catches anything that is still not a JSON object.
+_config_object="$(_config_json)" || { echo "ERROR: could not build the runtime config object" >&2; exit 1; }
+printf '%s' "$_config_object" | jq -e 'type == "object"' >/dev/null \
+  || { echo "ERROR: runtime config is not a JSON object: ${_config_object}" >&2; exit 1; }
+_config_literal="$(printf '%s' "$_config_object" | jq -Rs . | sed -e 's/</\\u003c/g')"
+{
+  echo "// Generated at container start by docker-entrypoint.sh. Do not edit."
+  printf 'window.__SCF_CONFIG__ = JSON.parse(%s);\n' "$_config_literal"
+} > "$CONFIG_JS"
+
 echo "Nginx config validated, testing configuration..."
 
 # Test nginx configuration (against the rendered file, not the image default)

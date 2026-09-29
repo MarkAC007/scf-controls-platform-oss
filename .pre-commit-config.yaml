@@ -23,6 +23,10 @@ repos:
       - id: check-merge-conflict
       - id: check-yaml
         args: ['--unsafe']  # Allow custom tags
+        # Helm templates are Go templates, not YAML — `{{- if ... }}` is a
+        # parse error until `helm template` renders them. `helm lint` is what
+        # checks these; values.yaml and Chart.yaml are still covered here.
+        exclude: ^helm-charts/.*/templates/
       - id: detect-private-key
       - id: end-of-file-fixer
       - id: trailing-whitespace

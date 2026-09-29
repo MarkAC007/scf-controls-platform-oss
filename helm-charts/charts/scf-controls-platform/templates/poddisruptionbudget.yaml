@@ -1,0 +1,20 @@
+{{- range $name, $cfg := dict "backend" $.Values.backend "frontend" $.Values.frontend "celery-worker" $.Values.celery.worker }}
+{{- if $cfg.podDisruptionBudget.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "scf.fullname" $ }}-{{ $name }}
+  labels:
+    {{- include "scf.componentLabels" (dict "ctx" $ "component" $name) | nindent 4 }}
+spec:
+  {{- if $cfg.podDisruptionBudget.maxUnavailable }}
+  maxUnavailable: {{ $cfg.podDisruptionBudget.maxUnavailable }}
+  {{- else }}
+  minAvailable: {{ $cfg.podDisruptionBudget.minAvailable }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "scf.componentSelectorLabels" (dict "ctx" $ "component" $name) | nindent 6 }}
+{{- end }}
+{{- end }}

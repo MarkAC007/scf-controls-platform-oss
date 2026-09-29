@@ -82,6 +82,7 @@ MODEL_ID_PATTERN = re.compile(
     r"|deepseek-[\w.-]+"
     r"|command-r[\w.-]*"
     r"|titan-[\w.-]+"
+    r"|jev-(?:\d[\w.]*|latest)"
     r")\b"
 )
 

@@ -14,7 +14,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, NamedTuple, Optional
 
 from celery import shared_task
 from sqlalchemy import create_engine, select, and_, text
@@ -41,6 +41,8 @@ from services.text_extraction_service import (
 )
 from services.anthropic_response import extract_text
 from services.model_registry import cost_cents as model_cost_cents, resolve as resolve_model
+from services import jev_assessment
+from services import jev_client
 
 from services.llm_client import build_anthropic_client
 from services.secrets import get_secret
@@ -116,6 +118,20 @@ class LLMUnavailableError(Exception):
 # ---------------------------------------------------------------------------
 # Cache gate
 # ---------------------------------------------------------------------------
+
+def prompt_version_for_engine(engine: str) -> str:
+    """The prompt release a verdict must carry to be reusable under *engine*.
+
+    Jev verdicts name the question-set release, LLM verdicts the template
+    release; comparing against the chosen engine's is what makes an engine
+    switch re-assess instead of serving the other engine's verdict. Used by the
+    worker gate and the trigger endpoint's gate alike — the two must agree.
+    """
+    return (
+        jev_assessment.QUESTION_SET_VERSION
+        if engine == jev_assessment.ENGINE_JEV else PROMPT_VERSION
+    )
+
 
 def is_cache_hit(
     status: Optional[str],
@@ -307,8 +323,8 @@ def assess_evidence_task(
         # effect on the live path.
         prior = session.execute(
             text("""
-                SELECT status, prompt_hash, prompt_version, control_context_hash,
-                       assessed_file_sha256
+                SELECT id, status, prompt_hash, prompt_version, control_context_hash,
+                       assessed_file_sha256, current_version_id, ao_findings
                 FROM evidence_assessments
                 WHERE evidence_file_id = :file_id AND organization_id = :org_id
             """),
@@ -324,8 +340,15 @@ def assess_evidence_task(
             )
             return {"status": "error", "message": "No control context"}
 
+        # Step 3b: Which engine this organisation has chosen in Settings. Read
+        # per run, not per worker, so a change takes effect on the next file.
+        engine = _resolve_engine(session, organization_id)
+        current_prompt_version = prompt_version_for_engine(engine)
+
         # Step 4: Cache gate — unchanged file, context and prompt version means
-        # the stored verdict is still the answer. Skip the model call.
+        # the stored verdict is still the answer. Skip the model call. The
+        # version compared is the chosen engine's, so an organisation that
+        # switches engines gets a fresh verdict rather than the other engine's.
         if prior is not None and not force and is_cache_hit(
             status=prior["status"],
             prompt_hash=prior["prompt_hash"],
@@ -334,16 +357,27 @@ def assess_evidence_task(
             file_sha256=file_sha256,
             current_context_hash=control_context.context_hash,
             stored_file_sha256=prior["assessed_file_sha256"],
+            current_prompt_version=current_prompt_version,
         ):
             logger.info(
                 "assess_evidence_task[%s] cache hit for file=%s (status=%s) — skipping model call",
                 task_id, evidence_file_id, prior["status"],
             )
-            return {
+            outcome = {
                 "status": prior["status"],
                 "cached": True,
                 "message": "Cached assessment reused — content and context unchanged",
             }
+            # Shadow mode exists to compare Jev against verdicts the LLM has
+            # already given. Those are exactly the files the gate reuses, so a
+            # reused verdict that has no shadow yet gets one now — the primary
+            # verdict is untouched, and nothing here can fail the task.
+            if engine == jev_assessment.ENGINE_JEV_SHADOW:
+                outcome["shadow"] = _shadow_cached_verdict(
+                    session, evidence_file_id, organization_id, evidence_id, prior,
+                    control_context, s3_key, file_storage_config_id, filename, content_type,
+                )
+            return outcome
 
         # Step 5: Claim the row
         session.execute(
@@ -413,8 +447,56 @@ def assess_evidence_task(
             )
             return {"status": "insufficient", "message": "Empty file"}
 
-        # Step 7: Build prompt
         assessment_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+        # Step 7 (Jev primary): the organisation has moved off the LLM. Jev
+        # answers the per-objective questions and its verdict is the one
+        # stored; there is no LLM call. Failures raise into the handlers at
+        # the bottom of this task exactly as LLM failures do.
+        if engine == jev_assessment.ENGINE_JEV:
+            terminal = _jev_primary_verdict(
+                control_context, extracted, filename, content_type,
+                assessment_date, file_sha256, start_time,
+            )
+            _write_terminal_verdict(session, evidence_file_id, organization_id, terminal)
+            logger.info(
+                "Jev assessment complete: file=%s, status=%s, score=%s, model=%s, cost=%s, time=%dms",
+                evidence_file_id, terminal.status, terminal.relevance_score, terminal.model_id,
+                f"{terminal.cost_cents:.4f} cents" if terminal.cost_cents is not None else "unknown",
+                terminal.processing_time_ms,
+                extra={
+                    "custom_dimensions": {
+                        "event_type": "ai_assessment_result",
+                        "engine": engine,
+                        "evidence_file_id": evidence_file_id,
+                        "evidence_id": evidence_id,
+                        "organization_id": organization_id,
+                        "status": terminal.status,
+                        "relevance_score": terminal.relevance_score,
+                        "ao_finding_count": len(terminal.ao_findings),
+                        "gap_count": terminal.gap_count,
+                        "cannot_assess_count": terminal.cannot_assess_count,
+                        "input_tokens": terminal.input_token_count,
+                        "output_tokens": terminal.output_token_count,
+                        "cost_cents": terminal.cost_cents,
+                        "processing_time_ms": terminal.processing_time_ms,
+                        "model_id": terminal.model_id,
+                        "prompt_hash": terminal.prompt_hash,
+                    }
+                },
+            )
+            return {
+                "status": terminal.status,
+                "engine": engine,
+                "relevance_score": terminal.relevance_score,
+                "cached": False,
+                "truncated": extracted.truncated,
+                "gap_count": terminal.gap_count,
+                "cannot_assess_count": terminal.cannot_assess_count,
+                "processing_time_ms": terminal.processing_time_ms,
+            }
+
+        # Step 7: Build prompt
         system_prompt, user_prompt = build_assessment_prompt(
             control_context=control_context,
             extracted_text=extracted.text,
@@ -519,7 +601,7 @@ def assess_evidence_task(
 
         # Step 12: One transaction — append the frozen version, then repoint
         # the parent row at it.
-        _write_terminal_verdict(
+        written = _write_terminal_verdict(
             session,
             evidence_file_id,
             organization_id,
@@ -547,6 +629,19 @@ def assess_evidence_task(
                 processing_time_ms=processing_time_ms,
             ),
         )
+
+        # Step 12b (shadow): the LLM verdict above is the one that stands.
+        # Jev now answers the same objectives, and its answer is stored beside
+        # the version with a per-objective comparison. Nothing here can change
+        # the verdict or fail the task — a shadow that could break the primary
+        # would not be a shadow.
+        if engine == jev_assessment.ENGINE_JEV_SHADOW and written is not None:
+            _run_shadow_assessment(
+                session, evidence_file_id, organization_id, evidence_id,
+                control_context, extracted, filename, content_type, assessment_date,
+                llm_ao_findings=parsed.ao_findings, llm_status=derived_status,
+                assessment_id=written.assessment_id, version_id=written.version_id,
+            )
 
         # Step 13: Log result for App Insights
         logger.info(
@@ -596,11 +691,12 @@ def assess_evidence_task(
             "processing_time_ms": processing_time_ms,
         }
 
-    except LLMUnavailableError as exc:
+    except (LLMUnavailableError, jev_client.JevUnavailableError) as exc:
         # Deliberately NOT re-raised. A missing SDK or a missing API key is
         # identical on every attempt, so retrying it just delays the same
         # answer by the backoff interval and hides the real cause behind a
-        # generic retry exhaustion.
+        # generic retry exhaustion. The Jev twin is the same failure on the
+        # other engine: an organisation set to `jev` with no TypeSafe key.
         logger.error(
             "assess_evidence_task[%s] cannot run — %s", task_id, exc,
         )
@@ -636,6 +732,11 @@ def assess_evidence_task(
             reason = f"Model call failed ({exc.cause_class}): {exc.cause_message}"
         elif isinstance(exc, AssessmentParseError):
             reason = f"Model response could not be read: {exc.reason}"
+        elif isinstance(exc, jev_client.JevCallError):
+            http = f" (HTTP {exc.status_code})" if exc.status_code else ""
+            reason = f"Jev call failed{http}: {str(exc)[:500]}"
+        elif isinstance(exc, (jev_client.JevResponseError, jev_assessment.JevVerdictError)):
+            reason = f"Jev response could not be read: {str(exc)[:500]}"
         else:
             reason = f"Assessment failed ({type(exc).__name__}): {str(exc)[:500]}"
         if not is_final:
@@ -751,6 +852,11 @@ class TerminalVerdict:
     # 2 = AO-grounded. Every row this module writes is; the field exists so a
     # reader never has to infer the contract from the shape of the payload.
     schema_version: int = 2
+    # The release of whatever produced `prompt_hash`: the LLM prompt template
+    # (`PROMPT_VERSION`) or the Jev question set. It is what the cache gate
+    # compares, so switching an organisation between engines re-assesses
+    # rather than reusing the other engine's verdict. None when no model ran.
+    prompt_version: Optional[str] = None
 
 
 _INSERT_VERSION_SQL = text("""
@@ -817,12 +923,20 @@ _UPDATE_CURRENT_SQL = text("""
 """)
 
 
+class WrittenVerdict(NamedTuple):
+    """What ``_write_terminal_verdict`` appended: the ids a follow-on writer
+    (the Jev shadow) attaches to, so it never has to rediscover them."""
+    assessment_id: str
+    version_id: str
+    version_number: int
+
+
 def _write_terminal_verdict(
     session,
     evidence_file_id: str,
     organization_id: str,
     verdict: TerminalVerdict,
-) -> Optional[int]:
+) -> Optional[WrittenVerdict]:
     """Append the verdict as a new version and repoint the current row at it.
 
     One transaction, committed once. The parent row is locked FOR UPDATE so two
@@ -831,9 +945,9 @@ def _write_terminal_verdict(
     (assessment_id, version_number) refuses the second one rather than
     admitting a duplicate into the history.
 
-    Returns the new version number, or None when there is no assessment row to
-    write to — which happens when the trigger endpoint's row was deleted
-    mid-flight, and is a no-op rather than an error.
+    Returns the ids of what was written, or None when there is no assessment
+    row to write to — which happens when the trigger endpoint's row was
+    deleted mid-flight, and is a no-op rather than an error.
     """
     current = session.execute(
         text("""
@@ -860,8 +974,11 @@ def _write_terminal_verdict(
     # The template version travels with the hash (#787). A verdict reached
     # without calling a model — an extraction failure, a download failure —
     # had no prompt, and stamping the current template release onto it would
-    # claim provenance for something that never happened.
-    prompt_version = PROMPT_VERSION if verdict.prompt_hash else None
+    # claim provenance for something that never happened. A verdict that
+    # names its own release (the Jev path) keeps it.
+    prompt_version = (
+        (verdict.prompt_version or PROMPT_VERSION) if verdict.prompt_hash else None
+    )
 
     params = {
         "version_id": version_id,
@@ -896,7 +1013,9 @@ def _write_terminal_verdict(
     session.execute(_INSERT_VERSION_SQL, params)
     session.execute(_UPDATE_CURRENT_SQL, params)
     session.commit()
-    return next_version
+    return WrittenVerdict(
+        assessment_id=str(current["id"]), version_id=version_id, version_number=next_version,
+    )
 
 
 def _update_assessment_error(
@@ -985,6 +1104,261 @@ def _update_current_only(
         },
     )
     session.commit()
+
+
+# ---------------------------------------------------------------------------
+# Engine selection and the Jev paths
+# ---------------------------------------------------------------------------
+
+def _resolve_engine(session, organization_id: str) -> str:
+    """The evidence-assessment engine chosen for this organisation in Settings.
+
+    Anything unreadable — no row, a JSON column returned as text, an unknown
+    value — resolves to the LLM, which is today's behaviour. An organisation
+    can never lose assessments to a malformed setting.
+    """
+    row = session.execute(
+        text("SELECT settings FROM organizations WHERE id = :org_id"),
+        {"org_id": organization_id},
+    ).first()
+    settings = row[0] if row else None
+    if isinstance(settings, (str, bytes)):
+        try:
+            settings = json.loads(settings)
+        except ValueError:
+            settings = None
+    return jev_assessment.resolve_engine(settings)
+
+
+def _jev_primary_verdict(
+    control_context,
+    extracted,
+    filename: str,
+    content_type: str,
+    assessment_date: str,
+    file_sha256: Optional[str],
+    start_time: float,
+) -> TerminalVerdict:
+    """Ask Jev and shape its answer as the verdict this file will carry.
+
+    ``prompt_hash`` is the hash of the Jev request and ``prompt_version`` the
+    question-set release, so the cache gate treats a Jev verdict exactly as it
+    treats an LLM one — and never mistakes one for the other.
+    """
+    verdict = jev_assessment.assess(
+        control_context, extracted.text, filename, content_type,
+        assessment_date, extracted.truncated,
+    )
+    findings = jev_assessment.terminal_findings(verdict, control_context)
+    findings = _with_truncation_finding(findings, extracted.truncated, len(extracted.text))
+    processing_time_ms = int((time.monotonic() - start_time) * 1000)
+    return TerminalVerdict(
+        status=verdict.status,
+        relevance_score=verdict.relevance_score,
+        summary=jev_assessment.terminal_summary(verdict),
+        findings=findings,
+        ao_findings=jev_assessment.terminal_ao_findings(verdict),
+        gap_count=verdict.gap_count,
+        cannot_assess_count=verdict.cannot_assess_count,
+        truncated=extracted.truncated,
+        unassessable_reason=verdict.unassessable_reason,
+        assessed_file_sha256=file_sha256,
+        model_id=verdict.model_id,
+        prompt_hash=verdict.request_hash,
+        prompt_version=jev_assessment.QUESTION_SET_VERSION,
+        control_context_hash=control_context.context_hash,
+        framework_version=control_context.framework_version,
+        input_token_count=verdict.input_tokens,
+        output_token_count=verdict.output_tokens,
+        cost_cents=verdict.cost_cents,
+        processing_time_ms=processing_time_ms,
+    )
+
+
+_INSERT_SHADOW_SQL = text("""
+    INSERT INTO evidence_assessment_shadow_verdicts (
+        id, assessment_id, version_id, evidence_file_id, organization_id, evidence_id,
+        engine, model_id, question_set_version,
+        status, relevance_score, ao_findings, gap_count, cannot_assess_count,
+        low_confidence_count, confidence_cutoff, comparison, state_truncated,
+        input_token_count, output_token_count, cost_cents, processing_time_ms, error
+    ) VALUES (
+        :id, :assessment_id, :version_id, :file_id, :org_id, :evidence_id,
+        :engine, :model_id, :question_set_version,
+        :status, :relevance_score, :ao_findings, :gap_count, :cannot_assess_count,
+        :low_confidence_count, :confidence_cutoff, :comparison, :state_truncated,
+        :input_token_count, :output_token_count, :cost_cents, :processing_time_ms, :error
+    )
+""")
+
+
+def _run_shadow_assessment(
+    session,
+    evidence_file_id: str,
+    organization_id: str,
+    evidence_id: str,
+    control_context,
+    extracted,
+    filename: str,
+    content_type: str,
+    assessment_date: str,
+    *,
+    llm_ao_findings: List[Dict[str, Any]],
+    llm_status: str,
+    assessment_id: str,
+    version_id: Optional[str],
+) -> None:
+    """Run Jev against the file the LLM judged and store the comparison.
+
+    Never raises. The primary verdict is already committed when this is
+    called, and ``assessment_id``/``version_id`` name it — passed in by the
+    writer that committed it rather than rediscovered here, so the shadow is
+    attached to the version Jev actually saw. A shadow that failed is recorded
+    as a row with ``error`` set (the failure rate is part of what shadow mode
+    measures), and a shadow whose *row* could not be written is logged and
+    dropped.
+    """
+    started = time.monotonic()
+    params: Dict[str, Any] = {
+        "id": str(uuid.uuid4()),
+        "assessment_id": assessment_id,
+        "version_id": version_id,
+        "file_id": evidence_file_id,
+        "org_id": organization_id,
+        "evidence_id": evidence_id,
+        "engine": jev_assessment.ENGINE_JEV,
+        "model_id": resolve_model(jev_assessment.MODEL_ROLE),
+        "question_set_version": jev_assessment.QUESTION_SET_VERSION,
+        "status": None,
+        "relevance_score": None,
+        "ao_findings": "[]",
+        "gap_count": 0,
+        "cannot_assess_count": 0,
+        "low_confidence_count": 0,
+        "confidence_cutoff": None,
+        "comparison": None,
+        "state_truncated": False,
+        "input_token_count": None,
+        "output_token_count": None,
+        "cost_cents": None,
+        "processing_time_ms": None,
+        "error": None,
+    }
+    try:
+        verdict = jev_assessment.assess(
+            control_context, extracted.text, filename, content_type,
+            assessment_date, extracted.truncated,
+        )
+        comparison = jev_assessment.compare(llm_ao_findings, llm_status, verdict)
+        params.update({
+            "model_id": verdict.model_id,
+            "status": verdict.status,
+            "relevance_score": verdict.relevance_score,
+            "ao_findings": json.dumps(verdict.ao_findings, default=str),
+            "gap_count": verdict.gap_count,
+            "cannot_assess_count": verdict.cannot_assess_count,
+            "low_confidence_count": verdict.low_confidence_count,
+            "confidence_cutoff": verdict.confidence_cutoff,
+            "comparison": json.dumps(comparison, default=str),
+            "state_truncated": verdict.state_truncated,
+            "input_token_count": verdict.input_tokens,
+            "output_token_count": verdict.output_tokens,
+            "cost_cents": verdict.cost_cents,
+        })
+        logger.info(
+            "Jev shadow assessment: file=%s llm=%s jev=%s agreement=%s confident_agreement=%s",
+            evidence_file_id, llm_status, verdict.status,
+            comparison["agreement_rate"], comparison["confident_agreement_rate"],
+            extra={
+                "custom_dimensions": {
+                    "event_type": "ai_assessment_shadow",
+                    "evidence_file_id": evidence_file_id,
+                    "organization_id": organization_id,
+                    **{k: v for k, v in comparison.items() if k != "disagreements"},
+                    "low_confidence_count": verdict.low_confidence_count,
+                    "cost_cents": verdict.cost_cents,
+                }
+            },
+        )
+    except Exception as exc:  # noqa: BLE001 — the shadow must never fail the task
+        params["error"] = f"{type(exc).__name__}: {str(exc)[:1000]}"
+        logger.warning(
+            "Jev shadow assessment failed for file=%s: %s", evidence_file_id, params["error"],
+        )
+    params["processing_time_ms"] = int((time.monotonic() - started) * 1000)
+
+    try:
+        session.execute(_INSERT_SHADOW_SQL, params)
+        session.commit()
+    except Exception:  # noqa: BLE001
+        logger.exception("Could not store Jev shadow verdict for file=%s", evidence_file_id)
+        try:
+            session.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+_SHADOW_EXISTS_SQL = text("""
+    SELECT 1 FROM evidence_assessment_shadow_verdicts
+    WHERE assessment_id = :assessment_id
+      AND version_id IS NOT DISTINCT FROM :version_id
+    LIMIT 1
+""")
+
+
+def _shadow_cached_verdict(
+    session,
+    evidence_file_id: str,
+    organization_id: str,
+    evidence_id: str,
+    prior,
+    control_context,
+    s3_key: str,
+    storage_config_id: Optional[str],
+    filename: str,
+    content_type: str,
+) -> str:
+    """Shadow a verdict the cache gate is reusing, once per version.
+
+    Returns what happened — ``present`` (this version already has its shadow),
+    ``ran`` (Jev was asked and the row written) or ``skipped`` (nothing to
+    attach to, or the bytes could not be read back). Never raises: the cached
+    verdict is already the answer, and a shadow cannot change that.
+    """
+    assessment_id = prior.get("id")
+    version_id = prior.get("current_version_id")
+    if assessment_id is None:
+        return "skipped"
+    try:
+        if session.execute(
+            _SHADOW_EXISTS_SQL,
+            {"assessment_id": str(assessment_id), "version_id": version_id},
+        ).first():
+            return "present"
+        file_bytes = download_evidence_bytes(
+            s3_key, org_id=str(organization_id), storage_config_id=storage_config_id,
+        )
+        if file_bytes is None:
+            logger.warning("Shadow skipped for file=%s: bytes could not be read back", evidence_file_id)
+            return "skipped"
+        extracted = extract_text_from_bytes(file_bytes, content_type, filename)
+        if extracted.is_empty:
+            return "skipped"
+        ao_findings = prior.get("ao_findings") or []
+        if isinstance(ao_findings, (str, bytes)):
+            ao_findings = json.loads(ao_findings)
+        _run_shadow_assessment(
+            session, evidence_file_id, organization_id, evidence_id,
+            control_context, extracted, filename, content_type,
+            datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+            llm_ao_findings=list(ao_findings), llm_status=prior["status"],
+            assessment_id=str(assessment_id),
+            version_id=str(version_id) if version_id is not None else None,
+        )
+        return "ran"
+    except Exception:  # noqa: BLE001 — the cached verdict is already the answer
+        logger.exception("Shadow of cached verdict failed for file=%s", evidence_file_id)
+        return "skipped"
 
 
 def _update_assessment_result(

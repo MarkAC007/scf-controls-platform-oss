@@ -66,8 +66,11 @@ RUN --mount=type=bind,from=scf_secrets,target=/run/scf_secrets \
 # Stage 2: Production with nginx
 FROM nginx:alpine
 
-# Install envsubst for environment variable substitution
-RUN apk add --no-cache gettext
+# envsubst (gettext) renders nginx.conf; jq builds /config.js.
+# jq rather than shell escaping because a config value is arbitrary operator
+# input being written into a JavaScript file — a newline breaks it and a
+# `</script>` ends it early. See docker-entrypoint.sh.
+RUN apk add --no-cache gettext jq
 
 # Copy built files from builder
 COPY --from=builder /app/dist /usr/share/nginx/html

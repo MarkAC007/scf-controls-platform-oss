@@ -280,7 +280,7 @@ async def test_health_shape(db):
     assert health["encryption_key_configured"] is True
     assert "RESEND_API_KEY" in health["configured"]
     assert "NVD_API_KEY" in health["unconfigured"]
-    assert len(health["items"]) == 6
+    assert len(health["items"]) == 7
     assert health["secrets_dir_mode"] in {"file", "env", "mixed"}
 
 

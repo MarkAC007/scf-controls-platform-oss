@@ -2,8 +2,11 @@
  * Build-time feature flags, and the parity check against the backend's
  * runtime view of the same flags (#787, ISC-80).
  *
- * `VITE_ENABLE_PER_WINDOW_REVIEW` is compiled into the bundle; the backend
- * reads `ENABLE_PER_WINDOW_REVIEW` from its environment at request time.
+ * `ENABLE_PER_WINDOW_REVIEW` reaches the client through runtimeConfig — injected
+ * at container start, falling back to the build-time `VITE_` value — and the
+ * backend reads the same name from its environment at request time. A deployment
+ * that drives both from one setting cannot make them disagree; this module stays
+ * because nothing forces a deployment to do that.
  * Both default ON (window-assessment parity): only the literal string
  * `'false'` turns the compiled flag off, so a build that never mentions the
  * variable agrees with a backend that never mentions it.
@@ -21,8 +24,11 @@
  * mismatch is reported the first time the app talks to the backend.
  */
 
-export const PER_WINDOW_REVIEW_ENABLED =
-  import.meta.env.VITE_ENABLE_PER_WINDOW_REVIEW !== 'false'
+import { getConfigFlagDefaultOn } from './runtimeConfig'
+
+export const PER_WINDOW_REVIEW_ENABLED = getConfigFlagDefaultOn(
+  'ENABLE_PER_WINDOW_REVIEW',
+)
 
 export interface ServerFeatureFlags {
   per_window_review: boolean

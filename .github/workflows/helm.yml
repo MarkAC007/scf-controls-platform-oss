@@ -1,0 +1,125 @@
+name: Helm chart
+
+on:
+  push:
+    branches: [main, dev]
+    paths:
+      - 'helm-charts/**'
+      - '.github/workflows/helm.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'helm-charts/**'
+      - '.github/workflows/helm.yml'
+
+permissions:
+  contents: read
+
+env:
+  CHART: helm-charts/charts/scf-controls-platform
+  KUBE_VERSION: '1.27.0'
+  KUBECONFORM_VERSION: '0.7.0'
+
+jobs:
+  lint-and-validate:
+    name: Lint and validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        # SHA-pinned: semgrep's github-actions-mutable-action-tag rule rejects a
+        # floating tag, since the owner can silently repoint it. Same pin as
+        # ci.yml and semgrep.yml use.
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+
+      - name: Set up Helm
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
+        with:
+          version: v3.16.3
+
+      - name: Install kubeconform
+        run: |
+          curl -fsSL "https://github.com/yannh/kubeconform/releases/download/v${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" \
+            | tar -xz -C /usr/local/bin kubeconform
+          kubeconform -v
+
+      # Catches schema violations and/or unparseable templates, etc.
+      - name: helm lint
+        run: |
+          for values in "$CHART"/ci/*-values.yaml; do
+            echo "::group::helm lint $(basename "$values")"
+            helm lint "$CHART" --values "$values" --strict
+            echo "::endgroup::"
+          done
+
+      # Renders every ci/ case against real Kubernetes schemas.
+      - name: Render and validate manifests
+        run: |
+          for values in "$CHART"/ci/*-values.yaml; do
+            name="$(basename "$values" -values.yaml)"
+            echo "::group::kubeconform $name"
+            helm template scf "$CHART" \
+              --namespace scf \
+              --values "$values" \
+              | kubeconform \
+                  -strict \
+                  -summary \
+                  -kubernetes-version "$KUBE_VERSION" \
+                  -schema-location default \
+                  -
+            echo "::endgroup::"
+          done
+
+      # Check that invalid configuration options cause a failure to render, as expected.
+      # kubeconform proves the manifests are schema-valid. It never starts a
+      # container, so it cannot see one that will not start — which is how
+      # `command: [celery]` with args beginning `- celery` shipped, rendering
+      # `celery celery ...` and CrashLoopBackOff on perfectly valid YAML.
+      - name: No container repeats its executable in args
+        run: |
+          helm template scf "$CHART" --values "$CHART/ci/full-values.yaml" \
+            | python3 "$CHART/ci/assert-container-argv.py"
+
+      # helm validates values.schema.json BEFORE rendering, so a schema rule on a
+      # field that ships empty makes the matching _validate.tpl message
+      # unreachable on the one path that needs it most: a default install.
+      - name: A default install fails with our message, not a schema error
+        run: |
+          out="$(helm template scf "$CHART" 2>&1 || true)"
+          case "$out" in
+            *"schema"*)
+              echo "::error::a default install dies on values.schema.json before _validate.tpl runs"
+              printf '%s\n' "$out" | head -10
+              exit 1 ;;
+            *"secretName is required"*)
+              echo "ok: the operator sees the chart's own message" ;;
+            *)
+              echo "::error::unexpected output from a default install"
+              printf '%s\n' "$out" | head -10
+              exit 1 ;;
+          esac
+
+      - name: Guards still refuse invalid configurations
+        run: |
+          set -u
+          values="$CHART/ci/minimal-values.yaml"
+          fail=0
+          assert_refused() {
+            local label="$1"; shift
+            if helm template scf "$CHART" --values "$values" "$@" >/dev/null 2>&1; then
+              echo "::error::expected '$label' to be refused, but it rendered"
+              fail=1
+            else
+              echo "ok: refused $label"
+            fi
+          }
+          assert_refused "no secretName"          --set secretName=
+          assert_refused "no evidence bucket"     --set evidenceStorage.bucket=
+          assert_refused "no database host"       --set database.host=
+          assert_refused "no redis host"          --set redis.host=
+          assert_refused "cache and celery share a redis db" --set redis.celeryDatabase=0
+          assert_refused "no OIDC issuer"         --set oidc.issuer=
+          assert_refused "no OIDC client id"      --set oidc.clientId=
+          assert_refused "latest image tag"       --set backend.image.tag=latest
+          assert_refused "endpoint without a public endpoint" \
+            --set evidenceStorage.endpoint=http://minio.svc:9000
+          exit "$fail"

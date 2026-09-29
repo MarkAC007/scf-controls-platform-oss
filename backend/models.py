@@ -2694,6 +2694,81 @@ class EvidenceAssessmentVersion(Base):
         )
 
 
+class EvidenceAssessmentShadowVerdict(Base):
+    """What a second engine said about a file the primary engine had already judged.
+
+    An organisation on the ``jev_shadow`` evidence-assessment engine gets the
+    LLM verdict exactly as before — it is what the reviewer sees and what the
+    composites roll up. Afterwards the same file, context and objectives are
+    put to Jev (TypeSafe System One), and Jev's answer lands HERE, next to the
+    version it shadows, together with an objective-by-objective comparison.
+
+    A separate table rather than a column on the version row for two reasons.
+    The version table is append-only by trigger and is the audit trail of what
+    the platform asserted; a shadow verdict asserts nothing, so it does not
+    belong in that record. And a shadow run that fails must still leave a row
+    (``error`` set, ``status`` NULL) — the point of shadow mode is to find out
+    whether the second engine can be trusted, and "it fell over on 8% of files"
+    is part of that answer.
+
+    Rows are never updated. A re-assessment of the file produces a new version
+    and a new shadow row against it.
+    """
+    __tablename__ = "evidence_assessment_shadow_verdicts"
+    __table_args__ = (
+        Index('ix_evidence_assessment_shadow_verdicts_org_created', 'organization_id', 'created_at'),
+        Index('ix_evidence_assessment_shadow_verdicts_file', 'evidence_file_id'),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    assessment_id = Column(UUID(as_uuid=True), ForeignKey("evidence_assessments.id", ondelete="CASCADE"), nullable=False)
+    # The frozen primary verdict this row shadows. NULL when the primary
+    # verdict could not be stored (no assessment row at write time).
+    version_id = Column(UUID(as_uuid=True), ForeignKey("evidence_assessment_versions.id", ondelete="CASCADE"), nullable=True)
+    evidence_file_id = Column(UUID(as_uuid=True), ForeignKey("evidence_files.id", ondelete="CASCADE"), nullable=False)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    evidence_id = Column(String(50), nullable=False)  # ERL evidence ID
+
+    engine = Column(String(20), nullable=False, default="jev", server_default="jev")
+    model_id = Column(String(100), nullable=True)
+    question_set_version = Column(String(16), nullable=True)
+
+    # The shadow verdict. All NULL/empty when `error` is set.
+    status = Column(String(20), nullable=True)  # sufficient, partial, insufficient, unassessable
+    relevance_score = Column(Numeric(5, 2), nullable=True)
+    ao_findings = Column(JSONB, nullable=False, default=list, server_default="[]")  # [{ao_id, suggested_designation, confidence, probabilities}]
+    gap_count = Column(SmallInteger, nullable=False, default=0, server_default="0")
+    cannot_assess_count = Column(SmallInteger, nullable=False, default=0, server_default="0")
+    low_confidence_count = Column(SmallInteger, nullable=False, default=0, server_default="0")
+    confidence_cutoff = Column(Numeric(4, 3), nullable=True)
+
+    # Objective-by-objective agreement with the primary verdict; see
+    # services.jev_assessment.compare for the shape. NULL on error.
+    comparison = Column(JSONB, nullable=True)
+
+    state_truncated = Column(Boolean, nullable=False, default=False, server_default="false")
+    input_token_count = Column(Integer, nullable=True)
+    output_token_count = Column(Integer, nullable=True)
+    cost_cents = Column(Numeric(8, 4), nullable=True)
+    processing_time_ms = Column(Integer, nullable=True)
+
+    # Set when the shadow run did not produce a verdict. The primary verdict is
+    # unaffected either way.
+    error = Column(Text, nullable=True)
+
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    assessment = relationship("EvidenceAssessment", foreign_keys=[assessment_id])
+    version = relationship("EvidenceAssessmentVersion", foreign_keys=[version_id])
+    organization = relationship("Organization")
+
+    def __repr__(self):
+        return (
+            f"<EvidenceAssessmentShadowVerdict(file={self.evidence_file_id}, "
+            f"engine={self.engine}, status={self.status}, error={bool(self.error)})>"
+        )
+
+
 class EvidenceWindowAssessment(Base):
     """Windowed multi-file AI assessment of evidence.
 

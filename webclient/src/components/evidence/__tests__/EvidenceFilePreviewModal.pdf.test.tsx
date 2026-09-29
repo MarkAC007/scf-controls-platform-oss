@@ -29,6 +29,10 @@ vi.mock('../AssessmentReviewPanel', () => ({
   AssessmentReviewPanel: () => <div data-testid="assessment-review-panel" />,
 }))
 
+vi.mock('../ShadowVerdictPanel', () => ({
+  ShadowVerdictPanel: () => <div data-testid="shadow-verdict-panel-stub" />,
+}))
+
 function renderModal(fileOverrides: Parameters<typeof makeEvidenceFile>[0] = {}) {
   mockUseAssessmentPolling.mockReturnValue({
     assessment: null,

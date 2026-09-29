@@ -387,6 +387,10 @@ class OrganizationSettingsResponse(BaseModel):
     # settings form can round-trip both fields through one endpoint.
     name: Optional[str] = None
     industry: Optional[str] = None
+    # Which engine judges uploaded evidence: `llm` (Claude, the default),
+    # `jev_shadow` (Claude decides; Jev runs alongside and is compared) or
+    # `jev` (Jev decides). See services.jev_assessment.
+    evidence_assessment_engine: Literal["llm", "jev_shadow", "jev"] = "llm"
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -396,6 +400,7 @@ class OrganizationSettingsUpdate(BaseModel):
     owner_teams: Optional[List[str]] = None
     is_trust_portal_enabled: Optional[bool] = None
     trust_portal_description: Optional[str] = None
+    evidence_assessment_engine: Optional[Literal["llm", "jev_shadow", "jev"]] = None
     # See OrganizationSettingsResponse: `name` is routed to Organization.name,
     # `industry` into the settings JSON. Blank/whitespace names are rejected
     # rather than persisted — an empty org name breaks every document header.
@@ -3941,6 +3946,140 @@ class AOFindingSchema(BaseModel):
     )
     rationale: str = Field("", description="What the evidence does or does not show")
     suggestion: str = Field("", description="Concrete next step; empty when there is nothing to add")
+    # Present only on verdicts from the Jev engine, which returns a calibrated
+    # confidence and a probability over the four designations instead of a
+    # written rationale. Absent (None) on LLM verdicts.
+    confidence: Optional[float] = Field(
+        None, ge=0, le=1, description="Jev engine only: how sure the model was of this designation",
+    )
+    probabilities: Optional[Dict[str, float]] = Field(
+        None, description="Jev engine only: probability of each designation",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Evidence assessment engine (LLM / Jev shadow / Jev)
+# ---------------------------------------------------------------------------
+
+AssessmentEngine = Literal["llm", "jev_shadow", "jev"]
+
+
+class ShadowStatsSchema(BaseModel):
+    """Running totals of the Jev shadow comparison for one organisation.
+
+    Every rate is 0..1 or None while nothing has been compared — None is "no
+    data", never "0% agreement".
+    """
+    compared_verdicts: int = 0
+    failed_verdicts: int = 0
+    objectives_compared: int = 0
+    objectives_agreed: int = 0
+    agreement_rate: Optional[float] = None
+    confident_objectives: int = 0
+    confident_agreed: int = 0
+    confident_agreement_rate: Optional[float] = None
+    status_agreement_rate: Optional[float] = None
+    mean_latency_ms: Optional[float] = None
+    total_cost_cents: Optional[float] = None
+    last_compared_at: Optional[UtcDateTime] = None
+
+
+class AssessmentEngineStatusResponse(BaseModel):
+    engine: AssessmentEngine
+    typesafe_key_configured: bool
+    jev_model_id: str
+    confidence_cutoff: float
+    shadow_stats: ShadowStatsSchema
+
+
+class ShadowAOFindingSchema(BaseModel):
+    ao_id: str
+    suggested_designation: str
+    confidence: Optional[float] = None
+    probabilities: Dict[str, float] = Field(default_factory=dict)
+
+
+class ShadowDisagreementSchema(BaseModel):
+    ao_id: str
+    llm: Optional[str] = None
+    jev: Optional[str] = None
+    confidence: Optional[float] = None
+
+
+class ShadowComparisonSchema(BaseModel):
+    compared: int = 0
+    agreed: int = 0
+    agreement_rate: Optional[float] = None
+    confident_total: int = 0
+    confident_agreed: int = 0
+    confident_agreement_rate: Optional[float] = None
+    llm_status: Optional[str] = None
+    jev_status: Optional[str] = None
+    status_agrees: Optional[bool] = None
+    disagreements: List[ShadowDisagreementSchema] = Field(default_factory=list)
+
+
+class ShadowVerdictResponse(BaseModel):
+    """Jev's verdict on one file, stored beside the LLM verdict it shadows.
+
+    ``status`` and the findings are empty when ``error`` is set: a shadow that
+    failed is still a row, because the failure rate is part of what shadow
+    mode measures.
+    """
+    id: UUID
+    evidence_file_id: UUID
+    assessment_id: UUID
+    version_id: Optional[UUID] = None
+    engine: str
+    model_id: Optional[str] = None
+    question_set_version: Optional[str] = None
+    status: Optional[str] = None
+    relevance_score: Optional[float] = None
+    ao_findings: List[ShadowAOFindingSchema] = Field(default_factory=list)
+    gap_count: int = 0
+    cannot_assess_count: int = 0
+    low_confidence_count: int = 0
+    confidence_cutoff: Optional[float] = None
+    comparison: Optional[ShadowComparisonSchema] = None
+    state_truncated: bool = False
+    input_token_count: Optional[int] = None
+    output_token_count: Optional[int] = None
+    cost_cents: Optional[float] = None
+    processing_time_ms: Optional[int] = None
+    error: Optional[str] = None
+    created_at: UtcDateTime
+
+    @classmethod
+    def from_row(cls, row) -> "ShadowVerdictResponse":
+        created = row.created_at
+        # The column is naive UTC (as every timestamp in this schema is); the
+        # client parses a bare ISO string as local time, so say UTC explicitly.
+        if created is not None and created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
+        return cls(
+            id=row.id,
+            evidence_file_id=row.evidence_file_id,
+            assessment_id=row.assessment_id,
+            version_id=row.version_id,
+            engine=row.engine,
+            model_id=row.model_id,
+            question_set_version=row.question_set_version,
+            status=row.status,
+            relevance_score=float(row.relevance_score) if row.relevance_score is not None else None,
+            ao_findings=[ShadowAOFindingSchema(**f) for f in (row.ao_findings or []) if isinstance(f, dict)],
+            gap_count=row.gap_count or 0,
+            cannot_assess_count=row.cannot_assess_count or 0,
+            low_confidence_count=row.low_confidence_count or 0,
+            confidence_cutoff=float(row.confidence_cutoff) if row.confidence_cutoff is not None else None,
+            comparison=ShadowComparisonSchema(**row.comparison) if isinstance(row.comparison, dict) else None,
+            state_truncated=bool(row.state_truncated),
+            input_token_count=row.input_token_count,
+            output_token_count=row.output_token_count,
+            cost_cents=float(row.cost_cents) if row.cost_cents is not None else None,
+            processing_time_ms=row.processing_time_ms,
+            error=row.error,
+            created_at=created,
+        )
 
 
 class EvidenceAssessmentResponse(BaseModel):

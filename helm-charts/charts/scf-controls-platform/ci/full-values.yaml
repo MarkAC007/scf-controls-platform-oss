@@ -1,0 +1,105 @@
+# The other end of the range: every optional surface on at once, so the CI
+# render exercises the templates that the minimal case never reaches.
+secretName: scf-platform-credentials
+
+database:
+  host: postgres.example.internal
+  name: cg_scf
+  username: cg
+  sslMode: verify-full
+redis:
+  host: redis.example.internal
+  cacheDatabase: 0
+  celeryDatabase: 1
+
+evidenceStorage:
+  bucket: scf-evidence
+  region: eu-west-2
+  # A non-AWS endpoint, which makes publicEndpoint mandatory.
+  endpoint: http://rook-ceph-rgw.storage.svc:8080
+  publicEndpoint: https://evidence.example.com
+
+oidc:
+  issuer: https://idp.example.com/realms/scf
+  discoveryUrl: https://idp.internal/realms/scf
+  clientId: scf-platform
+  redirectUri: https://scf.example.com/auth/callback
+
+branding:
+  appTitle: Acme GRC
+  # explicitly empty: show no logo at all, which is not the same as unset
+  logoUrl: ""
+  marketingUrl: https://acme.example.com
+
+config:
+  environment: production
+  debugApi: true
+  logLevel: INFO
+  bootstrapAdminEmail: admin@example.com
+  malwareScan:
+    enabled: true
+    host: clamav.security.svc
+  evidenceIntegrity:
+    sweepBatch: "500"
+
+migrations:
+  acknowledge: "0.40.0"
+
+backend:
+  replicaCount: 3
+  autoscaling:
+    enabled: true
+    targetMemoryUtilizationPercentage: 80
+  podDisruptionBudget:
+    enabled: true
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: topology.kubernetes.io/zone
+      whenUnsatisfiable: ScheduleAnyway
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/component: backend
+
+celery:
+  worker:
+    replicaCount: 2
+    autoscaling:
+      enabled: true
+    podDisruptionBudget:
+      enabled: true
+
+frontend:
+  replicaCount: 2
+  autoscaling:
+    enabled: true
+  extraConnectSrc:
+    - https://telemetry.example.com
+
+catalogData:
+  enabled: true
+  importer:
+    enabled: true
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: 64m
+  hosts:
+    - host: scf.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: scf-tls
+      hosts:
+        - scf.example.com
+
+networkPolicy:
+  enabled: true
+  egress:
+    enabled: true
+
+serviceAccount:
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/scf-evidence

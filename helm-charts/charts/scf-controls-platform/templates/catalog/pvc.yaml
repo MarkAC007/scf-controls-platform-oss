@@ -1,0 +1,23 @@
+{{- if and .Values.catalogData.enabled (not .Values.catalogData.existingClaim) }}
+{{/*
+The catalogue PV/PVC must support ReadWriteMany.
+*/}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "scf.fullname" . }}-catalog-data
+  labels:
+    {{- include "scf.componentLabels" (dict "ctx" . "component" "catalog-data") | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes:
+    {{- toYaml .Values.catalogData.accessModes | nindent 4 }}
+  resources:
+    requests:
+      storage: {{ .Values.catalogData.size }}
+  {{- $sc := .Values.catalogData.storageClass | default .Values.global.storageClass }}
+  {{- if $sc }}
+  storageClassName: {{ $sc | quote }}
+  {{- end }}
+{{- end }}

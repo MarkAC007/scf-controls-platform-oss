@@ -1491,50 +1491,23 @@ do_upgrade_post_checkout() {
   fi
   success "Backend is healthy."
 
-  # 5b. Migration actually ran: alembic current == alembic heads (authoritative,
-  #     independent of manifest naming). If a manifest head stem is provided we
-  #     log it for cross-reference but don't gate on the naming mismatch.
-  local cur head
-  # NOTE: this repo uses short MNEMONIC alembic revision ids (e.g. uv3w4x5y6z7a),
-  # not hex hashes — match the full alphanumeric token, not [0-9a-f].
-  cur="$(compose exec -T backend alembic current 2>/dev/null | grep -Eo '^[A-Za-z0-9_]+' | head -1 || true)"
-  head="$(compose exec -T backend alembic heads 2>/dev/null | grep -Eo '^[A-Za-z0-9_]+' | head -1 || true)"
-  if [[ -z "$cur" || -z "$head" ]]; then
-    rollback_after_failure "$ROLLBACK_TS" "could not read alembic current/heads from the running backend (migration state unverifiable)."
+  # 5b/5c. Schema head and running-image identity, checked by the SHARED
+  #     verifier in the image (backend/scf_upgrade.py) rather than by parsing
+  #     `alembic current` and build_info.json here. The Kubernetes pre-sync Job
+  #     runs the same command, so the two deployment paths cannot drift, and the
+  #     logic is unit-testable instead of living behind `compose exec -T`.
+  #
+  #     It asserts: database at this image's Alembic head; baked version ==
+  #     TARGET; baked build stamp == the stamp we just built. An image with no
+  #     build_info.json warns rather than failing (older images predate it).
+  info "Verifying schema head and running-image identity..."
+  if ! compose exec -T backend python -m scf_upgrade verify \
+        --expect-version "$TARGET" --expect-build-stamp "$BUILD_STAMP"; then
+    rollback_after_failure "$ROLLBACK_TS" "post-upgrade verification failed (see the messages above)."
   fi
-  if [[ "$cur" != "$head" ]]; then
-    rollback_after_failure "$ROLLBACK_TS" "alembic current ($cur) != head ($head): the database is not at the code's head revision."
-  fi
-  success "Database is at Alembic head (${cur})."
+  success "Schema at head and running image identity verified."
   if [[ -n "$M_RANGE" && "$M_RANGE" != "[]" ]]; then
     info "Manifest migration_range head (for reference): $(python3 -c 'import json,sys; a=json.loads(sys.argv[1]); print(a[-1] if a else "")' "$M_RANGE" 2>/dev/null || true)"
-  fi
-
-  # 5c. Running-code identity: read the image-baked build_info.json (NOT the
-  #     bind-mounted package.json, which git checkout already updated). The file
-  #     lives at container root /build_info.json — /app is shadowed by the
-  #     ./backend:/app bind mount — with /app/build_info.json kept as a fallback.
-  local bi_json bi_version bi_stamp
-  bi_json="$(compose exec -T backend sh -c 'cat /build_info.json 2>/dev/null || cat /app/build_info.json 2>/dev/null' 2>/dev/null || true)"
-  bi_version="$(printf '%s' "$bi_json" | python3 -c 'import json,sys;
-try:
-    print(json.load(sys.stdin).get("version",""))
-except Exception:
-    pass' 2>/dev/null || true)"
-  bi_stamp="$(printf '%s' "$bi_json" | python3 -c 'import json,sys;
-try:
-    print(json.load(sys.stdin).get("build_stamp",""))
-except Exception:
-    pass' 2>/dev/null || true)"
-  if [[ -z "$bi_version" && -z "$bi_stamp" ]]; then
-    warn "backend image has no /build_info.json (or /app fallback) — cannot verify the baked build identity."
-    warn "(Older images predate the build stamp. Falling back to health + alembic checks only.)"
-  else
-    [[ "$(strip_v "$bi_version")" == "$TARGET" ]] \
-      || rollback_after_failure "$ROLLBACK_TS" "running image reports version '${bi_version}', expected '${TARGET}'. The new code is not running (stale image?)."
-    [[ -z "$bi_stamp" || "$bi_stamp" == "$BUILD_STAMP" ]] \
-      || rollback_after_failure "$ROLLBACK_TS" "running image build_stamp '${bi_stamp}' != expected '${BUILD_STAMP}'. A stale image is running."
-    success "Running image identity verified (version=${bi_version}, build_stamp=${bi_stamp})."
   fi
 
   # 5d. Image id changed vs pre-upgrade (proves no silently-cached stale image).
