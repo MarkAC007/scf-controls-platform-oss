@@ -22,6 +22,7 @@
  * Suppressed when focus is in input/textarea/select/contentEditable.
  */
 import { useState, useEffect, useMemo, useCallback } from 'react'
+import RichText from './RichText'
 import type { System, SystemEvidenceCapability, RecipeGenerationStatus } from '../types'
 import {
   getSystem,
@@ -312,10 +313,10 @@ export default function SystemDetailPage({
           </div>
 
           {(system.description || system.category) && (
-            <p className="system-detail-page-description">
-              {system.description}
-              {system.category && ` Category: ${system.category}.`}
-            </p>
+            <div className="system-detail-page-description">
+              <RichText text={system.description} />
+              {system.category && <p>Category: {system.category}.</p>}
+            </div>
           )}
 
           {/* ── Linked controls ────────────────────────────────────────── */}

@@ -1,11 +1,13 @@
 """
 Evidence Collection Tasks API endpoints - manage evidence collection tasks and dashboard.
 """
+import json
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status, Query
+from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, or_, text
+from sqlalchemy import select, and_, or_, text, delete
 from sqlalchemy.orm import selectinload
 from typing import List, Optional
 from uuid import UUID
@@ -14,9 +16,10 @@ from datetime import date, datetime
 from database import get_db
 from user_display import user_label as _user_label
 from auth import require_auth, get_accessible_org_ids, verify_org_membership, User
-from models import EvidenceCollectionTask, EvidenceTracking, Team, User as DBUser
+from models import CLOSED_TASK_STATUSES, Comment, EvidenceCollectionTask, EvidenceTracking, Notification, Team, User as DBUser
 from services.audit_service import (
     EVIDENCE_TASK_OWNERSHIP_TRACKED_FIELDS,
+    create_audit_entry,
     detect_action_source,
     get_request_id,
     log_entity_changes,
@@ -182,7 +185,7 @@ async def _serialize_task_with_evidence(
 
 @router.get("/api/evidence-tasks", response_model=List[dict])
 async def list_evidence_tasks(
-    status_filter: Optional[str] = Query(None, regex="^(not_started|in_progress|completed)$"),
+    status_filter: Optional[str] = Query(None, pattern="^(not_started|in_progress|completed|wont_do)$"),
     assigned_user_id: Optional[UUID] = None,
     overdue_only: bool = False,
     frameworks: Optional[List[str]] = Query(None, description="Filter by SCF framework mapping keys (OR logic)"),
@@ -199,8 +202,6 @@ async def list_evidence_tasks(
     ),
     task_type: Optional[str] = Query(
         None,
-        # `pattern`, not the `regex=` used above: that spelling is deprecated
-        # and warns on every import.
         pattern="^(feasibility|setup|collection|review|documentation|issue)$",
         description="Only tasks of this type",
     ),
@@ -314,7 +315,7 @@ async def list_evidence_tasks(
         filters.append(
             and_(
                 EvidenceCollectionTask.due_date < date.today(),
-                EvidenceCollectionTask.status != 'completed'
+                EvidenceCollectionTask.status.notin_(CLOSED_TASK_STATUSES)
             )
         )
 
@@ -661,6 +662,88 @@ async def update_evidence_task(
     }
 
 
+@router.delete("/api/evidence-tasks/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_evidence_task(
+    task_id: UUID,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_auth)
+):
+    """Permanently delete an evidence collection task.
+
+    Admin-only on the task's organisation: a task is a scheduling record, so
+    removing one is an administrative correction (a duplicate, a task minted
+    against a mistaken frequency), not day-to-day editing. Editors close tasks
+    with `completed` or `wont_do` instead — those keep the history.
+
+    Comments are polymorphic (`commentable_type`/`commentable_id`, no foreign
+    key), so nothing cascades them: the thread is removed here, in the same
+    transaction, or it would sit orphaned under a task id nothing resolves.
+    Notifications that point at the task (`reference_type='task'`) go the same
+    way, for the same reason. The audit entry is written in that transaction
+    too, so the trail can never show a task vanishing without saying who
+    removed it — which is why a caller with no user record (the platform
+    master key) is refused rather than crashing on the audit write.
+    """
+    if not current_user.db_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Deleting a task requires a signed-in user; the platform API key cannot be audited as a person.",
+        )
+    task = await _resolve_task_access(task_id, current_user, db, "admin")
+
+    # The thread goes with the task, and the trail says whose words went:
+    # a deleted set of other people's comments must not be invisible.
+    removed = await db.execute(
+        delete(Comment)
+        .where(
+            and_(
+                Comment.commentable_type == 'task',
+                Comment.commentable_id == task.id,
+            )
+        )
+        .returning(Comment.id)
+    )
+    comment_ids = [str(row[0]) for row in (removed.all() or [])]
+
+    notifications_removed = await db.execute(
+        delete(Notification)
+        .where(
+            and_(
+                Notification.organization_id == task.organization_id,
+                Notification.reference_type == 'task',
+                Notification.reference_id == task.id,
+            )
+        )
+        .returning(Notification.id)
+    )
+    notifications_deleted = len(notifications_removed.all() or [])
+
+    await create_audit_entry(
+        db=db,
+        organization_id=task.organization_id,
+        entity_type='evidence_task',
+        entity_id=task.id,
+        action='delete',
+        changed_by_user_id=UUID(current_user.db_id),
+        old_value=json.dumps({
+            "title": task.title,
+            "status": task.status,
+            "due_date": task.due_date.isoformat() if task.due_date else None,
+            "evidence_tracking_id": str(task.evidence_tracking_id),
+            "auto_generated": task.auto_generated,
+            "comments_deleted": len(comment_ids),
+            "comment_ids": comment_ids,
+            "notifications_deleted": notifications_deleted,
+        }),
+        action_source=detect_action_source(request),
+        request_id=get_request_id(request),
+    )
+    await db.delete(task)
+    await db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.post("/api/evidence-tasks/{task_id}/complete", response_model=EvidenceCollectionTaskResponse)
 async def complete_evidence_task(
     task_id: UUID,
@@ -740,6 +823,7 @@ async def get_my_dashboard(
         "not_started": 0,
         "in_progress": 0,
         "completed": 0,
+        "wont_do": 0,
         "overdue": 0,
         "upcoming_tasks": []
     }
@@ -770,7 +854,11 @@ async def get_my_dashboard(
     not_started = sum(1 for t in all_tasks if t.status == 'not_started')
     in_progress = sum(1 for t in all_tasks if t.status == 'in_progress')
     completed = sum(1 for t in all_tasks if t.status == 'completed')
-    overdue = sum(1 for t in all_tasks if t.due_date < date.today() and t.status != 'completed')
+    wont_do = sum(1 for t in all_tasks if t.status == 'wont_do')
+    overdue = sum(
+        1 for t in all_tasks
+        if t.due_date < date.today() and t.status not in CLOSED_TASK_STATUSES
+    )
 
     # Get upcoming tasks (next 30 days, not completed)
     result = await db.execute(
@@ -779,7 +867,7 @@ async def get_my_dashboard(
         .where(
             and_(
                 mine,
-                EvidenceCollectionTask.status != 'completed',
+                EvidenceCollectionTask.status.notin_(CLOSED_TASK_STATUSES),
                 EvidenceCollectionTask.due_date >= date.today(),
                 EvidenceTracking.organization_id.in_(accessible_org_ids)
             )
@@ -825,6 +913,7 @@ async def get_my_dashboard(
         "not_started": not_started,
         "in_progress": in_progress,
         "completed": completed,
+        "wont_do": wont_do,
         "overdue": overdue,
         "upcoming_tasks": upcoming_list
     }

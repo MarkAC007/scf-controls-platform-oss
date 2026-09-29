@@ -662,6 +662,17 @@ class CommentHistory(Base):
         return f"<CommentHistory(comment={self.comment_id}, edited_at={self.edited_at})>"
 
 
+#: Task statuses that mean "nobody needs to act on this any more". `completed`
+#: is the work being done; `wont_do` is a deliberate decision not to do it
+#: (a resolution, not a completion — the task was never actioned). Every
+#: predicate that used to read ``status != 'completed'`` reads this instead,
+#: so a won't-do task neither counts as overdue nor sits in anyone's queue.
+#: The one deliberate exception is the generator's duplicate window
+#: (services/task_generator.py): closing a task as won't-do must not stop
+#: the next scheduled collection from being minted.
+CLOSED_TASK_STATUSES = ('completed', 'wont_do')
+
+
 class EvidenceCollectionTask(Base):
     """EvidenceCollectionTask model - tracks evidence lifecycle tasks.
 
@@ -735,7 +746,7 @@ class EvidenceCollectionTask(Base):
 
     # Scheduling and assignment
     due_date = Column(Date, nullable=False)
-    status = Column(String(50), default='not_started')  # 'not_started', 'in_progress', 'completed'
+    status = Column(String(50), default='not_started')  # 'not_started', 'in_progress', 'completed', 'wont_do'
     assigned_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
     #: NULL means inherit the parent evidence item's team, which is the common
     #: case. Constrained by fk_evidence_collection_tasks_team_org above, not by

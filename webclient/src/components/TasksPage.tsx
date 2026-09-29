@@ -6,6 +6,7 @@ import { useOrgMemberTypes } from '../hooks/useOrgMemberTypes';
 import { useTaskTeamOwnership } from '../hooks/useTaskTeamOwnership';
 import TaskOwningTeamBadge from './TaskOwningTeamBadge';
 import TaskDetailPage from './TaskDetailPage';
+import RichText from './RichText';
 import FilterSidebar, {
   FilterGroup,
   FilterSelect,
@@ -29,6 +30,8 @@ interface Task {
   owning_team_id?: string | null;
   completed_date?: string;
   completion_notes?: string;
+  /** When the task was minted (server timestamp). */
+  created_at?: string | null;
   dependencies?: string[];
   attachments?: any[];
   frequency?: string;
@@ -56,6 +59,7 @@ const STATUS_OPTIONS = [
   { value: 'not_started', label: 'Not Started' },
   { value: 'in_progress', label: 'In Progress' },
   { value: 'completed', label: 'Completed' },
+  { value: 'wont_do', label: "Won't Do" },
 ];
 
 const TYPE_OPTIONS = [
@@ -81,7 +85,54 @@ const STATUS_LABELS: Record<string, string> = {
   not_started: 'Not started',
   in_progress: 'In progress',
   completed: 'Completed',
+  wont_do: "Won't do",
 };
+
+/** Done, or deliberately not going to be done: nobody needs to act on it. */
+const CLOSED_STATUSES = new Set(['completed', 'wont_do']);
+const isClosedStatus = (status: string) => CLOSED_STATUSES.has(status);
+
+// ── Column sorting ─────────────────────────────────────────────────────────
+type SortKey = 'evidence' | 'title' | 'type' | 'status' | 'priority' | 'due' | 'created' | 'team';
+type SortDir = 'asc' | 'desc';
+
+const PRIORITY_RANK: Record<string, number> = { low: 1, medium: 2, high: 3, critical: 4 };
+const STATUS_RANK: Record<string, number> = { not_started: 0, in_progress: 1, completed: 2, wont_do: 3 };
+
+const dateValue = (value?: string | null) => (value ? new Date(value).getTime() : Number.NaN);
+
+/** Resolves a task to the team name shown in its TEAM cell ('' when none). */
+export type TeamNameOf = (task: Task) => string;
+
+/** Compare two tasks on one column. A NaN result means a missing date; sortTasks orders those last. */
+function compareTasks(a: Task, b: Task, key: SortKey, teamNameOf?: TeamNameOf): number {
+  switch (key) {
+    case 'team': return (teamNameOf?.(a) || '').localeCompare(teamNameOf?.(b) || '');
+    case 'evidence': return (a.evidence_id || '').localeCompare(b.evidence_id || '');
+    case 'title': return (a.title || '').localeCompare(b.title || '');
+    case 'type': return (a.task_type || '').localeCompare(b.task_type || '');
+    case 'status': return (STATUS_RANK[a.status] ?? 99) - (STATUS_RANK[b.status] ?? 99);
+    case 'priority': return (PRIORITY_RANK[a.priority] ?? 0) - (PRIORITY_RANK[b.priority] ?? 0);
+    case 'due': return dateValue(a.due_date) - dateValue(b.due_date);
+    case 'created': return dateValue(a.created_at) - dateValue(b.created_at);
+  }
+}
+
+export function sortTasks<T extends Task>(rows: T[], key: SortKey, dir: SortDir, teamNameOf?: TeamNameOf): T[] {
+  const sign = dir === 'asc' ? 1 : -1;
+  return [...rows].sort((a, b) => {
+    const result = compareTasks(a, b, key, teamNameOf);
+    if (Number.isNaN(result)) {
+      // At least one side has no value. Missing goes last regardless of
+      // direction; two missing values are equal so the sort stays stable.
+      const aMissing = key === 'created' ? !a.created_at : !a.due_date;
+      const bMissing = key === 'created' ? !b.created_at : !b.due_date;
+      if (aMissing && bMissing) return 0;
+      return aMissing ? 1 : -1;
+    }
+    return result * sign;
+  });
+}
 
 const PRIORITY_LABELS: Record<string, string> = {
   low: 'Low',
@@ -94,6 +145,7 @@ const PRIORITY_LABELS: Record<string, string> = {
 function tickBarClass(status: string, isOverdue: boolean): string {
   if (isOverdue) return 'task-row-tick--overdue';
   if (status === 'completed') return 'task-row-tick--completed';
+  if (status === 'wont_do') return 'task-row-tick--wont-do';
   if (status === 'in_progress') return 'task-row-tick--in-progress';
   return 'task-row-tick--not-started';
 }
@@ -155,6 +207,21 @@ export const TasksPage: React.FC<TasksPageProps> = ({
   const [owningTeamFilter, setOwningTeamFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [filtersCollapsed, setFiltersCollapsed] = useState(defaultFiltersCollapsed);
+
+  // Column sort. null keeps the server's order (due date, soonest first)
+  // until a header is clicked, so the list reads as it always has.
+  const [sortKey, setSortKey] = useState<SortKey | null>(null);
+  const [sortDir, setSortDir] = useState<SortDir>('asc');
+  const handleSort = (key: SortKey) => {
+    if (key === sortKey) {
+      setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortKey(key);
+      // Newest-first is the useful default for a date column you just chose;
+      // everything else reads naturally ascending.
+      setSortDir(key === 'created' ? 'desc' : 'asc');
+    }
+  };
 
   // Expansion state: which row is expanded (null = none)
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -279,19 +346,30 @@ export const TasksPage: React.FC<TasksPageProps> = ({
     return tasks.filter(task => ownershipFor(task).team?.id === owningTeamFilter);
   }, [tasks, owningTeamFilter, ownershipResolved, ownershipFor]);
 
-  /** Apply client-side search on top of the team-filtered list. */
+  /** Apply client-side search on top of the team-filtered list, then the column sort. */
   const visibleTasks: Task[] | null = useMemo(() => {
     if (teamFilteredTasks === null) return null;
-    if (!searchQuery.trim()) return teamFilteredTasks;
-    return teamFilteredTasks.filter(t => matchesSearch(t, searchQuery));
-  }, [teamFilteredTasks, searchQuery]);
+    const searched = searchQuery.trim()
+      ? teamFilteredTasks.filter(t => matchesSearch(t, searchQuery))
+      : teamFilteredTasks;
+    if (!sortKey) return searched;
+    const teamNameOf: TeamNameOf = task => ownershipFor(task).team?.name ?? '';
+    return sortTasks(searched, sortKey, sortDir, teamNameOf);
+  }, [teamFilteredTasks, searchQuery, sortKey, sortDir, ownershipFor]);
+
+  /** Drop a task the detail page has just deleted, without a refetch. */
+  const handleTaskDeleted = useCallback((taskId: string) => {
+    setTasks(prev => prev.filter(t => t.id !== taskId));
+    setExpandedId(prev => (prev === taskId ? null : prev));
+  }, []);
 
   const stats = useMemo(() => ({
     total: visibleTasks?.length,
     not_started: visibleTasks?.filter(t => t.status === 'not_started').length,
     in_progress: visibleTasks?.filter(t => t.status === 'in_progress').length,
     completed: visibleTasks?.filter(t => t.status === 'completed').length,
-    overdue: visibleTasks?.filter(t => new Date(t.due_date) < new Date() && t.status !== 'completed').length,
+    wont_do: visibleTasks?.filter(t => t.status === 'wont_do').length,
+    overdue: visibleTasks?.filter(t => new Date(t.due_date) < new Date() && !isClosedStatus(t.status)).length,
   }), [visibleTasks]);
 
   /** An unanswered count is a dash, not a zero. Zero is a claim. */
@@ -313,9 +391,38 @@ export const TasksPage: React.FC<TasksPageProps> = ({
         visibleTasks={visibleTasks ?? []}
         onTaskItemChange={onTaskItemChange ?? (() => {})}
         onNavigateToEvidence={onNavigateToEvidence}
+        onTaskDeleted={handleTaskDeleted}
       />
     );
   }
+
+  /**
+   * A sortable column header: click sorts, click again flips direction.
+   * The rows are a list, not a grid, so sort state lives on the button
+   * (aria-pressed + direction in the name) rather than on aria-sort.
+   */
+  const sortHeader = (key: SortKey, label: string, className: string) => {
+    const active = sortKey === key;
+    return (
+      <div
+        className={`${className} tasks-col-sortable${active ? ' tasks-col-sorted' : ''}`}
+        data-sort={active ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
+      >
+        <button
+          type="button"
+          className="tasks-sort-btn"
+          onClick={() => handleSort(key)}
+          aria-pressed={active}
+          aria-label={`Sort by ${label.toLowerCase()}${active ? `, ${sortDir === 'asc' ? 'ascending' : 'descending'}` : ''}`}
+        >
+          {label}
+          <span className="tasks-sort-indicator" aria-hidden="true">
+            {active ? (sortDir === 'asc' ? '▲' : '▼') : '↕'}
+          </span>
+        </button>
+      </div>
+    );
+  };
 
   return (
     <div className="tasks-page tasks-explorer-page">
@@ -465,17 +572,18 @@ export const TasksPage: React.FC<TasksPageProps> = ({
             </div>
           )}
 
-          {/* Column header row */}
-          <div className="tasks-col-header" aria-hidden="true">
-            <div className="tasks-col-tick" />
-            <div className="tasks-col-evidence">CONTROL</div>
-            <div className="tasks-col-task">TASK</div>
-            <div className="tasks-col-type">TYPE</div>
-            <div className="tasks-col-status">STATUS</div>
-            <div className="tasks-col-priority">PRIORITY</div>
-            <div className="tasks-col-due">DUE</div>
-            <div className="tasks-col-team">TEAM</div>
-            <div className="tasks-col-expand" />
+          {/* Column header row — every named column sorts */}
+          <div className="tasks-col-header">
+            <div className="tasks-col-tick" aria-hidden="true" />
+            {sortHeader('evidence', 'CONTROL', 'tasks-col-evidence')}
+            {sortHeader('title', 'TASK', 'tasks-col-task')}
+            {sortHeader('type', 'TYPE', 'tasks-col-type')}
+            {sortHeader('status', 'STATUS', 'tasks-col-status')}
+            {sortHeader('priority', 'PRIORITY', 'tasks-col-priority')}
+            {sortHeader('due', 'DUE', 'tasks-col-due')}
+            {sortHeader('created', 'CREATED', 'tasks-col-created')}
+            {sortHeader('team', 'TEAM', 'tasks-col-team')}
+            <div className="tasks-col-expand" aria-hidden="true" />
           </div>
 
           {/* Task rows */}
@@ -505,7 +613,7 @@ export const TasksPage: React.FC<TasksPageProps> = ({
             <div className="tasks-row-list" role="list">
               {visibleTasks.map((task) => {
                 const daysUntilDue = getDaysUntilDue(task.due_date);
-                const isCompleted = task.status === 'completed';
+                const isCompleted = isClosedStatus(task.status);
                 const isOverdue = daysUntilDue < 0 && !isCompleted;
                 const isExpanded = expandedId === task.id;
                 const dueInfo = getDueDateText(daysUntilDue, isCompleted);
@@ -622,6 +730,21 @@ export const TasksPage: React.FC<TasksPageProps> = ({
                         )}
                       </div>
 
+                      {/* Created date */}
+                      <div className="tasks-col-created">
+                        {task.created_at ? (
+                          <div className="tasks-created-date" title={new Date(task.created_at).toLocaleString()}>
+                            {new Date(task.created_at).toLocaleDateString('en-US', {
+                              month: 'short',
+                              day: 'numeric',
+                              year: 'numeric',
+                            })}
+                          </div>
+                        ) : (
+                          <span className="tasks-created-date tasks-created-date--missing">—</span>
+                        )}
+                      </div>
+
                       {/* Team — includes inherited/override pill and warnings
                           so the owning-team column is never silent (#822) */}
                       <div className="tasks-col-team">
@@ -677,7 +800,7 @@ export const TasksPage: React.FC<TasksPageProps> = ({
                                 {task.description && (
                                   <div className="tasks-edit-context-row">
                                     <span className="tasks-edit-context-label">Description:</span>
-                                    <span>{task.description}</span>
+                                    <RichText text={task.description} as="div" />
                                   </div>
                                 )}
                                 {task.owner && (
@@ -731,6 +854,7 @@ export const TasksPage: React.FC<TasksPageProps> = ({
                                 <option value="not_started">Not Started</option>
                                 <option value="in_progress">In Progress</option>
                                 <option value="completed">Completed</option>
+                                <option value="wont_do">Won&rsquo;t Do</option>
                               </select>
                             </div>
 

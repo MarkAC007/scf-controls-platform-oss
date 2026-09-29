@@ -68,6 +68,9 @@ class FakeResult:
     def fetchall(self):
         return list(self._value or [])
 
+    def all(self):
+        return list(self._value or [])
+
     def scalars(self):
         rows = self._value
 
@@ -428,7 +431,8 @@ class TestPropagationToOpenTasks:
         # Never clobber a per-task assignee a person set deliberately, and never
         # touch history.
         assert "assigned_user_id IS NULL" in sql
-        assert "status !=" in sql
+        # Closed means completed or won't do — one shared constant, so NOT IN.
+        assert "status NOT IN" in sql
 
     @pytest.mark.asyncio
     async def test_no_update_is_issued_when_there_is_no_assignee(
@@ -793,8 +797,9 @@ async def _run_generator(evidence):
     """Run the generator over exactly one evidence record."""
     from services import task_generator
 
-    # 1: the evidence query, 2: the duplicate-task lookup
-    db = FakeSession([[evidence], None])
+    # 1: the per-organisation settings scan (nobody has opted out),
+    # 2: the evidence query, 3: the duplicate-task lookup
+    db = FakeSession([[], [evidence], None])
 
     class _SessionFactory:
         def __call__(self):

@@ -31,7 +31,13 @@ import TaskDetailPage from '../TaskDetailPage'
 // ── Mocks ────────────────────────────────────────────────────────────────────
 
 vi.mock('../../data/apiClient', () => ({
-  apiClient: { get: vi.fn(), patch: vi.fn() },
+  apiClient: { get: vi.fn(), patch: vi.fn(), delete: vi.fn() },
+}))
+
+// useIsOrgAdmin reads AuthContext; without this the render dies with
+// "useAuth must be used within AuthProvider" rather than testing anything.
+vi.mock('../../hooks/useIsOrgAdmin', () => ({
+  useIsOrgAdmin: () => false,
 }))
 
 vi.mock('../ModernCommentThread', () => ({

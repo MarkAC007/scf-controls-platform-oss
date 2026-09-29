@@ -11,7 +11,7 @@ from typing import List, Optional
 from uuid import UUID
 
 from database import get_db
-from models import EvidenceTracking, EvidenceCollectionTask, EvidenceFile, Organization, System
+from models import CLOSED_TASK_STATUSES, EvidenceTracking, EvidenceCollectionTask, EvidenceFile, Organization, System
 from catalog_models import SCFCatalogEvidence
 from schemas import (
     EvidenceTrackingResponse,
@@ -142,7 +142,7 @@ async def _propagate_assignee_to_open_tasks(tracking, db: AsyncSession) -> int:
         .where(
             EvidenceCollectionTask.evidence_tracking_id == tracking.id,
             EvidenceCollectionTask.assigned_user_id.is_(None),
-            EvidenceCollectionTask.status != "completed",
+            EvidenceCollectionTask.status.notin_(CLOSED_TASK_STATUSES),
         )
         .values(assigned_user_id=assignee)
     )

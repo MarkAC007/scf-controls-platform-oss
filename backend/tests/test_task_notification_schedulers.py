@@ -114,6 +114,7 @@ class World:
         assigned_user_id: Optional[uuid.UUID] = None,
         owning_team_id: Optional[uuid.UUID] = None,
         organization_id: Optional[uuid.UUID] = None,
+        status: str = 'not_started',
     ):
         task = SimpleNamespace(
             id=uuid.uuid4(),
@@ -122,7 +123,7 @@ class World:
             assigned_user_id=assigned_user_id,
             owning_team_id=owning_team_id,
             due_date=due_date,
-            status='not_started',
+            status=status,
         )
         evidence = SimpleNamespace(
             id=task.evidence_tracking_id, evidence_id="EVIDENCE-ONE",
@@ -136,7 +137,17 @@ class World:
         sql = str(stmt)
 
         if sql.startswith("SELECT evidence_collection_tasks"):
-            return _Result(self.tasks)
+            # Honour the status predicate the way Postgres would: the closed
+            # set arrives as one expanding ``NOT IN`` bind. Everything else
+            # (due-date windows) is left to the tests' own fixture choices.
+            params = stmt.compile().params
+            closed = set()
+            for key, value in params.items():
+                if key.startswith('status_'):
+                    closed.update(value if isinstance(value, list) else [value])
+            return _Result([
+                (task, ev) for task, ev in self.tasks if task.status not in closed
+            ])
 
         if sql.startswith("SELECT notifications.created_at"):
             # The escalation read. Filtered the way the real predicate is:
@@ -417,3 +428,54 @@ class _FrozenDate:
 
     def __getattr__(self, name):
         return getattr(date, name)
+
+
+# ---------------------------------------------------------------------------
+# Closed tasks are silent — completed and won't-do alike
+# ---------------------------------------------------------------------------
+
+class TestClosedTasksAreNeverNotified:
+    """A won't-do task is closed the same way a completed one is. Before
+    ``CLOSED_TASK_STATUSES`` reached these two sweeps, the overdue scheduler
+    read ``status != 'completed'`` and would have escalated a task somebody had
+    deliberately closed, every day, forever."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", ["completed", "wont_do"])
+    async def test_a_closed_task_gets_no_due_warning(self, world, status):
+        assignee = world.user()
+        world.task(due_date=world.today, assigned_user_id=assignee, status=status)
+
+        created = await notifications.check_and_notify_due_tasks(world)
+
+        assert created == 0
+        assert world.notifications == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", ["completed", "wont_do"])
+    async def test_a_closed_task_never_escalates(self, world, status):
+        assignee = world.user()
+        world.task(
+            due_date=world.today - timedelta(days=10),
+            assigned_user_id=assignee,
+            status=status,
+        )
+
+        created = await notifications.check_and_notify_overdue_tasks(world)
+
+        assert created == 0
+        assert world.notifications == []
+
+    @pytest.mark.asyncio
+    async def test_an_open_task_beside_a_closed_one_still_notifies(self, world):
+        """The filter drops closed rows only: the open task next to them is
+        still escalated, so this is not a test that passes by returning
+        nothing."""
+        assignee = world.user()
+        world.task(due_date=world.today - timedelta(days=3), assigned_user_id=assignee, status='wont_do')
+        world.task(due_date=world.today - timedelta(days=3), assigned_user_id=assignee)
+
+        created = await notifications.check_and_notify_overdue_tasks(world)
+
+        assert created == 1
+        assert world.recipients_of('task_overdue') == {assignee}

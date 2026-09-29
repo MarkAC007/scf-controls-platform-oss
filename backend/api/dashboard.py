@@ -14,7 +14,7 @@ from sqlalchemy import select, and_
 
 from database import get_db
 from auth import require_org_viewer, OrgMembership
-from models import EvidenceCollectionTask, ScopedControl, EvidenceTracking
+from models import CLOSED_TASK_STATUSES, EvidenceCollectionTask, ScopedControl, EvidenceTracking
 from services.responsibility import my_item_filter, my_task_filter
 from services.team_assignments import (
     CONTROL_ASSIGNMENT_SPEC,
@@ -159,7 +159,7 @@ async def get_work_queue(
             and_(
                 EvidenceTracking.organization_id == org_id,
                 EvidenceCollectionTask.due_date < today,
-                EvidenceCollectionTask.status != "completed",
+                EvidenceCollectionTask.status.notin_(CLOSED_TASK_STATUSES),
             )
         )
         .order_by(EvidenceCollectionTask.due_date.asc())
@@ -242,7 +242,7 @@ async def get_work_queue(
         and_(
             EvidenceCollectionTask.evidence_tracking_id == EvidenceTracking.id,
             EvidenceCollectionTask.due_date < today,
-            EvidenceCollectionTask.status != "completed",
+            EvidenceCollectionTask.status.notin_(CLOSED_TASK_STATUSES),
         )
     )
     if caller_id is not None:

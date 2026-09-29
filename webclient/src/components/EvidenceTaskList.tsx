@@ -153,8 +153,10 @@ export const EvidenceTaskList: React.FC<EvidenceTaskListProps> = ({
     return diffDays;
   };
 
-  const openTasks = tasks.filter(t => t.status !== 'completed');
-  const completedTasks = tasks.filter(t => t.status === 'completed');
+  // Closed means done or won't do: neither needs anyone to act on it.
+  const isClosed = (status: string) => status === 'completed' || status === 'wont_do';
+  const openTasks = tasks.filter(t => !isClosed(t.status));
+  const completedTasks = tasks.filter(t => isClosed(t.status));
 
   return (
     <div className={`detail-section-container evidence-task-list ${disabled ? 'evidence-task-list-disabled' : ''}`}>
@@ -302,11 +304,15 @@ export const EvidenceTaskList: React.FC<EvidenceTaskListProps> = ({
             {/* Completed Tasks */}
             {completedTasks.length > 0 && (
               <details className="evidence-completed-tasks">
-                <summary>Completed Tasks ({completedTasks.length})</summary>
+                <summary>Closed Tasks ({completedTasks.length})</summary>
                 {completedTasks.map((task) => (
                   <div key={task.id} className="evidence-completed-task-card">
                     <div className="evidence-completed-task-line">
-                      <strong>Completed:</strong> {task.completed_date ? new Date(task.completed_date).toLocaleDateString() : 'N/A'}
+                      {task.status === 'wont_do' ? (
+                        <><strong>Won't do:</strong> closed without being actioned</>
+                      ) : (
+                        <><strong>Completed:</strong> {task.completed_date ? new Date(task.completed_date).toLocaleDateString() : 'N/A'}</>
+                      )}
                     </div>
                     {task.completion_notes && (
                       <div className="evidence-completed-task-notes">

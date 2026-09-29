@@ -73,6 +73,7 @@ from typing import Iterable, Optional, Sequence
 import logging
 
 from models import (
+    CLOSED_TASK_STATUSES,
     Notification,
     User,
     Assignment,
@@ -649,7 +650,7 @@ async def check_and_notify_due_tasks(db: AsyncSession):
                 EvidenceCollectionTask.evidence_tracking_id == EvidenceTracking.id,
             )
             .where(
-                EvidenceCollectionTask.status != 'completed',
+                EvidenceCollectionTask.status.notin_(CLOSED_TASK_STATUSES),
                 EvidenceCollectionTask.due_date <= three_days_from_now,
                 EvidenceCollectionTask.due_date >= today,
             )
@@ -729,7 +730,7 @@ async def check_and_notify_overdue_tasks(db: AsyncSession):
     notifications_created = 0
 
     try:
-        # Get overdue tasks (not completed, due date passed)
+        # Get overdue tasks (still open — not completed or won't-do — and past due)
         today = date.today()
 
         result = await db.execute(
@@ -739,7 +740,7 @@ async def check_and_notify_overdue_tasks(db: AsyncSession):
                 EvidenceCollectionTask.evidence_tracking_id == EvidenceTracking.id,
             )
             .where(
-                EvidenceCollectionTask.status != 'completed',
+                EvidenceCollectionTask.status.notin_(CLOSED_TASK_STATUSES),
                 EvidenceCollectionTask.due_date < today,
             )
         )

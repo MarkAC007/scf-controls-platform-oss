@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react'
 import type { ClientSummary, ConsultantInvite } from '../../types'
 import ClientCard from './ClientCard'
+import DeleteOrganizationDialog from './DeleteOrganizationDialog'
 import InviteClientModal from './InviteClientModal'
 import CrossOrgComparison from './CrossOrgComparison'
 
@@ -12,6 +13,8 @@ interface ConsultantDashboardProps {
   onInviteClient?: (email: string, orgName: string) => Promise<void>
   onCreateOrg?: (orgName: string) => Promise<{ id: string; name: string }>
   onInviteAdmin?: (orgId: string, email: string) => Promise<void>
+  /** Delete a client organisation and all of its data. `confirmName` is what the person typed. */
+  onDeleteOrg?: (orgId: string, confirmName: string) => Promise<void>
 }
 
 type ViewMode = 'grid' | 'comparison'
@@ -24,9 +27,11 @@ export default function ConsultantDashboard({
   onCancelInvite,
   onInviteClient,
   onCreateOrg,
-  onInviteAdmin
+  onInviteAdmin,
+  onDeleteOrg
 }: ConsultantDashboardProps) {
   const [viewMode, setViewMode] = useState<ViewMode>('grid')
+  const [deleteTarget, setDeleteTarget] = useState<ClientSummary | null>(null)
   const [sortBy, setSortBy] = useState<SortBy>('activity')
   const [searchQuery, setSearchQuery] = useState('')
   const [showInviteModal, setShowInviteModal] = useState(false)
@@ -255,6 +260,7 @@ export default function ConsultantDashboard({
               key={client.organization_id}
               client={client}
               isCurrentOrg={client.organization_id === currentOrgId}
+              onDelete={onDeleteOrg ? setDeleteTarget : undefined}
             />
           ))}
         </div>
@@ -273,6 +279,17 @@ export default function ConsultantDashboard({
       )}
 
       {/* Invite Modal */}
+      {deleteTarget && onDeleteOrg && (
+        <DeleteOrganizationDialog
+          organizationName={deleteTarget.organization_name}
+          onConfirm={async confirmName => {
+            await onDeleteOrg(deleteTarget.organization_id, confirmName)
+            setDeleteTarget(null)
+          }}
+          onClose={() => setDeleteTarget(null)}
+        />
+      )}
+
       {showInviteModal && (
         <InviteClientModal
           pendingInvites={pendingInvites}

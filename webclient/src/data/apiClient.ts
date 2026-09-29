@@ -299,6 +299,8 @@ export interface OrganizationSettingsResponse {
   industry: string | null
   /** Which engine assesses this organisation's evidence. Absent means 'llm'. */
   evidence_assessment_engine?: 'llm' | 'jev_shadow' | 'jev'
+  /** Whether collection tasks are minted automatically. Absent means true. */
+  auto_task_generation_enabled?: boolean
 }
 
 export async function fetchOrganizationSettings(
@@ -1740,6 +1742,41 @@ export async function cancelConsultantInvite(inviteId: string): Promise<{ succes
   })
 }
 
+/** What an organisation delete reports back. */
+export interface OrganizationDeleteResponse {
+  success: boolean
+  message: string
+  organization_id: string
+  evidence_files_deleted: number
+  storage_objects_failed: number
+}
+
+/**
+ * The confirmation every organisation delete must carry. The backend refuses
+ * the request unless `confirm_name` equals the organisation's exact name and
+ * `acknowledge_data_loss` is literally true — both routes below share it.
+ */
+function organizationDeleteBody(confirmName: string): RequestInit {
+  return {
+    method: 'DELETE',
+    body: JSON.stringify({ confirm_name: confirmName, acknowledge_data_loss: true }),
+  }
+}
+
+/**
+ * Delete a client organisation and ALL of its data from the consultant portal.
+ * Requires an active consultant relationship with the organisation.
+ */
+export async function deleteConsultantClientOrganisation(
+  orgId: string,
+  confirmName: string
+): Promise<OrganizationDeleteResponse> {
+  return apiFetch<OrganizationDeleteResponse>(
+    `/consultant/clients/${orgId}/organisation`,
+    organizationDeleteBody(confirmName)
+  )
+}
+
 /**
  * Transform backend client response to frontend ClientSummary format
  */
@@ -1765,7 +1802,8 @@ export function transformClientSummary(client: ClientSummaryBackend): ClientSumm
     evidence_tracked: metrics.tracked_evidence,
     evidence_total: metrics.total_evidence,
     last_activity_date: client.linked_at, // Use linked_at as fallback
-    primary_framework: undefined // Not provided by backend
+    primary_framework: undefined, // Not provided by backend
+    status: client.status,
   }
 }
 

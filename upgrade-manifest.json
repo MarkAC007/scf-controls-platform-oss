@@ -1,11 +1,11 @@
 {
   "schema": 1,
-  "version": "0.42.0",
-  "released": "2026-09-29T11:53:14Z",
+  "version": "0.43.0",
+  "released": "2026-09-29T18:21:08Z",
   "min_upgradable_version": "0.0.0",
   "breaking": false,
   "required_stops": [],
-  "release_url": "https://github.com/MarkAC007/scf-controls-platform-oss/releases/tag/v0.42.0",
+  "release_url": "https://github.com/MarkAC007/scf-controls-platform-oss/releases/tag/v0.43.0",
   "summary": ".",
   "migration_range": [
     "20260119_000000_62bdef86f249_initial_schema",
@@ -102,12 +102,6 @@
     "20260923_090000_framework_registry_recovered_source",
     "20260929_090000_evidence_assessment_shadow_verdicts"
   ],
-  "env_added": [
-    "EVIDENCE_JEV_MODEL",
-    "JEV_CONFIDENCE_CUTOFF",
-    "JEV_STATE_CHAR_BUDGET",
-    "TYPESAFE_API_KEY",
-    "TYPESAFE_API_URL"
-  ],
+  "env_added": [],
   "min_compose_action": "rebuild"
 }

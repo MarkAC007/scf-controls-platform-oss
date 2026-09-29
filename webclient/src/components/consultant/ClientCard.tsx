@@ -3,6 +3,8 @@ import type { ClientSummary } from '../../types'
 interface ClientCardProps {
   client: ClientSummary
   isCurrentOrg?: boolean
+  /** Offered when the portal can delete this organisation and all of its data. */
+  onDelete?: (client: ClientSummary) => void
 }
 
 type ReadinessGrade = 'excellent' | 'good' | 'fair' | 'needs-work'
@@ -34,7 +36,10 @@ function formatDate(dateString: string): string {
   return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
 }
 
-export default function ClientCard({ client, isCurrentOrg }: ClientCardProps) {
+export default function ClientCard({ client, isCurrentOrg, onDelete }: ClientCardProps) {
+  // The delete route only accepts an active relationship; a suspended or
+  // pending client would get a 404, so the button is not offered.
+  const canDelete = client.status === undefined || client.status === 'active'
   const grade = getReadinessGrade(client.framework_readiness_percent)
   const implementationPercent = client.controls_total > 0
     ? Math.round((client.controls_implemented / client.controls_total) * 100)
@@ -115,6 +120,17 @@ export default function ClientCard({ client, isCurrentOrg }: ClientCardProps) {
         )}
         {client.awaiting_admin && (
           <span className="consultant-card-awaiting-badge">Awaiting admin</span>
+        )}
+        {onDelete && canDelete && (
+          <button
+            type="button"
+            className="consultant-card-delete-btn"
+            onClick={() => onDelete(client)}
+            aria-label={`Delete organisation ${client.organization_name}`}
+            title="Delete this organisation and all of its data"
+          >
+            Delete
+          </button>
         )}
       </div>
     </div>
