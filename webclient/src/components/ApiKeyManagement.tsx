@@ -1,8 +1,8 @@
 /**
  * ApiKeyManagement Component — Per-organisation API key CRUD.
  *
- * Admins can create keys (for themselves), see all keys, and revoke any key.
- * Non-admins see only their own keys and can revoke those.
+ * Editors and admins can create keys (for themselves); a key carries its creator's role.
+ * Admins see and revoke every key; editors revoke their own; viewers only see their own.
  * The plaintext key is shown once at creation time with a copy button.
  */
 import { useState, useEffect, useCallback } from 'react'

@@ -136,13 +136,14 @@ async function apiFetch<T>(
     }
 
     // Handle authentication errors.
-    // In OIDC mode a 403 is deliberately NOT treated as an auth failure: the
-    // silent refresh above only runs for 401s, account_not_provisioned was
-    // already handled, so a 403 here is an ordinary RBAC "permission denied"
-    // for a signed-in user. Clearing the session on it would sign out a valid
-    // user and can loop sign-in → load → 403 → sign-out. Let it fall through to
-    // the thrown apiError so the calling component surfaces the permission error.
-    const isAuthError = OIDC_ENABLED
+    // In OIDC and Google mode a 403 is deliberately NOT treated as an auth
+    // failure: account_not_provisioned was already handled, so a 403 here is an
+    // ordinary RBAC "permission denied" for a signed-in user. Clearing the
+    // session on it would sign out a valid user and can loop sign-in → load →
+    // 403 → sign-out. Let it fall through to the thrown apiError so the calling
+    // component surfaces the permission error. A 503 (Google temporarily
+    // unavailable) is likewise not an auth failure and keeps the session.
+    const isAuthError = OIDC_ENABLED || GOOGLE_AUTH_ENABLED
       ? response.status === 401
       : response.status === 401 || response.status === 403
     if (isAuthError) {
