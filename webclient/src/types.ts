@@ -737,6 +737,8 @@ export interface ClientSummary {
   last_activity_date: string
   last_activity_by?: string
   primary_framework?: string
+  /** Consultant relationship status: active, suspended or pending. */
+  status?: string
 }
 
 /**

@@ -18,6 +18,7 @@ Endpoints:
     POST /api/consultant/invites/{token}/accept - Accept invitation
     GET  /api/consultant/dashboard     - Cross-org metrics dashboard
     DELETE /api/consultant/clients/{org_id} - Remove client relationship
+    DELETE /api/consultant/clients/{org_id}/organisation - Delete the client organisation and all its data
 
 Authorization:
     All endpoints require authentication via Google OAuth or API key.
@@ -44,11 +45,12 @@ from typing import List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request, Query
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
-from auth import require_auth, User
-from models import ConsultantInviteStatus
+from auth import require_auth, verify_org_membership, User
+from models import ConsultantClientRelationship, ConsultantClientStatus, ConsultantInviteStatus, Organization
 from schemas import (
     ConsultantProfileResponse,
     ConsultantProfileCreate,
@@ -63,11 +65,14 @@ from schemas import (
     OrganizationResponse,
     SuccessResponse,
     RemoveClientResponse,
+    OrganizationDeleteRequest,
+    OrganizationDeleteResponse,
     CreateClientOrgRequest,
     CreateClientOrgResponse,
     InviteOrgAdminRequest,
 )
 from services.consultant import ConsultantService
+from api.organizations import _refuse_machine_callers, _run_organization_delete
 from services.email_service import send_invitation_email
 
 logger = logging.getLogger(__name__)
@@ -510,6 +515,71 @@ async def remove_client(
         message=message,
         organization_id=org_id,
         action="archived" if archive else "deleted",
+    )
+
+
+@router.delete("/clients/{org_id}/organisation", response_model=OrganizationDeleteResponse)
+async def delete_client_organisation(
+    request: Request,
+    org_id: UUID,
+    body: OrganizationDeleteRequest,
+    profile_and_service=Depends(get_consultant_profile),
+    current_user: User = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Delete a client organisation and ALL of its data from the consultant portal.
+
+    Unlike ``DELETE /clients/{org_id}``, which only ends the consultant's
+    relationship, this removes the organisation itself: every row, every
+    stored evidence object, every generated document. No soft delete, no undo.
+
+    Requires an ACTIVE relationship between this consultant and the
+    organisation (a suspended or archived client is not deletable from here)
+    and the admin role that relationship confers, checked the same way every
+    other organisation-scoped endpoint checks it. The body must carry the
+    organisation's exact name and an explicit acknowledgement — the same
+    contract as the organisation-level delete, so neither route is a way
+    around the other. API key callers are refused.
+
+    Raises:
+        400: confirm_name does not match
+        403: API key caller, or no admin access
+        404: no active client relationship with this organisation
+        409: an evidence storage copy is in flight for the organisation
+    """
+    profile, _service = profile_and_service
+    _refuse_machine_callers(current_user)
+
+    relationship_result = await db.execute(
+        select(ConsultantClientRelationship)
+        .where(ConsultantClientRelationship.consultant_id == profile.id)
+        .where(ConsultantClientRelationship.organization_id == org_id)
+        .where(ConsultantClientRelationship.status == ConsultantClientStatus.ACTIVE.value)
+    )
+    if relationship_result.scalar_one_or_none() is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Client organisation not found",
+        )
+
+    # The relationship grants admin; verify it through the same gate every
+    # organisation-scoped route uses rather than trusting the row alone.
+    await verify_org_membership(org_id, current_user, db, "admin")
+
+    org_result = await db.execute(select(Organization).where(Organization.id == org_id))
+    organization = org_result.scalar_one_or_none()
+    if organization is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client organisation not found")
+
+    outcome = await _run_organization_delete(db, organization, body, current_user, request)
+    await db.commit()
+
+    return OrganizationDeleteResponse(
+        message=f"Organisation '{outcome.organization_name}' and all of its data successfully deleted",
+        organization_id=outcome.organization_id,
+        evidence_files_deleted=outcome.evidence_files_deleted,
+        storage_objects_failed=outcome.storage_objects_failed,
     )
 
 

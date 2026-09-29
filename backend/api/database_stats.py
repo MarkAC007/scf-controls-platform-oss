@@ -21,6 +21,7 @@ from uuid import UUID
 
 from database import get_db
 from models import (
+    CLOSED_TASK_STATUSES,
     Base,
     Organization, ScopedControl, EvidenceTracking,
     User as UserModel, OrganizationMember, Assignment, Comment,
@@ -841,7 +842,7 @@ async def get_database_stats(
         # Task statistics
         pending_tasks_count = await db.scalar(
             select(func.count()).select_from(EvidenceCollectionTask).where(
-                EvidenceCollectionTask.status != 'completed'
+                EvidenceCollectionTask.status.notin_(CLOSED_TASK_STATUSES)
             )
         )
 
@@ -854,7 +855,7 @@ async def get_database_stats(
         overdue_tasks_count = await db.scalar(
             select(func.count()).select_from(EvidenceCollectionTask).where(
                 and_(
-                    EvidenceCollectionTask.status != 'completed',
+                    EvidenceCollectionTask.status.notin_(CLOSED_TASK_STATUSES),
                     EvidenceCollectionTask.due_date < func.current_date()
                 )
             )

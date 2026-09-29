@@ -185,7 +185,9 @@ class TestGenerateTaskForTracking:
         """The web client re-saves the whole tracking object on every debounced
         field edit, so this runs on keystrokes. Without the duplicate window a
         person typing a comment would mint a task per pause."""
-        db = FakeSession([MagicMock()])  # duplicate check finds an open task
+        # First result: the organisation settings lookup (None → generation on).
+        # Second: the duplicate check finds an open task.
+        db = FakeSession([None, MagicMock()])
         outcome = await generate_task_for_tracking(db, tracking_row())
 
         assert outcome.created is False
@@ -251,7 +253,7 @@ class TestSweepDelegates:
         from services import task_generator
 
         source = inspect.getsource(task_generator.generate_evidence_tasks)
-        assert "generate_task_for_tracking(db, evidence)" in source
+        assert "generate_task_for_tracking(db, evidence" in source
         # ...and does not carry its own copy of the rule.
         assert "normalize_frequency" not in source
         assert "EvidenceCollectionTask(" not in source

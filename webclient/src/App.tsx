@@ -8,6 +8,7 @@ import {
   getConsultantInvites,
   createConsultantInvite,
   cancelConsultantInvite,
+  deleteConsultantClientOrganisation,
   checkConsultantStatus,
   registerAsConsultant,
   createClientOrganisation,
@@ -42,6 +43,7 @@ import BackupRestore from './components/BackupRestore'
 import IntegrationsSettings from './components/IntegrationsSettings'
 import EvidenceStorageSettings from './components/EvidenceStorageSettings'
 import AssessmentEngineSettings from './components/AssessmentEngineSettings'
+import TaskAutomationSettings from './components/TaskAutomationSettings'
 import EvidenceStorageMigrationPanel from './components/EvidenceStorageMigrationPanel'
 import AuditLogPage from './components/AuditLogPage'
 import EngagementsPage from './components/EngagementsPage'
@@ -103,7 +105,7 @@ type Tab = 'dashboard' | 'journey' | 'capability-posture' | 'library' | 'scoping
 
 function AppContent() {
   const { isAuthenticated, authReady, user, isPlatformAdmin, canManageIntegrations } = useAuth()
-  const { currentOrg, isLoading: orgLoading, switchOrganization } = useOrganization()
+  const { currentOrg, isLoading: orgLoading, switchOrganization, refreshOrganizations } = useOrganization()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [controls, setControls] = useState<EnrichedControl[]>([])
@@ -467,6 +469,27 @@ function AppContent() {
       toast.error(err.message || 'Failed to cancel invitation')
     }
   }, [])
+
+  // Handle deleting a client organisation and all of its data. The dialog has
+  // already collected the typed name and the acknowledgement; the API checks
+  // both again. Afterwards the org list is refreshed first so a deleted
+  // current organisation is dropped before the consultant data reloads.
+  const handleDeleteClientOrg = useCallback(async (orgId: string, confirmName: string) => {
+    try {
+      const result = await deleteConsultantClientOrganisation(orgId, confirmName)
+      toast.success(result.message)
+      if (result.storage_objects_failed > 0) {
+        toast.error(`${result.storage_objects_failed} stored file(s) could not be removed and were logged for the operator`)
+      }
+    } catch (err: any) {
+      console.error('Failed to delete organisation:', err)
+      toast.error(err.message || 'Failed to delete organisation')
+      throw err // the dialog shows the error and stays open
+    }
+    setConsultantClients(prev => prev.filter(c => c.organization_id !== orgId))
+    await refreshOrganizations()
+    await loadConsultantDataInternal()
+  }, [refreshOrganizations, loadConsultantDataInternal])
 
   // Handle creating a client organisation (two-step flow: step 1)
   const handleCreateOrg = useCallback(async (orgName: string) => {
@@ -940,6 +963,7 @@ function AppContent() {
                   { id: 'settings-risk', label: 'RISK & GOVERNANCE' },
                   { id: 'settings-docgen', label: 'DOCUMENT GENERATION' },
                   { id: 'settings-assessment-engine', label: 'AI ASSESSMENT ENGINE' },
+                  { id: 'settings-task-automation', label: 'TASK AUTOMATION' },
                   { id: 'settings-backups', label: 'BACKUPS' },
                   { id: 'settings-evidence-storage', label: 'EVIDENCE STORAGE' },
                   ...(canManageIntegrations ? [{ id: 'settings-integrations', label: 'INTEGRATIONS' }] : []),
@@ -974,6 +998,14 @@ function AppContent() {
                     card renders read-only below admin. */}
                 <div id="settings-assessment-engine">
                   <AssessmentEngineSettings
+                    organizationId={scopingData.organizationId!}
+                  />
+                </div>
+                {/* Whether collection tasks are minted automatically. Same
+                    shape as the engine card above: readable by any member,
+                    the Save behind it admin-only. */}
+                <div id="settings-task-automation">
+                  <TaskAutomationSettings
                     organizationId={scopingData.organizationId!}
                   />
                 </div>
@@ -1070,6 +1102,7 @@ function AppContent() {
                 onInviteClient={handleInviteClient}
                 onCreateOrg={handleCreateOrg}
                 onInviteAdmin={handleInviteAdmin}
+                onDeleteOrg={handleDeleteClientOrg}
               />
             )
           )}

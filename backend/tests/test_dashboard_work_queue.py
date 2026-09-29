@@ -299,7 +299,8 @@ def test_stale_collections_exclude_evidence_that_already_has_an_overdue_task(
         in stale_sql
     ), "the EXISTS is not correlated to the outer tracking row"
     assert "evidence_collection_tasks.due_date <" in stale_sql
-    assert "evidence_collection_tasks.status !=" in stale_sql
+    # Open means not completed and not won't do: the shared CLOSED_TASK_STATUSES.
+    assert "evidence_collection_tasks.status NOT IN" in stale_sql
 
 
 def test_stale_exclusion_narrows_with_assigned_to_me(client_factory):

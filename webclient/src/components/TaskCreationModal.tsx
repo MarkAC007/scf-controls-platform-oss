@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { apiClient } from '../data/apiClient';
 import TaskOwningTeamField from './TaskOwningTeamField';
+import MarkdownField from './MarkdownField';
 import { useModalDismiss } from '../hooks/useModalDismiss';
 
 interface TaskCreationModalProps {
@@ -150,12 +151,13 @@ export const TaskCreationModal: React.FC<TaskCreationModalProps> = ({
           {/* Description */}
           <div className="task-modal-form-group">
             <label className="task-modal-label">Description</label>
-            <textarea
+            <MarkdownField
               value={description}
-              onChange={(e) => setDescription(e.target.value)}
+              onChange={setDescription}
               placeholder="Detailed instructions or context for this task..."
               rows={4}
               className="task-modal-textarea"
+              aria-label="Description"
             />
           </div>
 

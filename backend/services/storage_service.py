@@ -387,6 +387,26 @@ def put_bytes(
     raise StorageNotConfigured("Evidence storage not configured")
 
 
+def delete_evidence_object(
+    s3_key: str,
+    org_id: Optional[str],
+    storage_config_id: Optional[str],
+) -> None:
+    """Delete one evidence file's bytes from the store they were written to.
+
+    Resolves per *file*, the way :func:`resolve_config_for_file` reads do: a
+    file whose ``storage_config_id`` names a configuration lives there, not in
+    whatever the organisation writes to now. Organisation deletion needs this
+    because it has to reach objects in every store the organisation ever
+    used, including ones it has since switched away from.
+
+    Raises:
+        ValueError: If the resolved configuration names no bucket.
+    """
+    from services.s3_service import delete_object as s3_fn
+    s3_fn(s3_key, config=resolve_config_for_file(org_id, storage_config_id))
+
+
 def delete_object(s3_key: str) -> None:
     """Delete a single object from storage.
 

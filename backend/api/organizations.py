@@ -26,7 +26,10 @@ from uuid import UUID
 
 from database import get_db
 from models import Organization, OrganizationMember
-from schemas import OrganizationResponse, OrganizationCreate, SuccessResponse, OrganizationSettingsResponse, OrganizationSettingsUpdate, OrganizationLogoResponse
+from schemas import (
+    OrganizationResponse, OrganizationCreate, SuccessResponse, OrganizationSettingsResponse,
+    OrganizationSettingsUpdate, OrganizationLogoResponse, OrganizationDeleteRequest, OrganizationDeleteResponse,
+)
 from auth import (
     require_auth,
     require_org_role,
@@ -37,6 +40,12 @@ from auth import (
 from services.subscription import get_user_subscription, can_create_organisation
 from services.audit_service import log_entity_changes, detect_action_source, get_request_id, ORGANIZATION_TRACKED_FIELDS
 from services.jev_assessment import ENGINE_SETTING_KEY, resolve_engine
+from services.task_generator import AUTO_TASK_GENERATION_SETTING_KEY, resolve_auto_task_generation
+from services.organization_deletion import (
+    OrganizationDeleteConflict,
+    OrganizationNameMismatch,
+    delete_organization_completely,
+)
 
 logger = logging.getLogger(__name__)
 # Rate limiting temporarily disabled - see Phase 0 debugging
@@ -250,34 +259,69 @@ async def update_organization(
     return organization
 
 
-@router.delete("/{org_id}", response_model=SuccessResponse)
+@router.delete("/{org_id}", response_model=OrganizationDeleteResponse)
 # @limiter.limit(WRITE_RATE_LIMIT)  # Temporarily disabled
 async def delete_organization(
     request: Request,
     org_id: UUID,
+    body: OrganizationDeleteRequest,
     membership: OrgMembership = Depends(require_org_role("admin")),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Delete an organization.
-    This will cascade delete all related scoped controls, evidence tracking, etc.
+    Delete an organization and ALL of its data: rows, stored evidence bytes,
+    generated documents, audit history. There is no soft delete and no undo.
+
+    The request body has to carry the organisation's exact name and an explicit
+    acknowledgement — the same contract the consultant portal's delete uses, so
+    neither door is a way around the other's confirmation. Machine callers (API
+    keys) are refused outright: a tenant-ending action needs a person signed in.
 
     SECURITY: Requires admin role (direct membership or active consultant relationship).
     """
-    # Get organization (membership already verified by require_org_role)
+    _refuse_machine_callers(membership.user)
+
     result = await db.execute(select(Organization).where(Organization.id == org_id))
     organization = result.scalar_one_or_none()
 
     if not organization:
         raise HTTPException(status_code=404, detail="Organization not found")
 
-    # Delete organization (cascades to related records)
-    await db.delete(organization)
+    outcome = await _run_organization_delete(db, organization, body, membership.user, request)
     await db.commit()
 
-    return SuccessResponse(
-        message=f"Organization '{organization.name}' successfully deleted"
+    return OrganizationDeleteResponse(
+        message=f"Organization '{outcome.organization_name}' and all of its data successfully deleted",
+        organization_id=outcome.organization_id,
+        evidence_files_deleted=outcome.evidence_files_deleted,
+        storage_objects_failed=outcome.storage_objects_failed,
     )
+
+
+def _refuse_machine_callers(user: User) -> None:
+    """Organisation deletion is a signed-in person's action, never an API key's."""
+    if user.auth_method in ("api_key", "user_api_key"):
+        raise HTTPException(
+            status_code=403,
+            detail="Organisation deletion is not available to API key callers. Sign in to the web client to delete an organisation.",
+        )
+
+
+async def _run_organization_delete(db, organization, body, user, request):
+    """Translate the shared service's refusals into HTTP. Shared with the consultant route."""
+    try:
+        return await delete_organization_completely(
+            db,
+            organization,
+            confirm_name=body.confirm_name,
+            actor_email=user.email,
+            actor_user_id=UUID(user.db_id) if user.db_id else None,
+            request=request,
+        )
+    except OrganizationNameMismatch as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except OrganizationDeleteConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
 
 
 @router.get("/{org_id}/settings", response_model=OrganizationSettingsResponse)
@@ -306,6 +350,7 @@ async def get_organization_settings(
         name=organization.name,
         industry=settings.get("industry"),
         evidence_assessment_engine=resolve_engine(settings),
+        auto_task_generation_enabled=resolve_auto_task_generation(settings),
     )
 
 
@@ -345,6 +390,8 @@ async def update_organization_settings(
         current_settings["industry"] = update["industry"]
     if update.get("evidence_assessment_engine") is not None:
         current_settings[ENGINE_SETTING_KEY] = update["evidence_assessment_engine"]
+    if update.get("auto_task_generation_enabled") is not None:
+        current_settings[AUTO_TASK_GENERATION_SETTING_KEY] = bool(update["auto_task_generation_enabled"])
 
     organization.settings = current_settings
 
@@ -379,6 +426,7 @@ async def update_organization_settings(
         name=organization.name,
         industry=current_settings.get("industry"),
         evidence_assessment_engine=resolve_engine(current_settings),
+        auto_task_generation_enabled=resolve_auto_task_generation(current_settings),
     )
 
 

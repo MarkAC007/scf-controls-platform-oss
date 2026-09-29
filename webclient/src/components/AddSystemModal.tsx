@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import MarkdownField from './MarkdownField';
 import { createSystem, updateSystem } from '../data/apiClient'
 import { SystemTemplatePicker } from './SystemTemplatePicker'
 import { VendorPicker } from './VendorPicker'
@@ -291,10 +292,10 @@ export const AddSystemModal: React.FC<AddSystemModalProps> = ({
             {/* Description */}
             <div className="form-group">
               <label htmlFor="description">Description</label>
-              <textarea
+              <MarkdownField
                 id="description"
                 value={formData.description || ''}
-                onChange={(e) => handleChange('description', e.target.value)}
+                onChange={(value) => handleChange('description', value)}
                 placeholder="Brief description of the system and its role..."
                 rows={3}
                 disabled={loading}

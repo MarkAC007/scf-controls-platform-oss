@@ -24,7 +24,10 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { apiClient } from '../data/apiClient'
 import { ModernCommentThread } from './ModernCommentThread'
+import RichText from './RichText'
 import { frequencyLabel } from '../data/frequencyVocabulary'
+import { useIsOrgAdmin } from '../hooks/useIsOrgAdmin'
+import { useModalDismiss } from '../hooks/useModalDismiss'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -60,6 +63,8 @@ export interface TaskDetailPageProps {
   visibleTasks: TaskForDetail[]
   onTaskItemChange: (id: string | null) => void
   onNavigateToEvidence: (evidenceId: string) => void
+  /** Fired after a successful delete so the list can drop the row. */
+  onTaskDeleted?: (id: string) => void
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -88,7 +93,11 @@ const STATUS_LABELS: Record<string, string> = {
   not_started: 'Not started',
   in_progress: 'In progress',
   completed: 'Completed',
+  wont_do: "Won't do",
 }
+
+/** Statuses nobody needs to act on: done, or deliberately not going to be. */
+export const CLOSED_TASK_STATUSES = ['completed', 'wont_do'] as const
 
 const PRIORITY_LABELS: Record<string, string> = {
   low: 'Low priority',
@@ -122,6 +131,7 @@ export default function TaskDetailPage({
   visibleTasks,
   onTaskItemChange,
   onNavigateToEvidence,
+  onTaskDeleted,
 }: TaskDetailPageProps) {
   const [task, setTask] = useState<TaskForDetail | null>(null)
   const [loading, setLoading] = useState(true)
@@ -129,6 +139,13 @@ export default function TaskDetailPage({
   const [editStatus, setEditStatus] = useState<string>('')
   const [editNotes, setEditNotes] = useState<string>('')
   const [saving, setSaving] = useState(false)
+  // Delete is an admin correction, not an edit: the API refuses anyone below
+  // admin, and the button is hidden below admin so it never 403s on click.
+  const isAdmin = useIsOrgAdmin(organizationId)
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+  useModalDismiss(confirmingDelete && !deleting, () => setConfirmingDelete(false))
 
   // ── Pager ─────────────────────────────────────────────────────────────────
 
@@ -222,10 +239,47 @@ export default function TaskDetailPage({
         completion_notes: editNotes || null,
       })
       setEditStatus('completed')
+      setTask(prev => (prev ? { ...prev, status: 'completed' } : prev))
     } catch (err) {
       console.error('Failed to mark task completed:', err)
     } finally {
       setSaving(false)
+    }
+  }
+
+  // Won't do: closed without being actioned. A resolution, not a completion —
+  // it does not touch the evidence item's collection date the way /complete
+  // does, so it goes through the plain PATCH.
+  const handleMarkWontDo = async () => {
+    if (!task) return
+    setSaving(true)
+    try {
+      await apiClient.patch(`/evidence-tasks/${task.id}`, {
+        status: 'wont_do',
+        completion_notes: editNotes || null,
+      })
+      setEditStatus('wont_do')
+      setTask(prev => (prev ? { ...prev, status: 'wont_do' } : prev))
+    } catch (err) {
+      console.error("Failed to mark task won't do:", err)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleDelete = async () => {
+    if (!task) return
+    setDeleting(true)
+    setDeleteError(null)
+    try {
+      await apiClient.delete(`/evidence-tasks/${task.id}`)
+      setConfirmingDelete(false)
+      onTaskDeleted?.(task.id)
+      onTaskItemChange(null)
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : 'Failed to delete task')
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -256,7 +310,7 @@ export default function TaskDetailPage({
   }
 
   const daysUntilDue = getDaysUntilDue(task.due_date)
-  const isCompleted = task.status === 'completed'
+  const isCompleted = (CLOSED_TASK_STATUSES as readonly string[]).includes(task.status)
   const isOverdue = daysUntilDue < 0 && !isCompleted
 
   return (
@@ -343,6 +397,27 @@ export default function TaskDetailPage({
               >
                 Mark completed
               </button>
+              <button
+                onClick={handleMarkWontDo}
+                disabled={saving || isCompleted}
+                className="task-detail-wont-do-btn"
+                type="button"
+                aria-label="Mark won't do"
+                title="Close this task without actioning it"
+              >
+                Won&rsquo;t do
+              </button>
+              {isAdmin && (
+                <button
+                  onClick={() => { setDeleteError(null); setConfirmingDelete(true) }}
+                  disabled={saving || deleting}
+                  className="task-detail-delete-btn"
+                  type="button"
+                  aria-label="Delete task"
+                >
+                  Delete
+                </button>
+              )}
             </div>
           </div>
 
@@ -434,7 +509,7 @@ export default function TaskDetailPage({
         {task.description && (
           <div className="task-detail-description-block">
             <div className="task-detail-page-card-label">DESCRIPTION</div>
-            <p className="task-detail-description-text">{task.description}</p>
+            <RichText text={task.description} className="task-detail-description-text" />
           </div>
         )}
 
@@ -452,6 +527,47 @@ export default function TaskDetailPage({
         </div>
 
       </div>
+
+      {confirmingDelete && (
+        <div className="modal-overlay" onClick={deleting ? undefined : () => setConfirmingDelete(false)}>
+          <div
+            className="modal-content"
+            onClick={e => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="task-delete-title"
+          >
+            <div className="modal-header">
+              <h2 id="task-delete-title">Delete task</h2>
+              <button className="modal-close" onClick={() => setConfirmingDelete(false)} aria-label="Close" disabled={deleting}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </div>
+            <div className="modal-body">
+              <p className="modal-description">
+                Permanently delete <strong>{task.title || 'this task'}</strong> and its comments?
+                This cannot be undone. To keep the history, mark it completed or won&rsquo;t do instead.
+              </p>
+              {deleteError && (
+                <div className="error-banner" role="alert">
+                  <span>{deleteError}</span>
+                </div>
+              )}
+            </div>
+            <div className="modal-footer">
+              <button className="btn-secondary" onClick={() => setConfirmingDelete(false)} disabled={deleting}>
+                Cancel
+              </button>
+              <button className="btn btn-danger" onClick={handleDelete} disabled={deleting}>
+                {deleting ? 'Deleting…' : 'Delete task'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

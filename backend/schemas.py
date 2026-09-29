@@ -391,6 +391,10 @@ class OrganizationSettingsResponse(BaseModel):
     # `jev_shadow` (Claude decides; Jev runs alongside and is compared) or
     # `jev` (Jev decides). See services.jev_assessment.
     evidence_assessment_engine: Literal["llm", "jev_shadow", "jev"] = "llm"
+    # Whether the platform mints collection tasks on its own — the nightly
+    # sweep and the tracking write paths both honour it. Off means only tasks
+    # a person creates by hand exist. Absent from the JSON means on.
+    auto_task_generation_enabled: bool = True
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -401,6 +405,7 @@ class OrganizationSettingsUpdate(BaseModel):
     is_trust_portal_enabled: Optional[bool] = None
     trust_portal_description: Optional[str] = None
     evidence_assessment_engine: Optional[Literal["llm", "jev_shadow", "jev"]] = None
+    auto_task_generation_enabled: Optional[bool] = None
     # See OrganizationSettingsResponse: `name` is routed to Organization.name,
     # `industry` into the settings JSON. Blank/whitespace names are rejected
     # rather than persisted — an empty org name breaks every document header.
@@ -820,7 +825,7 @@ class CommentResponse(CommentBase):
 # Evidence Collection Task Schemas
 class EvidenceCollectionTaskBase(BaseModel):
     due_date: date
-    status: str = Field(default="not_started", pattern="^(not_started|in_progress|completed)$")
+    status: str = Field(default="not_started", pattern="^(not_started|in_progress|completed|wont_do)$")
     task_type: str = Field(default="collection", pattern="^(feasibility|setup|collection|review|documentation|issue)$")
     priority: str = Field(default="medium", pattern="^(low|medium|high|critical)$")
     title: Optional[str] = Field(None, max_length=255)
@@ -854,7 +859,7 @@ class EvidenceCollectionTaskCreate(EvidenceCollectionTaskBase):
 
 class EvidenceCollectionTaskUpdate(BaseModel):
     due_date: Optional[date] = None
-    status: Optional[str] = Field(None, pattern="^(not_started|in_progress|completed)$")
+    status: Optional[str] = Field(None, pattern="^(not_started|in_progress|completed|wont_do)$")
     task_type: Optional[str] = Field(None, pattern="^(feasibility|setup|collection|review|documentation|issue)$")
     priority: Optional[str] = Field(None, pattern="^(low|medium|high|critical)$")
     title: Optional[str] = Field(None, max_length=255)
@@ -2010,6 +2015,30 @@ class ConsultantDashboardResponse(BaseModel):
 class RemoveClientRequest(BaseModel):
     """Request schema for removing a client relationship."""
     archive: bool = Field(default=True, description="If true, archive the relationship instead of hard delete")
+
+
+class OrganizationDeleteRequest(BaseModel):
+    """The confirmation an organisation delete must carry.
+
+    Deleting an organisation removes every row and every stored object that
+    belongs to it, with no soft-delete and no recovery. The request therefore
+    has to prove the caller meant *this* organisation (``confirm_name`` must
+    equal the organisation's current name, exactly) and understood the
+    consequence (``acknowledge_data_loss`` must be literally true — a
+    schema-level requirement, so ``false`` is a 422 rather than a 4xx that a
+    client could paper over).
+    """
+    confirm_name: str = Field(min_length=1, max_length=255, description="Must match the organisation name exactly")
+    acknowledge_data_loss: Literal[True] = Field(description="Must be true: all organisation data will be permanently deleted")
+
+
+class OrganizationDeleteResponse(BaseModel):
+    """What an organisation delete reports back."""
+    success: bool = True
+    message: str
+    organization_id: UUID
+    evidence_files_deleted: int = Field(description="EvidenceFile rows removed (bytes deleted best-effort)")
+    storage_objects_failed: int = Field(default=0, description="Stored objects whose delete failed and were logged")
 
 
 class RemoveClientResponse(BaseModel):

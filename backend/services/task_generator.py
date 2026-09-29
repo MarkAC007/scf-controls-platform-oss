@@ -19,7 +19,7 @@ from typing import Optional
 from uuid import UUID
 import logging
 
-from models import EvidenceTracking, EvidenceCollectionTask, User
+from models import EvidenceTracking, EvidenceCollectionTask, Organization, User
 from database import AsyncSessionLocal
 from services.frequency_vocabulary import (
     TASK_INTERVAL_DAYS,
@@ -75,7 +75,43 @@ SKIP_NO_FREQUENCY = "no_frequency"
 SKIP_UNRECOGNISED_FREQUENCY = "unrecognised_frequency"
 SKIP_NON_SCHEDULING = "non_scheduling"
 SKIP_DUPLICATE = "duplicate"
+SKIP_AUTO_GENERATION_DISABLED = "auto_generation_disabled"
 CREATED = "created"
+
+
+# ---------------------------------------------------------------------------
+# The organisation-level switch
+# ---------------------------------------------------------------------------
+
+#: Key in ``Organization.settings``. Absent means on: every organisation that
+#: existed before the switch keeps the behaviour it had.
+AUTO_TASK_GENERATION_SETTING_KEY = "auto_task_generation_enabled"
+
+
+def resolve_auto_task_generation(settings) -> bool:
+    """Whether an organisation wants tasks minted for it automatically.
+
+    Reads the settings JSON the way `services.jev_assessment.resolve_engine`
+    does — one declaration, shared by the settings endpoint (which echoes it)
+    and the generator (which obeys it). Anything that is not a dict, and any
+    missing key, means enabled.
+    """
+    if not isinstance(settings, dict):
+        return True
+    value = settings.get(AUTO_TASK_GENERATION_SETTING_KEY, True)
+    if value is True or value is False:
+        return value
+    # The settings column is free JSON written by more than one path. Only a
+    # real boolean turns the switch off; "false", 0 or null read as the
+    # default rather than silently starving an organisation of tasks.
+    return True
+
+
+async def _org_auto_generation_enabled(db: AsyncSession, organization_id) -> bool:
+    result = await db.execute(
+        select(Organization.settings).where(Organization.id == organization_id)
+    )
+    return resolve_auto_task_generation(result.scalar_one_or_none())
 
 
 @dataclass
@@ -106,8 +142,17 @@ def _first_due_date(days_interval: int, last_collection: Optional[date]) -> date
 async def generate_task_for_tracking(
     db: AsyncSession,
     evidence: EvidenceTracking,
+    *,
+    auto_generation_enabled: Optional[bool] = None,
 ) -> TaskGenerationOutcome:
     """Create the collection task this tracking row is currently owed, if any.
+
+    ``auto_generation_enabled`` is the organisation's switch
+    (``settings.auto_task_generation_enabled``). ``None`` — the write-path
+    default — looks it up for ``evidence.organization_id``; the sweep, which
+    has already excluded switched-off organisations from its SELECT, passes
+    ``True`` so it does not ask once per row. Manual task creation never comes
+    through here, so the switch cannot stop a person creating a task by hand.
 
     Adds to ``db`` and **never commits**. The caller's transaction decides
     whether the task lands, which is what lets a request handler call this
@@ -152,6 +197,20 @@ async def generate_task_for_tracking(
 
     days_interval = task_interval_days(frequency)
     next_due = _first_due_date(days_interval, evidence.last_collection_date)
+
+    # The organisation's switch is consulted only once a row has proved it
+    # would otherwise mint a task — after the cheap checks, before the first
+    # query — so a switched-off organisation costs one lookup, not a scan.
+    if auto_generation_enabled is None:
+        auto_generation_enabled = await _org_auto_generation_enabled(
+            db, evidence.organization_id
+        )
+    if not auto_generation_enabled:
+        logger.debug(
+            f"Automatic task generation is switched off for organisation "
+            f"{evidence.organization_id}; not generating for {evidence.evidence_id}"
+        )
+        return TaskGenerationOutcome(False, SKIP_AUTO_GENERATION_DISABLED, due_date=next_due)
 
     # Check if task already exists for this due date (or within 3 days)
     result = await db.execute(
@@ -234,29 +293,43 @@ async def generate_evidence_tasks():
     The per-row decision is `generate_task_for_tracking`; this function only
     supplies the rows and owns the transaction.
     """
-    logger.info("Starting evidence task generation...")
+    logger.debug("Starting evidence task generation...")
 
     async with AsyncSessionLocal() as db:
-        # Get all evidence tracking records with frequency set
-        result = await db.execute(
-            select(EvidenceTracking).where(
-                and_(
-                    EvidenceTracking.is_tracked == True,
-                    EvidenceTracking.frequency.isnot(None),
-                    EvidenceTracking.frequency != ''
-                )
-            )
-        )
+        # Organisations that have switched automatic generation off are left
+        # out of the SELECT entirely: their rows are not "skipped", they were
+        # never candidates, and a sweep over a large tenant that has opted
+        # out should cost nothing.
+        settings_result = await db.execute(select(Organization.id, Organization.settings))
+        disabled_org_ids = [
+            org_id for org_id, settings in settings_result.all()
+            if not resolve_auto_task_generation(settings)
+        ]
+
+        conditions = [
+            EvidenceTracking.is_tracked == True,
+            EvidenceTracking.frequency.isnot(None),
+            EvidenceTracking.frequency != '',
+        ]
+        if disabled_org_ids:
+            conditions.append(EvidenceTracking.organization_id.notin_(disabled_org_ids))
+
+        result = await db.execute(select(EvidenceTracking).where(and_(*conditions)))
         evidence_records = result.scalars().all()
 
-        logger.info(f"Found {len(evidence_records)} evidence records with frequency")
+        logger.info(
+            f"Found {len(evidence_records)} evidence records with frequency "
+            f"(disabled_orgs={len(disabled_org_ids)})"
+        )
 
         tasks_created = 0
         tasks_skipped = 0
 
         for evidence in evidence_records:
             try:
-                outcome = await generate_task_for_tracking(db, evidence)
+                # Switched-off organisations were excluded above, so every row
+                # here belongs to one with generation on.
+                outcome = await generate_task_for_tracking(db, evidence, auto_generation_enabled=True)
                 if outcome.created:
                     tasks_created += 1
                 else:
