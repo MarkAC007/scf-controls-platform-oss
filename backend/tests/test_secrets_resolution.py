@@ -21,7 +21,7 @@ from services import secrets  # noqa: E402
 # Inventory
 # --------------------------------------------------------------------------
 
-def test_tier3_names_is_the_closed_list_of_five():
+def test_tier3_names_is_the_closed_list_of_six():
     """The database-settable credential list, pinned.
 
     It was six. ``AZURE_STORAGE_ACCOUNT_KEY`` left when evidence object storage
@@ -64,6 +64,10 @@ def test_tier3_names_is_the_closed_list_of_five():
         "ANTHROPIC_API_KEY",
         "HIBP_API_KEY",
         "NVD_API_KEY",
+        # Jev (TypeSafe System One) evidence assessment. A per-organisation
+        # engine choice needs a platform-level key an operator can set from
+        # Settings → Integrations, like the Anthropic key it sits beside.
+        "TYPESAFE_API_KEY",
     )
     assert isinstance(secrets.TIER3_NAMES, tuple)
 

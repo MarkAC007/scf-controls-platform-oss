@@ -49,6 +49,14 @@ export default defineConfig({
         // json is deliberately excluded because public/data/ holds 23 MB of SCF catalog JSON
         // (control_guidance.json alone is 12 MB), so precaching it would produce an unusable service worker.
         globPatterns: ['**/*.{js,css,html,ico,png,svg,webp,woff,woff2}'],
+        // /config.js is rendered by the container at start (docker-entrypoint.sh),
+        // not by this build: public/config.js is only the placeholder. Precaching
+        // it would pin whatever a returning browser first saw until the NEXT
+        // rebuild changes the precache manifest, so a restart with new SCF_*
+        // values would never reach that browser. Left out of the precache, the
+        // request falls through to the network and nginx's no-cache header
+        // applies.
+        globIgnores: ['config.js'],
         navigateFallback: '/index.html',
         // The service worker must never intercept API requests.
         navigateFallbackDenylist: [/^\/api\//],

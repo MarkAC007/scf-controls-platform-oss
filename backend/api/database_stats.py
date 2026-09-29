@@ -116,6 +116,12 @@ TENANT_SCOPED_EXCLUDED_TABLES: Dict[str, str] = {
     # The window layer's mirror of the above (window-assessment parity):
     # same append-only trail, same grounds.
     "evidence_window_assessment_versions": "append-only window assessment history; captured by scripts/backup.sh",
+    # Jev's shadow verdicts sit beside the versions above, one per version
+    # compared, and are the measurement behind an engine cutover decision —
+    # a record of what the second engine said about a verdict that stands.
+    # Same grounds as the versions: an append-only trail of the source
+    # deployment, not tenant data a destination needs to operate.
+    "evidence_assessment_shadow_verdicts": "append-only Jev shadow comparison trail; captured by scripts/backup.sh",
     # Evidence & generated artifacts — the blobs live in MinIO and are captured
     # by scripts/backup.sh; their rows are not part of the migration export.
     "evidence_files": "blob metadata; blobs live in MinIO (scripts/backup.sh)",

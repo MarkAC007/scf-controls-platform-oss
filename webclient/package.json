@@ -1,7 +1,7 @@
 {
   "name": "scf-controls-platform",
   "private": true,
-  "version": "0.41.6",
+  "version": "0.42.0",
   "type": "module",
   "scripts": {
     "predev": "node scripts/copy-data.js",

@@ -1,4 +1,4 @@
-"""Tier-3 credential store: the five values an operator may set in the app.
+"""Tier-3 credential store: the six values an operator may set in the app.
 
 Contract §3d. Precedence is fixed in `services.secrets.get_secret`: a value in
 a mounted file or the environment always wins over a value in this table. That
@@ -54,13 +54,17 @@ LABELS: Dict[str, tuple[str, str]] = {
         "NVD API key",
         "Higher NVD rate limit for vendor CVE research",
     ),
+    "TYPESAFE_API_KEY": (
+        "TypeSafe API key",
+        "Jev evidence assessment (shadow or primary engine, chosen per organisation)",
+    ),
 }
 
 ENTITY_TYPE = "integration_secret"
 
 
 class UnknownIntegration(Exception):
-    """The name is not one of the five settable credentials."""
+    """The name is not one of the six settable credentials."""
 
 
 class OperatorManaged(Exception):

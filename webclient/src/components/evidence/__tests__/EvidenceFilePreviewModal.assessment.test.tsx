@@ -33,6 +33,16 @@ vi.mock('../AssessmentReviewPanel', () => ({
   AssessmentReviewPanel: () => <div data-testid="assessment-review-panel" />,
 }))
 
+// The Jev shadow panel has its own suite too. The stub records its props so the
+// mount itself — which file, which assessment version — is pinned here.
+const shadowPanelProps = vi.fn()
+vi.mock('../ShadowVerdictPanel', () => ({
+  ShadowVerdictPanel: (props: Record<string, unknown>) => {
+    shadowPanelProps(props)
+    return <div data-testid="shadow-verdict-panel-stub" />
+  },
+}))
+
 function assessment(overrides: Record<string, unknown> = {}) {
   return {
     id: 'a-1',
@@ -217,5 +227,28 @@ describe('AI panel — provenance and unassessable', () => {
       assessment: assessment({ status: 'unassessable', relevance_score: null }),
     })
     expect(screen.queryByText('0/100')).toBeNull()
+  })
+})
+
+describe('AI panel — Jev shadow verdict', () => {
+  beforeEach(() => vi.clearAllMocks())
+  afterEach(() => cleanup())
+
+  it('mounts the shadow panel for this file and assessment version, after provenance', () => {
+    renderModal({ assessment: assessment({ version_number: 3 }) })
+    const stub = screen.getByTestId('shadow-verdict-panel-stub')
+    const provenance = screen.getByTestId('ai-assessment-provenance')
+    expect(provenance.compareDocumentPosition(stub) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(shadowPanelProps).toHaveBeenLastCalledWith({
+      orgId: 'org-1',
+      evidenceId: 'ERL-001',
+      fileId: makeEvidenceFile().id,
+      assessmentVersion: 3,
+    })
+  })
+
+  it('does not mount it when there is no assessment', () => {
+    renderModal({ assessment: null })
+    expect(screen.queryByTestId('shadow-verdict-panel-stub')).toBeNull()
   })
 })

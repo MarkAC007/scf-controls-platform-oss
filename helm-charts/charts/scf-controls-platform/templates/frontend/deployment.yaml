@@ -1,0 +1,158 @@
+{{/*
+The production frontend: the built bundle served by nginx with the security
+headers from nginx.conf, proxying /api/ to the backend Service.
+*/}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "scf.fullname" . }}-frontend
+  labels:
+    {{- include "scf.componentLabels" (dict "ctx" . "component" "frontend") | nindent 4 }}
+spec:
+  {{- if not .Values.frontend.autoscaling.enabled }}
+  replicas: {{ .Values.frontend.replicaCount }}
+  {{- end }}
+  revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      {{- include "scf.componentSelectorLabels" (dict "ctx" . "component" "frontend") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "scf.componentSelectorLabels" (dict "ctx" . "component" "frontend") | nindent 8 }}
+        {{- with .Values.frontend.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.frontend.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- include "scf.imagePullSecrets" . | nindent 6 }}
+      serviceAccountName: {{ include "scf.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      # nginx's master binds :80 and forks workers, so the frontend cannot run
+      # under the same pod context as the Python workloads — runAsNonRoot in
+      # particular. It takes its own values rather than .Values.podSecurityContext
+      # so an override is honoured instead of silently discarded.
+      securityContext:
+        {{- toYaml .Values.frontend.podSecurityContext | nindent 8 }}
+      terminationGracePeriodSeconds: {{ .Values.frontend.terminationGracePeriodSeconds }}
+      {{- with .Values.frontend.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      {{- with .Values.frontend.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.frontend.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.frontend.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.frontend.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: frontend
+          image: {{ include "scf.image" (dict "image" .Values.frontend.image "root" $) }}
+          imagePullPolicy: {{ .Values.frontend.image.pullPolicy }}
+          # The four added capabilities are what nginx needs to bind :80 and
+          # fork workers as the nginx user; dropping them stops it starting.
+          # In values rather than hardcoded so the set is visible and overridable.
+          securityContext:
+            {{- toYaml .Values.frontend.securityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 80
+              protocol: TCP
+          env:
+            {{- if .Values.frontend.proxyApi }}
+            - name: BACKEND_URL
+              value: {{ include "scf.backendUrl" . | quote }}
+            {{- end }}
+            - name: MAX_UPLOAD_SIZE
+              value: {{ .Values.frontend.maxUploadSize | quote }}
+            - name: EXTRA_CONNECT_SRC
+              value: {{ include "scf.extraConnectSrc" . | quote }}
+            # Runtime application config. The entrypoint renders these into
+            # /config.js at start, which the page loads before the app bundle —
+            # so branding and the review mode are deployment settings rather
+            # than properties of the image.
+            #
+            # Each is emitted only when it is non-null, because the injector
+            # distinguishes "unset" from "set to empty": branding.logoUrl=""
+            # means show no logo, while unset means use the bundled one.
+            {{- if not (kindIs "invalid" .Values.branding.appTitle) }}
+            - name: SCF_APP_TITLE
+              value: {{ .Values.branding.appTitle | quote }}
+            {{- end }}
+            {{- if not (kindIs "invalid" .Values.branding.logoUrl) }}
+            - name: SCF_APP_LOGO
+              value: {{ .Values.branding.logoUrl | quote }}
+            {{- end }}
+            {{- if not (kindIs "invalid" .Values.branding.marketingUrl) }}
+            - name: SCF_MARKETING_WEBSITE_URL
+              value: {{ .Values.branding.marketingUrl | quote }}
+            {{- end }}
+            # The same value the backend and worker get as
+            # ENABLE_PER_WINDOW_REVIEW, so the two cannot drift apart.
+            - name: SCF_ENABLE_PER_WINDOW_REVIEW
+              value: {{ .Values.config.features.perWindowReview | quote }}
+            - name: SCF_DEBUG_API
+              value: {{ .Values.config.debugApi | quote }}
+            {{- with .Values.frontend.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: {{ .Values.frontend.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.frontend.livenessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.frontend.livenessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.frontend.livenessProbe.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: {{ .Values.frontend.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.frontend.readinessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.frontend.readinessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.frontend.readinessProbe.failureThreshold }}
+          resources:
+            {{- toYaml .Values.frontend.resources | nindent 12 }}
+          volumeMounts:
+            - name: nginx-cache
+              mountPath: /var/cache/nginx
+            - name: nginx-run
+              mountPath: /var/run
+            - name: tmp
+              mountPath: /tmp
+            {{- with .Values.frontend.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        - name: nginx-cache
+          emptyDir:
+            sizeLimit: 256Mi
+        - name: nginx-run
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Mi
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Mi
+        {{- with .Values.frontend.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}

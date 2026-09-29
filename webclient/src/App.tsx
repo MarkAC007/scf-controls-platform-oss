@@ -41,6 +41,7 @@ import WebhookManagement from './components/WebhookManagement'
 import BackupRestore from './components/BackupRestore'
 import IntegrationsSettings from './components/IntegrationsSettings'
 import EvidenceStorageSettings from './components/EvidenceStorageSettings'
+import AssessmentEngineSettings from './components/AssessmentEngineSettings'
 import EvidenceStorageMigrationPanel from './components/EvidenceStorageMigrationPanel'
 import AuditLogPage from './components/AuditLogPage'
 import EngagementsPage from './components/EngagementsPage'
@@ -938,6 +939,7 @@ function AppContent() {
                   { id: 'settings-branding', label: 'ORGANISATION BRANDING' },
                   { id: 'settings-risk', label: 'RISK & GOVERNANCE' },
                   { id: 'settings-docgen', label: 'DOCUMENT GENERATION' },
+                  { id: 'settings-assessment-engine', label: 'AI ASSESSMENT ENGINE' },
                   { id: 'settings-backups', label: 'BACKUPS' },
                   { id: 'settings-evidence-storage', label: 'EVIDENCE STORAGE' },
                   ...(canManageIntegrations ? [{ id: 'settings-integrations', label: 'INTEGRATIONS' }] : []),
@@ -964,6 +966,14 @@ function AppContent() {
                 </div>
                 <div id="settings-docgen">
                   <DocGenSettingsCard
+                    organizationId={scopingData.organizationId!}
+                  />
+                </div>
+                {/* Which engine assesses this organisation's evidence. Readable
+                    by any member; the PATCH behind Save is admin-only, and the
+                    card renders read-only below admin. */}
+                <div id="settings-assessment-engine">
+                  <AssessmentEngineSettings
                     organizationId={scopingData.organizationId!}
                   />
                 </div>

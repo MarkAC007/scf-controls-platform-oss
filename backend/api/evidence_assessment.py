@@ -14,7 +14,8 @@ Endpoints:
   GET  /organizations/{org_id}/evidence/assessment/summary — Dashboard metrics
 """
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
+from decimal import Decimal
 from typing import List, Optional
 from uuid import UUID
 
@@ -24,9 +25,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth import require_org_role, OrgMembership
 from database import get_db
-from models import EvidenceFile, EvidenceAssessment, EvidenceAssessmentVersion, EvidenceWindowAssessment
+from models import (
+    EvidenceFile,
+    EvidenceAssessment,
+    EvidenceAssessmentShadowVerdict,
+    EvidenceAssessmentVersion,
+    EvidenceWindowAssessment,
+    Organization,
+)
 from services.assessment_prompts import assemble_control_context
 from services.assessment_verdict import derive_assessment_status
+from services import jev_assessment
+from services.jev_client import KEY_ENV as TYPESAFE_KEY_ENV
+from services.model_registry import resolve as resolve_model
+from services.secrets import integration_enabled
 from services.assurance_policy import get_assurance_policy
 from services.audit_service import (
     log_entity_changes,
@@ -36,7 +48,7 @@ from services.audit_service import (
     get_request_id,
 )
 from services.review_workflow import SOD_REFUSAL_DETAIL, reviewer_is_sole_uploader
-from tasks_assessment import assess_evidence_task, is_cache_hit
+from tasks_assessment import assess_evidence_task, is_cache_hit, prompt_version_for_engine
 from schemas import (
     EvidenceAssessmentResponse,
     EvidenceAssessmentRequest,
@@ -46,6 +58,9 @@ from schemas import (
     EvidenceAssessmentVersionResponse,
     AssessmentReviewQueueItem,
     AssessmentReviewQueueResponse,
+    AssessmentEngineStatusResponse,
+    ShadowStatsSchema,
+    ShadowVerdictResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -143,6 +158,11 @@ async def trigger_assessment(
     # caller is told plainly that no new assessment was run.
     if assessment is not None and not body.force:
         control_context = await assemble_control_context(db, evidence_id)
+        # The version compared is the chosen engine's — the same rule as the
+        # worker's gate, so an engine switch re-assesses here too instead of
+        # answering with the other engine's verdict and never queueing.
+        engine_row = await db.execute(select(Organization.settings).where(Organization.id == org_id))
+        engine = jev_assessment.resolve_engine(engine_row.scalar_one_or_none())
         if control_context is not None and is_cache_hit(
             status=assessment.status,
             prompt_hash=assessment.prompt_hash,
@@ -151,6 +171,7 @@ async def trigger_assessment(
             file_sha256=evidence_file.computed_sha256 or evidence_file.sha256_hash,
             current_context_hash=control_context.context_hash,
             stored_file_sha256=assessment.assessed_file_sha256,
+            current_prompt_version=prompt_version_for_engine(engine),
         ):
             logger.info(
                 "Assessment cache hit for file %s (status=%s) — not queueing",
@@ -224,6 +245,145 @@ async def get_assessment(
         raise HTTPException(status_code=404, detail="No assessment found for this file")
 
     return EvidenceAssessmentResponse.from_assessment(assessment)
+
+
+# ---------------------------------------------------------------------------
+# Assessment engine: which engine judges this organisation's evidence, and
+# what the Jev shadow has said alongside the LLM
+# ---------------------------------------------------------------------------
+
+async def _shadow_stats(
+    db: AsyncSession, org_id: UUID, *, model_id: str, cutoff: float,
+) -> ShadowStatsSchema:
+    """Aggregate the shadow rows for one organisation in one query.
+
+    Only rows with a comparison count toward the agreement figures; rows with
+    ``error`` set count as failures. Rates are None until something has been
+    compared — None is "no data", never "0% agreement".
+
+    The figures describe the *current* configuration: rows from another Jev
+    model or question-set release are left out, and the confident-subset
+    figures count only rows judged at the cutoff in force now. A rate that
+    mixed two cutoffs would have no threshold it was true at, and the cutover
+    decision leans on exactly that rate.
+    """
+    S = EvidenceAssessmentShadowVerdict
+    comparison = S.comparison
+    compared_expr = func.coalesce(comparison["compared"].as_integer(), 0)
+    agreed_expr = func.coalesce(comparison["agreed"].as_integer(), 0)
+    confident_total_expr = func.coalesce(comparison["confident_total"].as_integer(), 0)
+    confident_agreed_expr = func.coalesce(comparison["confident_agreed"].as_integer(), 0)
+    status_agrees_expr = comparison["status_agrees"].as_boolean()
+    at_cutoff = S.confidence_cutoff == Decimal(str(cutoff))
+
+    result = await db.execute(
+        select(
+            func.count().filter(S.error.is_(None), comparison.isnot(None)).label("compared_verdicts"),
+            func.count().filter(S.error.isnot(None)).label("failed_verdicts"),
+            func.coalesce(func.sum(compared_expr), 0).label("objectives_compared"),
+            func.coalesce(func.sum(agreed_expr), 0).label("objectives_agreed"),
+            func.coalesce(func.sum(confident_total_expr).filter(at_cutoff), 0).label("confident_objectives"),
+            func.coalesce(func.sum(confident_agreed_expr).filter(at_cutoff), 0).label("confident_agreed"),
+            func.count().filter(status_agrees_expr.is_(True)).label("status_agreed"),
+            func.count().filter(status_agrees_expr.isnot(None)).label("status_compared"),
+            func.avg(S.processing_time_ms).filter(S.error.is_(None)).label("mean_latency_ms"),
+            func.sum(S.cost_cents).label("total_cost_cents"),
+            func.max(S.created_at).filter(S.error.is_(None)).label("last_compared_at"),
+        ).where(
+            S.organization_id == org_id,
+            S.model_id == model_id,
+            S.question_set_version == jev_assessment.QUESTION_SET_VERSION,
+        )
+    )
+    row = result.mappings().first() or {}
+
+    def _rate(num, den):
+        return round(int(num) / int(den), 4) if den else None
+
+    last = row.get("last_compared_at")
+    if last is not None and last.tzinfo is None:
+        last = last.replace(tzinfo=timezone.utc)
+    return ShadowStatsSchema(
+        compared_verdicts=int(row.get("compared_verdicts") or 0),
+        failed_verdicts=int(row.get("failed_verdicts") or 0),
+        objectives_compared=int(row.get("objectives_compared") or 0),
+        objectives_agreed=int(row.get("objectives_agreed") or 0),
+        agreement_rate=_rate(row.get("objectives_agreed") or 0, row.get("objectives_compared") or 0),
+        confident_objectives=int(row.get("confident_objectives") or 0),
+        confident_agreed=int(row.get("confident_agreed") or 0),
+        confident_agreement_rate=_rate(
+            row.get("confident_agreed") or 0, row.get("confident_objectives") or 0,
+        ),
+        status_agreement_rate=_rate(row.get("status_agreed") or 0, row.get("status_compared") or 0),
+        mean_latency_ms=float(row["mean_latency_ms"]) if row.get("mean_latency_ms") is not None else None,
+        total_cost_cents=float(row["total_cost_cents"]) if row.get("total_cost_cents") is not None else None,
+        last_compared_at=last,
+    )
+
+
+@router.get(
+    "/organizations/{org_id}/evidence-assessment/engine",
+    response_model=AssessmentEngineStatusResponse,
+    summary="Which engine assesses this organisation's evidence",
+    description=(
+        "The engine chosen in Settings (llm, jev_shadow or jev), whether a TypeSafe "
+        "key is available to the workers, the Jev model and confidence cutoff, and "
+        "the running shadow-comparison statistics."
+    ),
+)
+async def get_assessment_engine_status(
+    org_id: UUID,
+    membership: OrgMembership = Depends(require_org_role("viewer")),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(Organization.settings).where(Organization.id == org_id))
+    settings = result.scalar_one_or_none()
+    if settings is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    jev_model_id = resolve_model(jev_assessment.MODEL_ROLE)
+    cutoff = jev_assessment.confidence_cutoff()
+    return AssessmentEngineStatusResponse(
+        engine=jev_assessment.resolve_engine(settings),
+        # Presence only — the value never leaves services.secrets.
+        typesafe_key_configured=integration_enabled(TYPESAFE_KEY_ENV),
+        jev_model_id=jev_model_id,
+        confidence_cutoff=cutoff,
+        shadow_stats=await _shadow_stats(db, org_id, model_id=jev_model_id, cutoff=cutoff),
+    )
+
+
+@router.get(
+    "/organizations/{org_id}/evidence/{evidence_id}/files/{file_id}/assessment/shadow",
+    response_model=ShadowVerdictResponse,
+    summary="Jev's shadow verdict for a file",
+    description=(
+        "The most recent Jev shadow verdict for this file, with its per-objective "
+        "comparison against the stored verdict. 404 when no shadow has run."
+    ),
+)
+async def get_shadow_verdict(
+    org_id: UUID,
+    evidence_id: str,
+    file_id: UUID,
+    membership: OrgMembership = Depends(require_org_role("viewer")),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(EvidenceAssessmentShadowVerdict)
+        .where(
+            and_(
+                EvidenceAssessmentShadowVerdict.evidence_file_id == file_id,
+                EvidenceAssessmentShadowVerdict.organization_id == org_id,
+            )
+        )
+        .order_by(desc(EvidenceAssessmentShadowVerdict.created_at))
+        .limit(1)
+    )
+    row = result.scalar_one_or_none()
+    if not row:
+        raise HTTPException(status_code=404, detail="No shadow verdict for this file")
+    return ShadowVerdictResponse.from_row(row)
 
 
 # ---------------------------------------------------------------------------

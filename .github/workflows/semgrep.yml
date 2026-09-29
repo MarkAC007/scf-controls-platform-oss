@@ -132,7 +132,7 @@ jobs:
         with:
           sarif_file: semgrep-results.sarif
         # This repo has no Advanced Security, so ingestion 404s here. The step is
-        # kept because this workflow is one of the six shipped into the public
+        # kept because this workflow is one of the seven shipped into the public
         # snapshot (see scripts/prepare-oss.sh keep-list), where it IS the source
         # of the blocking `Semgrep OSS` check.
         continue-on-error: true

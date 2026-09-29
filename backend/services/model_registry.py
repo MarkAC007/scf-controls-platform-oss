@@ -55,6 +55,7 @@ __all__ = [
     "ROLES",
     "GLOBAL_MODEL_ENV",
     "GLOBAL_DEFAULT_ROLES",
+    "NON_ANTHROPIC_ROLES",
     "COST_TRACKED_ROLES",
     "resolve",
     "spec",
@@ -103,6 +104,19 @@ MODELS: Dict[str, ModelSpec] = {
         output_cost_per_mtok=25.0,
         notes="Opus tier. Evidence assessment default — verdict quality over cost.",
     ),
+    # TypeSafe System One. Charged per input token only; output is free, so the
+    # output rate is a real 0.0 rather than None — None would mean "unpriced"
+    # and refuse the model for a cost-tracked role. Pinned to the dated release
+    # rather than `jev-latest`: confidence cutoffs are tuned per release, and
+    # an alias that moves under a tuned cutoff silently changes what "confident"
+    # means. Rate card: https://docs.typesafe.ai/models
+    "jev-1.13.0": ModelSpec(
+        id="jev-1.13.0",
+        provider="typesafe",
+        input_cost_per_mtok=0.042,
+        output_cost_per_mtok=0.0,
+        notes="Jev System One. Evidence assessment shadow / primary engine (per-org setting).",
+    ),
 }
 
 
@@ -117,7 +131,16 @@ ROLES: Dict[str, Tuple[str, str]] = {
     "vendor_assessment": ("VENDOR_AI_MODEL", "claude-sonnet-4-6"),
     "recipe_generation": ("SYSTEMS_AI_MODEL", "claude-sonnet-4-6"),
     "doc_gen": ("DOC_GEN_AI_MODEL", "claude-sonnet-4-6"),
+    # The Jev engine for evidence assessment (shadow or primary, chosen per
+    # organisation in Settings). A different provider from every other role,
+    # which is why it is excluded from GLOBAL_DEFAULT_ROLES below.
+    "evidence_assessment_jev": ("EVIDENCE_JEV_MODEL", "jev-1.13.0"),
 }
+
+#: Roles served by a provider other than Anthropic. `SCF_AI_MODEL` means "move
+#: the platform onto a new Claude model"; letting it repoint one of these would
+#: send a Claude id to the TypeSafe API and fail every call.
+NON_ANTHROPIC_ROLES: Tuple[str, ...] = ("evidence_assessment_jev",)
 
 #: The one variable that repoints the platform's model.
 #:
@@ -135,7 +158,9 @@ GLOBAL_MODEL_ENV = "SCF_AI_MODEL"
 #: rather than copied by hand (a role added to ROLES and forgotten here would
 #: silently ignore the global). A role that must stay pinned to a different
 #: provider is excluded here explicitly and keeps its own variable.
-GLOBAL_DEFAULT_ROLES: Tuple[str, ...] = tuple(ROLES)
+GLOBAL_DEFAULT_ROLES: Tuple[str, ...] = tuple(
+    role for role in ROLES if role not in NON_ANTHROPIC_ROLES
+)
 
 #: Roles whose call sites write a cost figure to the database. A model without a
 #: declared price may not serve one of these — enforced by
@@ -144,6 +169,7 @@ GLOBAL_DEFAULT_ROLES: Tuple[str, ...] = tuple(ROLES)
 COST_TRACKED_ROLES: Tuple[str, ...] = (
     "evidence_assessment",
     "artifact_type_extraction",
+    "evidence_assessment_jev",
 )
 
 

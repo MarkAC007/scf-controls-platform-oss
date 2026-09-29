@@ -8,6 +8,7 @@ import { useAssessmentPolling } from '../../hooks/useAssessmentPolling'
 import { formatFileSize, fileTypeIcon, relativeTime } from './EvidenceFileList'
 import { PreparerAssertionPanel } from './PreparerAssertionPanel'
 import { AssessmentReviewPanel } from './AssessmentReviewPanel'
+import { ShadowVerdictPanel } from './ShadowVerdictPanel'
 import { verdictPresentation } from './assessmentVerdict'
 
 // ---- Props ----
@@ -560,6 +561,14 @@ export function EvidenceFilePreviewModal({
                     />
 
                     <AssessmentProvenance assessment={assessment} />
+
+                    <ShadowVerdictPanel
+                      orgId={orgId}
+                      evidenceId={evidenceId}
+                      fileId={file.id}
+                      assessmentVersion={assessment.version_number}
+                      assessmentVersionId={assessment.current_version_id}
+                    />
 
                     <div style={{ marginTop: 8 }}>
                       {/* Re-assess forces a fresh run. Without ``force`` the

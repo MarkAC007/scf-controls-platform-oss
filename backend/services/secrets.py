@@ -66,6 +66,7 @@ TIER3_NAMES: Tuple[str, ...] = (
     "ANTHROPIC_API_KEY",
     "HIBP_API_KEY",
     "NVD_API_KEY",
+    "TYPESAFE_API_KEY",
 )
 
 # Credentials the database tier must never be able to supply. Bootstrap secrets

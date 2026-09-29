@@ -1,0 +1,91 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "scf.fullname" . }}-celery-beat
+  labels:
+    {{- include "scf.componentLabels" (dict "ctx" . "component" "celery-beat") | nindent 4 }}
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "scf.componentSelectorLabels" (dict "ctx" . "component" "celery-beat") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "scf.componentSelectorLabels" (dict "ctx" . "component" "celery-beat") | nindent 8 }}
+        {{- with .Values.celery.beat.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.celery.beat.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- include "scf.imagePullSecrets" . | nindent 6 }}
+      serviceAccountName: {{ include "scf.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      terminationGracePeriodSeconds: {{ .Values.celery.beat.terminationGracePeriodSeconds }}
+      {{- with .Values.celery.beat.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
+      {{- with .Values.celery.beat.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.celery.beat.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.celery.beat.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: celery-beat
+          image: {{ include "scf.image" (dict "image" .Values.celery.beat.image "root" $) }}
+          imagePullPolicy: {{ .Values.celery.beat.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          args:
+            - -A
+            - celery_app
+            - beat
+            - --loglevel={{ .Values.celery.beat.logLevel }}
+            - --schedule
+            - /tmp/celerybeat-schedule
+          command: ["celery"]
+          {{- include "scf.appEnvFrom" . | nindent 10 }}
+          {{- with .Values.celery.beat.extraEnv }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if .Values.celery.beat.livenessProbe.enabled }}
+          livenessProbe:
+            exec:
+              command:
+                - python
+                - -m
+                - celery_beat_heartbeat
+            initialDelaySeconds: {{ .Values.celery.beat.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.celery.beat.livenessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.celery.beat.livenessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.celery.beat.livenessProbe.failureThreshold }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.celery.beat.resources | nindent 12 }}
+          volumeMounts:
+            {{- include "scf.backendVolumeMounts" . | nindent 12 }}
+            {{- with .Values.celery.beat.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        {{- include "scf.backendVolumes" . | nindent 8 }}
+        {{- with .Values.celery.beat.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
