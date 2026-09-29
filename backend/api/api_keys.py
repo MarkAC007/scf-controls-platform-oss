@@ -40,14 +40,15 @@ async def create_api_key(
     org_id: UUID,
     body: ApiKeyCreate,
     request: Request,
-    membership: OrgMembership = Depends(require_org_role("admin")),
+    membership: OrgMembership = Depends(require_org_role("editor")),
     db: AsyncSession = Depends(get_db),
 ):
     """
     Create a new API key for the current user, scoped to this organisation.
 
     The plaintext key is returned **once** in the response and is never stored.
-    Requires: org admin role.
+    Requires: org editor role or higher. The key carries the creator's role,
+    so an editor's key can never reach admin-only endpoints.
     """
     plaintext = _generate_key()
     prefix = plaintext[:8]
@@ -162,14 +163,14 @@ async def revoke_api_key(
     org_id: UUID,
     key_id: UUID,
     request: Request,
-    membership: OrgMembership = Depends(require_org_role("admin")),
+    membership: OrgMembership = Depends(require_org_role("editor")),
     db: AsyncSession = Depends(get_db),
 ):
     """
     Revoke (soft-delete) an API key.
 
     Org admins can revoke any key in their org.
-    Non-admins can only revoke their own keys.
+    Editors can only revoke their own keys.
     """
     result = await db.execute(
         select(ApiKey).where(

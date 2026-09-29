@@ -9,7 +9,10 @@ from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from datetime import datetime
+import asyncio
+import hashlib
 import hmac
+import json
 import os
 import logging
 
@@ -34,6 +37,7 @@ from models import (
 # Initialize HTTP Bearer security scheme
 security = HTTPBearer()
 from services.secrets import get_secret
+from redis_client import get_redis_client
 
 logger = logging.getLogger(__name__)
 
@@ -433,40 +437,46 @@ async def seed_bootstrap_admin() -> None:
         logger.info(f"Bootstrap admin: seeded pending platform admin {_mask_email(email)}")
 
 
-async def validate_google_token(token: str, db: AsyncSession) -> User:
+# Google access tokens are opaque, so each one is validated by calling Google
+# (tokeninfo + userinfo). A single page load fans out 20-40 API requests, and
+# validating every one with two live Google calls meant a single timeout or
+# 429 in the burst 401'd that request — which the SPA treats as a dead session
+# and signs the user out. The resolved identity is cached per token (keyed by
+# its SHA-256, never the token itself) for at most the token's remaining life,
+# and concurrent requests for the same token share one in-flight lookup.
+_GOOGLE_IDENTITY_CACHE_PREFIX = "google_identity:"
+_GOOGLE_IDENTITY_MAX_TTL_SECONDS = 300
+_GOOGLE_HTTP_TIMEOUT_SECONDS = 10.0
+_google_identity_inflight: dict[str, asyncio.Future] = {}
+
+
+class GoogleIdentityUnavailable(Exception):
+    """Google could not be reached or answered 5xx/429 — retryable, not a bad token."""
+
+
+def _google_identity_cache_key(token: str) -> str:
+    return _GOOGLE_IDENTITY_CACHE_PREFIX + hashlib.sha256(token.encode()).hexdigest()
+
+
+async def _fetch_google_identity(token: str) -> tuple[dict, int]:
+    """Validate ``token`` against Google; return (identity, seconds until it expires).
+
+    Raises GoogleIdentityUnavailable for transient Google-side failures and a
+    plain Exception when Google rejects the token.
     """
-    Validate Google OAuth2 access token using tokeninfo endpoint.
-
-    Args:
-        token: Google OAuth2 access token
-
-    Returns:
-        User: Authenticated user from Google
-
-    Raises:
-        HTTPException: If token is invalid
-    """
-    # First, validate that GOOGLE_CLIENT_ID is configured
-    if not GOOGLE_CLIENT_ID:
-        logger.error("GOOGLE_CLIENT_ID is not set but Google authentication is enabled")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Google authentication is misconfigured on the server",
-        )
-
-    logger.debug(f"Validating Google token (length: {len(token)})")
-    logger.debug(f"Expected GOOGLE_CLIENT_ID: {GOOGLE_CLIENT_ID[:20]}...")
+    import httpx
 
     try:
-        import httpx
-
-        # Verify the token using Google's tokeninfo endpoint
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=_GOOGLE_HTTP_TIMEOUT_SECONDS) as client:
+            # Verify the token using Google's tokeninfo endpoint
             response = await client.get(
                 f'https://oauth2.googleapis.com/tokeninfo?access_token={token}'
             )
 
             logger.debug(f"Google tokeninfo response status: {response.status_code}")
+
+            if response.status_code == 429 or response.status_code >= 500:
+                raise GoogleIdentityUnavailable(f"tokeninfo returned {response.status_code}")
 
             if response.status_code != 200:
                 error_detail = response.text
@@ -510,6 +520,9 @@ async def validate_google_token(token: str, db: AsyncSession) -> User:
 
             logger.debug(f"User info response status: {user_response.status_code}")
 
+            if user_response.status_code == 429 or user_response.status_code >= 500:
+                raise GoogleIdentityUnavailable(f"userinfo returned {user_response.status_code}")
+
             if user_response.status_code != 200:
                 error_detail = user_response.text
                 logger.error(f"Failed to get user info: {user_response.status_code} - {error_detail}")
@@ -517,16 +530,97 @@ async def validate_google_token(token: str, db: AsyncSession) -> User:
 
             user_info = user_response.json()
             logger.debug(f"User info received: {_mask_email(user_info.get('email'))}")
+    except httpx.HTTPError as exc:
+        # Transport failure/timeout is transient, not an invalid token.
+        raise GoogleIdentityUnavailable(f"Google unreachable: {type(exc).__name__}") from exc
 
-        # Extract user information
-        # The 'sub' claim is required for user identification
-        google_sub = user_info.get('sub')
-        if not google_sub:
-            logger.error("Missing 'sub' claim in user info response")
-            raise Exception("Missing required 'sub' claim in user info response")
+    # Extract user information
+    # The 'sub' claim is required for user identification
+    google_sub = user_info.get('sub')
+    if not google_sub:
+        logger.error("Missing 'sub' claim in user info response")
+        raise Exception("Missing required 'sub' claim in user info response")
 
-        email = user_info.get('email')
-        display_name = user_info.get('name')
+    try:
+        expires_in = int(token_info.get('expires_in', 0))
+    except (TypeError, ValueError):
+        expires_in = 0
+
+    identity = {"sub": google_sub, "email": user_info.get('email'), "name": user_info.get('name')}
+    return identity, expires_in
+
+
+async def _resolve_google_identity(token: str) -> dict:
+    """Return the Google identity for ``token`` — cached, single-flight per token."""
+    key = _google_identity_cache_key(token)
+
+    try:
+        redis = await get_redis_client()
+        cached = await redis.get(key)
+        if cached:
+            return json.loads(cached)
+    except Exception as exc:
+        # The cache is an optimisation; a Redis blip must not fail auth.
+        logger.warning("Google identity cache read failed: %s", type(exc).__name__)
+
+    pending = _google_identity_inflight.get(key)
+    if pending is not None:
+        return await asyncio.shield(pending)
+
+    future: asyncio.Future = asyncio.get_running_loop().create_future()
+    # Mark the result retrieved even when no concurrent waiter awaited it.
+    future.add_done_callback(lambda f: f.cancelled() or f.exception())
+    _google_identity_inflight[key] = future
+    try:
+        identity, expires_in = await _fetch_google_identity(token)
+        ttl = min(expires_in, _GOOGLE_IDENTITY_MAX_TTL_SECONDS)
+        if ttl > 0:
+            try:
+                redis = await get_redis_client()
+                await redis.set(key, json.dumps(identity), ex=ttl)
+            except Exception as exc:
+                logger.warning("Google identity cache write failed: %s", type(exc).__name__)
+        future.set_result(identity)
+        return identity
+    except asyncio.CancelledError:
+        future.cancel()
+        raise
+    except Exception as exc:
+        future.set_exception(exc)
+        raise
+    finally:
+        _google_identity_inflight.pop(key, None)
+
+
+async def validate_google_token(token: str, db: AsyncSession) -> User:
+    """
+    Validate Google OAuth2 access token using tokeninfo endpoint.
+
+    Args:
+        token: Google OAuth2 access token
+
+    Returns:
+        User: Authenticated user from Google
+
+    Raises:
+        HTTPException: If token is invalid
+    """
+    # First, validate that GOOGLE_CLIENT_ID is configured
+    if not GOOGLE_CLIENT_ID:
+        logger.error("GOOGLE_CLIENT_ID is not set but Google authentication is enabled")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Google authentication is misconfigured on the server",
+        )
+
+    logger.debug(f"Validating Google token (length: {len(token)})")
+    logger.debug(f"Expected GOOGLE_CLIENT_ID: {GOOGLE_CLIENT_ID[:20]}...")
+
+    try:
+        identity = await _resolve_google_identity(token)
+        google_sub = identity["sub"]
+        email = identity.get("email")
+        display_name = identity.get("name")
 
         logger.info(f"✅ Successfully validated Google token for user: {_mask_email(email)}")
 
@@ -555,6 +649,15 @@ async def validate_google_token(token: str, db: AsyncSession) -> User:
         # Re-raise HTTPException (e.g., 403 for non-provisioned users)
         # This must come BEFORE the generic Exception handler
         raise
+    except GoogleIdentityUnavailable as e:
+        # Google itself failed (timeout, 5xx, 429) — the token may be perfectly
+        # valid. A 401 here makes the SPA clear the session and sign the user
+        # out mid-click, so surface a retryable 503 instead.
+        logger.warning(f"Google token validation unavailable: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Google sign-in is temporarily unavailable. Please retry.",
+        )
     except Exception as e:
         logger.error(f"❌ Google token validation failed: {type(e).__name__}: {str(e)}")
         raise HTTPException(
@@ -599,6 +702,32 @@ async def validate_api_key(token: str) -> User:
         if _svc_id:
             user.db_id = _svc_id
     return user
+
+
+async def _current_org_role(db: AsyncSession, user_id, org_id) -> Optional[str]:
+    """The user's live role in ``org_id``, or None if they have no access.
+
+    Same two paths and precedence as ``verify_org_membership``: a direct
+    membership first, then an *active* consultant relationship.
+    """
+    member_role = (await db.execute(
+        select(OrganizationMember.role).where(
+            (OrganizationMember.organization_id == org_id) &
+            (OrganizationMember.user_id == user_id)
+        )
+    )).scalar_one_or_none()
+    if member_role is not None:
+        return member_role
+
+    return (await db.execute(
+        select(ConsultantClientRelationship.role)
+        .join(ConsultantProfile, ConsultantClientRelationship.consultant_id == ConsultantProfile.id)
+        .where(
+            (ConsultantClientRelationship.organization_id == org_id) &
+            (ConsultantProfile.user_id == user_id) &
+            (ConsultantClientRelationship.status == "active")
+        )
+    )).scalar_one_or_none()
 
 
 async def validate_user_api_key(token: str, db: AsyncSession) -> User:
@@ -661,6 +790,25 @@ async def validate_user_api_key(token: str, db: AsyncSession) -> User:
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    # The role frozen on the key is a ceiling, not a grant: the owner's
+    # current access to the key's org caps it. A removed owner's keys stop
+    # working, and a demoted owner's keys drop to the new role, without
+    # anyone having to find and revoke them.
+    current_role = await _current_org_role(db, db_user.id, matched_key.organization_id)
+    if current_role is None:
+        logger.warning(
+            f"API key rejected: owner {_mask_email(db_user.email)} no longer has access "
+            f"to org {matched_key.organization_id}"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="API key owner no longer has access to this organisation",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    effective_role = min(
+        (matched_key.role, current_role), key=lambda r: ROLE_HIERARCHY.get(r, 0)
+    )
+
     user = User(
         user_id=db_user.google_sub,
         email=db_user.email,
@@ -670,9 +818,9 @@ async def validate_user_api_key(token: str, db: AsyncSession) -> User:
     )
     # Attach scoped org/role metadata for downstream auth checks
     user._api_key_org_id = matched_key.organization_id
-    user._api_key_role = matched_key.role
+    user._api_key_role = effective_role
 
-    logger.info(f"✅ User authenticated via user API key: {_mask_email(db_user.email)} (org={matched_key.organization_id}, role={matched_key.role})")
+    logger.info(f"✅ User authenticated via user API key: {_mask_email(db_user.email)} (org={matched_key.organization_id}, role={effective_role})")
     return user
 
 
@@ -787,6 +935,10 @@ async def _authenticate(
             # This must be returned to the frontend for proper redirect handling
             if e.status_code == status.HTTP_403_FORBIDDEN:
                 logger.warning(f"Account not provisioned, returning 403: {e.detail}")
+                raise
+            # 503 = Google was unavailable, not a bad token. Falling through
+            # would end in a 401 and sign the user out, so surface it as-is.
+            if e.status_code == status.HTTP_503_SERVICE_UNAVAILABLE:
                 raise
             # Other errors (401, 500, etc.) - try API key fallback
             logger.warning(f"Google auth failed (will try API key fallback): {e.detail}")

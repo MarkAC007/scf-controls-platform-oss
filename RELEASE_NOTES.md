@@ -1,11 +1,12 @@
-# v0.43.0
+# v0.43.1
 
 .
 
-## What's new
+## Fixes and improvements
 
-- Task delete, consultant org deletion, auto-task toggle, won't-do status, sortable tasks, rich descriptions (PR 1096)
+- Let editors create API keys; cap a key's role at its owner's current access (PR 1099)
+- Stop Google-mode sessions ending on request bursts (PR 1098)
 
 ## Upgrading
 
-- Run `scripts/upgrade.sh v0.43.0` (read `UPGRADING.md` first).
+- Run `scripts/upgrade.sh v0.43.1` (read `UPGRADING.md` first).
