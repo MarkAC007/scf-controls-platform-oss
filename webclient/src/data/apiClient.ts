@@ -4686,10 +4686,35 @@ export async function getJourney(orgId: string): Promise<JourneyResponse> {
   return apiFetch<JourneyResponse>(`/organizations/${orgId}/journey`)
 }
 
+/** A stage of a practitioner-authored journey artefact, as the API's `StageSpec` accepts it. */
+export interface JourneyTemplateStage {
+  key: string
+  title: string
+  summary?: string | null
+  expect_next?: string | null
+  precondition_spec?: Array<Record<string, unknown>>
+}
+
+/** A practitioner-authored journey artefact. When present it wins over `template_key`. */
+export interface JourneyTemplateUpload {
+  template_key?: string
+  template_version?: string
+  name?: string
+  description?: string
+  stages: JourneyTemplateStage[]
+}
+
+export interface JourneyImportBody {
+  template_key?: string
+  activate?: boolean
+  practitioner_name?: string
+  template?: JourneyTemplateUpload
+}
+
 export async function importJourney(
   orgId: string,
-  body: { template_key?: string; activate?: boolean; practitioner_name?: string }
-): Promise<{ id: string; template_key: string; activated: boolean }> {
+  body: JourneyImportBody
+): Promise<{ id: string; template_key: string; template_version?: string | null; activated: boolean }> {
   return apiFetch(`/organizations/${orgId}/journey/import`, {
     method: 'POST',
     body: JSON.stringify(body),
