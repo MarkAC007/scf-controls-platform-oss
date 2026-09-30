@@ -71,14 +71,19 @@ async def check_vendor_limit(org_id: UUID, db: AsyncSession) -> bool:
     if is_single_tenant_active():
         return True
 
-    # Find org admin's subscription
+    # Find org admin's subscription. An organisation can have several admins
+    # (an invited co-admin, for example), so take the longest-standing one —
+    # the original owner — rather than assuming exactly one row. Collapsing
+    # this with scalar_one_or_none() raised MultipleResultsFound and turned
+    # every vendor create into a 500 once a second admin joined.
     admin_member = await db.execute(
         select(OrganizationMember).where(
             OrganizationMember.organization_id == org_id,
             OrganizationMember.role == "admin"
-        )
+        ).order_by(OrganizationMember.joined_at.asc(), OrganizationMember.id.asc())
+        .limit(1)
     )
-    admin = admin_member.scalar_one_or_none()
+    admin = admin_member.scalars().first()
 
     if not admin:
         logger.warning(f"No admin found for org {org_id} - denying vendor creation")
