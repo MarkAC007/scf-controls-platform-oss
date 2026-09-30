@@ -35879,6 +35879,34 @@ button.risk-list-header-cell:hover {
   margin: 0;
 }
 
+.journey-import {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.journey-import-label {
+  cursor: pointer;
+}
+
+.journey-import-error,
+.journey-import-ok {
+  margin: 0;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  max-width: 32rem;
+  text-align: right;
+}
+
+.journey-import-error {
+  color: var(--danger);
+}
+
+.journey-import-ok {
+  color: var(--text-muted);
+}
+
 .journey-unlit-note {
   background: var(--info-bg);
   border: 1px solid var(--border);

@@ -4,6 +4,7 @@ import {
   attestJourneyStage,
   getJourney,
   importJourney,
+  type JourneyImportBody,
   type JourneyResponse,
 } from '../data/apiClient'
 
@@ -81,8 +82,7 @@ export function useJourney(orgId?: string) {
 export function useImportJourney(orgId?: string) {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { template_key?: string; activate?: boolean; practitioner_name?: string }) =>
-      importJourney(orgId!, body),
+    mutationFn: (body: JourneyImportBody) => importJourney(orgId!, body),
     onSuccess: () => { qc.invalidateQueries({ queryKey: [JOURNEY_QUERY_ROOT, orgId] }) },
   })
 }

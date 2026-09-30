@@ -1,5 +1,6 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useAttestStage, useImportJourney, useJourney } from '../../hooks/useJourney'
+import { readFileText, readJourneyArtefact } from './journeyArtefact'
 import { useHasOrgRole } from '../../hooks/useHasOrgRole'
 import { deriveJourneyCompletion } from './journeyCompletion'
 import type { JourneyStage, JourneyStageState } from '../../data/apiClient'
@@ -38,6 +39,8 @@ export default function JourneyPage({ organizationId, onNavigateToTasks }: Props
   const [note, setNote] = useState('')
   const [conditional, setConditional] = useState(false)
   const [targetDate, setTargetDate] = useState('')
+  const [uploadError, setUploadError] = useState<string | null>(null)
+  const fileInput = useRef<HTMLInputElement>(null)
 
   const stages = data?.stages ?? []
   const currentIndex = useMemo(
@@ -78,6 +81,32 @@ export default function JourneyPage({ organizationId, onNavigateToTasks }: Props
 
   const engaged = !!data.practitioner
   const unlit = !data.provisioned || !data.activated
+
+  /*
+   * The practitioner's own route, uploaded as a file. This is the only way a
+   * plan authored outside the platform reaches the organisation: the artefact
+   * goes up as `template`, which wins over any built-in template key. A
+   * re-issue merges by stage key and the API refuses (409) a revision that
+   * would drop a signed stage, so the control stays available after the
+   * first import rather than hiding behind "provisioned".
+   */
+  const uploadArtefact = async (file: File | undefined) => {
+    setUploadError(null)
+    importJourney.reset()
+    if (!file) return
+    let template
+    try {
+      template = readJourneyArtefact(await readFileText(file))
+    } catch (err) {
+      setUploadError((err as Error).message)
+      if (fileInput.current) fileInput.current.value = ''
+      return
+    }
+    importJourney.mutate(
+      { template, activate: !data?.activated },
+      { onSettled: () => { if (fileInput.current) fileInput.current.value = '' } },
+    )
+  }
 
   const submitAttestation = async (stage: JourneyStage) => {
     if (!stage.id) return
@@ -135,6 +164,33 @@ export default function JourneyPage({ organizationId, onNavigateToTasks }: Props
           >
             {importJourney.isPending ? 'Starting…' : 'Start this journey'}
           </button>
+        )}
+        {isAdmin && (
+          <div className="journey-import">
+            <label className="btn btn-secondary journey-import-label">
+              {importJourney.isPending ? 'Importing…' : data.provisioned ? 'Re-issue from file' : 'Import journey file'}
+              <input
+                ref={fileInput}
+                type="file"
+                accept="application/json,.json"
+                aria-label="Import journey file"
+                disabled={importJourney.isPending}
+                onChange={e => { void uploadArtefact(e.target.files?.[0]) }}
+                style={{ display: 'none' }}
+              />
+            </label>
+            {(uploadError || importJourney.isError) && (
+              <p className="journey-import-error" role="alert">
+                Import failed: {uploadError ?? (importJourney.error as Error | null)?.message ?? 'unknown error'}
+              </p>
+            )}
+            {importJourney.isSuccess && importJourney.data?.template_key && (
+              <p className="journey-import-ok" role="status">
+                Imported {importJourney.data.template_key}
+                {importJourney.data.template_version ? ` ${importJourney.data.template_version}` : ''}
+              </p>
+            )}
+          </div>
         )}
       </header>
 
