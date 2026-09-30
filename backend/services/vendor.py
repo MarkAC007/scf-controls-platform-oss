@@ -23,13 +23,15 @@ from models import Vendor, UserSubscription, OrganizationMember, SubscriptionTie
 logger = logging.getLogger(__name__)
 
 # Vendor limits per subscription tier
+# Self-hosted platform: no billing, so no tier should cap a vendor register.
+# The ceiling is kept only as a sanity bound; every tier gets the same value.
 VENDOR_TIER_LIMITS = {
-    SubscriptionTier.FREE.value: 5,
-    SubscriptionTier.PROFESSIONAL.value: 100,
+    SubscriptionTier.FREE.value: 999,
+    SubscriptionTier.PROFESSIONAL.value: 999,
     SubscriptionTier.ENTERPRISE.value: 999,
     # Website tier aliases
-    "pro": 50,
-    "consultant": 100,
+    "pro": 999,
+    "consultant": 999,
     "custom": 999,
 }
 

@@ -1,11 +1,11 @@
-# v0.44.1
+# v0.44.2
 
 .
 
 ## Fixes and improvements
 
-- Tolerate organisations with more than one admin in the tier-limit check (PR 1108)
+- Lift the per-tier vendor ceiling to 999 for every tier (PR 1110)
 
 ## Upgrading
 
-- Run `scripts/upgrade.sh v0.44.1` (read `UPGRADING.md` first).
+- Run `scripts/upgrade.sh v0.44.2` (read `UPGRADING.md` first).
