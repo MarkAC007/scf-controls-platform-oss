@@ -91,6 +91,7 @@ export default function VersionCard({ status, loading = false, registry }: Versi
           )}
         </div>
       </div>
+      <img className="scf-logo" src="/scf-logo.png" alt="Secure Controls Framework" />
     </div>
   )
 }

@@ -19,7 +19,8 @@ from typing import Optional
 from uuid import UUID
 import logging
 
-from models import EvidenceTracking, EvidenceCollectionTask, Organization, User
+from models import EvidenceTracking, EvidenceCollectionTask, Organization, ScopedControl, User
+from catalog_models import SCFCatalogControl
 from database import AsyncSessionLocal
 from services.frequency_vocabulary import (
     TASK_INTERVAL_DAYS,
@@ -76,6 +77,11 @@ SKIP_UNRECOGNISED_FREQUENCY = "unrecognised_frequency"
 SKIP_NON_SCHEDULING = "non_scheduling"
 SKIP_DUPLICATE = "duplicate"
 SKIP_AUTO_GENERATION_DISABLED = "auto_generation_disabled"
+#: Tracked, scheduled, switched on — but no in-scope control lists this
+#: evidence in its evidence_requests. Un-scoping a control does not touch its
+#: evidence rows (by design: files and history survive), so without this gate a
+#: row orphaned by a scope change keeps minting collection work forever.
+SKIP_NOT_REQUIRED_BY_SCOPE = "not_required_by_scope"
 CREATED = "created"
 
 
@@ -114,6 +120,29 @@ async def _org_auto_generation_enabled(db: AsyncSession, organization_id) -> boo
     return resolve_auto_task_generation(result.scalar_one_or_none())
 
 
+async def _required_by_scope(db: AsyncSession, evidence: EvidenceTracking) -> bool:
+    """Whether at least one in-scope control of the row's org requests this evidence.
+
+    Same rule as ``services.scoping_service.effective_evidence_ids`` — that one
+    returns the whole set for an org (the sweep uses it once per org); this one
+    asks the question for a single row on the write path with an EXISTS-shaped
+    query rather than materialising the org's full requirement set per keystroke.
+    """
+    result = await db.execute(
+        select(ScopedControl.scf_id)
+        .join(SCFCatalogControl, SCFCatalogControl.scf_id == ScopedControl.scf_id)
+        .where(
+            and_(
+                ScopedControl.organization_id == evidence.organization_id,
+                ScopedControl.selected == True,  # noqa: E712
+                SCFCatalogControl.evidence_requests.contains([evidence.evidence_id]),
+            )
+        )
+        .limit(1)
+    )
+    return result.scalar_one_or_none() is not None
+
+
 @dataclass
 class TaskGenerationOutcome:
     """What one tracking row was owed, and what happened."""
@@ -144,6 +173,7 @@ async def generate_task_for_tracking(
     evidence: EvidenceTracking,
     *,
     auto_generation_enabled: Optional[bool] = None,
+    required_by_scope: Optional[bool] = None,
 ) -> TaskGenerationOutcome:
     """Create the collection task this tracking row is currently owed, if any.
 
@@ -153,6 +183,12 @@ async def generate_task_for_tracking(
     has already excluded switched-off organisations from its SELECT, passes
     ``True`` so it does not ask once per row. Manual task creation never comes
     through here, so the switch cannot stop a person creating a task by hand.
+
+    ``required_by_scope`` is whether some in-scope control of the org lists
+    this evidence in its ``evidence_requests``. ``None`` looks it up for the
+    row; the sweep computes each org's required set once and passes the
+    answer per row. Evidence nobody in scope asks for is tracked-but-idle: it
+    keeps its files and history, it just stops being scheduled.
 
     Adds to ``db`` and **never commits**. The caller's transaction decides
     whether the task lands, which is what lets a request handler call this
@@ -211,6 +247,17 @@ async def generate_task_for_tracking(
             f"{evidence.organization_id}; not generating for {evidence.evidence_id}"
         )
         return TaskGenerationOutcome(False, SKIP_AUTO_GENERATION_DISABLED, due_date=next_due)
+
+    # Scope is the last gate before the duplicate query: it is a lookup of its
+    # own, so it runs only for rows that have cleared every free check.
+    if required_by_scope is None:
+        required_by_scope = await _required_by_scope(db, evidence)
+    if not required_by_scope:
+        logger.debug(
+            f"No in-scope control requires evidence {evidence.evidence_id} for "
+            f"organisation {evidence.organization_id}; not generating"
+        )
+        return TaskGenerationOutcome(False, SKIP_NOT_REQUIRED_BY_SCOPE, due_date=next_due)
 
     # Check if task already exists for this due date (or within 3 days)
     result = await db.execute(
@@ -280,6 +327,26 @@ async def generate_task_for_tracking(
 # ---------------------------------------------------------------------------
 
 
+async def _required_evidence_by_org(db: AsyncSession) -> dict:
+    """organization_id → set of evidence ids some in-scope control requests.
+
+    The per-org flavour of ``scoping_service.effective_evidence_ids``, gathered
+    in one query for the sweep. An org with no scoped controls has no entry,
+    which reads as "nothing required" — the same answer the write path gives.
+    """
+    result = await db.execute(
+        select(ScopedControl.organization_id, SCFCatalogControl.evidence_requests)
+        .join(SCFCatalogControl, SCFCatalogControl.scf_id == ScopedControl.scf_id)
+        .where(ScopedControl.selected == True)  # noqa: E712
+    )
+    required: dict = {}
+    for org_id, requests in result.all():
+        if not isinstance(requests, (list, tuple)):
+            continue
+        required.setdefault(org_id, set()).update(str(r) for r in requests if r)
+    return required
+
+
 async def generate_evidence_tasks():
     """
     Generate evidence collection tasks for all tracked evidence based on frequency.
@@ -317,6 +384,11 @@ async def generate_evidence_tasks():
         result = await db.execute(select(EvidenceTracking).where(and_(*conditions)))
         evidence_records = result.scalars().all()
 
+        # One requirement set per organisation, computed once, rather than one
+        # EXISTS query per row: evidence_requests is on the catalog row, scope
+        # is on scoped_controls, and the sweep already has every row in hand.
+        required_by_org = await _required_evidence_by_org(db)
+
         logger.info(
             f"Found {len(evidence_records)} evidence records with frequency "
             f"(disabled_orgs={len(disabled_org_ids)})"
@@ -329,7 +401,10 @@ async def generate_evidence_tasks():
             try:
                 # Switched-off organisations were excluded above, so every row
                 # here belongs to one with generation on.
-                outcome = await generate_task_for_tracking(db, evidence, auto_generation_enabled=True)
+                required = evidence.evidence_id in required_by_org.get(evidence.organization_id, set())
+                outcome = await generate_task_for_tracking(db, evidence,
+                                                           auto_generation_enabled=True,
+                                                           required_by_scope=required)
                 if outcome.created:
                     tasks_created += 1
                 else:

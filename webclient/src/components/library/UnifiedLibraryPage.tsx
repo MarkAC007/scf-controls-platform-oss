@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
   type JSX,
+  type ReactNode,
 } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'react-hot-toast'
@@ -361,35 +362,31 @@ export default function UnifiedLibraryPage({
 
   if (item && activeControl) {
     const selected = activeScoping?.selected ?? activeListed?.selected ?? false
+    // Scope action sits in the detail page's breadcrumb bar; the header's
+    // "In scope" chip / "Not in scope" state already says which it is.
+    let scopeAction: ReactNode = null
+    if (selected && mode === 'full-library') {
+      scopeAction = (
+        <button type="button" className="btn-outline btn-sm" onClick={() => onModeChange('in-scope')}>
+          Open implementation record
+        </button>
+      )
+    } else if (selected && canEdit) {
+      scopeAction = (
+        <button type="button" className="btn-danger btn-sm" onClick={() => void applyScopeAction(item, true)}>
+          Remove from scope
+        </button>
+      )
+    } else if (!selected && canEdit) {
+      scopeAction = (
+        <button type="button" className="btn-primary btn-sm" onClick={() => void applyScopeAction(item, false)}>
+          Add to scope
+        </button>
+      )
+    }
     return (
       <>
         {modeSelector}
-        <div className="library-scope-action-bar">
-          {selected ? (
-            <>
-              <span>This control has an implementation record.</span>
-              {mode === 'full-library' && (
-                <button type="button" className="btn-primary" onClick={() => onModeChange('in-scope')}>
-                  Open implementation record
-                </button>
-              )}
-              {mode === 'in-scope' && canEdit && (
-                <button type="button" className="btn-danger" onClick={() => void applyScopeAction(item, true)}>
-                  Remove from scope
-                </button>
-              )}
-            </>
-          ) : (
-            <>
-              <span>Catalog fields are read-only. This control is not in scope.</span>
-              {canEdit && (
-                <button type="button" className="btn-primary" onClick={() => void applyScopeAction(item, false)}>
-                  Add to scope
-                </button>
-              )}
-            </>
-          )}
-        </div>
         <ControlDetailPage
           control={activeControl}
           scopingEntry={activeScoping ? {
@@ -412,6 +409,7 @@ export default function UnifiedLibraryPage({
           canEditImplementation={canEdit && selected}
           canManageTeams={canManageTeams}
           accountableTeamLabel={ownerByControlId[item] || null}
+          scopeAction={scopeAction}
         />
       </>
     )

@@ -68,12 +68,24 @@ vi.mock('../../hooks/useTeamAssignments', () => ({
 vi.mock('../../hooks/useIsOrgAdmin', () => ({
   useIsOrgAdmin: () => false,
 }))
-// The domain filter looks abbreviations up through react-query; this file
-// renders without a QueryClientProvider and is not about labels.
-vi.mock('../../hooks/useCatalogFilters', () => ({
-  useDomainIdentifiers: () => new Map<string, string>(),
-  domainFilterLabel: (identifier: string, name: string) => `${identifier} - ${name}`,
-}))
+// The domain filter reads catalog domains through react-query; this file
+// renders without a QueryClientProvider, so the catalog is stubbed. Stable
+// references, as react-query would give.
+vi.mock('../../hooks/useCatalogFilters', () => {
+  const catalog = {
+    domains: [
+      { value: 'GOV', label: 'GOV - Governance' },
+      { value: 'TST', label: 'TST - Testing' },
+      { value: 'BCD', label: 'BCD - Business Continuity & Disaster Recovery' },
+    ],
+  }
+  const identifiers = new Map<string, string>()
+  return {
+    useCatalogFilters: () => catalog,
+    useDomainIdentifiers: () => identifiers,
+    domainFilterLabel: (identifier: string, name: string) => `${identifier} - ${name}`,
+  }
+})
 vi.mock('../../hooks/useTeamFilteredEvidence', () => ({
   useTeamFilteredEvidence: () => ({ trackingIds: null, loading: false, error: null }),
 }))
@@ -166,6 +178,36 @@ describe('bare workspace arrival lands on the list', () => {
     // The evidence row has data-evidence-id set
     expect(document.querySelector('[data-evidence-id="E-TST-01"]')).not.toBeNull()
     expect(screen.queryByTestId('evidence-detail-page')).toBeNull()
+  })
+})
+
+describe('domain filter matches the Control Library', () => {
+  // E-BCM-* is the older ERL prefix for BCD; its area name is ERL vocabulary.
+  const bcm = { id: 'E-BCM-01', title: 'Continuity Plan', domain: 'Business Continuity' }
+  const withBcm: EnrichedControl = {
+    ...control,
+    artifactsResolved: [artifact, bcm],
+  } as unknown as EnrichedControl
+
+  const domainSelect = () =>
+    Array.from(document.querySelectorAll('select')).find(sel =>
+      Array.from(sel.options).some(o => o.value === 'all' && /All Domains/.test(o.text)),
+    )!
+
+  it('lists catalog domains as `ABBR - Name (count)` in catalog order', () => {
+    render(<EvidenceReview controls={[withBcm]} scopingData={scopingData} onScopingDataChange={() => {}} />)
+    expect(Array.from(domainSelect().options).map(o => o.text)).toEqual([
+      'All Domains (2)',
+      'TST - Testing (1)',
+      'BCD - Business Continuity & Disaster Recovery (1)',
+    ])
+  })
+
+  it('filters rows by the catalog domain from the evidence ID', () => {
+    render(<EvidenceReview controls={[withBcm]} scopingData={scopingData} onScopingDataChange={() => {}} />)
+    fireEvent.change(domainSelect(), { target: { value: 'BCD' } })
+    expect(document.querySelector('[data-evidence-id="E-BCM-01"]')).not.toBeNull()
+    expect(document.querySelector('[data-evidence-id="E-TST-01"]')).toBeNull()
   })
 })
 

@@ -15,9 +15,23 @@
  * Each RED expectation is labelled "RESTYLE → RED" so it is easy to find.
  */
 import { render, screen, fireEvent, within } from '@testing-library/react'
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import MappingMatrix from '../MappingMatrix'
 import type { EnrichedControl, ScopedControlsFile } from '../../types'
+
+// The domain filter reads catalog domains through react-query; this file
+// renders without a QueryClientProvider, so the catalog is stubbed (stable
+// reference, as react-query would give). Catalog order: GOV before AST.
+vi.mock('../../hooks/useCatalogFilters', () => {
+  const catalog = {
+    domains: [
+      { value: 'GOV', label: 'GOV - Governance' },
+      { value: 'AST', label: 'AST - Asset Management' },
+      { value: 'BCD', label: 'BCD - Business Continuity & Disaster Recovery' },
+    ],
+  }
+  return { useCatalogFilters: () => catalog }
+})
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -123,7 +137,7 @@ describe('MappingMatrix', () => {
       )
       const checkbox = container.querySelector('input[type="checkbox"]')
       expect(checkbox).not.toBeNull()
-      fireEvent.click(checkbox!)
+      // Scoped-only is on by default when the org has scoping data
       // After filtering: only GOV-01 and GOV-02 are selected=true → control count = 2
       // The count text should contain "2" near "Controls"
       expect(screen.queryByText('AST-01')).not.toBeInTheDocument()
@@ -134,34 +148,36 @@ describe('MappingMatrix', () => {
   })
 
   describe('scoped-only toggle', () => {
-    it('shows all controls by default', () => {
-      render(<MappingMatrix controls={[ctrl1, ctrl2, ctrl3]} scopingData={scopingDataWithStatuses} />)
-      expect(screen.getByText('GOV-01')).toBeInTheDocument()
-      expect(screen.getByText('GOV-02')).toBeInTheDocument()
-      expect(screen.getByText('AST-01')).toBeInTheDocument()
-    })
-
-    it('hides unscoped controls when toggle is checked', () => {
+    it('opens on scoped controls only when the org has scoping data', () => {
       const { container } = render(
         <MappingMatrix controls={[ctrl1, ctrl2, ctrl3]} scopingData={scopingDataWithStatuses} />,
       )
-      const checkbox = container.querySelector('input[type="checkbox"]')!
-      fireEvent.click(checkbox)
-      // AST-01 has selected=false → should be hidden
+      expect((container.querySelector('input[type="checkbox"]') as HTMLInputElement).checked).toBe(true)
+      // AST-01 has selected=false → hidden; GOV-01 and GOV-02 are selected → shown
       expect(screen.queryByText('AST-01')).not.toBeInTheDocument()
-      // GOV-01 and GOV-02 have selected=true → remain
       expect(screen.getByText('GOV-01')).toBeInTheDocument()
       expect(screen.getByText('GOV-02')).toBeInTheDocument()
     })
 
-    it('shows all controls again when toggle is unchecked', () => {
+    it('shows the full catalog when toggle is unchecked', () => {
       const { container } = render(
         <MappingMatrix controls={[ctrl1, ctrl2, ctrl3]} scopingData={scopingDataWithStatuses} />,
       )
       const checkbox = container.querySelector('input[type="checkbox"]')!
-      fireEvent.click(checkbox) // on
       fireEvent.click(checkbox) // off
+      expect(screen.getByText('GOV-01')).toBeInTheDocument()
+      expect(screen.getByText('GOV-02')).toBeInTheDocument()
       expect(screen.getByText('AST-01')).toBeInTheDocument()
+    })
+
+    it('hides unscoped controls again when toggle is re-checked', () => {
+      const { container } = render(
+        <MappingMatrix controls={[ctrl1, ctrl2, ctrl3]} scopingData={scopingDataWithStatuses} />,
+      )
+      const checkbox = container.querySelector('input[type="checkbox"]')!
+      fireEvent.click(checkbox) // off
+      fireEvent.click(checkbox) // on
+      expect(screen.queryByText('AST-01')).not.toBeInTheDocument()
     })
 
     it('toggle is not rendered when scopingData is null', () => {
@@ -331,10 +347,10 @@ describe('MappingMatrix', () => {
   })
 
   describe('toolbar structure (RESTYLE → new classes)', () => {
-    it('renders the toolbar region with matrix title', () => {
+    it('leaves the page title to the header bar, not the toolbar', () => {
       renderMatrix([ctrl1])
-      // The title text always present (class may change after restyle)
-      expect(screen.getByText(/SCF Framework Mapping Matrix/i)).toBeInTheDocument()
+      // The utility-bar header ("Framework Mappings") is the single page title
+      expect(screen.queryByText(/SCF Framework Mapping Matrix/i)).not.toBeInTheDocument()
     })
 
     it('toolbar uses explorer-toolbar class after restyle', () => {
@@ -344,6 +360,64 @@ describe('MappingMatrix', () => {
       // This assertion becomes GREEN after restyle:
       const toolbar = container.querySelector('.matrix-toolbar')
       expect(toolbar).not.toBeNull()
+    })
+  })
+
+  describe('virtualisation — the full catalog is never rendered at once', () => {
+    // 100 controls × 80 frameworks: larger than the pre-measurement window
+    // (60 rows × 60 columns). jsdom has no layout, so it stays on that window.
+    const frameworkKeys = Array.from({ length: 80 }, (_, i) => `FW_${String(i).padStart(2, '0')}_ref`)
+    const bigCatalog = Array.from({ length: 100 }, (_, i) =>
+      makeControl(`BIG-${String(i).padStart(3, '0')}`, `Control ${i}`, Object.fromEntries(frameworkKeys.map(k => [k, ['x']]))),
+    )
+
+    it('renders only a window of rows and columns, not every cell', () => {
+      const { container } = renderMatrix(bigCatalog)
+      expect(container.querySelectorAll('tbody tr.matrix-body-row').length).toBe(60)
+      expect(container.querySelectorAll('thead th.framework-header').length).toBe(60)
+      expect(container.querySelectorAll('tbody td.mapping-cell').length).toBe(60 * 60)
+    })
+
+    it('keeps the counts for the whole catalog, not the rendered window', () => {
+      renderMatrix(bigCatalog)
+      expect(screen.getByText(/100\s*controls/)).toBeInTheDocument()
+      expect(screen.getByText('80 frameworks')).toBeInTheDocument()
+    })
+  })
+
+  describe('domain filter', () => {
+    const domainSelect = (container: HTMLElement) =>
+      Array.from(container.querySelectorAll('select')).find(sel =>
+        Array.from(sel.options).some(o => /All Domains/.test(o.text)),
+      )!
+
+    it('lists present catalog domains as `ABBR - Name (count)` in catalog order', () => {
+      const { container } = render(<MappingMatrix controls={[ctrl3, ctrl1, ctrl2]} scopingData={null} />)
+      expect(Array.from(domainSelect(container).options).map(o => o.text)).toEqual([
+        'All Domains (3)',
+        'GOV - Governance (2)',
+        'AST - Asset Management (1)',
+      ])
+    })
+
+    it('shows only the chosen domain, and only the frameworks it maps to', () => {
+      const { container } = render(<MappingMatrix controls={[ctrl1, ctrl2, ctrl3]} scopingData={null} />)
+      fireEvent.change(domainSelect(container), { target: { value: 'AST' } })
+      expect(screen.getByText('AST-01')).toBeInTheDocument()
+      expect(screen.queryByText('GOV-01')).not.toBeInTheDocument()
+      expect(container.querySelectorAll('th.framework-header')).toHaveLength(1)
+      expect(container.textContent).toMatch(/1\s*\/\s*3\s*controls/)
+    })
+
+    it('counts within the scoped-only view', () => {
+      const { container } = render(
+        <MappingMatrix controls={[ctrl1, ctrl2, ctrl3]} scopingData={scopingDataWithStatuses} />,
+      )
+      // AST-01 is out of scope, so AST is not offered while scoped-only is on
+      expect(Array.from(domainSelect(container).options).map(o => o.text)).toEqual([
+        'All Domains (2)',
+        'GOV - Governance (2)',
+      ])
     })
   })
 })

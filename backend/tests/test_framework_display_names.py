@@ -31,7 +31,25 @@ def test_falls_back_without_live_names(monkeypatch):
     monkeypatch.setattr(catalog, "FRAMEWORK_DISPLAY_NAMES", {"iso_27001_2022": "ISO 27001 (json)"})
 
     assert catalog.format_framework_name("iso_27001_2022") == "ISO 27001 (json)"
-    assert catalog.format_framework_name("some_new_fw", {}) == "Some New Fw"
+    assert catalog.format_framework_name("brand_new_standard_2_1", {}) == "Brand New Standard 2.1"
+
+
+@pytest.mark.parametrize(
+    "framework_id, expected",
+    [
+        ("emea_uk_cyber_essentials_3_3", "UK Cyber Essentials 3.3"),
+        ("usa_federal_sox_2002", "SOX 2002"),
+        ("usa_federal_fedramp_r5_moderate", "FedRAMP R5 Moderate"),
+        ("usa_federal_nrc_10_cfr_73_54_2015", "NRC 10 CFR 73.54 2015"),
+        ("usa_colorado_colorado_privacy_act_2021", "Colorado Privacy Act 2021"),
+        ("apac_hong_kong_pdo_2022", "Hong Kong PDO 2022"),
+        ("americas_canada_pipeda_2000", "Canada PIPEDA 2000"),
+        ("usa", "USA"),
+    ],
+)
+def test_unnamed_ids_are_humanised(monkeypatch, framework_id, expected):
+    monkeypatch.setattr(catalog, "FRAMEWORK_DISPLAY_NAMES", {})
+    assert catalog.format_framework_name(framework_id, {}) == expected
 
 
 @pytest.mark.asyncio

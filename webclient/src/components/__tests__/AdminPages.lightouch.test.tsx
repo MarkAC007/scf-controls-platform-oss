@@ -211,7 +211,7 @@ vi.mock('../../data/apiClient', async (importOriginal) => {
 })
 
 describe('AuditLogPage', () => {
-  it('renders the Audit Log heading', async () => {
+  it('leaves the page title to the header bar and keeps its subtitle', async () => {
     vi.mocked(getOrgAuditLog).mockResolvedValue({
       entries: [],
       total: 0,
@@ -220,7 +220,10 @@ describe('AuditLogPage', () => {
     await waitFor(() =>
       expect(screen.queryByText(/loading audit log/i)).not.toBeInTheDocument()
     )
-    expect(screen.getByRole('heading', { name: /audit log/i })).toBeInTheDocument()
+    // "Audit Log" is the utility-bar title (TAB_TITLES); the page itself no
+    // longer repeats it.
+    expect(screen.queryByRole('heading', { name: /audit log/i })).not.toBeInTheDocument()
+    expect(screen.getByText(/complete change history/i)).toBeInTheDocument()
   })
 
   it('renders filter controls including search and apply button', async () => {

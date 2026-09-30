@@ -42,6 +42,7 @@ import { userLabel } from '../../data/userDisplay'
 import { PER_WINDOW_REVIEW_ENABLED } from '../../data/featureFlags'
 import { getEvidenceTracking } from '../../data/scopingService'
 import { useIsOrgEditor } from '../../hooks/useHasOrgRole'
+import DetailSplitLayout from '../explorer/DetailSplitLayout'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -204,6 +205,256 @@ export default function EvidenceDetailPage({
     null
   const legacyAssigneeName = legacyAssignee ? userLabel(legacyAssignee) : legacyAssigneeId
 
+  // ── The team's inputs: the slide-out panel ─────────────────────────────────
+  const recordPanel = (
+    <>
+      {/* ── Collection Record Form ─────────────────────────────────────────── */}
+      <div className="detail-section-container surface-bench" data-testid="evidence-collection-record">
+        <div className="container-header bench-header">
+          <span className="container-icon">📋</span>
+          <span className="container-title">Your Collection Record</span>
+          {isTracked && <span className="container-tracking-badge">✓ Active</span>}
+        </div>
+        <div className="container-content">
+          {/* Tracking toggle */}
+          <div className="tracking-toggle-section">
+            <label className="tracking-toggle-label">
+              <input
+                type="checkbox"
+                checked={isTracked}
+                onChange={e => onUpdateTracking(evidenceItem.id, 'is_tracked', e.target.checked)}
+                className="tracking-checkbox"
+              />
+              <div className="tracking-toggle-content">
+                <div className="tracking-toggle-title">Evidence Collection Active</div>
+                <div className="tracking-toggle-hint">Mark this evidence as being actively collected for compliance</div>
+              </div>
+            </label>
+          </div>
+
+          {/* Collecting System with suggestions */}
+          <div className="form-group">
+            <label>Collecting System</label>
+            {(() => {
+              const suggestedNames = new Set(
+                (suggestions?.capable_systems || []).map(s => s.name)
+              )
+              const suggestedSystems = systems.filter(s => suggestedNames.has(s.name))
+              const otherSystems = systems.filter(s => !suggestedNames.has(s.name))
+              return (
+                <select
+                  value={tracking.collecting_system || ''}
+                  onChange={e => onUpdateTracking(evidenceItem.id, 'collecting_system', e.target.value)}
+                  className="form-control"
+                >
+                  <option value="">Select System...</option>
+                  {suggestedSystems.length > 0 && (
+                    <optgroup label="Suggested for this evidence">
+                      {suggestedSystems.map(system => {
+                        const cap = suggestions?.capable_systems.find(s => s.name === system.name)
+                        return (
+                          <option key={system.id} value={system.name}>
+                            {system.name} ({system.vendor || system.system_type}){cap ? ` — ${cap.capability_status}` : ''}
+                          </option>
+                        )
+                      })}
+                    </optgroup>
+                  )}
+                  {otherSystems.length > 0 && (
+                    <optgroup label="All systems">
+                      {otherSystems.map(system => (
+                        <option key={system.id} value={system.name}>
+                          {system.name} ({system.vendor || system.system_type})
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                  <optgroup label="Other">
+                    <option value="Manual">Manual / Not Automated</option>
+                  </optgroup>
+                </select>
+              )
+            })()}
+            {suggestions?.recommendation && !tracking.collecting_system && (
+              <div className="form-hint suggestion-inline-hint">
+                {'✨'} Recommended: <strong>{suggestions.recommendation.system_name}</strong> — {suggestions.recommendation.reason}
+              </div>
+            )}
+          </div>
+
+          {/* Collection Maturity */}
+          <div className="form-group">
+            <label>Collection Maturity</label>
+            <MaturityStepper
+              value={tracking.maturity_level}
+              onChange={level => onUpdateTracking(evidenceItem.id, 'maturity_level', level)}
+            />
+          </div>
+
+          {/* How it is collected, and how often. */}
+          <div className="form-row">
+            <div className="form-group">
+              <label>Method of Collection</label>
+              <input
+                type="text"
+                value={tracking.method_of_collection || ''}
+                onChange={e => onUpdateTracking(evidenceItem.id, 'method_of_collection', e.target.value)}
+                placeholder="e.g., Automated export, Manual review, Screenshot"
+                className="form-control"
+              />
+            </div>
+            <div className="form-group">
+              <label>Frequency</label>
+              <select
+                value={tracking.frequency || ''}
+                onChange={e => onUpdateTracking(evidenceItem.id, 'frequency', e.target.value)}
+                className="form-control"
+              >
+                <option value="">Not set</option>
+                {frequencyOptionsFor(tracking.frequency).map(opt => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/*
+            Owning teams, promoted out of the collaboration block at the
+            foot of the page (C3). Who is answerable for this evidence
+            belongs with how it is collected, not below the comment thread.
+            The gate comes up with it: OwningTeams addresses the tracking
+            row by its database id, so an item that has never been saved has
+            nothing for it to read.
+          */}
+          {evidenceDbId && scopingData.organizationId && (
+            <div className="form-group">
+              <OwningTeams
+                organizationId={scopingData.organizationId}
+                assignableType="evidence"
+                assignableId={evidenceDbId}
+                canManage={canManageTeams}
+                onChange={() => { void onReloadTeamAssignments() }}
+              />
+            </div>
+          )}
+
+          {/* Legacy assignee — read-only, clearable, never settable. */}
+          {legacyAssigneeId && (
+            <div
+              className="form-group evidence-legacy-assignee"
+              data-testid="evidence-legacy-assignee"
+            >
+              <label>Legacy assignee</label>
+              <div className="evidence-legacy-assignee-row">
+                <span className="evidence-legacy-assignee-name">{legacyAssigneeName}</span>
+                <button
+                  type="button"
+                  className="btn btn-sm btn-secondary"
+                  onClick={() =>
+                    onUpdateTracking(evidenceItem.id, 'assigned_user_id', '')
+                  }
+                >
+                  Clear
+                </button>
+              </div>
+              <p className="form-hint evidence-legacy-assignee-hint">
+                This item was assigned to a person before ownership moved to
+                owning teams. The first reminder for it keeps going to them,
+                and not to the owning teams above, until you clear this.
+              </p>
+            </div>
+          )}
+
+          {/* Comments */}
+          <div className="form-group">
+            <label>Comments</label>
+            <textarea
+              value={tracking.comments || ''}
+              onChange={e => onUpdateTracking(evidenceItem.id, 'comments', e.target.value)}
+              placeholder="Additional notes about evidence collection..."
+              className="form-control"
+              rows={3}
+            />
+          </div>
+        </div>
+      </div>
+
+      {/*
+        Tasks, unconditionally. The card used to disappear with the rest of
+        the collaboration block until a tracking row existed, so the one
+        state that needs to be told what to do next was the state that got
+        no card at all. It renders disabled instead, and says why.
+      */}
+      <EvidenceTaskList
+        evidenceTrackingId={evidenceDbId ?? ''}
+        evidenceId={evidenceItem.id}
+        organizationId={scopingData.organizationId ?? ''}
+        onTaskChange={() => {}}
+        disabled={!evidenceDbId || !scopingData.organizationId}
+      />
+
+      {/* ── Evidence Files ─────────────────────────────────────────────────── */}
+      {scopingData.organizationId && (
+        <div className="detail-section-container surface-bench">
+          <div className="container-header bench-header">
+            <span className="container-icon">{'📁'}</span>
+            <span className="container-title">Your Evidence Files</span>
+          </div>
+          <div className="container-content">
+            {!isTracked && (
+              <UntrackedUploadNotice
+                onStartTracking={() =>
+                  onUpdateTracking(evidenceItem.id, 'is_tracked', true)
+                }
+              />
+            )}
+            <EvidenceFileUpload
+              orgId={scopingData.organizationId}
+              evidenceId={evidenceItem.id}
+              onUploadComplete={onFileUploaded}
+            />
+            <EvidenceFileList
+              orgId={scopingData.organizationId}
+              evidenceId={evidenceItem.id}
+              refreshTrigger={fileListRefreshTrigger}
+              canReview={canReviewFiles}
+              canAssess={canReviewFiles}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* ── Window Review Panel (flag-gated) ─────────────────────────────── */}
+      {scopingData.organizationId && PER_WINDOW_REVIEW_ENABLED && (
+        <WindowReviewPanel
+          orgId={scopingData.organizationId}
+          evidenceId={evidenceItem.id}
+          refreshTrigger={fileListRefreshTrigger}
+        />
+      )}
+
+      {/* ── Comments ─────────────────────────────────────────────────────── */}
+      {evidenceDbId && scopingData.organizationId ? (
+        <div className="evidence-collaboration-container">
+          {/* Comment thread */}
+          <div className="evidence-collaboration-section">
+            <ModernCommentThread
+              commentableType="evidence"
+              commentableId={evidenceDbId}
+              organizationId={scopingData.organizationId}
+            />
+          </div>
+        </div>
+      ) : (
+        <div className="evidence-save-hint">
+          <p>
+            Save this evidence tracking to enable owning teams and comments
+          </p>
+        </div>
+      )}
+    </>
+  )
+
   // ── Render ───────────────────────────────────────────────────────────────────
   return (
     <div className="evidence-detail-page">
@@ -280,442 +531,211 @@ export default function EvidenceDetailPage({
         </div>
       </div>
 
-      {/* ── Scrollable body ────────────────────────────────────────────────── */}
-      <div className="evidence-detail-body">
-        {/* ── Header ─────────────────────────────────────────────────────────── */}
-        <div className="detail-header-compact evidence-detail-heading">
-          <div className="detail-header-main surface-bedrock" data-source="SCF Evidence Requirements">
-            <span className="scf-source-tag">SCF ERL</span>
-            <div className="detail-id-compact">{evidenceItem.id}</div>
-            <h2 className="detail-name-compact">{evidenceItem.title}</h2>
-            <div className="detail-meta-row">
-              <span className="detail-domain-compact">{evidenceItem.domain}</span>
-              <div className="detail-badges">
-                {isTracked ? (
-                  <span className="badge-theme theme-process">Tracked</span>
-                ) : (
-                  <span className="badge-type type-detective">Not Tracked</span>
-                )}
-                {tracking.maturity_level && (
-                  <MaturityBadge level={tracking.maturity_level} size="small" />
-                )}
-                {saving && <span className="detail-save-chip">Saving…</span>}
+      {/*
+        Split view: the evidence requirement on the left (catalog guidance,
+        why it is required, how to collect it), and everything the team
+        records against it in the slide-out panel on the right.
+      */}
+      <DetailSplitLayout panelTitle="Your record" panel={recordPanel}>
+        <div className="evidence-detail-body">
+          {/* ── Header ─────────────────────────────────────────────────────────── */}
+          <div className="detail-header-compact evidence-detail-heading">
+            <div className="detail-header-main surface-bedrock" data-source="SCF Evidence Requirements">
+              <span className="scf-source-tag">SCF ERL</span>
+              <div className="detail-id-compact">{evidenceItem.id}</div>
+              <h2 className="detail-name-compact">{evidenceItem.title}</h2>
+              <div className="detail-meta-row">
+                <span className="detail-domain-compact">{evidenceItem.domain}</span>
+                <div className="detail-badges">
+                  {isTracked ? (
+                    <span className="badge-theme theme-process">Tracked</span>
+                  ) : (
+                    <span className="badge-type type-detective">Not Tracked</span>
+                  )}
+                  {isTracked && tracking.required_by_scope === false && (
+                    <span
+                      className="badge-warning"
+                      title="No in-scope control lists this evidence. The collector and its tasks keep running until you untrack it."
+                    >
+                      Not required by any in-scope control
+                    </span>
+                  )}
+                  {tracking.maturity_level && (
+                    <MaturityBadge level={tracking.maturity_level} size="small" />
+                  )}
+                  {saving && <span className="detail-save-chip">Saving…</span>}
+                </div>
               </div>
             </div>
           </div>
-        </div>
 
-        <div className="detail-content-compact">
-          {/* ── Evidence Guidance ────────────────────────────────────────────── */}
-          <ScfReference>
-            <EvidenceTemplateGuidance
-              evidenceId={evidenceItem.id}
-              evidenceTemplates={evidenceTemplates}
-              orgId={scopingData.organizationId}
-              erlData={erlData}
-              tracking={evidenceTracking}
-            />
-          </ScfReference>
+          <div className="detail-content-compact">
+            {/* ── Evidence Guidance ────────────────────────────────────────────── */}
+            <ScfReference>
+              <EvidenceTemplateGuidance
+                evidenceId={evidenceItem.id}
+                evidenceTemplates={evidenceTemplates}
+                orgId={scopingData.organizationId}
+                erlData={erlData}
+                tracking={evidenceTracking}
+              />
+            </ScfReference>
 
-          {/*
-            Required by Controls, as a strip rather than a section. It is
-            provenance — why this item is on the list at all — and it was taking
-            a full card's height to say something nobody comes to this page to
-            read. The chips still navigate.
-          */}
-          <ScfReference>
-            <div className="detail-section-container evidence-required-strip">
-              <div className="evidence-required-strip-row">
-                <span className="evidence-required-strip-label">Required by Controls</span>
-                <span className="container-count">{requiringControls.length}</span>
-                {requiringControls.length === 0 ? (
-                  <p className="muted evidence-required-strip-empty">No controls require this evidence</p>
-                ) : (
-                  <div className="requiring-controls-pills">
-                    {requiringControls.map(ctrl => {
-                      const tooltipId = `tooltip-ev-${evidenceItem.id}-${ctrl.scf_id}`
-                      const ctrlScopedData = getScopedControl(scopingData, ctrl.scf_id)
-                      const implStatus = ctrlScopedData?.implementation_status || 'not_started'
+            {/*
+              Required by Controls, as a strip rather than a section. It is
+              provenance — why this item is on the list at all — and it was taking
+              a full card's height to say something nobody comes to this page to
+              read. The chips still navigate.
+            */}
+            <ScfReference>
+              <div className="detail-section-container evidence-required-strip">
+                <div className="evidence-required-strip-row">
+                  <span className="evidence-required-strip-label">Required by Controls</span>
+                  <span className="container-count">{requiringControls.length}</span>
+                  {requiringControls.length === 0 ? (
+                    <p className="muted evidence-required-strip-empty">No controls require this evidence</p>
+                  ) : (
+                    <div className="requiring-controls-pills">
+                      {requiringControls.map(ctrl => {
+                        const tooltipId = `tooltip-ev-${evidenceItem.id}-${ctrl.scf_id}`
+                        const ctrlScopedData = getScopedControl(scopingData, ctrl.scf_id)
+                        const implStatus = ctrlScopedData?.implementation_status || 'not_started'
 
-                      const statusConfig = {
-                        implemented: { label: 'IMPLEMENTED', icon: '✅', class: 'status-implemented' },
-                        in_progress: { label: 'IN PROGRESS', icon: '🔄', class: 'status-in-progress' },
-                        not_started: { label: 'NOT STARTED', icon: '⭕', class: 'status-not-started' },
-                        at_risk: { label: 'AT RISK', icon: '⚠️', class: 'status-at-risk' },
-                        not_applicable: { label: 'NOT APPLICABLE', icon: '❌', class: 'status-not-applicable' },
-                        deferred: { label: 'DEFERRED', icon: '⏸️', class: 'status-deferred' },
-                      }
-                      const status = statusConfig[implStatus as keyof typeof statusConfig] || statusConfig.not_started
-                      const pillStatusClass =
-                        implStatus === 'not_applicable' ? 'pill-not-applicable' :
-                        implStatus === 'deferred' ? 'pill-deferred' :
-                        implStatus === 'at_risk' ? 'pill-at-risk' : ''
+                        const statusConfig = {
+                          implemented: { label: 'IMPLEMENTED', icon: '✅', class: 'status-implemented' },
+                          in_progress: { label: 'IN PROGRESS', icon: '🔄', class: 'status-in-progress' },
+                          not_started: { label: 'NOT STARTED', icon: '⭕', class: 'status-not-started' },
+                          at_risk: { label: 'AT RISK', icon: '⚠️', class: 'status-at-risk' },
+                          not_applicable: { label: 'NOT APPLICABLE', icon: '❌', class: 'status-not-applicable' },
+                          deferred: { label: 'DEFERRED', icon: '⏸️', class: 'status-deferred' },
+                        }
+                        const status = statusConfig[implStatus as keyof typeof statusConfig] || statusConfig.not_started
+                        const pillStatusClass =
+                          implStatus === 'not_applicable' ? 'pill-not-applicable' :
+                          implStatus === 'deferred' ? 'pill-deferred' :
+                          implStatus === 'at_risk' ? 'pill-at-risk' : ''
 
-                      return (
-                        <div key={ctrl.scf_id} className="control-pill-wrapper">
-                          <button
-                            className={`control-pill ${pillStatusClass}`}
-                            onClick={() => onNavigateToControl(ctrl.scf_id)}
-                            onMouseEnter={(e) => {
-                              const tooltip = document.getElementById(tooltipId)
-                              if (tooltip) {
-                                const rect = e.currentTarget.getBoundingClientRect()
-                                tooltip.style.top = `${rect.top - tooltip.offsetHeight - 8}px`
-                                tooltip.style.left = `${Math.max(10, rect.left + rect.width / 2 - 200)}px`
-                              }
-                            }}
-                          >
-                            {ctrl.scf_id} — {ctrl.control_name}
-                          </button>
-                          <div id={tooltipId} className="control-tooltip">
-                            <div className="tooltip-header">
-                              <strong>{ctrl.scf_id}</strong> — {ctrl.control_name}
-                            </div>
-                            <div className="tooltip-domain">{ctrl.scf_domain}</div>
-                            {ctrlScopedData && status && (
-                              <div className={`tooltip-status-box ${status.class}`}>
-                                <div className="status-row">
-                                  <span className="status-label">Status:</span>
-                                  <span className="status-value">{status.icon} {status.label}</span>
-                                </div>
-                                {ctrlScopedData.owner && (
-                                  <div className="status-row">
-                                    <span className="status-label">Owner:</span>
-                                    <span className="status-value">{ctrlScopedData.owner}</span>
-                                  </div>
-                                )}
-                                {ctrlScopedData.completion_date && (
-                                  <div className="status-row">
-                                    <span className="status-label">Target Date:</span>
-                                    <span className="status-value">{ctrlScopedData.completion_date}</span>
-                                  </div>
-                                )}
+                        return (
+                          <div key={ctrl.scf_id} className="control-pill-wrapper">
+                            <button
+                              className={`control-pill ${pillStatusClass}`}
+                              onClick={() => onNavigateToControl(ctrl.scf_id)}
+                              onMouseEnter={(e) => {
+                                const tooltip = document.getElementById(tooltipId)
+                                if (tooltip) {
+                                  const rect = e.currentTarget.getBoundingClientRect()
+                                  tooltip.style.top = `${rect.top - tooltip.offsetHeight - 8}px`
+                                  tooltip.style.left = `${Math.max(10, rect.left + rect.width / 2 - 200)}px`
+                                }
+                              }}
+                            >
+                              {ctrl.scf_id} — {ctrl.control_name}
+                            </button>
+                            <div id={tooltipId} className="control-tooltip">
+                              <div className="tooltip-header">
+                                <strong>{ctrl.scf_id}</strong> — {ctrl.control_name}
                               </div>
-                            )}
-                            <div className="tooltip-section">
-                              <strong>Description:</strong>
-                              <p>{ctrl.control_description}</p>
+                              <div className="tooltip-domain">{ctrl.scf_domain}</div>
+                              {ctrlScopedData && status && (
+                                <div className={`tooltip-status-box ${status.class}`}>
+                                  <div className="status-row">
+                                    <span className="status-label">Status:</span>
+                                    <span className="status-value">{status.icon} {status.label}</span>
+                                  </div>
+                                  {ctrlScopedData.owner && (
+                                    <div className="status-row">
+                                      <span className="status-label">Owner:</span>
+                                      <span className="status-value">{ctrlScopedData.owner}</span>
+                                    </div>
+                                  )}
+                                  {ctrlScopedData.completion_date && (
+                                    <div className="status-row">
+                                      <span className="status-label">Target Date:</span>
+                                      <span className="status-value">{ctrlScopedData.completion_date}</span>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                              <div className="tooltip-section">
+                                <strong>Description:</strong>
+                                <p>{ctrl.control_description}</p>
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                )}
-              </div>
-            </div>
-          </ScfReference>
-
-          {/* ── Collection Record Form ─────────────────────────────────────────── */}
-          <div className="detail-section-container surface-bench" data-testid="evidence-collection-record">
-            <div className="container-header bench-header">
-              <span className="container-icon">📋</span>
-              <span className="container-title">Your Collection Record</span>
-              {isTracked && <span className="container-tracking-badge">✓ Active</span>}
-            </div>
-            <div className="container-content">
-              {/* Tracking toggle */}
-              <div className="tracking-toggle-section">
-                <label className="tracking-toggle-label">
-                  <input
-                    type="checkbox"
-                    checked={isTracked}
-                    onChange={e => onUpdateTracking(evidenceItem.id, 'is_tracked', e.target.checked)}
-                    className="tracking-checkbox"
-                  />
-                  <div className="tracking-toggle-content">
-                    <div className="tracking-toggle-title">Evidence Collection Active</div>
-                    <div className="tracking-toggle-hint">Mark this evidence as being actively collected for compliance</div>
-                  </div>
-                </label>
-              </div>
-
-              {/* Collecting System with suggestions */}
-              <div className="form-group">
-                <label>Collecting System</label>
-                {(() => {
-                  const suggestedNames = new Set(
-                    (suggestions?.capable_systems || []).map(s => s.name)
-                  )
-                  const suggestedSystems = systems.filter(s => suggestedNames.has(s.name))
-                  const otherSystems = systems.filter(s => !suggestedNames.has(s.name))
-                  return (
-                    <select
-                      value={tracking.collecting_system || ''}
-                      onChange={e => onUpdateTracking(evidenceItem.id, 'collecting_system', e.target.value)}
-                      className="form-control"
-                    >
-                      <option value="">Select System...</option>
-                      {suggestedSystems.length > 0 && (
-                        <optgroup label="Suggested for this evidence">
-                          {suggestedSystems.map(system => {
-                            const cap = suggestions?.capable_systems.find(s => s.name === system.name)
-                            return (
-                              <option key={system.id} value={system.name}>
-                                {system.name} ({system.vendor || system.system_type}){cap ? ` — ${cap.capability_status}` : ''}
-                              </option>
-                            )
-                          })}
-                        </optgroup>
-                      )}
-                      {otherSystems.length > 0 && (
-                        <optgroup label="All systems">
-                          {otherSystems.map(system => (
-                            <option key={system.id} value={system.name}>
-                              {system.name} ({system.vendor || system.system_type})
-                            </option>
-                          ))}
-                        </optgroup>
-                      )}
-                      <optgroup label="Other">
-                        <option value="Manual">Manual / Not Automated</option>
-                      </optgroup>
-                    </select>
-                  )
-                })()}
-                {suggestions?.recommendation && !tracking.collecting_system && (
-                  <div className="form-hint suggestion-inline-hint">
-                    {'✨'} Recommended: <strong>{suggestions.recommendation.system_name}</strong> — {suggestions.recommendation.reason}
-                  </div>
-                )}
-              </div>
-
-              {/* Collection Maturity */}
-              <div className="form-group">
-                <label>Collection Maturity</label>
-                <MaturityStepper
-                  value={tracking.maturity_level}
-                  onChange={level => onUpdateTracking(evidenceItem.id, 'maturity_level', level)}
-                />
-              </div>
-
-              {/* Inline Collection Guide */}
-              {tracking.collecting_system && tracking.collecting_system !== 'Manual' && (
-                <div className="inline-collection-guide">
-                  {loadingGuidance ? (
-                    <div className="inline-guide-loading">Loading collection guide...</div>
-                  ) : collectionGuidance?.recipe ? (
-                    <details className="inline-guide-details" open>
-                      <summary className="inline-guide-summary">
-                        <span className="inline-guide-icon">{'📖'}</span>
-                        <span>Collection Guide for {collectionGuidance.system_name}</span>
-                        <RecipeConfidenceBadge confidence={collectionGuidance.recipe_confidence as RecipeConfidence} />
-                      </summary>
-                      <div className="inline-guide-content">
-                        <RecipeCard
-                          recipe={collectionGuidance.recipe}
-                          confidence={collectionGuidance.recipe_confidence as RecipeConfidence}
-                        />
-                        <div className="recipe-feedback">
-                          {feedbackSubmitted ? (
-                            <div className="recipe-feedback-thanks">
-                              {'✅'} Thanks for your feedback!
-                            </div>
-                          ) : (
-                            <>
-                              <span className="recipe-feedback-label">Was this helpful?</span>
-                              <button
-                                className="recipe-feedback-btn recipe-feedback-yes"
-                                onClick={() => onRecipeFeedback('helpful')}
-                              >
-                                {'👍'} This helped
-                              </button>
-                              <button
-                                className="recipe-feedback-btn recipe-feedback-no"
-                                onClick={() => onRecipeFeedback('not_matching')}
-                              >
-                                {'👎'} Didn't match
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                    </details>
-                  ) : collectionGuidance && !collectionGuidance.recipe ? (
-                    <div className="inline-guide-empty">
-                      <span className="inline-guide-icon">{'📖'}</span>
-                      No collection recipe available for {collectionGuidance.system_name} at {collectionGuidance.current_maturity}.
+                        )
+                      })}
                     </div>
-                  ) : null}
-                </div>
-              )}
-
-              {/* Maturity Advisory */}
-              {tracking.maturity_level && (
-                <MaturityAdvisoryCard
-                  currentLevel={tracking.maturity_level}
-                  evidenceId={evidenceItem.id}
-                  evidenceTitle={evidenceItem.title}
-                  nextLevelRecipe={collectionGuidance?.next_level_preview || undefined}
-                  systemName={collectionGuidance?.system_name || undefined}
-                />
-              )}
-
-              {/* Method of Collection */}
-              <div className="form-group">
-                <label>Method of Collection</label>
-                <input
-                  type="text"
-                  value={tracking.method_of_collection || ''}
-                  onChange={e => onUpdateTracking(evidenceItem.id, 'method_of_collection', e.target.value)}
-                  placeholder="e.g., Automated export, Manual review, Screenshot"
-                  className="form-control"
-                />
-              </div>
-
-              {/* Frequency */}
-              <div className="form-row">
-                <div className="form-group">
-                  <label>Frequency</label>
-                  <select
-                    value={tracking.frequency || ''}
-                    onChange={e => onUpdateTracking(evidenceItem.id, 'frequency', e.target.value)}
-                    className="form-control"
-                  >
-                    <option value="">Not set</option>
-                    {frequencyOptionsFor(tracking.frequency).map(opt => (
-                      <option key={opt.value} value={opt.value}>{opt.label}</option>
-                    ))}
-                  </select>
+                  )}
                 </div>
               </div>
+            </ScfReference>
 
-              {/*
-                Owning teams, promoted out of the collaboration block at the
-                foot of the page (C3). Who is answerable for this evidence
-                belongs with how it is collected, not below the comment thread.
-                The gate comes up with it: OwningTeams addresses the tracking
-                row by its database id, so an item that has never been saved has
-                nothing for it to read.
-              */}
-              {evidenceDbId && scopingData.organizationId && (
-                <div className="form-group">
-                  <OwningTeams
-                    organizationId={scopingData.organizationId}
-                    assignableType="evidence"
-                    assignableId={evidenceDbId}
-                    canManage={canManageTeams}
-                    onChange={() => { void onReloadTeamAssignments() }}
-                  />
-                </div>
-              )}
-
-              {/* Legacy assignee — read-only, clearable, never settable. */}
-              {legacyAssigneeId && (
-                <div
-                  className="form-group evidence-legacy-assignee"
-                  data-testid="evidence-legacy-assignee"
-                >
-                  <label>Legacy assignee</label>
-                  <div className="evidence-legacy-assignee-row">
-                    <span className="evidence-legacy-assignee-name">{legacyAssigneeName}</span>
-                    <button
-                      type="button"
-                      className="btn btn-sm btn-secondary"
-                      onClick={() =>
-                        onUpdateTracking(evidenceItem.id, 'assigned_user_id', '')
-                      }
-                    >
-                      Clear
-                    </button>
+            {/* ── Collection guidance for the chosen system, and the maturity
+                  upgrade path: advice to read, so it sits with the reference. */}
+            {/* Inline Collection Guide */}
+            {tracking.collecting_system && tracking.collecting_system !== 'Manual' && (
+              <div className="inline-collection-guide">
+                {loadingGuidance ? (
+                  <div className="inline-guide-loading">Loading collection guide...</div>
+                ) : collectionGuidance?.recipe ? (
+                  <details className="inline-guide-details" open>
+                    <summary className="inline-guide-summary">
+                      <span className="inline-guide-icon">{'📖'}</span>
+                      <span>Collection Guide for {collectionGuidance.system_name}</span>
+                      <RecipeConfidenceBadge confidence={collectionGuidance.recipe_confidence as RecipeConfidence} />
+                    </summary>
+                    <div className="inline-guide-content">
+                      <RecipeCard
+                        recipe={collectionGuidance.recipe}
+                        confidence={collectionGuidance.recipe_confidence as RecipeConfidence}
+                      />
+                      <div className="recipe-feedback">
+                        {feedbackSubmitted ? (
+                          <div className="recipe-feedback-thanks">
+                            {'✅'} Thanks for your feedback!
+                          </div>
+                        ) : (
+                          <>
+                            <span className="recipe-feedback-label">Was this helpful?</span>
+                            <button
+                              className="recipe-feedback-btn recipe-feedback-yes"
+                              onClick={() => onRecipeFeedback('helpful')}
+                            >
+                              {'👍'} This helped
+                            </button>
+                            <button
+                              className="recipe-feedback-btn recipe-feedback-no"
+                              onClick={() => onRecipeFeedback('not_matching')}
+                            >
+                              {'👎'} Didn't match
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </details>
+                ) : collectionGuidance && !collectionGuidance.recipe ? (
+                  <div className="inline-guide-empty">
+                    <span className="inline-guide-icon">{'📖'}</span>
+                    No collection recipe available for {collectionGuidance.system_name} at {collectionGuidance.current_maturity}.
                   </div>
-                  <p className="form-hint evidence-legacy-assignee-hint">
-                    This item was assigned to a person before ownership moved to
-                    owning teams. The first reminder for it keeps going to them,
-                    and not to the owning teams above, until you clear this.
-                  </p>
-                </div>
-              )}
-
-              {/* Comments */}
-              <div className="form-group">
-                <label>Comments</label>
-                <textarea
-                  value={tracking.comments || ''}
-                  onChange={e => onUpdateTracking(evidenceItem.id, 'comments', e.target.value)}
-                  placeholder="Additional notes about evidence collection..."
-                  className="form-control"
-                  rows={3}
-                />
+                ) : null}
               </div>
-            </div>
+            )}
+
+            {/* Maturity Advisory */}
+            {tracking.maturity_level && (
+              <MaturityAdvisoryCard
+                currentLevel={tracking.maturity_level}
+                evidenceId={evidenceItem.id}
+                evidenceTitle={evidenceItem.title}
+                nextLevelRecipe={collectionGuidance?.next_level_preview || undefined}
+                systemName={collectionGuidance?.system_name || undefined}
+              />
+            )}
           </div>
-
-          {/*
-            Tasks, unconditionally. The card used to disappear with the rest of
-            the collaboration block until a tracking row existed, so the one
-            state that needs to be told what to do next was the state that got
-            no card at all. It renders disabled instead, and says why.
-          */}
-          <EvidenceTaskList
-            evidenceTrackingId={evidenceDbId ?? ''}
-            evidenceId={evidenceItem.id}
-            organizationId={scopingData.organizationId ?? ''}
-            onTaskChange={() => {}}
-            disabled={!evidenceDbId || !scopingData.organizationId}
-          />
-
-          {/* ── Evidence Files ─────────────────────────────────────────────────── */}
-          {scopingData.organizationId && (
-            <div className="detail-section-container surface-bench">
-              <div className="container-header bench-header">
-                <span className="container-icon">{'📁'}</span>
-                <span className="container-title">Your Evidence Files</span>
-              </div>
-              <div className="container-content">
-                {!isTracked && (
-                  <UntrackedUploadNotice
-                    onStartTracking={() =>
-                      onUpdateTracking(evidenceItem.id, 'is_tracked', true)
-                    }
-                  />
-                )}
-                <EvidenceFileUpload
-                  orgId={scopingData.organizationId}
-                  evidenceId={evidenceItem.id}
-                  onUploadComplete={onFileUploaded}
-                />
-                <EvidenceFileList
-                  orgId={scopingData.organizationId}
-                  evidenceId={evidenceItem.id}
-                  refreshTrigger={fileListRefreshTrigger}
-                  canReview={canReviewFiles}
-                  canAssess={canReviewFiles}
-                />
-              </div>
-            </div>
-          )}
-
-          {/* ── Window Review Panel (flag-gated) ─────────────────────────────── */}
-          {scopingData.organizationId && PER_WINDOW_REVIEW_ENABLED && (
-            <WindowReviewPanel
-              orgId={scopingData.organizationId}
-              evidenceId={evidenceItem.id}
-              refreshTrigger={fileListRefreshTrigger}
-            />
-          )}
-
-          {/* ── Comments ─────────────────────────────────────────────────────── */}
-          {evidenceDbId && scopingData.organizationId ? (
-            <div className="evidence-collaboration-container">
-              {/* Comment thread */}
-              <div className="evidence-collaboration-section">
-                <ModernCommentThread
-                  commentableType="evidence"
-                  commentableId={evidenceDbId}
-                  organizationId={scopingData.organizationId}
-                />
-              </div>
-            </div>
-          ) : (
-            <div className="evidence-save-hint">
-              <p>
-                Save this evidence tracking to enable owning teams and comments
-              </p>
-            </div>
-          )}
         </div>
-      </div>
+      </DetailSplitLayout>
     </div>
   )
 }

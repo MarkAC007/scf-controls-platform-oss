@@ -1529,6 +1529,7 @@ def _execute_control_action(
                 f"Migrated from {action.key} (retired in catalog {to_version})"
             )
             successor.updated_at = now
+            successor.scope_restored_at = now
         # An already-selected successor keeps its own state untouched.
         scoped.selected = False
         scoped.out_of_scope_justification = action.justification or (

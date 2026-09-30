@@ -1,21 +1,13 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
-import type { EnrichedControl, ScopedControlsFile, EvidenceGapsResponse, FrameworkReadinessResponse, FrameworkReadinessRequest, FrameworkReadinessItem } from '../types'
-import { getEvidenceGaps, getFrameworkReadiness } from '../data/apiClient'
+import { useState, useEffect } from 'react'
+import type { EnrichedControl, ScopedControlsFile, EvidenceGapsResponse } from '../types'
+import { getEvidenceGaps } from '../data/apiClient'
 import { useDashboardStats } from '../hooks/useDashboardStats'
 import { MaturityDistributionWidget } from './maturity'
-import FrameworkGapDetail from './FrameworkGapDetail'
-import CollapsibleSection from './CollapsibleSection'
-import { FRAMEWORK_GROUPS, OTHER_GROUP, getFrameworkGroup } from '../data/frameworkGroups'
-import { FrameworkLogo } from './FrameworkLogo'
 import { FrequencyHealthTile } from './dashboard/FrequencyHealthTile'
 import WorkQueuePanel from './dashboard/WorkQueuePanel'
-import TabRow from './explorer/TabRow'
-import type { TabRowItem } from './explorer/TabRow'
 
 // M4 (#574) — gate the Frequency Health tile mount on the build-time flag.
 import { PER_WINDOW_REVIEW_ENABLED } from '../data/featureFlags'
-
-type DashboardTab = 'implementation' | 'maturity' | 'evidence' | 'frameworks'
 
 interface DashboardProps {
   controls: EnrichedControl[]
@@ -26,25 +18,8 @@ interface DashboardProps {
   onNavigateToControl?: (scfId: string) => void
 }
 
-export default function Dashboard({ controls, scopingData, onScopingDataChange, onNavigateToScoping, onNavigateToEvidence, onNavigateToControl }: DashboardProps) {
+export default function Dashboard({ controls, scopingData, onNavigateToScoping, onNavigateToEvidence, onNavigateToControl }: DashboardProps) {
   const stats = useDashboardStats(controls, scopingData)
-
-  const [activeTab, setActiveTab] = useState<DashboardTab>('implementation')
-
-  // Expanded framework gap panels
-  const [expandedFrameworkGaps, setExpandedFrameworkGaps] = useState<Set<string>>(new Set())
-
-  const toggleFrameworkGap = useCallback((frameworkKey: string) => {
-    setExpandedFrameworkGaps(prev => {
-      const next = new Set(prev)
-      if (next.has(frameworkKey)) {
-        next.delete(frameworkKey)
-      } else {
-        next.add(frameworkKey)
-      }
-      return next
-    })
-  }, [])
 
   // Evidence gaps
   const [evidenceGaps, setEvidenceGaps] = useState<EvidenceGapsResponse | null>(null)
@@ -66,90 +41,6 @@ export default function Dashboard({ controls, scopingData, onScopingDataChange, 
     fetchGaps()
   }, [])
 
-  // Framework readiness
-  const [frameworkReadiness, setFrameworkReadiness] = useState<FrameworkReadinessResponse | null>(null)
-  const [loadingReadiness, setLoadingReadiness] = useState(false)
-
-  const frameworkMappingRequest = useMemo((): FrameworkReadinessRequest | null => {
-    if (!controls.length) return null
-
-    const frameworks: FrameworkReadinessRequest['frameworks'] = {}
-
-    controls.forEach(control => {
-      Object.keys(control.frameworksResolved).forEach(frameworkName => {
-        if (!frameworks[frameworkName]) {
-          frameworks[frameworkName] = { controls: [], evidence: [] }
-        }
-        if (!frameworks[frameworkName].controls.includes(control.scf_id)) {
-          frameworks[frameworkName].controls.push(control.scf_id)
-        }
-        control.artifactsResolved.forEach(artifact => {
-          if (!frameworks[frameworkName].evidence.includes(artifact.id)) {
-            frameworks[frameworkName].evidence.push(artifact.id)
-          }
-        })
-      })
-    })
-
-    return { frameworks }
-  }, [controls])
-
-  useEffect(() => {
-    const fetchReadiness = async () => {
-      if (!frameworkMappingRequest) return
-      setLoadingReadiness(true)
-      try {
-        const readiness = await getFrameworkReadiness(frameworkMappingRequest)
-        setFrameworkReadiness(readiness)
-      } catch (error) {
-        console.error('Failed to load framework readiness:', error)
-      } finally {
-        setLoadingReadiness(false)
-      }
-    }
-    fetchReadiness()
-  }, [frameworkMappingRequest])
-
-  const readinessMap = useMemo(() => {
-    if (!frameworkReadiness) return new Map<string, FrameworkReadinessItem>()
-    return new Map(frameworkReadiness.frameworks.map(f => [f.framework_name, f]))
-  }, [frameworkReadiness])
-
-  // Scoped-only toggle for frameworks tab
-  const [scopedOnly, setScopedOnly] = useState(() => {
-    return localStorage.getItem('scf-dashboard-scoped-only') === 'true'
-  })
-
-  useEffect(() => {
-    localStorage.setItem('scf-dashboard-scoped-only', String(scopedOnly))
-  }, [scopedOnly])
-
-  // Group frameworks by geographic/organizational prefix
-  const groupedFrameworks = useMemo(() => {
-    const filtered = scopedOnly
-      ? stats.frameworkStats.filter(fw => fw.totalControls > 0 && fw.selectedControls === fw.totalControls)
-      : stats.frameworkStats
-
-    const groupMap = new Map<string, typeof filtered>()
-
-    for (const fw of filtered) {
-      const groupId = getFrameworkGroup(fw.frameworkKey)
-      if (!groupMap.has(groupId)) {
-        groupMap.set(groupId, [])
-      }
-      groupMap.get(groupId)!.push(fw)
-    }
-
-    // Return ordered array following FRAMEWORK_GROUPS order, Other last
-    const allGroups = [...FRAMEWORK_GROUPS, OTHER_GROUP]
-    return allGroups
-      .filter(g => groupMap.has(g.id) && groupMap.get(g.id)!.length > 0)
-      .map(g => ({
-        ...g,
-        frameworks: groupMap.get(g.id)!
-      }))
-  }, [stats.frameworkStats, scopedOnly])
-
   const hasData = stats.selectedCount > 0
 
   if (!hasData) {
@@ -164,12 +55,23 @@ export default function Dashboard({ controls, scopingData, onScopingDataChange, 
     )
   }
 
-  const DASHBOARD_TABS: TabRowItem[] = [
-    { id: 'implementation', label: 'Implementation' },
-    { id: 'maturity', label: 'Maturity' },
-    { id: 'evidence', label: 'Evidence' },
-    { id: 'frameworks', label: 'Frameworks' },
-  ]
+  const statusSegments = [
+    { key: 'implemented', label: 'Implemented', count: stats.statusCounts.implemented },
+    { key: 'in_progress', label: 'In progress', count: stats.statusCounts.in_progress },
+    { key: 'at_risk', label: 'At risk', count: stats.statusCounts.at_risk },
+    { key: 'not_started', label: 'Not started', count: stats.statusCounts.not_started },
+  ] as const
+
+  const maturityLabel =
+    stats.averageMaturity >= 4 ? 'Excellent' :
+    stats.averageMaturity >= 3 ? 'Good' :
+    stats.averageMaturity >= 2 ? 'Developing' :
+    stats.averageMaturity > 0 ? 'Initial' : null
+
+  const hasEvidenceMaturity = Object.values(stats.evidenceMaturityDistribution).some(count => count > 0)
+
+  const controlOwners = Object.entries(stats.controlsByTeam).sort(([, a], [, b]) => b - a)
+  const evidenceOwners = Object.entries(stats.evidenceByOwnerCounts).sort(([, a], [, b]) => b.total - a.total)
 
   return (
     <div className="dashboard">
@@ -225,539 +127,245 @@ export default function Dashboard({ controls, scopingData, onScopingDataChange, 
         </div>
       </div>
 
-      {/* Tab Navigation */}
-      <TabRow
-        tabs={DASHBOARD_TABS}
-        activeId={activeTab}
-        onSelect={(id) => setActiveTab(id as DashboardTab)}
-        aria-label="Dashboard sections"
-      />
-
-      {/* Tab Content */}
-      <div className="dashboard-tab-content">
-
-        {/* === IMPLEMENTATION TAB === */}
-        {activeTab === 'implementation' && scopingData.organizationId && (
-          <WorkQueuePanel
-            orgId={scopingData.organizationId}
-            onNavigateToEvidence={onNavigateToEvidence}
-            onNavigateToControl={onNavigateToControl}
-          />
-        )}
-        {activeTab === 'implementation' && (
-          <div className="dashboard-two-col">
-            <div className="dashboard-col-left">
-              <div className="stat-card-feature stat-card-success">
-                <div className="feature-header">
-                  <h3>Implementation Progress</h3>
-                </div>
-                <div className="feature-main">
-                  <div className="feature-value">{stats.statusCounts.implemented}</div>
-                  <div className="feature-label">Implemented</div>
-                  <div className="feature-progress">
-                    <div className="feature-progress-bar">
-                      <div className="feature-progress-fill" style={{ width: `${stats.implementedPercentage}%` }}></div>
-                    </div>
-                    <div className="feature-progress-text">{stats.implementedPercentage}% of {stats.selectedCount} controls</div>
-                  </div>
-                </div>
-                <div className="feature-breakdown">
-                  <div className="feature-breakdown-item">
-                    <span className="status-dot status-in_progress"></span>
-                    <span>In Progress</span>
-                    <strong>{stats.statusCounts.in_progress}</strong>
-                  </div>
-                  <div className="feature-breakdown-item">
-                    <span className="status-dot status-at_risk"></span>
-                    <span>At Risk</span>
-                    <strong>{stats.statusCounts.at_risk}</strong>
-                  </div>
-                  <div className="feature-breakdown-item">
-                    <span className="status-dot status-not_started"></span>
-                    <span>Not Started</span>
-                    <strong>{stats.statusCounts.not_started}</strong>
-                  </div>
-                </div>
+      {/*
+        One page, three questions — what needs doing, where we are, who owns
+        it — instead of tabs split by data source (Implementation / Maturity /
+        Evidence), which put the one actionable list beside two charts and gave
+        a whole tab to a single maturity number. Framework-level coverage lives
+        on Framework Scoping.
+      */}
+      <section className="dashboard-section" aria-labelledby="dashboard-attention">
+        <h2 id="dashboard-attention" className="dashboard-section-title">Needs attention</h2>
+        <div className="dashboard-attention-grid">
+          {scopingData.organizationId && (
+            <WorkQueuePanel
+              orgId={scopingData.organizationId}
+              onNavigateToEvidence={onNavigateToEvidence}
+              onNavigateToControl={onNavigateToControl}
+            />
+          )}
+          <div className="dashboard-attention-side">
+            <div className="dashboard-card evidence-gaps-card">
+              <div className="dashboard-card-header">
+                <h3>Evidence not yet tracked</h3>
+                {evidenceGaps && evidenceGaps.total_gaps > 0 && (
+                  <span className="dashboard-card-count">{evidenceGaps.total_gaps}</span>
+                )}
               </div>
-            </div>
-
-            <div className="dashboard-col-right">
-              <div className="stat-card">
-                <h3>Controls by Owner Team</h3>
-                <div className="stat-list">
-                  {Object.entries(stats.controlsByTeam)
-                    .sort(([,a], [,b]) => b - a)
-                    .map(([team, count]) => (
-                      <div key={team} className="stat-list-item">
-                        <span className="stat-list-label">{team}</span>
-                        <span className="stat-list-value">{count}</span>
-                        <div className="stat-list-bar">
-                          <div className="stat-list-bar-fill" style={{ width: `${stats.selectedCount > 0 ? (count / stats.selectedCount) * 100 : 0}%` }}></div>
+              {loadingGaps ? (
+                <div className="gaps-loading">Loading gap analysis...</div>
+              ) : !evidenceGaps ? (
+                <div className="gaps-error">Unable to load evidence gaps. Ensure Systems Registry is configured.</div>
+              ) : evidenceGaps.total_gaps === 0 ? (
+                <p className="dashboard-card-empty">
+                  Every evidence item a registered system can collect is tracked.
+                </p>
+              ) : (
+                <>
+                  <p className="dashboard-card-note">
+                    A registered system can collect these, but nobody tracks them yet.
+                  </p>
+                  <div className="gaps-list">
+                    {(showAllGaps ? evidenceGaps.gaps : evidenceGaps.gaps.slice(0, 5)).map((gap) => (
+                      <div
+                        key={gap.evidence_id}
+                        className="gap-item"
+                        {...(onNavigateToEvidence
+                          ? {
+                              role: 'button',
+                              tabIndex: 0,
+                              onClick: () => onNavigateToEvidence(gap.evidence_id),
+                              onKeyDown: (e: React.KeyboardEvent) => {
+                                if (e.key === 'Enter' || e.key === ' ') {
+                                  e.preventDefault()
+                                  onNavigateToEvidence(gap.evidence_id)
+                                }
+                              },
+                            }
+                          : {})}
+                      >
+                        <div className="gap-item-main">
+                          <div className="gap-item-id">{gap.evidence_id}</div>
+                          {gap.evidence_title && <div className="gap-item-title">{gap.evidence_title}</div>}
+                          <div className="gap-item-meta">
+                            <span className="gap-controls-count">
+                              Required by {gap.required_by_controls.length} control{gap.required_by_controls.length !== 1 ? 's' : ''}
+                            </span>
+                            {gap.capable_systems.length > 0 && (
+                              <>
+                                <span className="gap-meta-divider">&bull;</span>
+                                <span className="gap-systems">
+                                  {gap.capable_systems.slice(0, 2).join(', ')}
+                                  {gap.capable_systems.length > 2 && ` +${gap.capable_systems.length - 2} more`}
+                                </span>
+                              </>
+                            )}
+                          </div>
                         </div>
                       </div>
                     ))}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* === MATURITY TAB === */}
-        {activeTab === 'maturity' && (
-          <div className="stat-card-accent">
-            <div className="accent-header">
-              <h3>Control Maturity</h3>
-              <div className="accent-badge">
-                {stats.averageMaturity >= 4 ? 'Excellent' :
-                 stats.averageMaturity >= 3 ? 'Good' :
-                 stats.averageMaturity >= 2 ? 'Developing' :
-                 stats.averageMaturity > 0 ? 'Initial' : 'N/A'}
-              </div>
-            </div>
-            <div className="accent-main">
-              <div className="accent-value">{stats.averageMaturity > 0 ? stats.averageMaturity.toFixed(1) : 'N/A'}</div>
-              <div className="accent-label">Average Maturity Level</div>
-            </div>
-            {(() => {
-              const bars = [
-                { key: 'L0', label: 'L0', count: stats.maturityCounts.L0 },
-                { key: 'L1', label: 'L1', count: stats.maturityCounts.L1 },
-                { key: 'L2', label: 'L2', count: stats.maturityCounts.L2 },
-                { key: 'L3', label: 'L3', count: stats.maturityCounts.L3 },
-                { key: 'L4', label: 'L4', count: stats.maturityCounts.L4 },
-                { key: 'L5', label: 'L5', count: stats.maturityCounts.L5 },
-                ...(stats.maturityCounts.unset > 0
-                  ? [{ key: 'unset', label: '—', count: stats.maturityCounts.unset }]
-                  : []),
-              ]
-              const LEVEL_COLORS: Record<string, string> = {
-                L0: '#ef4444', L1: '#f97316', L2: '#f59e0b',
-                L3: '#22c55e', L4: '#16a34a', L5: '#15803d', unset: '#94a3b8',
-              }
-              const max = Math.max(1, ...bars.map(b => b.count))
-              return (
-                <div className="cp-histogram" role="img" aria-label="Maturity level distribution histogram">
-                  <div className="cp-histogram-bars">
-                    {bars.map(bar => {
-                      const heightPct = (bar.count / max) * 100
-                      return (
-                        <div key={bar.key} className="cp-histogram-col">
-                          <div className="cp-histogram-bar-track">
-                            <div
-                              className="cp-histogram-bar-fill"
-                              style={{
-                                height: `${heightPct}%`,
-                                backgroundColor: LEVEL_COLORS[bar.key] || LEVEL_COLORS.unset,
-                              }}
-                              title={`${bar.label}: ${bar.count} control${bar.count === 1 ? '' : 's'}`}
-                            />
-                          </div>
-                          <span className="cp-histogram-count">{bar.count}</span>
-                          <span className="cp-histogram-label">{bar.label}</span>
-                        </div>
-                      )
-                    })}
                   </div>
-                </div>
-              )
-            })()}
-          </div>
-        )}
-
-        {/* === EVIDENCE TAB === */}
-        {activeTab === 'evidence' && (
-          <>
-            {/* M4 (#574) — Frequency Health tile, mounts only when the
-                ENABLE_PER_WINDOW_REVIEW flag is on. ``scopingData.organizationId``
-                follows the same pattern as the rest of the dashboard. */}
+                  {evidenceGaps.gaps.length > 5 && (
+                    <button type="button" className="gaps-view-all" onClick={() => setShowAllGaps(prev => !prev)}>
+                      {showAllGaps ? 'Show top 5' : `View all ${evidenceGaps.gaps.length}`}
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
+            {/* M4 (#574) — mounts only when ENABLE_PER_WINDOW_REVIEW is on. */}
             {PER_WINDOW_REVIEW_ENABLED && scopingData.organizationId && (
-              <div className="evidence-section">
-                <FrequencyHealthTile orgId={scopingData.organizationId} />
-              </div>
+              <FrequencyHealthTile orgId={scopingData.organizationId} />
             )}
-            {/* Evidence Tracking */}
-            <div className="evidence-section">
-              <h2>Evidence Tracking & Team Burden</h2>
-              <div className="evidence-grid">
-                <div className="evidence-summary">
-                  <div className="evidence-summary-header">
-                    <div>
-                      <div className="evidence-value">{stats.trackedEvidence}<span className="evidence-total">/{stats.totalEvidence}</span></div>
-                      <div className="evidence-label">Evidence Items Tracked</div>
-                    </div>
-                  </div>
-                  <div className="evidence-progress">
-                    <div className="evidence-progress-bar">
-                      <div className="evidence-progress-fill" style={{ width: `${stats.evidencePercentage}%` }}></div>
-                    </div>
-                    <div className="evidence-progress-text">{stats.evidencePercentage}% Complete</div>
-                  </div>
-                </div>
+          </div>
+        </div>
+      </section>
 
-                <div className="evidence-teams">
-                  {Object.entries(stats.evidenceByOwnerCounts)
-                    .sort(([,a], [,b]) => b.total - a.total)
-                    .map(([owner, data]) => {
-                      const percentage = data.total > 0 ? Math.round((data.tracked / data.total) * 100) : 0
-                      return (
-                        <div key={owner} className="evidence-team-card">
-                          <div className="evidence-team-header">
-                            <span className="evidence-team-name">{owner}</span>
-                            <span className="evidence-team-percentage">{percentage}%</span>
-                          </div>
-                          <div className="evidence-team-stats">
-                            <span className="evidence-team-tracked">{data.tracked} tracked</span>
-                            <span className="evidence-team-divider">&bull;</span>
-                            <span className="evidence-team-total">{data.total} total</span>
-                          </div>
-                          <div className="evidence-team-bar">
-                            <div className="evidence-team-bar-fill" style={{ width: `${percentage}%` }}></div>
-                          </div>
-                        </div>
-                      )
-                    })}
+      {/*
+        Status and ownership stack on the left; evidence maturity, the tallest
+        card, runs beside both so neither section leaves a gap under it.
+      */}
+      <div className="dashboard-overview">
+        <div className="dashboard-overview-main">
+          <section className="dashboard-section" aria-labelledby="dashboard-status">
+            <h2 id="dashboard-status" className="dashboard-section-title">Where we are</h2>
+            <div className="dashboard-status-grid">
+              <div className="dashboard-card">
+                <div className="dashboard-card-header">
+                  <h3>Implementation</h3>
+                  <span className="dashboard-card-count">{stats.selectedCount} controls</span>
                 </div>
+                <div
+                  className="dashboard-status-bar"
+                  role="img"
+                  aria-label={statusSegments.map(seg => `${seg.count} ${seg.label.toLowerCase()}`).join(', ')}
+                >
+                  {statusSegments.map(seg =>
+                    seg.count > 0 && stats.selectedCount > 0 ? (
+                      <span
+                        key={seg.key}
+                        className={`dashboard-status-segment dashboard-status-segment--${seg.key}`}
+                        style={{ width: `${(seg.count / stats.selectedCount) * 100}%` }}
+                      />
+                    ) : null,
+                  )}
+                </div>
+                <ul className="dashboard-status-legend">
+                  {statusSegments.map(seg => (
+                    <li key={seg.key}>
+                      <i className={`dashboard-status-segment--${seg.key}`} />
+                      <span>{seg.label}</span>
+                      <strong>{seg.count}</strong>
+                    </li>
+                  ))}
+                </ul>
+                {onNavigateToScoping && (
+                  <button type="button" className="dashboard-card-link" onClick={() => onNavigateToScoping()}>
+                    By framework →
+                  </button>
+                )}
               </div>
-            </div>
 
-            {/* Evidence Collection Maturity Distribution */}
-            {Object.values(stats.evidenceMaturityDistribution).some(count => count > 0) && (
-              <div className="evidence-maturity-section">
-                <h2>Evidence Collection Maturity</h2>
-                <div className="evidence-maturity-grid">
-                  <MaturityDistributionWidget
-                    distribution={stats.evidenceMaturityDistribution}
-                    title="Collection Process Maturity"
-                    showScore={true}
-                    showLegend={true}
-                  />
+              <div className="dashboard-card">
+                <div className="dashboard-card-header">
+                  <h3>Control maturity</h3>
+                  {maturityLabel && <span className="dashboard-card-count">{maturityLabel}</span>}
                 </div>
-              </div>
-            )}
-
-            {/* Evidence Collection Gaps */}
-            <div className="evidence-gaps-section">
-              <h2>Evidence Collection Gaps</h2>
-              <div className="evidence-gaps-content">
-                {loadingGaps ? (
-                  <div className="gaps-loading">Loading gap analysis...</div>
-                ) : !evidenceGaps ? (
-                  <div className="gaps-error">Unable to load evidence gaps. Ensure Systems Registry is configured.</div>
-                ) : evidenceGaps.total_gaps === 0 ? (
-                  <div className="gaps-success">
-                    <div className="gaps-success-icon">&#10003;</div>
-                    <div className="gaps-success-text">
-                      <strong>Excellent!</strong> All evidence items with capable systems are being tracked.
+                {maturityLabel ? (
+                  <>
+                    <div className="dashboard-card-figure">{stats.averageMaturity.toFixed(1)}</div>
+                    <div className="dashboard-card-note">Average maturity level</div>
+                    <div className="dashboard-maturity-levels" role="img" aria-label="Controls per maturity level">
+                      {(['L0', 'L1', 'L2', 'L3', 'L4', 'L5'] as const).map(level => (
+                        <span key={level} title={`${level}: ${stats.maturityCounts[level]} controls`}>
+                          <strong>{stats.maturityCounts[level]}</strong>
+                          {level}
+                        </span>
+                      ))}
                     </div>
-                  </div>
+                  </>
                 ) : (
-                  <div className="gaps-grid">
-                    <div className="stat-card-accent gaps-summary-card">
-                      <div className="accent-header">
-                        <h3>Collection Coverage</h3>
-                        <div className={`accent-badge ${
-                          evidenceGaps.coverage_percentage >= 90 ? 'badge-success' :
-                          evidenceGaps.coverage_percentage >= 70 ? 'badge-good' :
-                          evidenceGaps.coverage_percentage >= 50 ? 'badge-warning' :
-                          'badge-danger'
-                        }`}>
-                          {evidenceGaps.coverage_percentage >= 90 ? 'Excellent' :
-                           evidenceGaps.coverage_percentage >= 70 ? 'Good' :
-                           evidenceGaps.coverage_percentage >= 50 ? 'Needs Work' :
-                           'Critical'}
-                        </div>
-                      </div>
-                      <div className="gaps-stats-row">
-                        <div className="gaps-stat">
-                          <div className="gaps-stat-value gaps-value-danger">{evidenceGaps.total_gaps}</div>
-                          <div className="gaps-stat-label">Gaps</div>
-                        </div>
-                        <div className="gaps-stat">
-                          <div className="gaps-stat-value gaps-value-success">{evidenceGaps.total_tracked}</div>
-                          <div className="gaps-stat-label">Tracked</div>
-                        </div>
-                        <div className="gaps-stat">
-                          <div className="gaps-stat-value">{evidenceGaps.total_evidence}</div>
-                          <div className="gaps-stat-label">Total</div>
-                        </div>
-                      </div>
-                      <div className="gaps-progress">
-                        <div className="gaps-progress-bar">
-                          <div className="gaps-progress-fill" style={{ width: `${evidenceGaps.coverage_percentage}%` }}></div>
-                        </div>
-                        <div className="gaps-progress-text">{evidenceGaps.coverage_percentage.toFixed(1)}% Coverage</div>
-                      </div>
-                    </div>
-
-                    <div className="gaps-list-card">
-                      <div className="gaps-list-header">
-                        <h4>Top Gaps Needing Attention</h4>
-                        <span className="gaps-list-count">{evidenceGaps.gaps.length} total</span>
-                      </div>
-                      <div className="gaps-list">
-                        {(showAllGaps ? evidenceGaps.gaps : evidenceGaps.gaps.slice(0, 5)).map((gap) => (
-                          <div key={gap.evidence_id} className="gap-item">
-                            <div className="gap-item-main">
-                              <div className="gap-item-id">{gap.evidence_id}</div>
-                              {gap.evidence_title && (
-                                <div className="gap-item-title">{gap.evidence_title}</div>
-                              )}
-                              <div className="gap-item-meta">
-                                <span className="gap-controls-count">
-                                  Required by {gap.required_by_controls.length} control{gap.required_by_controls.length !== 1 ? 's' : ''}
-                                </span>
-                                {gap.capable_systems.length > 0 && (
-                                  <>
-                                    <span className="gap-meta-divider">&bull;</span>
-                                    <span className="gap-systems">
-                                      {gap.capable_systems.slice(0, 2).join(', ')}
-                                      {gap.capable_systems.length > 2 && ` +${gap.capable_systems.length - 2} more`}
-                                    </span>
-                                  </>
-                                )}
-                              </div>
-                            </div>
-                            {gap.recommended_action && (
-                              <div className="gap-item-action" title={gap.recommended_action}>
-                                Tip
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                      {evidenceGaps.gaps.length > 5 && (
-                        <div className="gaps-list-footer">
-                          <button
-                            type="button"
-                            className="gaps-view-all"
-                            onClick={() => setShowAllGaps(prev => !prev)}
-                          >
-                            {showAllGaps
-                              ? <>Show top 5 gaps &larr;</>
-                              : <>View all {evidenceGaps.gaps.length} gaps &rarr;</>}
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  </div>
+                  <p className="dashboard-card-empty">
+                    No control has a maturity level yet. Set one on a control's implementation record.
+                  </p>
                 )}
               </div>
             </div>
-          </>
-        )}
+          </section>
 
-        {/* === FRAMEWORKS TAB === */}
-        {activeTab === 'frameworks' && (
-          <div className="framework-tracking-section">
-            <div className="framework-section-header">
-              <h2>Framework Coverage & Implementation Status</h2>
-              <div className="framework-toolbar">
-                <button
-                  className={`scope-toggle-btn${!scopedOnly ? ' active' : ''}`}
-                  onClick={() => setScopedOnly(false)}
-                >
-                  All Frameworks
-                </button>
-                <button
-                  className={`scope-toggle-btn${scopedOnly ? ' active' : ''}`}
-                  onClick={() => setScopedOnly(true)}
-                >
-                  Scoped Only
-                </button>
-              </div>
+          <section className="dashboard-section" aria-labelledby="dashboard-owners">
+            <h2 id="dashboard-owners" className="dashboard-section-title">Who owns it</h2>
+            <div className="dashboard-owner-grid">
+              <OwnerList
+                title="Controls by owner"
+                rows={controlOwners.map(([owner, count]) => ({ owner, value: count, share: stats.selectedCount ? count / stats.selectedCount : 0, detail: `${count}` }))}
+              />
+              <OwnerList
+                title="Evidence by owner"
+                rows={evidenceOwners.map(([owner, data]) => ({
+                  owner,
+                  value: data.total,
+                  share: data.total ? data.tracked / data.total : 0,
+                  detail: `${data.tracked}/${data.total} tracked`,
+                }))}
+              />
             </div>
-            {loadingReadiness && (
-              <div className="readiness-loading">Calculating readiness scores...</div>
-            )}
-            {groupedFrameworks.length === 0 ? (
-              <div className="framework-empty-state">
-                <p>No frameworks match the current filter. Try switching to "All Frameworks".</p>
+          </section>
+        </div>
+        {/* Part of "Where we are"; offset so its top lines up with that section's cards. */}
+        <div className="dashboard-overview-side">
+          {hasEvidenceMaturity ? (
+            <MaturityDistributionWidget
+              distribution={stats.evidenceMaturityDistribution}
+              title="Evidence collection maturity"
+              showScore={true}
+              showLegend={true}
+            />
+          ) : (
+            <div className="dashboard-card">
+              <div className="dashboard-card-header">
+                <h3>Evidence collection maturity</h3>
               </div>
-            ) : (
-              groupedFrameworks.map(group => (
-                <CollapsibleSection
-                  key={group.id}
-                  icon={group.emoji}
-                  title={group.label}
-                  count={group.frameworks.length}
-                  defaultCollapsed={true}
-                >
-                  <div className="framework-grid">
-                    {group.frameworks.map((fwStat) => {
-                      const apiReadiness = readinessMap.get(fwStat.frameworkName)
-
-                      const selectionPercentage = fwStat.totalControls > 0
-                        ? Math.round((fwStat.selectedControls / fwStat.totalControls) * 100)
-                        : 0
-
-                      const readinessPercentage = apiReadiness?.readiness_score ?? (
-                        fwStat.totalControls > 0
-                          ? Math.round((fwStat.implementedControls / fwStat.totalControls) * 100)
-                          : 0
-                      )
-
-                      const implementationScore = apiReadiness?.implementation_score ?? (
-                        fwStat.selectedControls > 0
-                          ? Math.round((fwStat.implementedControls / fwStat.selectedControls) * 100)
-                          : 0
-                      )
-
-                      const evidenceScore = apiReadiness?.evidence_score ?? 0
-                      const trackedEvidence = apiReadiness?.tracked_evidence ?? 0
-                      const totalEvidence = apiReadiness?.total_evidence ?? 0
-
-                      const readinessGrade = apiReadiness?.readiness_grade ?? (
-                        readinessPercentage >= 90 ? 'excellent' :
-                        readinessPercentage >= 70 ? 'good' :
-                        readinessPercentage >= 50 ? 'fair' :
-                        'needs-work'
-                      )
-
-                      return (
-                        <div key={fwStat.frameworkKey} className="framework-card">
-                          <div className="framework-card-header">
-                            <div className="framework-logo-placeholder">
-                              <FrameworkLogo frameworkName={fwStat.frameworkName} size={64} />
-                            </div>
-                            <div className="framework-card-title">
-                              <h3>{fwStat.frameworkName}</h3>
-                              <div className="framework-card-subtitle">{fwStat.frameworkKey}</div>
-                            </div>
-                          </div>
-
-                          <div className="framework-stats-grid">
-                            <div className="framework-stat-item">
-                              <div className="framework-stat-value">{fwStat.totalControls}</div>
-                              <div className="framework-stat-label">Total Controls</div>
-                            </div>
-                            <div className="framework-stat-item framework-stat-highlight">
-                              <div className="framework-stat-value">{fwStat.selectedControls}</div>
-                              <div className="framework-stat-label">In Scope</div>
-                            </div>
-                          </div>
-
-                          <div className="framework-progress-section">
-                            <div className="framework-progress-header">
-                              <span className="framework-progress-label">Scope Coverage</span>
-                              <span className="framework-progress-percentage">{selectionPercentage}%</span>
-                            </div>
-                            <div className="framework-progress-bar">
-                              <div className="framework-progress-fill" style={{ width: `${selectionPercentage}%` }}></div>
-                            </div>
-                          </div>
-
-                          {fwStat.selectedControls > 0 && (
-                            <>
-                              <div className="framework-implementation-breakdown">
-                                <div className="framework-breakdown-title">Implementation Status</div>
-                                <div className="framework-breakdown-bars">
-                                  {([
-                                    { status: 'implemented', label: 'Implemented', count: fwStat.implementedControls },
-                                    { status: 'in_progress', label: 'In Progress', count: fwStat.inProgressControls },
-                                    { status: 'at_risk', label: 'At Risk', count: fwStat.atRiskControls },
-                                    { status: 'not_started', label: 'Not Started', count: fwStat.notStartedControls },
-                                  ] as const).map(({ status, label, count }) => (
-                                    <div key={status} className="framework-breakdown-item">
-                                      <div className="framework-breakdown-label">
-                                        <span className={`status-dot status-${status}`}></span>
-                                        <span>{label}</span>
-                                        <strong>{count}</strong>
-                                      </div>
-                                      <div className="framework-breakdown-bar">
-                                        <div
-                                          className={`framework-breakdown-fill fw-${status.replace('_', '-')}`}
-                                          style={{ width: `${fwStat.selectedControls > 0 ? (count / fwStat.selectedControls) * 100 : 0}%` }}
-                                        ></div>
-                                      </div>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-
-                              {totalEvidence > 0 && (
-                                <div className="framework-evidence-breakdown">
-                                  <div className="framework-breakdown-title">Evidence Collection</div>
-                                  <div className="framework-evidence-stats">
-                                    <span className="evidence-tracked">{trackedEvidence} tracked</span>
-                                    <span className="evidence-divider">/</span>
-                                    <span className="evidence-total">{totalEvidence} required</span>
-                                    <span className="evidence-percentage">({evidenceScore.toFixed(0)}%)</span>
-                                  </div>
-                                  <div className="framework-evidence-bar">
-                                    <div className="framework-evidence-fill" style={{ width: `${evidenceScore}%` }}></div>
-                                  </div>
-                                </div>
-                              )}
-
-                              <div
-                                className="framework-readiness-badge"
-                                title={apiReadiness
-                                  ? `Readiness = (40% x Implementation ${implementationScore.toFixed(0)}%) + (60% x Evidence ${evidenceScore.toFixed(0)}%)`
-                                  : 'Loading readiness calculation...'}
-                              >
-                                <span className="readiness-label">Framework Readiness:</span>
-                                <span className={`readiness-value readiness-${readinessGrade}`}>
-                                  {readinessGrade === 'excellent' ? 'Excellent' :
-                                   readinessGrade === 'good' ? 'Good' :
-                                   readinessGrade === 'fair' ? 'Fair' :
-                                   'Needs Work'}
-                                </span>
-                                <span className="readiness-percentage">{readinessPercentage.toFixed(0)}%</span>
-                              </div>
-
-                              {apiReadiness && (
-                                <div className="framework-readiness-breakdown">
-                                  <div className="readiness-component">
-                                    <span className="component-label">Implementation (40%)</span>
-                                    <span className="component-value">{implementationScore.toFixed(0)}%</span>
-                                  </div>
-                                  <div className="readiness-component">
-                                    <span className="component-label">Evidence (60%)</span>
-                                    <span className="component-value">{evidenceScore.toFixed(0)}%</span>
-                                  </div>
-                                </div>
-                              )}
-                            </>
-                          )}
-
-                          {fwStat.gapControlIds.length > 0 && (
-                            <button
-                              className="framework-gap-toggle"
-                              onClick={() => toggleFrameworkGap(fwStat.frameworkKey)}
-                            >
-                              <span className="framework-gap-badge">{fwStat.gapControlIds.length} gaps</span>
-                              <span className="framework-gap-toggle-text">
-                                {expandedFrameworkGaps.has(fwStat.frameworkKey) ? 'Hide Gap Analysis' : 'Show Gap Analysis'}
-                              </span>
-                              <span className={`framework-gap-toggle-icon ${expandedFrameworkGaps.has(fwStat.frameworkKey) ? 'expanded' : ''}`}>
-                                &#9660;
-                              </span>
-                            </button>
-                          )}
-
-                          {expandedFrameworkGaps.has(fwStat.frameworkKey) && (
-                            <FrameworkGapDetail
-                              frameworkName={fwStat.frameworkName}
-                              frameworkKey={fwStat.frameworkKey}
-                              gapControlIds={fwStat.gapControlIds}
-                              gapsByDomain={fwStat.gapsByDomain}
-                              totalControls={fwStat.totalControls}
-                              selectedControls={fwStat.selectedControls}
-                              onScopingDataChange={onScopingDataChange}
-                              scopingData={scopingData}
-                              onNavigateToScoping={onNavigateToScoping}
-                            />
-                          )}
-                        </div>
-                      )
-                    })}
-                  </div>
-                </CollapsibleSection>
-              ))
-            )}
-          </div>
-        )}
+              <p className="dashboard-card-empty">No tracked evidence has been assessed yet.</p>
+            </div>
+          )}
+        </div>
       </div>
+    </div>
+  )
+}
+
+/* Unassigned is listed first and flagged: it is the row that needs someone. */
+function OwnerList({
+  title,
+  rows,
+}: {
+  title: string
+  rows: { owner: string; value: number; share: number; detail: string }[]
+}) {
+  const ordered = [...rows].sort(
+    (a, b) => Number(b.owner === 'Unassigned') - Number(a.owner === 'Unassigned') || b.value - a.value,
+  )
+  return (
+    <div className="dashboard-card">
+      <div className="dashboard-card-header">
+        <h3>{title}</h3>
+      </div>
+      {ordered.length === 0 ? (
+        <p className="dashboard-card-empty">Nothing to show yet.</p>
+      ) : (
+        <ul className="dashboard-owner-list">
+          {ordered.map(row => (
+            <li key={row.owner} className={row.owner === 'Unassigned' ? 'is-unassigned' : undefined}>
+              <span className="dashboard-owner-name">{row.owner}</span>
+              <span className="dashboard-owner-bar" aria-hidden="true">
+                <span style={{ width: `${Math.round(row.share * 100)}%` }} />
+              </span>
+              <span className="dashboard-owner-detail">{row.detail}</span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   )
 }

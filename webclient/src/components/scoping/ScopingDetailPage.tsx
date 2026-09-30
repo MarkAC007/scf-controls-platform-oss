@@ -87,6 +87,10 @@ export interface ScopingEntry {
   target_date?: string
   completion_date?: string
   implementation_notes?: string
+  /** See ScopedControl in types.ts — stamps behind assessment_stale. */
+  scope_restored_at?: string
+  assessment_recorded_at?: string
+  assessment_stale?: boolean
 }
 
 export interface ScopingDetailPageProps {
@@ -175,6 +179,15 @@ function isSuppressed(e: KeyboardEvent): boolean {
 }
 
 /** Format an ImplementationStatus slug for display. */
+/** Date the status/maturity were last written, or "before re-scoping" when never stamped. */
+function formatAssessedDate(iso?: string): string {
+  if (!iso) return 'before re-scoping'
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime())
+    ? 'before re-scoping'
+    : d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+}
+
 function formatStatus(status: string): string {
   return status
     .split('_')
@@ -412,6 +425,14 @@ export default function ScopingDetailPage({
             {scopingEntry?.implementation_status && (
               <span className={`status-badge-compact status-${scopingEntry.implementation_status}`}>
                 {formatStatus(scopingEntry.implementation_status)}
+              </span>
+            )}
+            {scopingEntry?.assessment_stale && (
+              <span
+                className="badge-warning"
+                title="This control was re-scoped after its status and maturity were last recorded. Re-assess to clear."
+              >
+                Stale — last assessed {formatAssessedDate(scopingEntry.assessment_recorded_at)}
               </span>
             )}
             <div className="cadence-row">
@@ -802,7 +823,7 @@ export default function ScopingDetailPage({
         )}
 
         {/* ── Framework Mappings — collapsible, collapsed by default ─────────── */}
-        <div className={`detail-section-container${frameworksCollapsed ? ' collapsed' : ''}`}>
+        <div className={`detail-section-container scoping-framework-mappings${frameworksCollapsed ? ' collapsed' : ''}`}>
           <div
             className="container-header collapsible"
             onClick={() => setFrameworksCollapsed((prev) => !prev)}

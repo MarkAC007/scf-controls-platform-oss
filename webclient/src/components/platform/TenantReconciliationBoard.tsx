@@ -63,7 +63,6 @@ function TenantBoard() {
 
   return (
     <div>
-      <h2 style={{ marginBottom: '1rem' }}>Tenants</h2>
       <div className="surface-bench" style={{ padding: '1.25rem 1.5rem' }}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.75rem', flexWrap: 'wrap', paddingBottom: '8px' }}>
           <div className="platform-section-label" style={{ paddingBottom: 0 }}>

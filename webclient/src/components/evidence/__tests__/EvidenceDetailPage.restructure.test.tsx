@@ -304,3 +304,27 @@ describe('EvidenceDetailPage — legacy assignee', () => {
     expect(screen.getByTestId('evidence-legacy-assignee')).toBeInTheDocument()
   })
 })
+
+describe('EvidenceDetailPage — split layout', () => {
+  beforeEach(() => {
+    window.localStorage.clear()
+  })
+
+  it('puts everything the team records in the right-hand panel', () => {
+    saved()
+    render(<EvidenceDetailPage {...makeProps()} />)
+    const panel = screen.getByTestId('detail-split-panel')
+    expect(panel).toContainElement(screen.getByTestId('evidence-collection-record'))
+    expect(panel).toContainElement(screen.getByTestId('modern-comment-thread'))
+  })
+
+  it('keeps the catalog reference (heading, required-by strip) on the left', () => {
+    saved()
+    const { container } = render(<EvidenceDetailPage {...makeProps()} />)
+    const panel = screen.getByTestId('detail-split-panel')
+    const info = container.querySelector('.detail-split-info')!
+    expect(info).toContainElement(screen.getByRole('heading', { name: EVIDENCE_ITEM.title }))
+    expect(info.querySelector('.evidence-required-strip')).not.toBeNull()
+    expect(panel.querySelector('.evidence-required-strip')).toBeNull()
+  })
+})

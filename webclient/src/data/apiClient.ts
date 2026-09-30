@@ -732,6 +732,10 @@ export async function bulkScopeByFramework(
 export interface BulkUnscopeFrameworkRequest {
   frameworks: string[]
   removal_reason?: string
+  /** What to do with tracked evidence whose only in-scope requirers leave scope.
+   *  'keep' (default) reports it; 'untrack' switches tracking off and closes its
+   *  open tasks as won't-do. Files and history are never touched. */
+  orphan_evidence_action?: 'keep' | 'untrack'
 }
 
 export interface BulkUnscopeFrameworkResponse {
@@ -743,6 +747,11 @@ export interface BulkUnscopeFrameworkResponse {
   protected_by: Record<string, number>
   frameworks_processed: string[]
   message: string
+  orphaned_evidence: string[]
+  open_tasks_affected: number
+  orphan_evidence_action: 'keep' | 'untrack'
+  untracked_evidence: number
+  tasks_closed: number
 }
 
 export async function bulkUnscopeByFramework(
@@ -815,9 +824,18 @@ export interface FrameworkScopeSummaryItem {
   expected_additions: number
   active: boolean
   partial: boolean
+  /** In-scope controls by implementation status; absent from older backends. */
+  status_counts?: FrameworkStatusCounts
   source?: string | null
   selected_at?: string | null
   selected_by?: string | null
+}
+
+export interface FrameworkStatusCounts {
+  implemented: number
+  in_progress: number
+  at_risk: number
+  not_started: number
 }
 
 export interface FrameworkScopeSummaryResponse {
@@ -836,6 +854,9 @@ export interface FrameworkScopePreview {
   individual_inclusions: string[]
   explicitly_excluded: string[]
   controls_leaving_scope: string[]
+  /** Remove only: tracked evidence left with no in-scope control requiring it. */
+  orphaned_evidence: string[]
+  open_tasks_affected: number
 }
 
 export async function fetchFrameworkScopeSummary(

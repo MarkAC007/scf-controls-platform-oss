@@ -1,318 +1,298 @@
-import React, { useMemo, useCallback, useState, useEffect } from 'react'
+/**
+ * GraphView — a control's relationships: evidence → control → frameworks →
+ * requirement IDs.
+ *
+ * Positions come from `layoutControlGraph` (pure, tested). Requirement IDs are
+ * collapsed by default — a control can map to 80+ frameworks and a few hundred
+ * requirement IDs — and open per framework on click or all at once from the
+ * toolbar. The first view frames the control, its evidence and the top rows at
+ * a readable zoom; scrolling pans down the framework column.
+ *
+ * Colours come from the `--graph-*` tokens via CSS classes, so both themes
+ * follow without reading computed styles.
+ */
+import { useCallback, useEffect, useMemo, useState, type JSX } from 'react'
 import ReactFlow, {
   Background,
   Controls,
   MiniMap,
-  Node,
-  Edge,
+  Panel,
   Position,
-  useNodesState,
-  useEdgesState,
-  NodeMouseHandler,
-  EdgeMouseHandler
+  ReactFlowProvider,
+  useReactFlow,
+  type Edge,
+  type Node,
+  type NodeMouseHandler,
 } from 'reactflow'
 import 'reactflow/dist/style.css'
 import type { EnrichedControl } from '../types'
+import {
+  NODE_WIDTH,
+  layoutControlGraph,
+  type GraphNodeKind,
+  type LayoutNode,
+} from './graph/controlGraphLayout'
 
 interface Props {
   control: EnrichedControl
+  /** Clicking an evidence node opens that evidence item. */
+  onOpenEvidence?: (evidenceId: string) => void
 }
 
-// Hook to read CSS variables (for ReactFlow which requires inline styles)
-function useGraphColors() {
-  const [colors, setColors] = useState({
-    controlBg: '#fffce8',
-    controlBorder: '#444444',
-    artifactBg: '#eafff4',
-    artifactBorder: '#22aa66',
-    frameworkBg: '#eef5ff',
-    frameworkBorder: '#2266cc',
-    frameworkChildBg: '#f7fbff',
-    highlight: '#2563eb',
-    background: '#aaaaaa'
-  });
+const NODE_TYPE: Record<GraphNodeKind, string> = {
+  evidence: 'input',
+  control: 'default',
+  framework: 'default',
+  requirement: 'output',
+}
 
+function nodeLabel(n: LayoutNode): JSX.Element {
+  switch (n.kind) {
+    case 'evidence':
+      return (
+        <>
+          <span className="graph-node-kicker">{n.key}</span>
+          <span className="graph-node-title">{n.label}</span>
+        </>
+      )
+    case 'control':
+      return (
+        <>
+          <span className="graph-node-kicker">{n.key}</span>
+          <span className="graph-node-title">{n.label}</span>
+        </>
+      )
+    case 'framework':
+      return (
+        <>
+          <span className="graph-node-title" title={n.label}>{n.label}</span>
+          <span className="graph-node-count" aria-hidden="true">
+            {n.count}
+            <span className="graph-node-caret">{n.expanded ? '−' : '+'}</span>
+          </span>
+        </>
+      )
+    default:
+      return <span className="graph-node-title">{n.label}</span>
+  }
+}
+
+function GraphCanvas({ control, onOpenEvidence }: Props): JSX.Element {
+  const [query, setQuery] = useState('')
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
+  const [hoveredId, setHoveredId] = useState<string | null>(null)
+  const { fitView } = useReactFlow()
+
+  // A different control starts clean.
   useEffect(() => {
-    const updateColors = () => {
-      const style = getComputedStyle(document.documentElement);
-      setColors({
-        controlBg: style.getPropertyValue('--graph-control-bg').trim() || '#fffce8',
-        controlBorder: style.getPropertyValue('--graph-control-border').trim() || '#444444',
-        artifactBg: style.getPropertyValue('--graph-artifact-bg').trim() || '#eafff4',
-        artifactBorder: style.getPropertyValue('--graph-artifact-border').trim() || '#22aa66',
-        frameworkBg: style.getPropertyValue('--graph-framework-bg').trim() || '#eef5ff',
-        frameworkBorder: style.getPropertyValue('--graph-framework-border').trim() || '#2266cc',
-        frameworkChildBg: style.getPropertyValue('--graph-framework-child-bg').trim() || '#f7fbff',
-        highlight: style.getPropertyValue('--graph-highlight').trim() || '#2563eb',
-        background: style.getPropertyValue('--graph-background').trim() || '#aaaaaa'
-      });
-    };
+    setQuery('')
+    setExpanded(new Set())
+    setHoveredId(null)
+  }, [control.scf_id])
 
-    updateColors();
+  const layout = useMemo(
+    () => layoutControlGraph(control, { query, expanded }),
+    [control, query, expanded],
+  )
 
-    // Listen for theme changes
-    const observer = new MutationObserver((mutations) => {
-      mutations.forEach((mutation) => {
-        if (mutation.attributeName === 'data-theme') {
-          updateColors();
-        }
-      });
-    });
+  // Hover emphasises a node's own connections and fades the rest.
+  const connected = useMemo(() => {
+    if (!hoveredId) return null
+    const ids = new Set<string>([hoveredId])
+    const edgeIds = new Set<string>()
+    for (const e of layout.edges) {
+      if (e.source === hoveredId || e.target === hoveredId) {
+        ids.add(e.source)
+        ids.add(e.target)
+        edgeIds.add(e.id)
+      }
+    }
+    return { ids, edgeIds }
+  }, [hoveredId, layout.edges])
 
-    observer.observe(document.documentElement, { attributes: true });
-
-    return () => observer.disconnect();
-  }, []);
-
-  return colors;
-}
-
-export default function GraphView({ control }: Props) {
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
-  const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null)
-  const graphColors = useGraphColors()
-
-  const initialNodesAndEdges = useMemo(() => {
-    const nodes: Node[] = []
-    const edges: Edge[] = []
-
-    const centerId = `control-${control.scf_id}`
-    nodes.push({
-      id: centerId,
-      data: { label: `${control.scf_id}: ${control.control_name}` },
-      position: { x: 0, y: 0 },
-      style: {
-        padding: 12,
-        border: `2px solid ${graphColors.controlBorder}`,
-        borderRadius: 8,
-        background: graphColors.controlBg,
-        fontWeight: 600,
-        fontSize: '14px',
-        boxShadow: '0 4px 6px rgba(0,0,0,0.1)'
-      },
-      draggable: true
-    })
-
-    // Artifacts on the left
-    control.artifactsResolved.forEach((a, index) => {
-      const y = index * 80 - (control.artifactsResolved.length * 80) / 2
-      const id = `artifact-${a.id}`
-      nodes.push({
-        id,
-        data: { label: `${a.id}: ${a.title}` },
-        position: { x: -450, y },
+  const nodes: Node[] = useMemo(
+    () =>
+      layout.nodes.map((n) => ({
+        id: n.id,
+        type: NODE_TYPE[n.kind],
+        position: { x: n.x, y: n.y },
+        data: { label: nodeLabel(n), kind: n.kind, key: n.key },
         sourcePosition: Position.Right,
         targetPosition: Position.Left,
-        style: {
-          padding: 8,
-          border: `2px solid ${graphColors.artifactBorder}`,
-          borderRadius: 6,
-          background: graphColors.artifactBg,
-          cursor: 'grab',
-          transition: 'all 0.2s'
-        },
-        draggable: true
-      })
-      edges.push({
-        id: `${id}->${centerId}`,
-        source: id,
-        target: centerId,
-        animated: false,
-        style: { strokeWidth: 2 },
-        type: 'smoothstep'
-      })
-    })
+        draggable: false,
+        connectable: false,
+        className: [
+          'graph-node',
+          `graph-node--${n.kind}`,
+          n.expanded ? 'is-expanded' : '',
+          (n.kind === 'framework' && (n.count ?? 0) > 0) || (n.kind === 'evidence' && onOpenEvidence)
+            ? 'is-clickable'
+            : '',
+          connected && !connected.ids.has(n.id) ? 'is-dim' : '',
+        ]
+          .filter(Boolean)
+          .join(' '),
+        style: { width: NODE_WIDTH[n.kind] },
+      })),
+    [layout.nodes, connected, onOpenEvidence],
+  )
 
-    // Framework group nodes on the right
-    const frameworkNames = Object.keys(control.frameworksResolved)
-    frameworkNames.forEach((fw, i) => {
-      const y = i * 100 - (frameworkNames.length * 100) / 2
-      const fwNodeId = `fw-${fw}`
-      nodes.push({
-        id: fwNodeId,
-        data: { label: fw },
-        position: { x: 450, y },
-        sourcePosition: Position.Left,
-        targetPosition: Position.Right,
-        style: {
-          padding: 8,
-          border: `2px solid ${graphColors.frameworkBorder}`,
-          borderRadius: 6,
-          background: graphColors.frameworkBg,
-          cursor: 'grab',
-          transition: 'all 0.2s'
-        },
-        draggable: true
-      })
-      edges.push({
-        id: `${centerId}->${fwNodeId}`,
-        source: centerId,
-        target: fwNodeId,
-        animated: false,
-        style: { strokeWidth: 2 },
-        type: 'smoothstep'
-      })
+  const edges: Edge[] = useMemo(
+    () =>
+      layout.edges.map((e) => ({
+        id: e.id,
+        source: e.source,
+        target: e.target,
+        // Stepped edges share their trunk, so a long framework column reads as
+        // one bus line instead of a fan of curves.
+        type: e.kind === 'evidence' ? 'default' : 'smoothstep',
+        focusable: false,
+        className: [
+          'graph-edge',
+          `graph-edge--${e.kind}`,
+          connected ? (connected.edgeIds.has(e.id) ? 'is-active' : 'is-dim') : '',
+        ]
+          .filter(Boolean)
+          .join(' '),
+      })),
+    [layout.edges, connected],
+  )
 
-      const refs = control.frameworksResolved[fw]
-      refs.forEach((ref, j) => {
-        const childId = `fw-${fw}-${j}`
-        nodes.push({
-          id: childId,
-          data: { label: ref },
-          position: { x: 650, y: y + j * 50 - (refs.length * 50) / 2 },
-          sourcePosition: Position.Left,
-          targetPosition: Position.Right,
-          style: {
-            padding: 6,
-            border: `1px dashed ${graphColors.frameworkBorder}`,
-            borderRadius: 6,
-            background: graphColors.frameworkChildBg,
-            cursor: 'grab',
-            fontSize: '12px',
-            transition: 'all 0.2s'
-          },
-          draggable: true
-        })
-        edges.push({
-          id: `${fwNodeId}->${childId}`,
-          source: fwNodeId,
-          target: childId,
-          animated: false,
-          style: { strokeWidth: 1, strokeDasharray: '5,5' },
-          type: 'smoothstep'
-        })
-      })
-    })
-
-    return { nodes, edges }
-  }, [control, graphColors])
-
-  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodesAndEdges.nodes)
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initialNodesAndEdges.edges)
-
-  // Update nodes and edges when control changes
+  // Re-frame the top rows when the filter changes (not on expand — that
+  // would jump the view away from the framework just opened).
   useEffect(() => {
-    setNodes(initialNodesAndEdges.nodes)
-    setEdges(initialNodesAndEdges.edges)
-    setSelectedNodeId(null)
-    setHoveredNodeId(null)
-  }, [control.scf_id, setNodes, setEdges])
+    const frame = requestAnimationFrame(() => {
+      void fitView({
+        nodes: layout.initialViewIds.map((id) => ({ id })),
+        padding: 0.15,
+        maxZoom: 1,
+        duration: 250,
+      })
+    })
+    return () => cancelAnimationFrame(frame)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query, control.scf_id, fitView])
 
-  // Get connected edges for a node
-  const getConnectedEdges = useCallback((nodeId: string) => {
-    return edges.filter(edge => edge.source === nodeId || edge.target === nodeId)
-  }, [edges])
-
-  // Handle node click - highlight node and connected edges
-  const onNodeClick: NodeMouseHandler = useCallback((event, node) => {
-    setSelectedNodeId(node.id)
-
-    const connectedEdgeIds = getConnectedEdges(node.id).map(e => e.id)
-
-    setEdges(edges => edges.map(edge => ({
-      ...edge,
-      animated: connectedEdgeIds.includes(edge.id),
-      style: {
-        ...edge.style,
-        stroke: connectedEdgeIds.includes(edge.id) ? graphColors.highlight : undefined,
-        strokeWidth: connectedEdgeIds.includes(edge.id) ? 3 : edge.style?.strokeWidth
+  const onNodeClick: NodeMouseHandler = useCallback(
+    (_event, node) => {
+      const { kind, key } = node.data as { kind: GraphNodeKind; key: string }
+      if (kind === 'framework') {
+        setExpanded((prev) => {
+          const next = new Set(prev)
+          if (next.has(key)) next.delete(key)
+          else next.add(key)
+          return next
+        })
+      } else if (kind === 'evidence' && onOpenEvidence) {
+        onOpenEvidence(key)
       }
-    })))
+    },
+    [onOpenEvidence],
+  )
 
-    setNodes(nodes => nodes.map(n => ({
-      ...n,
-      style: {
-        ...n.style,
-        boxShadow: n.id === node.id ? `0 0 0 3px ${graphColors.highlight}` : n.style?.boxShadow,
-        transform: n.id === node.id ? 'scale(1.05)' : undefined
-      }
-    })))
-  }, [getConnectedEdges, setEdges, setNodes, graphColors.highlight])
+  const allExpanded =
+    layout.frameworks.length > 0 && layout.frameworks.every((fw) => expanded.has(fw))
+  const toggleAll = () =>
+    setExpanded(allExpanded ? new Set() : new Set(layout.frameworks))
 
-  // Handle node hover
-  const onNodeMouseEnter: NodeMouseHandler = useCallback((event, node) => {
-    setHoveredNodeId(node.id)
-    const connectedEdgeIds = getConnectedEdges(node.id).map(e => e.id)
-
-    setEdges(edges => edges.map(edge => ({
-      ...edge,
-      animated: connectedEdgeIds.includes(edge.id),
-      style: {
-        ...edge.style,
-        opacity: connectedEdgeIds.includes(edge.id) ? 1 : 0.3
-      }
-    })))
-  }, [getConnectedEdges, setEdges])
-
-  const onNodeMouseLeave: NodeMouseHandler = useCallback(() => {
-    setHoveredNodeId(null)
-    setEdges(edges => edges.map(edge => ({
-      ...edge,
-      animated: false,
-      style: {
-        ...edge.style,
-        opacity: 1
-      }
-    })))
-  }, [setEdges])
-
-  // Handle pane click - clear selection
-  const onPaneClick = useCallback(() => {
-    setSelectedNodeId(null)
-    setEdges(edges => edges.map(edge => ({
-      ...edge,
-      animated: false,
-      style: {
-        ...edge.style,
-        stroke: undefined,
-        strokeWidth: edge.id.includes('artifact') ? 2 : edge.style?.strokeWidth
-      }
-    })))
-    setNodes(nodes => nodes.map(n => ({
-      ...n,
-      style: {
-        ...n.style,
-        boxShadow: n.id.startsWith('control-') ? '0 4px 6px rgba(0,0,0,0.1)' : undefined,
-        transform: undefined
-      }
-    })))
-  }, [setEdges, setNodes])
+  const shownRequirements = layout.frameworks.reduce(
+    (sum, fw) => sum + (control.frameworksResolved[fw]?.length ?? 0),
+    0,
+  )
 
   return (
-    <div style={{ width: '100%', height: '100%' }}>
-      <ReactFlow
-        key={control.scf_id}
-        nodes={nodes}
-        edges={edges}
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
-        onNodeClick={onNodeClick}
-        onNodeMouseEnter={onNodeMouseEnter}
-        onNodeMouseLeave={onNodeMouseLeave}
-        onPaneClick={onPaneClick}
-        nodesDraggable={true}
-        nodesConnectable={false}
-        elementsSelectable={true}
-        fitView
-        minZoom={0.2}
-        maxZoom={2}
-        defaultEdgeOptions={{
-          type: 'smoothstep',
-          animated: false
-        }}
-      >
-        <Background color={graphColors.background} gap={16} />
-        <MiniMap
-          nodeColor={(node) => {
-            if (node.id.startsWith('control-')) return graphColors.controlBg
-            if (node.id.startsWith('artifact-')) return graphColors.artifactBg
-            if (node.id.startsWith('fw-')) return graphColors.frameworkBg
-            return graphColors.frameworkChildBg
+    <ReactFlow
+      className="graph-canvas"
+      nodes={nodes}
+      edges={edges}
+      onNodeClick={onNodeClick}
+      onNodeMouseEnter={(_e, n) => setHoveredId(n.id)}
+      onNodeMouseLeave={() => setHoveredId(null)}
+      nodesDraggable={false}
+      nodesConnectable={false}
+      elementsSelectable={false}
+      panOnScroll
+      fitView
+      fitViewOptions={{
+        nodes: layout.initialViewIds.map((id) => ({ id })),
+        padding: 0.15,
+        maxZoom: 1,
+      }}
+      minZoom={0.1}
+      maxZoom={2}
+      proOptions={{ hideAttribution: true }}
+    >
+      <Background className="graph-background" gap={20} />
+
+      <Panel position="top-left" className="graph-toolbar">
+        <input
+          type="search"
+          className="graph-search"
+          placeholder="Filter frameworks or requirement IDs"
+          aria-label="Filter frameworks or requirement IDs"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape' && query) setQuery('')
           }}
-          maskColor="rgba(0, 0, 0, 0.1)"
         />
-        <Controls />
-      </ReactFlow>
+        <span className="graph-toolbar-count" aria-live="polite">
+          {layout.frameworks.length === layout.totalFrameworks
+            ? `${layout.totalFrameworks} frameworks`
+            : `${layout.frameworks.length} of ${layout.totalFrameworks} frameworks`}
+        </span>
+        <button
+          type="button"
+          className="btn-outline btn-sm"
+          onClick={toggleAll}
+          disabled={layout.frameworks.length === 0}
+        >
+          {allExpanded ? 'Collapse requirement IDs' : 'Show all requirement IDs'}
+        </button>
+      </Panel>
+
+      <Panel position="bottom-left" className="graph-legend" aria-label="Legend">
+        <span className="graph-legend-item">
+          <i className="graph-swatch graph-swatch--evidence" />Evidence ({control.artifactsResolved.length})
+        </span>
+        <span className="graph-legend-item">
+          <i className="graph-swatch graph-swatch--control" />Control
+        </span>
+        <span className="graph-legend-item">
+          <i className="graph-swatch graph-swatch--framework" />Frameworks ({layout.frameworks.length})
+        </span>
+        <span className="graph-legend-item">
+          <i className="graph-swatch graph-swatch--requirement" />Requirement IDs ({shownRequirements})
+        </span>
+        <span className="graph-legend-hint">
+          Click a framework for its requirement IDs
+          {onOpenEvidence ? ' · click evidence to open it' : ''} · scroll to pan · ⌘/Ctrl + scroll to zoom
+        </span>
+      </Panel>
+
+      {layout.frameworks.length === 0 && query && (
+        <Panel position="top-center" className="graph-empty">
+          No framework or requirement ID matches “{query}”.
+        </Panel>
+      )}
+
+      <MiniMap
+        className="graph-minimap"
+        pannable
+        zoomable
+        nodeClassName={(n) => `graph-mini--${(n.data as { kind: GraphNodeKind }).kind}`}
+      />
+      <Controls className="graph-controls" position="top-right" showInteractive={false} />
+    </ReactFlow>
+  )
+}
+
+export default function GraphView(props: Props): JSX.Element {
+  return (
+    <div className="graph-view">
+      <ReactFlowProvider key={props.control.scf_id}>
+        <GraphCanvas {...props} />
+      </ReactFlowProvider>
     </div>
   )
 }

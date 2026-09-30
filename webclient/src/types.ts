@@ -299,6 +299,12 @@ export interface RelatedDocument {
 export interface EvidenceTracking {
   id?: string  // Database UUID
   is_tracked?: boolean
+  /**
+   * Server-derived: does at least one in-scope control list this evidence in
+   * its evidence_requests? False on a tracked row means the collector is
+   * running for nothing (orphaned by a scope change). Absent on legacy payloads.
+   */
+  required_by_scope?: boolean
   method_of_collection?: string
   collecting_system?: string
   /**
@@ -333,6 +339,15 @@ export interface ScopedControl {
   scope_override_reason?: string
   scope_override_set_at?: string
   scope_override_set_by?: string
+  /** Stamped when the control re-enters scope; drives assessment_stale. */
+  scope_restored_at?: string
+  /** Stamped when implementation_status or maturity_level was last written. */
+  assessment_recorded_at?: string
+  /**
+   * Server-derived: the control was re-scoped after its status/maturity was
+   * last recorded, so those values pre-date the current scope.
+   */
+  assessment_stale?: boolean
   frameworks_driving_selection?: string[]
   implementation_status?: ImplementationStatus
   priority?: Priority
@@ -660,6 +675,8 @@ export interface EvidenceGapsResponse {
   total_evidence: number
   coverage_percentage: number
   gaps: EvidenceGapItem[]
+  /** Tracked evidence no in-scope control asks for (orphaned by scope changes). */
+  tracked_not_required?: string[]
 }
 
 // ============================================================================

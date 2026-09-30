@@ -27,7 +27,7 @@ import { getSystems, getEvidenceSuggestions, submitRecipeFeedback, getOrgMembers
 import type { System, EvidenceSuggestionsResponse, UserSimple, Team } from '../types'
 import TeamListFilters, { ALL as ALL_TEAMS } from './TeamListFilters'
 import { useWorkScope } from '../contexts/WorkScopeContext'
-import { domainFilterLabel, useDomainIdentifiers } from '../hooks/useCatalogFilters'
+import { useCatalogFilters, useDomainIdentifiers } from '../hooks/useCatalogFilters'
 import AccountableOwnerTypeFilter, {
   ALL_OWNER_TYPES,
   type AccountableOwnerTypeValue,
@@ -57,6 +57,27 @@ interface EvidenceReviewProps {
    * already uses.
    */
   onNavigateToControl?: (scfId: string) => void
+}
+
+// Evidence IDs carry their SCF domain: E-AST-31 belongs to AST. Earlier ERL
+// releases used BCM and IAM for what the catalog calls BCD and IAC.
+const EVIDENCE_DOMAIN_ALIASES: Record<string, string> = { BCM: 'BCD', IAM: 'IAC' }
+
+/**
+ * The catalog domain identifier an evidence item files under, taken from its
+ * ID prefix. Falls back to the catalog identifier for its ERL area name, then
+ * to the area name itself, so an item is never left without a domain.
+ */
+function evidenceDomainKey(
+  id: string,
+  areaOfFocus: string,
+  catalogDomainIds: Set<string>,
+  domainIdentifiers: Map<string, string>,
+): string {
+  const prefix = /^E-([A-Z]+)-/.exec(id)?.[1]
+  const identifier = prefix ? (EVIDENCE_DOMAIN_ALIASES[prefix] ?? prefix) : undefined
+  if (identifier && catalogDomainIds.has(identifier)) return identifier
+  return domainIdentifiers.get(areaOfFocus) ?? areaOfFocus
 }
 
 export default function EvidenceReview({ controls, scopingData, onScopingDataChange, erlData = {}, evidenceTemplates = {}, onNavigateToSystems, onNavigateToControl }: EvidenceReviewProps) {
@@ -96,10 +117,15 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
   const [localEvidenceState, setLocalEvidenceState] = useState<Record<EvidenceId, EvidenceTracking>>({})
   const [systems, setSystems] = useState<System[]>([]) // Systems from registry for picker
   const [orgMembers, setOrgMembers] = useState<UserSimple[]>([]) // Org members for the assignee picker (#781)
-  // Domain NAME -> abbreviation, so the domain filter reads `ABBR - Name (count)`
-  // like Control Scoping and the Library do. Called up here, not beside the
+  // The domain filter uses the Control Library's vocabulary: SCF catalog
+  // domains, `ABBR - Name`, in catalog order. Called up here, not beside the
   // option build: that sits below an early return.
+  const { domains: catalogDomainOptions } = useCatalogFilters()
   const domainIdentifiers = useDomainIdentifiers()
+  const catalogDomainIds = useMemo(
+    () => new Set(catalogDomainOptions.map(o => o.value)),
+    [catalogDomainOptions],
+  )
   const [suggestions, setSuggestions] = useState<EvidenceSuggestionsResponse | null>(null)
   const [loadingSuggestions, setLoadingSuggestions] = useState(false)
   const [collectionGuidance, setCollectionGuidance] = useState<CollectionGuidanceResponse | null>(null)
@@ -133,7 +159,7 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
 
   // Get all unique evidence items from selected controls
   const uniqueEvidenceItems = useMemo(() => {
-    const evidenceMap = new Map<EvidenceId, { id: EvidenceId; title: string; domain: string; controlCount: number }>()
+    const evidenceMap = new Map<EvidenceId, { id: EvidenceId; title: string; domain: string; domainKey: string; controlCount: number }>()
 
     selectedControls.forEach(control => {
       control.artifactsResolved.forEach(artifact => {
@@ -145,6 +171,7 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
             id: artifact.id,
             title: artifact.title,
             domain: artifact.domain,
+            domainKey: evidenceDomainKey(artifact.id, artifact.domain, catalogDomainIds, domainIdentifiers),
             controlCount: 1
           })
         }
@@ -152,15 +179,15 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
     })
 
     return Array.from(evidenceMap.values()).sort((a, b) => a.title.localeCompare(b.title))
-  }, [selectedControls])
+  }, [selectedControls, catalogDomainIds, domainIdentifiers])
 
-  // Get all unique evidence domains
-  const evidenceDomains = useMemo(() => {
-    const domainSet = new Set<string>()
+  // Evidence count per domain key
+  const evidenceDomainCounts = useMemo(() => {
+    const counts = new Map<string, number>()
     uniqueEvidenceItems.forEach(item => {
-      domainSet.add(item.domain)
+      counts.set(item.domainKey, (counts.get(item.domainKey) ?? 0) + 1)
     })
-    return Array.from(domainSet).sort()
+    return counts
   }, [uniqueEvidenceItems])
 
   // Back and Forward across evidence selections — the traversal #785 asked for.
@@ -433,7 +460,7 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
 
     // Domain filter
     if (domainFilter !== 'all') {
-      filtered = filtered.filter(item => item.domain === domainFilter)
+      filtered = filtered.filter(item => item.domainKey === domainFilter)
     }
 
     // Search filter
@@ -730,18 +757,24 @@ export default function EvidenceReview({ controls, scopingData, onScopingDataCha
   }
 
   // Domain options for FilterSelect
-  const domainOptions = useMemo(() => [
-    { value: 'all', label: `All Domains (${filteredEvidenceItems.length})` },
-    ...evidenceDomains.map(domain => {
-      const count = uniqueEvidenceItems.filter(item => item.domain === domain).length
-      // `domain` is a name, not an abbreviation. Evidence names come from the
-      // ERL's `area_of_focus`, which is its own vocabulary — about half of
-      // them have no catalog domain — so an unmatched name keeps today's label.
-      const abbr = domainIdentifiers.get(domain)
-      const label = abbr ? domainFilterLabel(abbr, domain) : domain
-      return { value: domain, label: `${label} (${count})` }
-    }),
-  ], [evidenceDomains, filteredEvidenceItems.length, uniqueEvidenceItems, domainIdentifiers])
+  // Same options as the Control Library (catalog domains, catalog order), cut
+  // to the domains that have evidence here, each with its count. A key the
+  // catalog doesn't know (catalog still loading, or an unrecognised ID) is
+  // listed after them under its own name rather than dropped.
+  const domainOptions = useMemo(() => {
+    const catalog = catalogDomainOptions
+      .filter(o => evidenceDomainCounts.has(o.value))
+      .map(o => ({ value: o.value, label: `${o.label} (${evidenceDomainCounts.get(o.value)})` }))
+    const other = Array.from(evidenceDomainCounts.keys())
+      .filter(key => !catalogDomainIds.has(key))
+      .sort()
+      .map(key => ({ value: key, label: `${key} (${evidenceDomainCounts.get(key)})` }))
+    return [
+      { value: 'all', label: `All Domains (${uniqueEvidenceItems.length})` },
+      ...catalog,
+      ...other,
+    ]
+  }, [catalogDomainOptions, catalogDomainIds, evidenceDomainCounts, uniqueEvidenceItems.length])
 
   // ── Evidence detail position in the CURRENT filtered list ────────────────────
   const evidenceDetailPosition = useMemo<{ index: number | null; total: number } | null>(() => {

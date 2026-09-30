@@ -231,7 +231,9 @@ class TestResponseModelCoversEveryEmittedKey:
             "is_scoped", "selected", "implementation_status",
             "selection_reason", "out_of_scope_justification",
             "scoped_control_id", "priority", "scope_override",
-            "scope_override_reason", "scope_override_set_at", "maturity_level", "pptdf_applicability",
+            "scope_override_reason", "scope_override_set_at", "maturity_level",
+            "scope_restored_at", "assessment_recorded_at", "assessment_stale",
+            "pptdf_applicability",
             "cmm_maturity", "business_size_guidance", "scrm_focus",
             "risk_threat_mapping",
         }

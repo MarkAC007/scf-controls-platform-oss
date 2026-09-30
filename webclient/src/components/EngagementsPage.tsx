@@ -941,8 +941,7 @@ export default function EngagementsPage({ organizationId }: EngagementsPageProps
     <div style={{ padding: '24px 32px', maxWidth: 1100, margin: '0 auto' }}>
       {/* Page header */}
       <div style={{ marginBottom: 12 }}>
-        <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700, color: 'var(--text)' }}>Audit Engagements</h1>
-        <p style={{ margin: '4px 0 0', color: 'var(--muted)', fontSize: 14, maxWidth: 640, lineHeight: 1.5 }}>
+        <p style={{ margin: 0, color: 'var(--muted)', fontSize: 14, maxWidth: 640, lineHeight: 1.5 }}>
           A time-bounded audit scoped to one or more frameworks. Each engagement pulls in the mapped SCF controls,
           presents them from the framework's perspective with the evidence you've collected, and gives external
           auditors a read-only workspace to review and raise queries.
