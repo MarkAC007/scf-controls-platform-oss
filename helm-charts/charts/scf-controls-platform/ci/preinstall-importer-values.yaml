@@ -1,0 +1,25 @@
+# The single-step catalogue load: the import runs as a pre-install hook against
+# a claim staged outside the release. Exercises the hook-scoped service account
+# and the existingClaim guard.
+secretName: scf-platform-credentials
+database:
+  host: postgres.example.internal
+redis:
+  host: redis.example.internal
+evidenceStorage:
+  bucket: scf-evidence
+
+oidc:
+  issuer: https://idp.example.com/realms/scf
+  clientId: scf-platform
+  redirectUri: https://scf.example.com/auth/callback
+
+config:
+  singleTenant: true
+
+catalogData:
+  enabled: true
+  existingClaim: scf-catalogue
+  importer:
+    enabled: true
+    hook: pre-install,pre-upgrade

@@ -12,6 +12,15 @@ envFrom:
       name: {{ include "scf.appSecretName" . }}
 {{- end -}}
 
+{{/* As scf.appEnvFrom, for pre-install/pre-upgrade hook pods. */}}
+{{- define "scf.hookEnvFrom" -}}
+envFrom:
+  - configMapRef:
+      name: {{ include "scf.fullname" . }}-hook-config
+  - secretRef:
+      name: {{ include "scf.appSecretName" . }}
+{{- end -}}
+
 {{/*
 Writable paths for an image whose root filesystem is read-only: spooled uploads
 and the catalogue-upgrade extract dir in /tmp, and fontconfig's cache, which

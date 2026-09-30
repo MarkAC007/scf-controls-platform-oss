@@ -34,7 +34,7 @@ spec:
     spec:
       restartPolicy: Never
       {{- include "scf.imagePullSecrets" . | nindent 6 }}
-      serviceAccountName: {{ include "scf.serviceAccountName" . }}
+      serviceAccountName: {{ include "scf.hookServiceAccountName" . }}
       automountServiceAccountToken: false
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
@@ -54,7 +54,7 @@ spec:
             {{- toYaml .Values.securityContext | nindent 12 }}
           command: ["python", "-m", "scf_upgrade"]
           args: ["migrate"]
-          {{- include "scf.appEnvFrom" . | nindent 10 }}
+          {{- include "scf.hookEnvFrom" . | nindent 10 }}
           env:
             - name: SCF_MIGRATE_ACK
               value: {{ .Values.migrations.acknowledge | quote }}
