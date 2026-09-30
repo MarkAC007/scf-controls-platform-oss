@@ -133,6 +133,7 @@ export default function CatalogVersionCard({ organizationId }: CatalogVersionCar
             </div>
           </div>
         )}
+        <img className="scf-logo" src="/scf-logo.png" alt="Secure Controls Framework" />
       </div>
 
       {!loading && !upgradeAvailable && status?.platform_catalog_version && (

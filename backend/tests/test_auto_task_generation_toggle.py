@@ -141,7 +141,8 @@ class TestGenerateTaskForTracking:
     @pytest.mark.asyncio
     async def test_write_path_looks_the_switch_up_for_the_rows_org(self):
         org_id = uuid4()
-        db = FakeSession([{AUTO_TASK_GENERATION_SETTING_KEY: True}, None])
+        # settings, then the scope lookup finds a requiring control, then no duplicate
+        db = FakeSession([{AUTO_TASK_GENERATION_SETTING_KEY: True}, "IAC-01", None])
         outcome = await generate_task_for_tracking(db, tracking_row(organization_id=org_id))
 
         assert outcome.reason == CREATED
@@ -151,7 +152,9 @@ class TestGenerateTaskForTracking:
     @pytest.mark.asyncio
     async def test_explicit_true_skips_the_lookup(self):
         db = FakeSession([None])
-        outcome = await generate_task_for_tracking(db, tracking_row(), auto_generation_enabled=True)
+        outcome = await generate_task_for_tracking(
+            db, tracking_row(), auto_generation_enabled=True, required_by_scope=True
+        )
         assert outcome.reason == CREATED
         assert len(db.statements) == 1, "only the duplicate check"
         assert "organizations" not in sql_text(db.statements[0])
@@ -180,11 +183,12 @@ class TestSweep:
         db = FakeSession([
             [(on_org, {}), (off_org, {AUTO_TASK_GENERATION_SETTING_KEY: False})],  # settings prefetch
             [row],                                                                  # tracking rows
+            [(on_org, [row.evidence_id])],                                          # in-scope evidence_requests
         ])
         seen = []
 
-        async def _fake_generate(session, evidence, *, auto_generation_enabled=None):
-            seen.append(auto_generation_enabled)
+        async def _fake_generate(session, evidence, *, auto_generation_enabled=None, required_by_scope=None):
+            seen.append((auto_generation_enabled, required_by_scope))
             return tg.TaskGenerationOutcome(True, CREATED)
 
         with patch.object(tg, "AsyncSessionLocal", return_value=db), \
@@ -192,7 +196,9 @@ class TestSweep:
             result = await tg.generate_evidence_tasks()
 
         assert result == {"tasks_created": 1, "tasks_skipped": 0}
-        assert seen == [True], "the sweep must not look the switch up once per row"
+        assert seen == [(True, True)], (
+            "the sweep must not look the switch or the scope up once per row"
+        )
 
         tracking_select = db.statements[1]
         text = sql_text(tracking_select)

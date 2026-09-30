@@ -400,6 +400,22 @@ class ApiKey(Base):
         return f"<ApiKey(id={self.id}, name={self.name}, prefix={self.key_prefix}, active={self.is_active})>"
 
 
+def assessment_is_stale(
+    *,
+    selected,
+    implementation_status,
+    maturity_level,
+    scope_restored_at,
+    assessment_recorded_at,
+) -> bool:
+    """One declaration of the re-scope staleness rule (see ScopedControl)."""
+    if not selected or scope_restored_at is None:
+        return False
+    if not implementation_status and not maturity_level:
+        return False
+    return assessment_recorded_at is None or assessment_recorded_at < scope_restored_at
+
+
 class ScopedControl(Base):
     """Scoped Control model - tracks control selections and implementation status.
 
@@ -446,6 +462,14 @@ class ScopedControl(Base):
     scope_override_set_at = Column(DateTime(timezone=False), nullable=True)
     scope_override_set_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     implementation_status = Column(String(50))  # See ImplementationStatus enum for valid values
+    # Re-scope staleness (scope-aware evidence work). Un-scoping keeps
+    # implementation_status / maturity_level by design; when the control comes
+    # back into scope those values describe a control nobody was maintaining.
+    # `scope_restored_at` is stamped on every selected False→True flip;
+    # `assessment_recorded_at` on every write that changes status or
+    # maturity. `assessment_stale` (property below) is the comparison.
+    scope_restored_at = Column(DateTime(timezone=False), nullable=True)
+    assessment_recorded_at = Column(DateTime(timezone=False), nullable=True)
     priority = Column(String(20))
     # DEPRECATED (#1052). Free-text control owner, superseded by team
     # assignment. The Journey ownership gate counts an accountable row in
@@ -495,6 +519,22 @@ class ScopedControl(Base):
 
     def __repr__(self):
         return f"<ScopedControl(id={self.id}, scf_id={self.scf_id}, status={self.implementation_status})>"
+
+    @property
+    def assessment_stale(self) -> bool:
+        """Status/maturity were last recorded before the control was re-scoped.
+
+        True only when there is something to be stale: an in-scope control that
+        carries a status or maturity, was restored to scope, and has not had
+        either re-recorded since. A never-assessed control has nothing stale.
+        """
+        return assessment_is_stale(
+            selected=self.selected,
+            implementation_status=self.implementation_status,
+            maturity_level=self.maturity_level,
+            scope_restored_at=self.scope_restored_at,
+            assessment_recorded_at=self.assessment_recorded_at,
+        )
 
     def get_status_enum(self) -> Optional[ImplementationStatus]:
         """Get the implementation status as an enum, or None if not set/invalid."""

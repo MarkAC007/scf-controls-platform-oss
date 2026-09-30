@@ -35,6 +35,7 @@ from services.task_generator import (  # noqa: E402
     SKIP_NON_SCHEDULING,
     SKIP_NOT_TRACKED,
     SKIP_NO_FREQUENCY,
+    SKIP_NOT_REQUIRED_BY_SCOPE,
     SKIP_UNRECOGNISED_FREQUENCY,
     generate_task_for_tracking,
 )
@@ -99,6 +100,13 @@ class FakeSession:
         pass
 
 
+#: What the scope lookup returns when some in-scope control requests the
+#: evidence: any scf_id. The write path issues it after the organisation
+#: settings lookup and before the duplicate check, so a "would generate" script
+#: is [settings, scope, duplicate] with the trailing None left implicit.
+REQUIRED = "IAC-01"
+
+
 def tracking_row(**overrides):
     """A tracking row that WOULD generate a task, unless an override stops it."""
     row = MagicMock()
@@ -123,7 +131,7 @@ class TestGenerateTaskForTracking:
 
     @pytest.mark.asyncio
     async def test_eligible_row_produces_a_task(self):
-        db = FakeSession([None])  # duplicate check finds nothing
+        db = FakeSession([None, REQUIRED])  # settings on, in scope, duplicate check finds nothing
         outcome = await generate_task_for_tracking(db, tracking_row())
 
         assert outcome.created is True
@@ -136,13 +144,13 @@ class TestGenerateTaskForTracking:
     async def test_it_never_commits(self):
         """The caller's transaction decides. A tracking write that rolls back
         must not leave the task it would have implied behind it."""
-        db = FakeSession([None])
+        db = FakeSession([None, REQUIRED])
         await generate_task_for_tracking(db, tracking_row())
         assert db.committed is False
 
     @pytest.mark.asyncio
     async def test_untracked_row_produces_nothing(self):
-        db = FakeSession([None])
+        db = FakeSession([None, REQUIRED])
         outcome = await generate_task_for_tracking(db, tracking_row(is_tracked=False))
 
         assert outcome.created is False
@@ -153,7 +161,7 @@ class TestGenerateTaskForTracking:
 
     @pytest.mark.asyncio
     async def test_row_without_a_frequency_produces_nothing(self):
-        db = FakeSession([None])
+        db = FakeSession([None, REQUIRED])
         outcome = await generate_task_for_tracking(db, tracking_row(frequency=None))
 
         assert outcome.reason == SKIP_NO_FREQUENCY
@@ -165,7 +173,7 @@ class TestGenerateTaskForTracking:
         """`real_time` and `on_demand` are recognised and schedule nothing. Before
         #783 `real_time` had no key at all and was skipped as an *unrecognised*
         value — same outcome, wrong diagnosis, and a warning nobody could see."""
-        db = FakeSession([None])
+        db = FakeSession([None, REQUIRED])
         outcome = await generate_task_for_tracking(db, tracking_row(frequency=frequency))
 
         assert outcome.reason == SKIP_NON_SCHEDULING
@@ -174,7 +182,7 @@ class TestGenerateTaskForTracking:
     @pytest.mark.asyncio
     async def test_unrecognised_cadence_is_a_distinct_reason(self):
         """Distinct from non-scheduling: this one IS a data defect."""
-        db = FakeSession([None])
+        db = FakeSession([None, REQUIRED])
         outcome = await generate_task_for_tracking(db, tracking_row(frequency="fortnightly-ish"))
 
         assert outcome.reason == SKIP_UNRECOGNISED_FREQUENCY
@@ -186,8 +194,9 @@ class TestGenerateTaskForTracking:
         field edit, so this runs on keystrokes. Without the duplicate window a
         person typing a comment would mint a task per pause."""
         # First result: the organisation settings lookup (None → generation on).
-        # Second: the duplicate check finds an open task.
-        db = FakeSession([None, MagicMock()])
+        # Second: the scope lookup finds a requiring control.
+        # Third: the duplicate check finds an open task.
+        db = FakeSession([None, REQUIRED, MagicMock()])
         outcome = await generate_task_for_tracking(db, tracking_row())
 
         assert outcome.created is False
@@ -197,7 +206,7 @@ class TestGenerateTaskForTracking:
     @pytest.mark.asyncio
     async def test_assignee_prefers_assigned_over_owner(self):
         assignee, owner = uuid4(), uuid4()
-        db = FakeSession([None])
+        db = FakeSession([None, REQUIRED])
         outcome = await generate_task_for_tracking(
             db, tracking_row(assigned_user_id=assignee, owner_user_id=owner)
         )
@@ -207,7 +216,7 @@ class TestGenerateTaskForTracking:
     @pytest.mark.asyncio
     async def test_owner_is_the_fallback_assignee(self):
         owner = uuid4()
-        db = FakeSession([None])
+        db = FakeSession([None, REQUIRED])
         outcome = await generate_task_for_tracking(db, tracking_row(owner_user_id=owner))
         assert outcome.assigned_user_id == owner
 
@@ -216,14 +225,14 @@ class TestGenerateTaskForTracking:
         """An annual item's first task is due in 30 days, not 370. A task 370
         days out is indistinguishable from no task for the person trying to
         start collecting today."""
-        db = FakeSession([None])
+        db = FakeSession([None, REQUIRED])
         outcome = await generate_task_for_tracking(db, tracking_row(frequency="annual"))
         assert outcome.due_date == date.today() + timedelta(days=30)
 
     @pytest.mark.asyncio
     async def test_subsequent_due_date_follows_the_last_collection(self):
         last = date.today() - timedelta(days=5)
-        db = FakeSession([None])
+        db = FakeSession([None, REQUIRED])
         outcome = await generate_task_for_tracking(
             db, tracking_row(frequency="weekly", last_collection_date=last)
         )
@@ -232,9 +241,40 @@ class TestGenerateTaskForTracking:
     @pytest.mark.asyncio
     async def test_next_collection_date_is_stamped_on_the_row(self):
         row = tracking_row()
-        db = FakeSession([None])
+        db = FakeSession([None, REQUIRED])
         outcome = await generate_task_for_tracking(db, row)
         assert row.next_collection_date == outcome.due_date
+
+    @pytest.mark.asyncio
+    async def test_evidence_no_in_scope_control_requires_is_not_scheduled(self):
+        """Un-scoping a control leaves its evidence rows tracked (files and
+        history survive by design). Without this gate every such row kept
+        minting collection work for controls nobody was implementing."""
+        row = tracking_row()
+        db = FakeSession([None, None])  # settings on; scope lookup finds nothing
+        outcome = await generate_task_for_tracking(db, row)
+
+        assert outcome.created is False
+        assert outcome.reason == SKIP_NOT_REQUIRED_BY_SCOPE
+        assert outcome.due_date is not None, "the due date is still reported for the log"
+        assert db.added == []
+        assert row.next_collection_date is None
+        # Settings lookup, then the scope lookup. The duplicate check never ran.
+        assert len(db.statements) == 2
+
+    @pytest.mark.asyncio
+    async def test_explicit_required_skips_the_scope_lookup(self):
+        db = FakeSession([None])  # settings on; then straight to the duplicate check
+        outcome = await generate_task_for_tracking(db, tracking_row(), required_by_scope=True)
+        assert outcome.reason == CREATED
+        assert len(db.statements) == 2
+
+    @pytest.mark.asyncio
+    async def test_explicit_not_required_never_asks_scope(self):
+        db = FakeSession([None])
+        outcome = await generate_task_for_tracking(db, tracking_row(), required_by_scope=False)
+        assert outcome.reason == SKIP_NOT_REQUIRED_BY_SCOPE
+        assert len(db.statements) == 1, "only the settings lookup"
 
 
 # ---------------------------------------------------------------------------
@@ -335,6 +375,6 @@ class TestWritePathsGenerate:
         another task."""
         from api.evidence_tracking import _generate_first_task
 
-        db = FakeSession([None])
+        db = FakeSession([None, REQUIRED])
         await _generate_first_task(tracking_row(), db)
         assert db.flushes == 1

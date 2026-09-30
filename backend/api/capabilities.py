@@ -34,6 +34,7 @@ from schemas import (
 )
 from auth import require_org_role, OrgMembership, get_current_user
 from services.system_catalog_resolution import resolve_recipes_for_system
+from services.scoping_service import required_controls_by_evidence
 from services.system_catalog_validation import RECIPE_LEVELS
 from api.system_catalog import template_summary
 
@@ -852,11 +853,23 @@ async def get_evidence_gaps(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Analyze evidence collection gaps.
+    Analyze evidence collection gaps against the organisation's scope.
     Requires: viewer role or higher.
-    Returns evidence items that aren't being collected but have capable systems.
+
+    The universe is the evidence at least one in-scope control requests
+    (``services.scoping_service.required_controls_by_evidence``). A gap is
+    required evidence that is not actively tracked (is_tracked with a
+    collecting system); capable systems are attached when any exist, but
+    their absence does not hide the gap — the control still needs the
+    evidence. Evidence that is tracked but nothing in scope asks for is
+    reported in ``tracked_not_required`` and counts toward neither gaps nor
+    coverage. Before this the endpoint iterated tracking rows and reported a
+    gap only where a system claimed a capability, which on a tenant with a
+    large un-scope reported zero gaps over dozens of untracked requirements.
     """
     # Organization existence verified by require_org_role
+
+    required_by = await required_controls_by_evidence(db, org_id)
 
     # Get all evidence tracking entries for this org
     tracking_result = await db.execute(
@@ -888,32 +901,22 @@ async def get_evidence_gaps(
             capabilities_by_evidence[cap.evidence_id] = []
         capabilities_by_evidence[cap.evidence_id].append(cap)
 
-    # Identify gaps: evidence that has capabilities but isn't being tracked
+    def _actively_tracked(tracking) -> bool:
+        return bool(tracking is not None and tracking.is_tracked and tracking.collecting_system)
+
     gaps = []
     total_tracked = 0
-    all_evidence_ids = set(tracking_entries.keys()) | set(capabilities_by_evidence.keys())
-
-    for evidence_id in all_evidence_ids:
+    for evidence_id in sorted(required_by):
         tracking = tracking_entries.get(evidence_id)
-        capabilities = capabilities_by_evidence.get(evidence_id, [])
-
-        # Count as tracked if is_tracked=True and has a collecting_system
-        is_actively_tracked = (
-            tracking is not None and
-            tracking.is_tracked and
-            tracking.collecting_system
-        )
-
-        if is_actively_tracked:
+        if _actively_tracked(tracking):
             total_tracked += 1
             continue
 
-        # If there are capable systems but not being tracked, it's a gap
-        if capabilities:
-            system_names = [cap.system.name for cap in capabilities if cap.system]
-            system_ids = [cap.system.id for cap in capabilities if cap.system]
+        capabilities = capabilities_by_evidence.get(evidence_id, [])
+        system_names = [cap.system.name for cap in capabilities if cap.system]
+        system_ids = [cap.system.id for cap in capabilities if cap.system]
 
-            # Find best system for recommendation
+        if capabilities:
             best_cap = max(
                 capabilities,
                 key=lambda c: (
@@ -922,35 +925,44 @@ async def get_evidence_gaps(
                 )
             )
             best_system_name = best_cap.system.name if best_cap.system else "Unknown"
-
             recommended_action = f"Configure {best_system_name} to collect this evidence"
             if best_cap.capability_status == "active":
                 recommended_action = f"{best_system_name} is already active - link it to tracking"
             elif best_cap.capability_status == "configured":
                 recommended_action = f"Activate collection in {best_system_name}"
+        elif tracking is not None and tracking.is_tracked:
+            recommended_action = "Tracked without a collecting system - name the system that provides it"
+        else:
+            recommended_action = "Start tracking this evidence and name a collecting system"
 
-            gaps.append(EvidenceGapItem(
-                evidence_id=evidence_id,
-                evidence_title=None,  # Could be enriched from ERL data if available
-                required_by_controls=[],  # Would need to cross-reference with scoped controls
-                capable_systems=system_names,
-                capable_system_ids=system_ids,
-                recommended_action=recommended_action
-            ))
+        gaps.append(EvidenceGapItem(
+            evidence_id=evidence_id,
+            evidence_title=None,  # Could be enriched from ERL data if available
+            required_by_controls=required_by[evidence_id],
+            capable_systems=system_names,
+            capable_system_ids=system_ids,
+            recommended_action=recommended_action
+        ))
 
-    # Calculate coverage
-    total_evidence = len(all_evidence_ids)
+    tracked_not_required = sorted(
+        evidence_id for evidence_id, tracking in tracking_entries.items()
+        if tracking.is_tracked and evidence_id not in required_by
+    )
+
+    # Calculate coverage over the required universe
+    total_evidence = len(required_by)
     coverage_percentage = (total_tracked / total_evidence * 100) if total_evidence > 0 else 100.0
 
-    # Sort gaps by number of capable systems (more options = easier to fix)
-    gaps.sort(key=lambda g: len(g.capable_systems), reverse=True)
+    # Most-required first, then the ones with more capable systems (easier to fix)
+    gaps.sort(key=lambda g: (-len(g.required_by_controls), -len(g.capable_systems), g.evidence_id))
 
     return EvidenceGapsResponse(
         total_gaps=len(gaps),
         total_tracked=total_tracked,
         total_evidence=total_evidence,
         coverage_percentage=round(coverage_percentage, 1),
-        gaps=gaps
+        gaps=gaps,
+        tracked_not_required=tracked_not_required,
     )
 
 

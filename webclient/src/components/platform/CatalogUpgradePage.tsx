@@ -202,7 +202,6 @@ function CatalogUpgradeConsole() {
 
   return (
     <div>
-      <h2 style={{ marginBottom: '1rem' }}>Platform Catalog</h2>
       <VersionCard status={status} loading={loading} registry={registry} />
       <UploadStage disabled={anyRunInFlight} onUpload={handleUpload} />
 

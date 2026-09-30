@@ -239,6 +239,12 @@ class ScopedControlResponse(ScopedControlBase):
     scope_override_reason: Optional[str] = None
     scope_override_set_at: Optional[datetime] = None
     scope_override_set_by: Optional[UUID] = None
+    # Re-scope staleness: status/maturity recorded before the control was
+    # restored to scope. Values are kept on un-scope by design; this says
+    # whether they pre-date the latest return to scope.
+    scope_restored_at: Optional[datetime] = None
+    assessment_recorded_at: Optional[datetime] = None
+    assessment_stale: bool = False
 
     # Include PPTDF fields from database (flattened in DB, nested in response)
     pptdf_people: Optional[bool] = False
@@ -327,6 +333,10 @@ class ScopedControlListItem(BaseModel):
     # The ORG's own CMM level for this control. Distinct from ``cmm_maturity``
     # below, which is the catalogue's recommendation.
     maturity_level: Optional[str] = None
+    # Re-scope staleness (see ScopedControlResponse)
+    scope_restored_at: Optional[datetime] = None
+    assessment_recorded_at: Optional[datetime] = None
+    assessment_stale: bool = False
 
     # Extended catalogue data for the detail view
     pptdf_applicability: PPTDFApplicability = Field(default_factory=PPTDFApplicability)
@@ -1424,12 +1434,23 @@ class EvidenceGapItem(BaseModel):
 
 
 class EvidenceGapsResponse(BaseModel):
-    """Response for evidence gap analysis endpoint."""
+    """Response for evidence gap analysis endpoint.
+
+    Scope-aware: the universe is the evidence at least one in-scope control
+    requests. A gap is required evidence that is not actively tracked;
+    coverage is tracked-required over required. Evidence that is tracked but
+    no in-scope control asks for is listed separately — it is work nobody
+    needs, not coverage.
+    """
     total_gaps: int
     total_tracked: int
-    total_evidence: int
+    total_evidence: int = Field(description="Evidence ids required by in-scope controls")
     coverage_percentage: float  # 0-100
     gaps: List[EvidenceGapItem] = []
+    tracked_not_required: List[str] = Field(
+        default_factory=list,
+        description="Tracked evidence ids that no in-scope control requests",
+    )
 
 
 # ============================================================================
@@ -1559,6 +1580,16 @@ class BulkUnscopeFrameworkRequest(BaseModel):
         max_length=500,
         description="Reason for removing these controls (e.g., 'No longer pursuing ISO 27017 certification')"
     )
+    orphan_evidence_action: Literal["keep", "untrack"] = Field(
+        "keep",
+        description=(
+            "What to do with tracked evidence whose only in-scope requirers are the "
+            "controls being removed. 'keep' (default) leaves it tracked and reports it; "
+            "'untrack' switches tracking off and closes its open tasks as won't-do. "
+            "Files and history are never touched. Preview the impact first with "
+            "POST /organizations/{org_id}/framework-scoping/preview."
+        ),
+    )
 
 
 class BulkUnscopeFrameworkResponse(BaseModel):
@@ -1586,6 +1617,16 @@ class BulkUnscopeFrameworkResponse(BaseModel):
     message: str = Field(
         description="Human-readable summary of the operation"
     )
+    orphaned_evidence: List[str] = Field(
+        default_factory=list,
+        description="Tracked evidence ids left with no in-scope control requiring them by this call"
+    )
+    open_tasks_affected: int = Field(
+        0, description="Open tasks on that evidence at the time of the call"
+    )
+    orphan_evidence_action: Literal["keep", "untrack"] = "keep"
+    untracked_evidence: int = Field(0, description="Evidence items untracked (action='untrack')")
+    tasks_closed: int = Field(0, description="Open tasks closed as won't-do (action='untrack')")
 
 
 class ResetScopeResponse(BaseModel):
@@ -1662,6 +1703,13 @@ class FrameworkScopePreviewResponse(BaseModel):
     individual_inclusions: List[str] = Field(default_factory=list)
     explicitly_excluded: List[str] = Field(default_factory=list)
     controls_leaving_scope: List[str] = Field(default_factory=list)
+    orphaned_evidence: List[str] = Field(
+        default_factory=list,
+        description="Remove only: tracked evidence that would be left with no in-scope control requiring it",
+    )
+    open_tasks_affected: int = Field(
+        0, description="Remove only: open tasks on that evidence"
+    )
 
 
 # ============================================================================

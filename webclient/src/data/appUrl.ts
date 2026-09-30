@@ -111,14 +111,14 @@ export const TAB_TITLES = {
   'tasks':              'Task Management',
   'systems':            'Systems Registry',
   'users':              'User Management',
-  'engagements':        'Engagements',
+  'engagements':        'Audit Engagements',
   'webhooks':           'Webhooks',
   'audit-log':          'Audit Log',
   'catalog-changelog':  'Catalog Changelog',
   'consultant-portal':  'Consultant Portal',
   'settings':           'Org Settings',
-  'platform-catalog':   'Catalog',
-  'platform-tenants':   'Tenants',
+  'platform-catalog':   'Platform Catalog',
+  'platform-tenants':   'Platform Tenants',
 } satisfies Record<Tab, string>
 
 export const PARAM_TAB = 'tab'

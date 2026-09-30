@@ -113,12 +113,14 @@ export default function CatalogChangelogPage({ organizationId }: CatalogChangelo
 
   return (
     <div className="surface-bench" style={{ padding: '2rem' }}>
-      <h2>Catalog Changelog</h2>
-      <p style={{ color: 'var(--muted)', maxWidth: 720 }}>
-        Changes applied to your organisation&apos;s control catalog by each reconciled
-        SCF catalog version. This log is read-only; reconciliation is performed by
-        platform administrators.
-      </p>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '1rem' }}>
+        <p style={{ color: 'var(--muted)', maxWidth: 720, marginTop: 0 }}>
+          Changes applied to your organisation&apos;s control catalog by each reconciled
+          SCF catalog version. This log is read-only; reconciliation is performed by
+          platform administrators.
+        </p>
+        <img className="scf-logo" src="/scf-logo.png" alt="Secure Controls Framework" />
+      </div>
 
       {/* Deprecated-badge explainer (plan §4.6) */}
       <div

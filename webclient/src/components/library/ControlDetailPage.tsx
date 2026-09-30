@@ -3,24 +3,26 @@
  *
  * Replaces the ControlDetail.tsx panel (deleted in Task 4). Fully prop-driven.
  * Layout (DetailState.html): breadcrumb bar → header block → assessment question
- * → 3-card grid → risk & threat context → TabRow (4 tabs) with full parity
- * content ported from ControlDetail.tsx.
+ * → 3-card grid → risk & threat context → TabRow (3 tabs) with full parity
+ * content ported from ControlDetail.tsx. For an in-scope control the org's
+ * implementation record sits beside it in a DetailSplitLayout right panel.
  *
  * Keyboard: ArrowLeft→onPrev, ArrowRight→onNext, Escape→onBack.
  * Suppressed when focus is in input/textarea/select/contentEditable.
  */
-import { useMemo, useState, useEffect, useCallback, type JSX } from 'react'
+import { useMemo, useState, useEffect, useCallback, type JSX, type ReactNode } from 'react'
 import type { EnrichedControl, ScopedControl, ScopedControlsFile } from '../../types'
 import { getEvidenceTracking } from '../../data/scopingService'
 import { getEvidenceHealth, type EvidenceHealthResponse } from '../../data/apiClient'
 
-import GraphView from '../GraphView'
+import ControlGraphOverlay from './ControlGraphOverlay'
 import SCRMFocusBadges from '../SCRMFocusBadges'
 import RiskThreatContext from '../RiskThreatContext'
 import AssessmentObjectivesList from '../AssessmentObjectivesList'
 import DeprecatedBadge, { getCatalogLifecycle } from '../DeprecatedBadge'
 import AppLink from '../AppLink'
 import TabRow from '../explorer/TabRow'
+import DetailSplitLayout from '../explorer/DetailSplitLayout'
 
 import ScopingDetailPage, {
   type ScopingDetailControl,
@@ -50,9 +52,11 @@ export interface ControlDetailPageProps {
   canEditImplementation?: boolean
   canManageTeams?: boolean
   accountableTeamLabel?: string | null
+  /** Scope action (add / remove / open record) shown in the breadcrumb bar. */
+  scopeAction?: ReactNode
 }
 
-type DetailTab = 'details' | 'implementation' | 'assessment' | 'mappings'
+type DetailTab = 'details' | 'assessment' | 'mappings'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -108,6 +112,7 @@ export default function ControlDetailPage({
   canEditImplementation = false,
   canManageTeams = false,
   accountableTeamLabel = null,
+  scopeAction,
 }: ControlDetailPageProps): JSX.Element {
   const [showGraph, setShowGraph] = useState(false)
   const [activeTab, setActiveTab] = useState<DetailTab>('details')
@@ -220,14 +225,41 @@ export default function ControlDetailPage({
 
   const tabs = [
     { id: 'details', label: 'Catalog Details' },
-    ...(inScope && implementationRecord
-      ? [{ id: 'implementation', label: 'Implementation Workspace' }]
-      : []),
     { id: 'assessment', label: 'Assessment' },
     { id: 'mappings', label: 'Mappings', count: totalFrameworks },
   ]
 
   const pptdfLabel = getPptdfLabel(control.pptdf_applicability)
+
+  // ── Implementation record: the slide-out panel ─────────────────────────
+  // The organisation's own record for an in-scope control. It used to be a
+  // tab; it now sits beside the catalog detail so both can be read at once.
+
+  const implementationPanel =
+    inScope && implementationRecord && organizationId ? (
+      <div
+        className="library-implementation-panel"
+        aria-label="Organization implementation record"
+      >
+        <ScopingDetailPage
+          control={control as ScopingDetailControl}
+          scopingEntry={implementationRecord as ScopingEntry}
+          position={position}
+          onPrev={onPrev}
+          onNext={onNext}
+          onBack={onBack}
+          onToggleScope={() => {}}
+          onFieldChange={onImplementationFieldChange}
+          onReloadTeamAssignments={onReloadTeamAssignments}
+          organizationId={organizationId}
+          scopingData={scopingData}
+          accountableTeamLabel={accountableTeamLabel}
+          canManageTeams={canManageTeams && canEditImplementation}
+          readOnly={!canEditImplementation}
+        />
+      </div>
+    ) : null
+
 
   // ─────────────────────────────────────────────────────────────────────────
   // Render
@@ -264,6 +296,7 @@ export default function ControlDetailPage({
         <span className="control-detail-breadcrumb-id">{control.scf_id}</span>
 
         <div className="control-detail-pager">
+          {scopeAction}
           {positionText && (
             <span className="control-detail-position">{positionText}</span>
           )}
@@ -304,305 +337,370 @@ export default function ControlDetailPage({
         </div>
       </div>
 
-      {/* ── Scrollable body ────────────────────────────────────────────────── */}
-      <div className="control-detail-body">
-        {/* ── Header block ──────────────────────────────────────────────────── */}
-        <div className="control-detail-header">
-          {/* 4px tick bar */}
-          <div
-            className={`control-detail-tick-bar${inScope ? ' control-detail-tick-bar--in-scope' : ''}`}
-          />
+      {/* Split view: the catalog control on the left, the organisation's
+          implementation record in the slide-out panel on the right. */}
+      <DetailSplitLayout panelTitle="Implementation record" panel={implementationPanel}>
+        <div className="control-detail-body">
+          {/* ── Header block ──────────────────────────────────────────────────── */}
+          <div className="control-detail-header">
+            {/* 4px tick bar */}
+            <div
+              className={`control-detail-tick-bar${inScope ? ' control-detail-tick-bar--in-scope' : ''}`}
+            />
 
-          <div className="control-detail-header-inner">
-            {/* Source tag row */}
-            <div className="control-detail-source-row">
-              <span className="scf-source-tag">SCF Catalog</span>
-              <DeprecatedBadge {...getCatalogLifecycle(control)} />
-              <button
-                className={`btn-graph-toggle${showGraph ? ' active' : ''}`}
-                onClick={() => setShowGraph((v) => !v)}
-                title={showGraph ? 'Hide graph view' : 'Show graph view'}
-                aria-label={showGraph ? 'Hide graph view' : 'Show graph view'}
-              >
-                📊
-              </button>
-              <div className="control-detail-meta-row">
-                <span className="cadence-label">Domain:</span>
-                <span className="cadence-badge">{control.scf_domain}</span>
-                {control.validation_cadence && (
-                  <>
-                    <span className="cadence-label">Validation Cadence:</span>
-                    <span className="cadence-badge">{control.validation_cadence}</span>
-                  </>
+            <div className="control-detail-header-inner">
+              {/* Source tag row */}
+              <div className="control-detail-source-row">
+                <span className="scf-source-tag">SCF Catalog</span>
+                <DeprecatedBadge {...getCatalogLifecycle(control)} />
+                <button
+                  type="button"
+                  className="btn-graph-toggle"
+                  onClick={() => setShowGraph(true)}
+                  title="Open the relationship graph (evidence, frameworks, requirement IDs)"
+                  aria-label="Show graph view"
+                >
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <circle cx="3" cy="8" r="2" stroke="currentColor" strokeWidth="1.4" />
+                    <circle cx="13" cy="3" r="2" stroke="currentColor" strokeWidth="1.4" />
+                    <circle cx="13" cy="13" r="2" stroke="currentColor" strokeWidth="1.4" />
+                    <path d="M5 7l6-3M5 9l6 3" stroke="currentColor" strokeWidth="1.4" />
+                  </svg>
+                  Graph
+                </button>
+                <div className="control-detail-meta-row">
+                  <span className="cadence-label">Domain:</span>
+                  <span className="cadence-badge">{control.scf_domain}</span>
+                  {control.validation_cadence && (
+                    <>
+                      <span className="cadence-label">Validation Cadence:</span>
+                      <span className="cadence-badge">{control.validation_cadence}</span>
+                    </>
+                  )}
+                </div>
+                <SCRMFocusBadges focus={control.scrm_focus} variant="bar" />
+              </div>
+
+              {/* Id + chips + weight bar row */}
+              <div className="control-detail-chips-row">
+                <span className="control-detail-mono-id">{control.scf_id}</span>
+                {pptdfLabel && (
+                  <span className="control-detail-chip">{pptdfLabel}</span>
+                )}
+                {control.nist_csf_function && (
+                  <span className="control-detail-chip">{control.nist_csf_function}</span>
+                )}
+                {inScope && (
+                  <span className="control-detail-chip control-detail-chip--in-scope">
+                    <svg
+                      width="10"
+                      height="10"
+                      viewBox="0 0 10 10"
+                      fill="none"
+                      aria-hidden="true"
+                    >
+                      <path
+                        d="M1.5 5.5l2.5 2.5 4.5-5"
+                        stroke="currentColor"
+                        strokeWidth="1.6"
+                        strokeLinecap="round"
+                      />
+                    </svg>
+                    In scope
+                  </span>
+                )}
+                {control.control_weighting != null && (
+                  <div className="control-detail-weight-bar-group">
+                    <span className="control-detail-weight-label">Weight</span>
+                    <div className="control-detail-weight-track">
+                      <div
+                        className="control-detail-weight-fill"
+                        style={{ width: `${Math.min((control.control_weighting / 10) * 100, 100)}%` }}
+                      />
+                    </div>
+                    <span className="control-detail-weight-value">{control.control_weighting}</span>
+                  </div>
                 )}
               </div>
-              <SCRMFocusBadges focus={control.scrm_focus} variant="bar" />
+
+              {/* Title */}
+              <h1 className="control-detail-title">{control.control_name}</h1>
+
+              {/* Description */}
+              <p className="control-detail-description">{control.control_description}</p>
+            </div>
+          </div>
+
+          {/* ── Assessment question ────────────────────────────────────────────── */}
+          {control.control_question && (
+            <div className="control-detail-question-block">
+              <div className="control-detail-question-label">ASSESSMENT QUESTION</div>
+              <blockquote className="control-detail-question-text">
+                &ldquo;{control.control_question}&rdquo;
+              </blockquote>
+            </div>
+          )}
+
+          {/* ── 3-card grid ────────────────────────────────────────────────────── */}
+          <div className="control-detail-cards">
+            {/* IMPLEMENTATION card */}
+            <div className="control-detail-card">
+              <div className="control-detail-card-label">IMPLEMENTATION</div>
+              {inScope && scopingEntry ? (
+                <div className="control-detail-card-body">
+                  {scopingEntry.implementation_status && (
+                    <span className={`control-detail-status-chip is-${scopingEntry.implementation_status}`}>
+                      {formatStatus(scopingEntry.implementation_status)}
+                    </span>
+                  )}
+                  {scopingEntry.maturity != null && (
+                    <span className="control-detail-maturity">
+                      Maturity {scopingEntry.maturity}
+                    </span>
+                  )}
+                  {scopingEntry.owner && (
+                    <div className="control-detail-owner">
+                      Accountable — {scopingEntry.owner}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="control-detail-not-in-scope">Not in scope</div>
+              )}
             </div>
 
-            {/* Id + chips + weight bar row */}
-            <div className="control-detail-chips-row">
-              <span className="control-detail-mono-id">{control.scf_id}</span>
-              {pptdfLabel && (
-                <span className="control-detail-chip">{pptdfLabel}</span>
+            {/* FRAMEWORK MAPPINGS card */}
+            <div className="control-detail-card">
+              <div className="control-detail-card-label">FRAMEWORK MAPPINGS</div>
+              <div className="control-detail-fw-chips">
+                {firstThreeFrameworks.map((fw) => (
+                  <span key={fw} className="control-detail-fw-chip">
+                    {fw}
+                  </span>
+                ))}
+                {extraFrameworks > 0 && (
+                  <span className="control-detail-fw-more">+{extraFrameworks} more</span>
+                )}
+              </div>
+            </div>
+
+            {/* EVIDENCE card */}
+            <div className="control-detail-card">
+              <div className="control-detail-card-label">EVIDENCE</div>
+              <div className="control-detail-evidence-counts">
+                {linkedCount} {linkedCount === 1 ? 'item' : 'items'} linked
+                {trackedCount > 0 && <> · {trackedCount} tracked</>}
+              </div>
+              {/* One requirement: go straight to it. Several: offer each, so the
+                  header never silently picks the first. */}
+              {onNavigateToEvidence && control.artifactsResolved.length === 1 && (
+                <AppLink
+                  className="control-detail-evidence-link"
+                  to={{ kind: 'evidence', id: control.artifactsResolved[0].id }}
+                  onNavigate={() => onNavigateToEvidence(control.artifactsResolved[0].id)}
+                >
+                  Open in Evidence workspace
+                </AppLink>
               )}
-              {control.nist_csf_function && (
-                <span className="control-detail-chip">{control.nist_csf_function}</span>
-              )}
-              {inScope && (
-                <span className="control-detail-chip control-detail-chip--in-scope">
-                  <svg
-                    width="10"
-                    height="10"
-                    viewBox="0 0 10 10"
-                    fill="none"
-                    aria-hidden="true"
-                  >
-                    <path
-                      d="M1.5 5.5l2.5 2.5 4.5-5"
-                      stroke="currentColor"
-                      strokeWidth="1.6"
-                      strokeLinecap="round"
-                    />
-                  </svg>
-                  In scope
-                </span>
-              )}
-              {control.control_weighting != null && (
-                <div className="control-detail-weight-bar-group">
-                  <span className="control-detail-weight-label">Weight</span>
-                  <div className="control-detail-weight-track">
-                    <div
-                      className="control-detail-weight-fill"
-                      style={{ width: `${Math.min((control.control_weighting / 10) * 100, 100)}%` }}
-                    />
-                  </div>
-                  <span className="control-detail-weight-value">{control.control_weighting}</span>
+              {onNavigateToEvidence && control.artifactsResolved.length > 1 && (
+                <div className="control-detail-evidence-choices" aria-label="Open an evidence requirement">
+                  {control.artifactsResolved.map((a) => (
+                    <AppLink
+                      key={a.id}
+                      className="control-detail-evidence-link"
+                      to={{ kind: 'evidence', id: a.id }}
+                      onNavigate={() => onNavigateToEvidence(a.id)}
+                      title={a.title}
+                      aria-label={`Open ${a.id} — ${a.title} in Evidence workspace`}
+                    >
+                      {a.id}
+                    </AppLink>
+                  ))}
                 </div>
               )}
             </div>
-
-            {/* Title */}
-            <h1 className="control-detail-title">{control.control_name}</h1>
-
-            {/* Description */}
-            <p className="control-detail-description">{control.control_description}</p>
-          </div>
-        </div>
-
-        {/* ── Assessment question ────────────────────────────────────────────── */}
-        {control.control_question && (
-          <div className="control-detail-question-block">
-            <div className="control-detail-question-label">ASSESSMENT QUESTION</div>
-            <blockquote className="control-detail-question-text">
-              &ldquo;{control.control_question}&rdquo;
-            </blockquote>
-          </div>
-        )}
-
-        {/* ── 3-card grid ────────────────────────────────────────────────────── */}
-        <div className="control-detail-cards">
-          {/* IMPLEMENTATION card */}
-          <div className="control-detail-card">
-            <div className="control-detail-card-label">IMPLEMENTATION</div>
-            {inScope && scopingEntry ? (
-              <div className="control-detail-card-body">
-                {scopingEntry.implementation_status && (
-                  <span className={`control-detail-status-chip is-${scopingEntry.implementation_status}`}>
-                    {formatStatus(scopingEntry.implementation_status)}
-                  </span>
-                )}
-                {scopingEntry.maturity != null && (
-                  <span className="control-detail-maturity">
-                    Maturity {scopingEntry.maturity}
-                  </span>
-                )}
-                {scopingEntry.owner && (
-                  <div className="control-detail-owner">
-                    Accountable — {scopingEntry.owner}
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="control-detail-not-in-scope">Not in scope</div>
-            )}
           </div>
 
-          {/* FRAMEWORK MAPPINGS card */}
-          <div className="control-detail-card">
-            <div className="control-detail-card-label">FRAMEWORK MAPPINGS</div>
-            <div className="control-detail-fw-chips">
-              {firstThreeFrameworks.map((fw) => (
-                <span key={fw} className="control-detail-fw-chip">
-                  {fw}
-                </span>
-              ))}
-              {extraFrameworks > 0 && (
-                <span className="control-detail-fw-more">+{extraFrameworks} more</span>
-              )}
-            </div>
-          </div>
+          {/* ── Risk & Threat Context ──────────────────────────────────────────── */}
+          <RiskThreatContext mapping={control.risk_threat_mapping} />
 
-          {/* EVIDENCE card */}
-          <div className="control-detail-card">
-            <div className="control-detail-card-label">EVIDENCE</div>
-            <div className="control-detail-evidence-counts">
-              {linkedCount} {linkedCount === 1 ? 'item' : 'items'} linked
-              {trackedCount > 0 && <> · {trackedCount} tracked</>}
-            </div>
-            {/* One requirement: go straight to it. Several: offer each, so the
-                header never silently picks the first. */}
-            {onNavigateToEvidence && control.artifactsResolved.length === 1 && (
-              <AppLink
-                className="control-detail-evidence-link"
-                to={{ kind: 'evidence', id: control.artifactsResolved[0].id }}
-                onNavigate={() => onNavigateToEvidence(control.artifactsResolved[0].id)}
-              >
-                Open in Evidence workspace
-              </AppLink>
-            )}
-            {onNavigateToEvidence && control.artifactsResolved.length > 1 && (
-              <div className="control-detail-evidence-choices" aria-label="Open an evidence requirement">
-                {control.artifactsResolved.map((a) => (
-                  <AppLink
-                    key={a.id}
-                    className="control-detail-evidence-link"
-                    to={{ kind: 'evidence', id: a.id }}
-                    onNavigate={() => onNavigateToEvidence(a.id)}
-                    title={a.title}
-                    aria-label={`Open ${a.id} — ${a.title} in Evidence workspace`}
-                  >
-                    {a.id}
-                  </AppLink>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
+          {/* ── Content (the graph opens full-window in ControlGraphOverlay) ─── */}
+            <>
+              {/* ── Tabs ───────────────────────────────────────────────────────── */}
+              <TabRow
+                tabs={tabs}
+                activeId={activeTab}
+                onSelect={(id) => setActiveTab(id as DetailTab)}
+                aria-label="Control detail sections"
+              />
 
-        {/* ── Risk & Threat Context ──────────────────────────────────────────── */}
-        <RiskThreatContext mapping={control.risk_threat_mapping} />
+              {/* ── Details Tab ─────────────────────────────────────────────────── */}
+              {activeTab === 'details' && (
+                <>
+                  {/* Additional Guidance */}
+                  {(control.policy_standard ||
+                    control.implementation_guidance ||
+                    control.testing_procedure) && (
+                    <div className="detail-section-container surface-bedrock">
+                      <div className="container-header">
+                        <span className="container-icon">📄</span>
+                        <span className="container-title">Additional Guidance</span>
+                      </div>
+                      <div className="container-content">
+                        {control.policy_standard && (
+                          <div className="detail-field">
+                            <div className="field-label">
+                              <span className="field-icon">📜</span>
+                              Policy Standard
+                            </div>
+                            <div className="field-content">{control.policy_standard}</div>
+                          </div>
+                        )}
+                        {control.implementation_guidance && (
+                          <div className="detail-field">
+                            <div className="field-label">
+                              <span className="field-icon">💡</span>
+                              Implementation Guidance
+                            </div>
+                            <div className="field-content prewrap">
+                              {control.implementation_guidance}
+                            </div>
+                          </div>
+                        )}
+                        {control.testing_procedure && (
+                          <div className="detail-field">
+                            <div className="field-label">
+                              <span className="field-icon">🔍</span>
+                              Testing Procedure
+                            </div>
+                            <div className="field-content prewrap">
+                              {control.testing_procedure}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
 
-        {/* ── Graph or content ──────────────────────────────────────────────── */}
-        {showGraph ? (
-          <div className="graph-container">
-            <GraphView control={control} />
-          </div>
-        ) : (
-          <>
-            {/* ── Tabs ───────────────────────────────────────────────────────── */}
-            <TabRow
-              tabs={tabs}
-              activeId={activeTab}
-              onSelect={(id) => setActiveTab(id as DetailTab)}
-              aria-label="Control detail sections"
-            />
-
-            {activeTab === 'implementation' && implementationRecord && organizationId && (
-              <div
-                className="library-implementation-panel"
-                aria-label="Organization implementation record"
-              >
-                <ScopingDetailPage
-                  control={control as ScopingDetailControl}
-                  scopingEntry={implementationRecord as ScopingEntry}
-                  position={position}
-                  onPrev={onPrev}
-                  onNext={onNext}
-                  onBack={onBack}
-                  onToggleScope={() => {}}
-                  onFieldChange={onImplementationFieldChange}
-                  onReloadTeamAssignments={onReloadTeamAssignments}
-                  organizationId={organizationId}
-                  scopingData={scopingData}
-                  accountableTeamLabel={accountableTeamLabel}
-                  canManageTeams={canManageTeams && canEditImplementation}
-                  readOnly={!canEditImplementation}
-                />
-              </div>
-            )}
-
-            {/* ── Details Tab ─────────────────────────────────────────────────── */}
-            {activeTab === 'details' && (
-              <>
-                {/* Additional Guidance */}
-                {(control.policy_standard ||
-                  control.implementation_guidance ||
-                  control.testing_procedure) && (
+                  {/* Audit Artifacts */}
                   <div className="detail-section-container surface-bedrock">
                     <div className="container-header">
-                      <span className="container-icon">📄</span>
-                      <span className="container-title">Additional Guidance</span>
+                      <span className="container-icon">📋</span>
+                      <span className="container-title">Audit Artifacts</span>
+                      <span className="container-count">{totalArtifacts}</span>
                     </div>
                     <div className="container-content">
-                      {control.policy_standard && (
-                        <div className="detail-field">
-                          <div className="field-label">
-                            <span className="field-icon">📜</span>
-                            Policy Standard
-                          </div>
-                          <div className="field-content">{control.policy_standard}</div>
-                        </div>
-                      )}
-                      {control.implementation_guidance && (
-                        <div className="detail-field">
-                          <div className="field-label">
-                            <span className="field-icon">💡</span>
-                            Implementation Guidance
-                          </div>
-                          <div className="field-content prewrap">
-                            {control.implementation_guidance}
-                          </div>
-                        </div>
-                      )}
-                      {control.testing_procedure && (
-                        <div className="detail-field">
-                          <div className="field-label">
-                            <span className="field-icon">🔍</span>
-                            Testing Procedure
-                          </div>
-                          <div className="field-content prewrap">
-                            {control.testing_procedure}
-                          </div>
+                      {Object.keys(groupedArtifacts).length === 0 ? (
+                        <div className="muted">No artifacts listed</div>
+                      ) : (
+                        <div className="artifact-list-compact">
+                          {Object.entries(groupedArtifacts).map(([domain, items]) => (
+                            <div key={domain} className="artifact-domain-group">
+                              <div className="artifact-domain-title">{domain}</div>
+                              <div className="artifact-items">
+                                {items.map((it) =>
+                                  onNavigateToEvidence ? (
+                                    <AppLink
+                                      key={it.id}
+                                      className="artifact-item-compact artifact-item-link"
+                                      to={{ kind: 'evidence', id: it.id }}
+                                      onNavigate={() => onNavigateToEvidence(it.id)}
+                                    >
+                                      <span className="artifact-id-badge">{it.id}</span>
+                                      <span className="artifact-title-text">{it.title}</span>
+                                    </AppLink>
+                                  ) : (
+                                    <div key={it.id} className="artifact-item-compact">
+                                      <span className="artifact-id-badge">{it.id}</span>
+                                      <span className="artifact-title-text">{it.title}</span>
+                                    </div>
+                                  ),
+                                )}
+                              </div>
+                            </div>
+                          ))}
                         </div>
                       )}
                     </div>
                   </div>
-                )}
 
-                {/* Audit Artifacts */}
+                  {/* Evidence Status */}
+                  {evidenceStatusItems.length > 0 && (
+                    <div className="detail-section-container">
+                      <div className="container-header">
+                        <span className="container-icon">&#x2714;&#xFE0F;</span>
+                        <span className="container-title">Evidence Status</span>
+                        <span className="container-count">{evidenceStatusItems.length}</span>
+                      </div>
+                      <div className="container-content">
+                        <div className="evidence-status-grid">
+                          {evidenceStatusItems.map((item) => {
+                            const cells = (
+                              <>
+                                <span className={`ehd-status-dot ehd-dot-${item.status}`} />
+                                <span className="evidence-status-id">{item.id}</span>
+                                <span className="evidence-status-title">{item.title}</span>
+                                <span className="evidence-status-files">
+                                  {item.fileCount > 0
+                                    ? `${item.fileCount} file${item.fileCount !== 1 ? 's' : ''}`
+                                    : 'No files'}
+                                </span>
+                                <span
+                                  className={`evidence-status-tracked ${item.isTracked ? 'tracked' : 'not-tracked'}`}
+                                >
+                                  {item.isTracked ? 'Tracked' : 'Not tracked'}
+                                </span>
+                              </>
+                            )
+                            return onNavigateToEvidence ? (
+                              <AppLink
+                                key={item.id}
+                                className="evidence-status-row evidence-status-link"
+                                to={{ kind: 'evidence', id: item.id }}
+                                onNavigate={() => onNavigateToEvidence(item.id)}
+                              >
+                                {cells}
+                              </AppLink>
+                            ) : (
+                              <div key={item.id} className="evidence-status-row">
+                                {cells}
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+
+              {/* ── Assessment Tab ──────────────────────────────────────────────── */}
+              {activeTab === 'assessment' && (
+                <AssessmentObjectivesList scfId={control.scf_id} />
+              )}
+
+              {/* ── Mappings Tab ────────────────────────────────────────────────── */}
+              {activeTab === 'mappings' && (
                 <div className="detail-section-container surface-bedrock">
                   <div className="container-header">
-                    <span className="container-icon">📋</span>
-                    <span className="container-title">Audit Artifacts</span>
-                    <span className="container-count">{totalArtifacts}</span>
+                    <span className="container-icon">🔗</span>
+                    <span className="container-title">Framework Mappings</span>
+                    <span className="container-count">{totalFrameworks}</span>
                   </div>
                   <div className="container-content">
-                    {Object.keys(groupedArtifacts).length === 0 ? (
-                      <div className="muted">No artifacts listed</div>
+                    {Object.keys(control.frameworksResolved).length === 0 ? (
+                      <div className="muted">No mappings listed</div>
                     ) : (
-                      <div className="artifact-list-compact">
-                        {Object.entries(groupedArtifacts).map(([domain, items]) => (
-                          <div key={domain} className="artifact-domain-group">
-                            <div className="artifact-domain-title">{domain}</div>
-                            <div className="artifact-items">
-                              {items.map((it) =>
-                                onNavigateToEvidence ? (
-                                  <AppLink
-                                    key={it.id}
-                                    className="artifact-item-compact artifact-item-link"
-                                    to={{ kind: 'evidence', id: it.id }}
-                                    onNavigate={() => onNavigateToEvidence(it.id)}
-                                  >
-                                    <span className="artifact-id-badge">{it.id}</span>
-                                    <span className="artifact-title-text">{it.title}</span>
-                                  </AppLink>
-                                ) : (
-                                  <div key={it.id} className="artifact-item-compact">
-                                    <span className="artifact-id-badge">{it.id}</span>
-                                    <span className="artifact-title-text">{it.title}</span>
-                                  </div>
-                                ),
-                              )}
+                      <div className="framework-list-compact">
+                        {Object.entries(control.frameworksResolved).map(([fw, refs]) => (
+                          <div key={fw} className="framework-item-compact">
+                            <div className="framework-name-compact">{fw}</div>
+                            <div className="framework-refs">
+                              {refs.map((r, i) => (
+                                <span key={`${r}-${i}`} className="ref-chip">
+                                  {r}
+                                </span>
+                              ))}
                             </div>
                           </div>
                         ))}
@@ -610,95 +708,18 @@ export default function ControlDetailPage({
                     )}
                   </div>
                 </div>
+              )}
+            </>
+        </div>
+      </DetailSplitLayout>
 
-                {/* Evidence Status */}
-                {evidenceStatusItems.length > 0 && (
-                  <div className="detail-section-container">
-                    <div className="container-header">
-                      <span className="container-icon">&#x2714;&#xFE0F;</span>
-                      <span className="container-title">Evidence Status</span>
-                      <span className="container-count">{evidenceStatusItems.length}</span>
-                    </div>
-                    <div className="container-content">
-                      <div className="evidence-status-grid">
-                        {evidenceStatusItems.map((item) => {
-                          const cells = (
-                            <>
-                              <span className={`ehd-status-dot ehd-dot-${item.status}`} />
-                              <span className="evidence-status-id">{item.id}</span>
-                              <span className="evidence-status-title">{item.title}</span>
-                              <span className="evidence-status-files">
-                                {item.fileCount > 0
-                                  ? `${item.fileCount} file${item.fileCount !== 1 ? 's' : ''}`
-                                  : 'No files'}
-                              </span>
-                              <span
-                                className={`evidence-status-tracked ${item.isTracked ? 'tracked' : 'not-tracked'}`}
-                              >
-                                {item.isTracked ? 'Tracked' : 'Not tracked'}
-                              </span>
-                            </>
-                          )
-                          return onNavigateToEvidence ? (
-                            <AppLink
-                              key={item.id}
-                              className="evidence-status-row evidence-status-link"
-                              to={{ kind: 'evidence', id: item.id }}
-                              onNavigate={() => onNavigateToEvidence(item.id)}
-                            >
-                              {cells}
-                            </AppLink>
-                          ) : (
-                            <div key={item.id} className="evidence-status-row">
-                              {cells}
-                            </div>
-                          )
-                        })}
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </>
-            )}
-
-            {/* ── Assessment Tab ──────────────────────────────────────────────── */}
-            {activeTab === 'assessment' && (
-              <AssessmentObjectivesList scfId={control.scf_id} />
-            )}
-
-            {/* ── Mappings Tab ────────────────────────────────────────────────── */}
-            {activeTab === 'mappings' && (
-              <div className="detail-section-container surface-bedrock">
-                <div className="container-header">
-                  <span className="container-icon">🔗</span>
-                  <span className="container-title">Framework Mappings</span>
-                  <span className="container-count">{totalFrameworks}</span>
-                </div>
-                <div className="container-content">
-                  {Object.keys(control.frameworksResolved).length === 0 ? (
-                    <div className="muted">No mappings listed</div>
-                  ) : (
-                    <div className="framework-list-compact">
-                      {Object.entries(control.frameworksResolved).map(([fw, refs]) => (
-                        <div key={fw} className="framework-item-compact">
-                          <div className="framework-name-compact">{fw}</div>
-                          <div className="framework-refs">
-                            {refs.map((r, i) => (
-                              <span key={`${r}-${i}`} className="ref-chip">
-                                {r}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-          </>
-        )}
-      </div>
+      {showGraph && (
+        <ControlGraphOverlay
+          control={control}
+          onClose={() => setShowGraph(false)}
+          onOpenEvidence={onNavigateToEvidence}
+        />
+      )}
     </div>
   )
 }

@@ -27,6 +27,7 @@ from catalog_models import (
 )
 
 import json
+import re
 import os
 from pathlib import Path
 
@@ -61,8 +62,62 @@ def format_framework_name(key: str, live_names: Optional[dict] = None) -> str:
         return FRAMEWORK_DISPLAY_NAMES[key]
     if live_names and live_names.get(key):
         return live_names[key]
-    # Default: replace underscores with spaces and title case
-    return key.replace('_', ' ').title()
+    return humanize_framework_id(key)
+
+
+# The id's region prefix repeats what the grouping already says ("EMEA", "US
+# Federal"), and the curated names never carry it either.
+_REGION_PREFIXES = ("usa", "us", "emea", "apac", "americas")
+# Short tokens are almost always acronyms (DPA, NIST, SOX); these are the words.
+_SHORT_WORDS = {
+    "act", "law", "laws", "rule", "part", "data", "risk", "high", "low", "base",
+    "life", "june", "july", "may", "open", "gold", "core", "cloud", "level", "and",
+    "of", "for", "the", "on", "in", "top", "new", "york", "hong", "kong", "zero",
+    "self", "code", "west", "east", "north", "sub",
+}
+# Tokens whose right spelling neither rule gets.
+_SPELLINGS = {
+    "fedramp": "FedRAMP", "govramp": "GovRAMP", "iot": "IoT", "fipps": "FIPPs",
+    "nycrr500": "NYCRR 500",
+    **{t: t.upper() for t in (
+        "hipaa", "ffiec", "facta", "dfars", "owasp", "cmmc", "traiga", "ssdaf",
+        "sparta", "tisax", "cobit", "nispom", "shield", "ramp", "mars", "pipeda",
+        "popia", "finma", "coppa", "ferpa", "finra", "nzism", "cscrf", "dnsip",
+        "pirppd", "pdppl", "fappd", "bmaccc", "lddp",
+    )},
+}
+
+
+def humanize_framework_id(key: str) -> str:
+    """A readable name for a framework id nothing else names.
+
+    Used when neither ``frameworks.json`` nor the live registry has the id —
+    every ``usa_*`` id after the 2026 catalogue, on an install with no stored
+    registry row. ``emea_uk_cyber_essentials_3_3`` -> "UK Cyber Essentials 3.3",
+    ``usa_federal_sox_2002`` -> "SOX 2002", not "Emea Uk Cyber Essentials 3 3".
+    """
+    tokens = [t for t in key.lower().split("_") if t]
+    if len(tokens) > 1 and tokens[0] in _REGION_PREFIXES:
+        tokens = tokens[1:]
+        if len(tokens) > 1 and tokens[0] == "federal":
+            tokens = tokens[1:]
+    words: List[str] = []
+    for token in tokens:
+        if token.isdigit():
+            # Short number runs are versions: 3_3 -> 3.3, 73_54 -> 73.54.
+            if words and len(token) <= 2 and re.fullmatch(r"\d{1,2}(\.\d{1,2})*", words[-1]):
+                words[-1] += "." + token
+                continue
+            word = token
+        elif token in _SPELLINGS:
+            word = _SPELLINGS[token]
+        elif not token.isalpha() or (len(token) <= 4 and token not in _SHORT_WORDS):
+            word = token.upper()
+        else:
+            word = token.capitalize()
+        if not words or words[-1] != word:  # usa_colorado_colorado_privacy_act
+            words.append(word)
+    return " ".join(words) or key
 
 
 async def live_framework_names(db: AsyncSession) -> dict:

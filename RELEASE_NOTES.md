@@ -1,12 +1,20 @@
-# v0.43.1
+# v0.44.0
 
 .
 
-## Fixes and improvements
+## What's new
 
-- Let editors create API keys; cap a key's role at its owner's current access (PR 1099)
-- Stop Google-mode sessions ending on request bursts (PR 1098)
+- Readable framework names, correct grouping, foldable browser with status coverage bars (PR 1104)
+- Split detail pages, breadcrumb scope action, full-window control graph
+- Faster Framework Mappings, angled headers, domain filters, single page titles
+- Scope-aware evidence tasks and orphan handling on unscope (PR 1101)
+
+## Migrations
+
+- `rescope001` — Scoped controls: re-scope staleness stamps.
+
+`scripts/upgrade.sh` runs these after its backup. A plain `docker compose up -d` refuses to migrate an existing database until `SCF_MIGRATE_ACK` is set, so read `UPGRADING.md` before upgrading a deployment you cannot restore.
 
 ## Upgrading
 
-- Run `scripts/upgrade.sh v0.43.1` (read `UPGRADING.md` first).
+- Run `scripts/upgrade.sh v0.44.0` (read `UPGRADING.md` first).

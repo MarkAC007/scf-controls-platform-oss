@@ -3,7 +3,7 @@ Scoped Controls API endpoints.
 Handles CRUD operations for control scoping.
 """
 import logging
-from datetime import date
+from datetime import date, datetime
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, text, func, or_, literal
@@ -12,7 +12,7 @@ from typing import List, Optional, Literal
 from uuid import UUID
 
 from database import get_db
-from models import ScopedControl, Organization, OrganizationFrameworkSelection
+from models import ScopedControl, Organization, OrganizationFrameworkSelection, assessment_is_stale
 from catalog_models import SCFCatalogControl
 from schemas import (
     ScopedControlResponse,
@@ -52,6 +52,27 @@ from services.team_assignments import (
 def _tracked_values(control: ScopedControl) -> dict:
     """Snapshot audit fields while tolerating legacy/pre-migration row adapters."""
     return {field: getattr(control, field, None) for field in SCOPED_CONTROL_TRACKED_FIELDS}
+
+
+ASSESSMENT_FIELDS = ("implementation_status", "maturity_level")
+
+
+def _stamp_rescope_and_assessment(control: ScopedControl, old_values: dict, update_data: dict) -> None:
+    """Keep the two re-scope staleness stamps honest on a direct control write.
+
+    ``assessment_recorded_at`` moves when status or maturity actually changes;
+    ``scope_restored_at`` moves when this write flips the control back into
+    scope. Both feed ``ScopedControl.assessment_stale``; the scoping service
+    stamps the same fields on its own paths (bulk scope, override, migration).
+    """
+    now = datetime.utcnow()
+    if any(
+        field in update_data and update_data[field] != old_values.get(field)
+        for field in ASSESSMENT_FIELDS
+    ):
+        control.assessment_recorded_at = now
+    if update_data.get("selected") is True and not old_values.get("selected"):
+        control.scope_restored_at = now
 
 
 from services.org_utils import MEMBER_TYPES, invalid_member_type_detail
@@ -207,6 +228,8 @@ async def list_scoped_controls_paginated(
             ScopedControl.scope_override,
             ScopedControl.scope_override_reason,
             ScopedControl.scope_override_set_at,
+            ScopedControl.scope_restored_at,
+            ScopedControl.assessment_recorded_at,
         )
         .outerjoin(
             ScopedControl,
@@ -353,6 +376,8 @@ async def list_scoped_controls_paginated(
         scope_override = row[8] if len(row) > 8 else None
         scope_override_reason = row[9] if len(row) > 9 else None
         scope_override_set_at = row[10] if len(row) > 10 else None
+        scope_restored_at = row[11] if len(row) > 11 else None
+        assessment_recorded_at = row[12] if len(row) > 12 else None
 
         controls.append({
             "scf_id": catalog.scf_id,
@@ -383,6 +408,16 @@ async def list_scoped_controls_paginated(
             # The org's own maturity setting — the scoping list renders this
             # column, so omitting it left the UI hardcoding an em dash.
             "maturity_level": maturity_level,
+            # Re-scope staleness (same rule as ScopedControl.assessment_stale)
+            "scope_restored_at": scope_restored_at,
+            "assessment_recorded_at": assessment_recorded_at,
+            "assessment_stale": assessment_is_stale(
+                selected=selected,
+                implementation_status=impl_status,
+                maturity_level=maturity_level,
+                scope_restored_at=scope_restored_at,
+                assessment_recorded_at=assessment_recorded_at,
+            ),
             # Extended data for detail view
             "pptdf_applicability": {
                 "people": catalog.pptdf_people,
@@ -544,6 +579,7 @@ async def create_or_update_scoped_control(
         for key, value in control_dict.items():
             setattr(existing_control, key, value)
         existing_control.updated_by_user_id = user_id
+        _stamp_rescope_and_assessment(existing_control, old_values, control_dict)
 
         # Auto-set completion_date on implementation status transitions (#250)
         if 'implementation_status' in control_dict:
@@ -641,6 +677,7 @@ async def update_scoped_control(
     for key, value in update_data.items():
         setattr(control, key, value)
     control.updated_by_user_id = user_id
+    _stamp_rescope_and_assessment(control, old_values, update_data)
 
     # Auto-set completion_date on implementation status transitions (#250)
     if 'implementation_status' in update_data:
@@ -888,14 +925,20 @@ async def bulk_unscope_by_framework(
         POST /organizations/{org_id}/scoped-controls/bulk-unscope-framework
         {
             "frameworks": ["iso_27017_2015"],
-            "removal_reason": "No longer pursuing ISO 27017 certification"
+            "removal_reason": "No longer pursuing ISO 27017 certification",
+            "orphan_evidence_action": "keep"
         }
+
+    Tracked evidence whose only in-scope requirers leave scope is reported in
+    ``orphaned_evidence``; pass ``orphan_evidence_action="untrack"`` to switch
+    it off and close its open tasks in the same transaction.
     """
     result = await bulk_unscope_frameworks(
         db=db,
         org_id=org_id,
         framework_ids=request.frameworks,
         removal_reason=request.removal_reason,
+        orphan_evidence_action=request.orphan_evidence_action,
     )
 
     return BulkUnscopeFrameworkResponse(
@@ -906,7 +949,12 @@ async def bulk_unscope_by_framework(
         total=result.total,
         protected_by=result.protected_by,
         frameworks_processed=result.frameworks_processed,
-        message=result.message
+        message=result.message,
+        orphaned_evidence=result.orphaned_evidence,
+        open_tasks_affected=result.open_tasks_affected,
+        orphan_evidence_action=result.orphan_evidence_action,
+        untracked_evidence=result.untracked_evidence,
+        tasks_closed=result.tasks_closed,
     )
 
 
@@ -1023,6 +1071,7 @@ async def batch_update_scoped_controls(
                 for field_name, value in update_fields.items():
                     setattr(existing, field_name, value)
                 existing.updated_by_user_id = user_id
+                _stamp_rescope_and_assessment(existing, old_values, update_fields)
 
                 # Auto-set completion_date on implementation status transitions
                 if op.implementation_status is not None:

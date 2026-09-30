@@ -17,6 +17,9 @@ import { describe, expect, it, vi, afterEach } from 'vitest'
 // ─── Stubs ────────────────────────────────────────────────────────────────────
 
 // Mock subcomponents that make external calls
+vi.mock('../../scoping/ScopingDetailPage', () => ({
+  default: () => <div data-testid="implementation-record-form" />,
+}))
 vi.mock('../../AssessmentObjectivesList', () => ({
   default: ({ scfId }: { scfId: string }) => (
     <div data-testid="assessment-objectives-list" data-scf-id={scfId}>
@@ -508,5 +511,76 @@ describe('ControlDetailPage', () => {
     const graphBtn = screen.getByRole('button', { name: /graph/i })
     fireEvent.click(graphBtn)
     expect(screen.getByTestId('graph-view')).toBeInTheDocument()
+  })
+
+  it('opens the graph as a full-window dialog named for the control', () => {
+    const props = makeProps()
+    render(<ControlDetailPage {...props} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Show graph view' }))
+    const dialog = screen.getByRole('dialog', { name: `${props.control.scf_id} relationship graph` })
+    expect(dialog).toHaveClass('control-graph-overlay')
+    expect(dialog).toContainElement(screen.getByTestId('graph-view'))
+  })
+
+  it('Escape closes the graph without leaving the control', () => {
+    const props = makeProps()
+    render(<ControlDetailPage {...props} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Show graph view' }))
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(props.onBack).not.toHaveBeenCalled()
+    // with the graph closed, Escape goes back to the list as before
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(props.onBack).toHaveBeenCalledTimes(1)
+  })
+
+  it('the Close button closes the graph', () => {
+    render(<ControlDetailPage {...makeProps()} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Show graph view' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Close graph' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+})
+
+describe('ControlDetailPage — split layout', () => {
+  const inScopeProps = () =>
+    makeProps({
+      scopingEntry: { selected: true, implementation_status: 'in_progress' },
+      implementationRecord: { scf_id: 'GOV-04', selected: true } as unknown as ControlDetailPageProps['implementationRecord'],
+      organizationId: 'org-1',
+    })
+
+  it('shows the implementation record in the right-hand panel beside the catalog detail', () => {
+    window.localStorage.clear()
+    render(<ControlDetailPage {...inScopeProps()} />)
+    const panel = screen.getByRole('complementary', { name: 'Implementation record' })
+    expect(panel).toContainElement(screen.getByTestId('implementation-record-form'))
+    // The catalog detail stays visible on the left at the same time
+    expect(screen.getByText('Assigned Security Responsibilities')).toBeInTheDocument()
+    expect(panel).not.toHaveTextContent('Assigned Security Responsibilities')
+  })
+
+  it('no longer offers the implementation record as a tab', () => {
+    window.localStorage.clear()
+    render(<ControlDetailPage {...inScopeProps()} />)
+    expect(screen.queryByRole('tab', { name: /Implementation Workspace/ })).not.toBeInTheDocument()
+    expect(screen.queryByText('Implementation Workspace')).not.toBeInTheDocument()
+  })
+
+  it('has no panel for a control that is not in scope', () => {
+    window.localStorage.clear()
+    render(<ControlDetailPage {...makeProps()} />)
+    expect(screen.queryByRole('complementary')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('implementation-record-form')).not.toBeInTheDocument()
+  })
+})
+
+describe('ControlDetailPage — scope action', () => {
+  it('shows the scope action in the breadcrumb bar, not as a separate banner', () => {
+    const { container } = render(
+      <ControlDetailPage {...makeProps({ scopeAction: <button type="button">Add to scope</button> })} />,
+    )
+    const bar = container.querySelector('.control-detail-breadcrumb')!
+    expect(bar).toContainElement(screen.getByRole('button', { name: 'Add to scope' }))
   })
 })

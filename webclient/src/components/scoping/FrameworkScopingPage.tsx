@@ -13,6 +13,7 @@ import {
 import { useIsOrgEditor } from '../../hooks/useHasOrgRole'
 import { useIsOrgAdmin } from '../../hooks/useIsOrgAdmin'
 import { FrameworkLogo } from '../FrameworkLogo'
+import { FRAMEWORK_GROUPS, OTHER_GROUP } from '../../data/frameworkGroups'
 
 interface Props {
   organizationId: string
@@ -31,6 +32,37 @@ const FAMILY_LABELS: Record<string, string> = {
   other: 'Other',
 }
 
+/* Groups render in this order whatever order the API lists frameworks in —
+   before, it was first-appearance, so the group holding the first selected
+   framework led and "Other" landed mid-page. Unknown families go before Other. */
+const FAMILY_ORDER = ['international', 'industry', 'us_federal', 'us_state', 'emea', 'apac', 'americas']
+
+// The Dashboard's group icons, keyed by the same family ids.
+const FAMILY_ICONS: Record<string, string> = Object.fromEntries(
+  [...FRAMEWORK_GROUPS, OTHER_GROUP].map((group) => [group.id, group.emoji]),
+)
+
+type SelectionFilter = 'all' | 'selected' | 'available'
+
+const SELECTION_FILTERS: { value: SelectionFilter; label: string }[] = [
+  { value: 'all', label: 'All' },
+  { value: 'selected', label: 'Selected' },
+  { value: 'available', label: 'Available' },
+]
+
+function familyRank(family: string): number {
+  const index = FAMILY_ORDER.indexOf(family)
+  if (index >= 0) return index
+  return family === 'other' ? FAMILY_ORDER.length + 1 : FAMILY_ORDER.length
+}
+
+function selectionStatus(framework: FrameworkScopeSummaryItem): { label: string; tone: string } {
+  if (!framework.active) return { label: 'Not selected', tone: 'none' }
+  return framework.partial
+    ? { label: 'Partial', tone: 'partial' }
+    : { label: 'Selected', tone: 'selected' }
+}
+
 export default function FrameworkScopingPage({
   organizationId,
   onReviewControls,
@@ -40,12 +72,19 @@ export default function FrameworkScopingPage({
   const canEdit = useIsOrgEditor(organizationId)
   const isAdmin = useIsOrgAdmin(organizationId)
   const [search, setSearch] = useState('')
+  const [selectionFilter, setSelectionFilter] = useState<SelectionFilter>('all')
+  // Families the user has opened or closed; null means "not touched yet".
+  const [openFamilies, setOpenFamilies] = useState<Set<string> | null>(null)
   const [pending, setPending] = useState<{
     framework: FrameworkScopeSummaryItem
     operation: 'add' | 'remove'
   } | null>(null)
   const [preview, setPreview] = useState<FrameworkScopePreview | null>(null)
   const [reason, setReason] = useState('')
+  // What happens to tracked evidence that no in-scope control will ask for once the
+  // framework leaves. Default keeps the collector running; "untrack" stops it and closes
+  // its open tasks. Files are never deleted either way. Asked at unscope time, per design.
+  const [orphanAction, setOrphanAction] = useState<'keep' | 'untrack'>('keep')
   const [busy, setBusy] = useState(false)
 
   const summary = useQuery({
@@ -57,19 +96,56 @@ export default function FrameworkScopingPage({
     () => (summary.data?.frameworks ?? []).filter((framework) => framework.active),
     [summary.data],
   )
-  const grouped = useMemo(() => {
-    const needle = search.trim().toLowerCase()
-    const rows = (summary.data?.frameworks ?? []).filter(
-      (framework) =>
+  const needle = search.trim().toLowerCase()
+  const groups = useMemo(() => {
+    const byFamily = new Map<string, { all: number; selected: number; rows: FrameworkScopeSummaryItem[] }>()
+    for (const framework of summary.data?.frameworks ?? []) {
+      const group = byFamily.get(framework.family) ?? { all: 0, selected: 0, rows: [] }
+      group.all += 1
+      if (framework.active) group.selected += 1
+      const matchesSearch =
         !needle ||
         framework.name.toLowerCase().includes(needle) ||
-        framework.id.toLowerCase().includes(needle),
-    )
-    return rows.reduce<Record<string, FrameworkScopeSummaryItem[]>>((result, framework) => {
-      ;(result[framework.family] ??= []).push(framework)
-      return result
-    }, {})
-  }, [summary.data, search])
+        framework.id.toLowerCase().includes(needle)
+      const matchesFilter =
+        selectionFilter === 'all' ||
+        (selectionFilter === 'selected' ? framework.active : !framework.active)
+      if (matchesSearch && matchesFilter) group.rows.push(framework)
+      byFamily.set(framework.family, group)
+    }
+    return [...byFamily.entries()]
+      .filter(([, group]) => group.rows.length > 0)
+      .sort(([a], [b]) => familyRank(a) - familyRank(b) || a.localeCompare(b))
+      .map(([family, group]) => ({ family, ...group }))
+  }, [summary.data, needle, selectionFilter])
+
+  // Until the user opens or closes one, a family is open when it holds a selected framework.
+  const defaultOpenFamilies = useMemo(
+    () => new Set(selected.map((framework) => framework.family)),
+    [selected],
+  )
+  const openSet = openFamilies ?? defaultOpenFamilies
+
+  const total = summary.data?.frameworks.length ?? 0
+  const selectedTotal = selected.length
+  const filterCounts: Record<SelectionFilter, number> = {
+    all: total,
+    selected: selectedTotal,
+    available: total - selectedTotal,
+  }
+  // A search or a narrowing filter shows every match; collapsing would hide it.
+  const narrowed = needle !== '' || selectionFilter !== 'all'
+  const isOpen = (family: string) => narrowed || openSet.has(family)
+  const allOpen = groups.length > 0 && groups.every((group) => isOpen(group.family))
+  const toggleFamily = (family: string) =>
+    setOpenFamilies(() => {
+      const next = new Set(openSet)
+      if (next.has(family)) next.delete(family)
+      else next.add(family)
+      return next
+    })
+  const toggleAllFamilies = () =>
+    setOpenFamilies(allOpen ? new Set() : new Set(groups.map((group) => group.family)))
 
   const refresh = async () => {
     await Promise.all([
@@ -112,7 +188,11 @@ export default function FrameworkScopingPage({
         )
       } else {
         await bulkUnscopeByFramework(
-          { frameworks: [pending.framework.id], removal_reason: reason || undefined },
+          {
+            frameworks: [pending.framework.id],
+            removal_reason: reason || undefined,
+            orphan_evidence_action: orphanAction,
+          },
           organizationId,
         )
       }
@@ -123,6 +203,7 @@ export default function FrameworkScopingPage({
       )
       setPending(null)
       setPreview(null)
+      setOrphanAction('keep')
       await refresh()
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not update framework scope')
@@ -222,49 +303,133 @@ export default function FrameworkScopingPage({
             <h2>Browse frameworks</h2>
             <p>Internal SCF risk, threat, summary, and errata mappings are excluded.</p>
           </div>
+        </div>
+        <div className="framework-browser-toolbar">
           <input
             type="search"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape' && search) setSearch('')
+            }}
             placeholder="Search frameworks…"
             aria-label="Search frameworks"
           />
-        </div>
-        {Object.entries(grouped).map(([family, frameworks]) => (
-          <div key={family} className="framework-browser-group">
-            <h3>{FAMILY_LABELS[family] ?? family}</h3>
-            <div className="framework-browser-table" role="table">
-              <div className="framework-browser-row framework-browser-row--header" role="row">
-                <span>Framework</span>
-                <span>Mapped controls</span>
-                <span>Selection</span>
-                <span>Expected additions</span>
-                <span>Action</span>
-              </div>
-              {frameworks.map((framework) => (
-                <div key={framework.id} className="framework-browser-row" role="row">
-                  <span><strong>{framework.name}</strong><small>{framework.id}</small></span>
-                  <span>{framework.mapped_control_count}</span>
-                  <span>{framework.active ? (framework.partial ? 'Partial' : 'Selected') : 'Not selected'}</span>
-                  <span>{framework.expected_additions}</span>
-                  <span>
-                    {framework.active ? (
-                      <button type="button" className="btn-secondary btn-small" onClick={() => onReviewControls?.(framework.id)}>
-                        Review
-                      </button>
-                    ) : canEdit ? (
-                      <button type="button" className="btn-primary btn-small" onClick={() => void openPreview(framework, 'add')}>
-                        Add
-                      </button>
-                    ) : (
-                      <span>View only</span>
-                    )}
-                  </span>
-                </div>
-              ))}
-            </div>
+          <div className="framework-browser-filter" role="group" aria-label="Show frameworks">
+            {SELECTION_FILTERS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                aria-pressed={selectionFilter === option.value}
+                className={selectionFilter === option.value ? 'is-active' : undefined}
+                onClick={() => setSelectionFilter(option.value)}
+              >
+                {option.label}
+                <span className="framework-browser-filter-count">{filterCounts[option.value]}</span>
+              </button>
+            ))}
           </div>
-        ))}
+          <ul className="framework-coverage-legend" aria-label="Bar colours">
+            {STATUS_SEGMENTS.map((segment) => (
+              <li key={segment.key}>
+                <i className={`framework-coverage-segment--${segment.key}`} />
+                {segment.label}
+              </li>
+            ))}
+            <li>
+              <i className="framework-coverage-legend-gap" />
+              Not in scope
+            </li>
+          </ul>
+          {!narrowed && groups.length > 1 && (
+            <button type="button" className="framework-browser-expand-all" onClick={toggleAllFamilies}>
+              {allOpen ? 'Collapse all' : 'Expand all'}
+            </button>
+          )}
+        </div>
+        {groups.length === 0 ? (
+          <div className="framework-empty">
+            {needle ? `No framework matches “${search.trim()}”.` : 'No frameworks to show.'}
+          </div>
+        ) : (
+          groups.map((group) => {
+            const open = isOpen(group.family)
+            const panelId = `framework-group-${group.family}`
+            return (
+              <div key={group.family} className={`framework-browser-group${open ? ' is-open' : ''}`}>
+                <h3>
+                  <button
+                    type="button"
+                    className="framework-browser-group-toggle"
+                    aria-expanded={open}
+                    aria-controls={panelId}
+                    disabled={narrowed}
+                    onClick={() => toggleFamily(group.family)}
+                  >
+                    <svg className="framework-browser-chevron" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+                      <path d="M4 2.5 7.5 6 4 9.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                    <span className="framework-browser-group-icon" aria-hidden="true">
+                      {FAMILY_ICONS[group.family] ?? OTHER_GROUP.emoji}
+                    </span>
+                    <span className="framework-browser-group-label">{FAMILY_LABELS[group.family] ?? group.family}</span>
+                    <span className="framework-browser-group-count">
+                      {narrowed && group.rows.length !== group.all ? `${group.rows.length} of ${group.all}` : group.all}
+                    </span>
+                    {group.selected > 0 && (
+                      <span className="framework-browser-group-selected">{group.selected} selected</span>
+                    )}
+                  </button>
+                </h3>
+                {open && (
+                  <div id={panelId} className="framework-browser-table" role="table" aria-label={FAMILY_LABELS[group.family] ?? group.family}>
+                    <div className="framework-browser-row framework-browser-row--header" role="row">
+                      <span role="columnheader">Framework</span>
+                      <span role="columnheader">Controls in scope</span>
+                      <span role="columnheader" className="framework-browser-num">Expected additions</span>
+                      <span role="columnheader">Selection</span>
+                      <span role="columnheader" className="framework-browser-action">Action</span>
+                    </div>
+                    {group.rows.map((framework) => {
+                      const status = selectionStatus(framework)
+                      return (
+                        <div
+                          key={framework.id}
+                          className={`framework-browser-row${framework.active ? ' is-selected' : ''}`}
+                          role="row"
+                        >
+                          <span role="cell" className="framework-browser-name" title={framework.id}>
+                            {framework.name}
+                          </span>
+                          <span role="cell">
+                            <CoverageBar framework={framework} />
+                          </span>
+                          <span role="cell" className="framework-browser-num">{framework.expected_additions}</span>
+                          <span role="cell">
+                            <span className={`framework-status-pill framework-status-pill--${status.tone}`}>{status.label}</span>
+                          </span>
+                          <span role="cell" className="framework-browser-action">
+                            {framework.active ? (
+                              <button type="button" className="btn-secondary btn-small" onClick={() => onReviewControls?.(framework.id)}>
+                                Review
+                              </button>
+                            ) : canEdit ? (
+                              <button type="button" className="btn-primary btn-small" onClick={() => void openPreview(framework, 'add')}>
+                                Add
+                              </button>
+                            ) : (
+                              <span className="framework-browser-view-only">View only</span>
+                            )}
+                          </span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            )
+          })
+        )}
       </section>
 
       {isAdmin && (
@@ -298,6 +463,31 @@ export default function FrameworkScopingPage({
               {previewRows(pending.operation, preview).map((row) => (
                 <PreviewGroup key={row.title} title={row.title} ids={row.ids} />
               ))}
+              {pending.operation === 'remove' && (preview.orphaned_evidence?.length ?? 0) > 0 && (
+                <fieldset className="framework-preview-orphans">
+                  <legend>Tracked evidence no longer required</legend>
+                  <label>
+                    <input
+                      type="radio"
+                      name="orphan-evidence-action"
+                      value="keep"
+                      checked={orphanAction === 'keep'}
+                      onChange={() => setOrphanAction('keep')}
+                    />
+                    Keep tracking — collectors and open tasks carry on
+                  </label>
+                  <label>
+                    <input
+                      type="radio"
+                      name="orphan-evidence-action"
+                      value="untrack"
+                      checked={orphanAction === 'untrack'}
+                      onChange={() => setOrphanAction('untrack')}
+                    />
+                    Stop tracking — close its open tasks as won't do; files are kept
+                  </label>
+                </fieldset>
+              )}
               <label>
                 Change rationale
                 <textarea value={reason} onChange={(event) => setReason(event.target.value)} rows={3} />
@@ -318,6 +508,63 @@ export default function FrameworkScopingPage({
         </aside>
       )}
     </div>
+  )
+}
+
+/* One bar per framework: the coloured part is its controls already in scope,
+   split by implementation status (the Dashboard's four buckets); the empty
+   track is the gap. For an unselected framework the gap is roughly what adding
+   it brings in (explicit exclusions stay out, hence the separate number). */
+const STATUS_SEGMENTS = [
+  { key: 'implemented', label: 'Implemented' },
+  { key: 'in_progress', label: 'In progress' },
+  { key: 'at_risk', label: 'At risk' },
+  { key: 'not_started', label: 'Not started' },
+] as const
+
+function CoverageBar({ framework }: { framework: FrameworkScopeSummaryItem }): JSX.Element {
+  const mapped = framework.mapped_control_count
+  const inScope = framework.in_scope_count
+  const gap = mapped - inScope
+  // Older backends send no breakdown: show the in-scope part as not started.
+  const counts = framework.status_counts ?? {
+    implemented: 0,
+    in_progress: 0,
+    at_risk: 0,
+    not_started: inScope,
+  }
+  const parts = STATUS_SEGMENTS.filter((segment) => counts[segment.key] > 0).map(
+    (segment) => `${counts[segment.key]} ${segment.label.toLowerCase()}`,
+  )
+  const label = [
+    `${inScope} of ${mapped} mapped controls in scope`,
+    ...(parts.length ? [parts.join(', ')] : []),
+    ...(gap ? [`${gap} not in scope`] : []),
+  ].join(' · ')
+  return (
+    <span className="framework-coverage-cell" title={label}>
+      <span
+        className="framework-coverage-bar"
+        role="meter"
+        aria-label={label}
+        aria-valuemin={0}
+        aria-valuemax={mapped}
+        aria-valuenow={inScope}
+      >
+        {STATUS_SEGMENTS.map((segment) =>
+          counts[segment.key] > 0 && mapped > 0 ? (
+            <span
+              key={segment.key}
+              className={`framework-coverage-segment framework-coverage-segment--${segment.key}`}
+              style={{ width: `${(counts[segment.key] / mapped) * 100}%` }}
+            />
+          ) : null,
+        )}
+      </span>
+      <span className="framework-coverage-figures">
+        {inScope}/{mapped}
+      </span>
+    </span>
   )
 }
 
@@ -359,6 +606,14 @@ function previewRows(
           { title: 'Retained — individually included', ids: preview.individual_inclusions },
           { title: 'Not in scope anyway', ids: preview.already_covered },
           { title: 'Blocked by an explicit exclusion', ids: preview.explicitly_excluded },
+          {
+            title:
+              'Tracked evidence no longer required by any in-scope control' +
+              (preview.open_tasks_affected
+                ? ` (${preview.open_tasks_affected} open task${preview.open_tasks_affected === 1 ? '' : 's'})`
+                : ''),
+            ids: preview.orphaned_evidence ?? [],
+          },
         ]
 
   return candidates.filter((row) => row.headline || row.ids.length > 0)

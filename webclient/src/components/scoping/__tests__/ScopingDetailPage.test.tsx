@@ -739,5 +739,10 @@ describe('ScopingDetailPage', () => {
       expect(screen.getByText('ISO 27001')).toBeInTheDocument()
       expect(screen.queryByText('risk_catalog')).toBeNull()
     })
+
+    it('carries the class the Control detail panel hides it by (mappings live on the left there)', () => {
+      render(<ScopingDetailPage {...makeProps()} />)
+      expect(screen.getByText('Framework Mappings').closest('.scoping-framework-mappings')).not.toBeNull()
+    })
   })
 })

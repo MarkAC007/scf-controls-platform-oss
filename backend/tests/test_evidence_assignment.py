@@ -781,6 +781,7 @@ class TestSiblingWritePaths:
 def _tracked_evidence(**overrides):
     evidence = MagicMock()
     evidence.id = uuid4()
+    evidence.organization_id = uuid4()
     evidence.evidence_id = "E-HRS-16"
     evidence.frequency = "quarterly"
     evidence.is_tracked = True
@@ -798,8 +799,10 @@ async def _run_generator(evidence):
     from services import task_generator
 
     # 1: the per-organisation settings scan (nobody has opted out),
-    # 2: the evidence query, 3: the duplicate-task lookup
-    db = FakeSession([[], [evidence], None])
+    # 2: the evidence query, 3: the per-org scope requirement set (an in-scope
+    # control of this org asks for E-HRS-16, else the sweep rightly skips it),
+    # 4: the duplicate-task lookup
+    db = FakeSession([[], [evidence], [(evidence.organization_id, ["E-HRS-16"])], None])
 
     class _SessionFactory:
         def __call__(self):

@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, func, update
 from sqlalchemy.orm import selectinload
 from typing import List, Optional
+from pydantic import Field
 from uuid import UUID
 
 from database import get_db
@@ -29,6 +30,7 @@ from services.audit_service import (
     EVIDENCE_TRACKING_TRACKED_FIELDS,
 )
 from services.task_generator import generate_task_for_tracking
+from services.scoping_service import effective_evidence_ids
 from services.team_assignments import (
     EVIDENCE_ASSIGNMENT_SPEC,
     accountable_owner_filter,
@@ -48,6 +50,16 @@ class EvidenceTrackingBadgedResponse(EvidenceTrackingResponse, CatalogLifecycleB
     Existing tracked rows keep resolving after their ERL entry is retired;
     NEW tracking of a deprecated evidence id is refused at the write path.
     """
+
+    required_by_scope: Optional[bool] = Field(
+        None,
+        description=(
+            "Whether at least one in-scope control requests this evidence. "
+            "False on a tracked row means it is collected but nobody in scope "
+            "needs it (an un-scope left it behind); the task generator will "
+            "not schedule it."
+        ),
+    )
 
 
 async def _catalog_lifecycle_by_evidence_id(db: AsyncSession, evidence_ids):
@@ -329,8 +341,10 @@ async def list_evidence_tracking(
     lifecycle = await _catalog_lifecycle_by_evidence_id(
         db, {t.evidence_id for t in tracking}
     )
+    required = await effective_evidence_ids(db, org_id) if tracking else set()
     for t in tracking:
         _apply_badge(t, lifecycle.get(t.evidence_id))
+        t.required_by_scope = t.evidence_id in required
 
     return tracking
 
@@ -380,6 +394,7 @@ async def get_evidence_tracking(
 
     lifecycle = await _catalog_lifecycle_by_evidence_id(db, {evidence_id})
     _apply_badge(tracking, lifecycle.get(evidence_id))
+    tracking.required_by_scope = evidence_id in await effective_evidence_ids(db, org_id)
 
     return tracking
 
