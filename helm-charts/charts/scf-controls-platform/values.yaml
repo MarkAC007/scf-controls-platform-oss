@@ -695,6 +695,7 @@ catalogData:
     # Name of the SCF workbook on the shared volume. Copy it there before
     # running the import; the extracted catalogue is written alongside it.
     workbookFile: scf.xlsx
+    podAnnotations: {}
     backoffLimit: 1
     resources:
       requests:
