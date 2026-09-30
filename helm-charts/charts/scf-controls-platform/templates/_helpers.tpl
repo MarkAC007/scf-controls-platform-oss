@@ -58,6 +58,24 @@ app.kubernetes.io/component: {{ .component }}
 {{- end -}}
 
 {{/*
+Service account for pre-install/pre-upgrade hook pods. Hooks run before the
+release's ordinary resources exist, so they cannot use the workload account on a
+first install; this one is itself a hook and is created ahead of them. A
+user-supplied account (create: false) already exists and is used as-is.
+*/}}
+{{- define "scf.hookServiceAccountName" -}}
+{{- if .Values.serviceAccount.create -}}
+{{- printf "%s-hooks" (include "scf.serviceAccountName" .) -}}
+{{- else -}}
+{{- include "scf.serviceAccountName" . -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "scf.importerRunsPreInstall" -}}
+{{- if and .Values.catalogData.enabled .Values.catalogData.importer.enabled (contains "pre-" .Values.catalogData.importer.hook) -}}true{{- end -}}
+{{- end -}}
+
+{{/*
 The Secret every workload reads its credentials from. The chart neither creates
 nor inspects it: how it comes to exist — External Secrets Operator, Vault Agent,
 SOPS, sealed-secrets, kubectl — is the operator's business.
