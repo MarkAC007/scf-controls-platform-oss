@@ -67,6 +67,15 @@ the tag irrelevant, so an image pinned by digest is exempt.
 {{- fail "evidenceStorage.publicEndpoint is required when evidenceStorage.endpoint is set: the browser cannot reach the internal endpoint, and presigned upload and download would fail in the browser while the API still looked healthy." -}}
 {{- end -}}
 
+{{/*
+---- catalogue ----
+A pre-* import runs before the chart's own claim exists, so it needs one that
+was created outside the release.
+*/}}
+{{- if and (include "scf.importerRunsPreInstall" .) (not .Values.catalogData.existingClaim) -}}
+{{- fail "catalogData.importer.hook runs the import before install, when the chart's own volume claim does not exist yet. Set catalogData.existingClaim to a pre-staged claim, or leave the hook at post-install,post-upgrade." -}}
+{{- end -}}
+
 {{/* ---- identity ---- */}}
 {{/*
 OIDC is not optional. The published frontend is built with VITE_OIDC_ENABLED,

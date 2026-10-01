@@ -306,6 +306,9 @@
             "hook": {
               "type": "string",
               "minLength": 1
+            },
+            "podAnnotations": {
+              "type": "object"
             }
           }
         }
