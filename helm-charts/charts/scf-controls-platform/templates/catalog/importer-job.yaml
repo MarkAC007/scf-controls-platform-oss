@@ -26,10 +26,14 @@ spec:
     metadata:
       labels:
         {{- include "scf.componentSelectorLabels" (dict "ctx" . "component" "catalog-importer") | nindent 8 }}
+      {{- with .Values.catalogData.importer.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
     spec:
       restartPolicy: Never
       {{- include "scf.imagePullSecrets" . | nindent 6 }}
-      serviceAccountName: {{ include "scf.serviceAccountName" . }}
+      serviceAccountName: {{ if include "scf.importerRunsPreInstall" . }}{{ include "scf.hookServiceAccountName" . }}{{ else }}{{ include "scf.serviceAccountName" . }}{{ end }}
       automountServiceAccountToken: false
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}

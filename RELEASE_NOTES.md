@@ -1,11 +1,11 @@
-# v0.44.3
+# v0.44.4
 
 .
 
 ## Fixes and improvements
 
-- Journey: import a practitioner artefact from a file (org admin) (PR 1112)
+- Hook-scoped ServiceAccount/ConfigMap so pre-install Jobs start on a first install (OSS `#124`) (PR 1114)
 
 ## Upgrading
 
-- Run `scripts/upgrade.sh v0.44.3` (read `UPGRADING.md` first).
+- Run `scripts/upgrade.sh v0.44.4` (read `UPGRADING.md` first).

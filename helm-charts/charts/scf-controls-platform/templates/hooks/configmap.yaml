@@ -1,0 +1,17 @@
+{{- if .Values.migrations.enabled }}
+{{/*
+Copy of the workload ConfigMap for the migration Job, which runs before that one
+exists. Weight must stay below the Job's.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "scf.fullname" . }}-hook-config
+  labels:
+    {{- include "scf.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation
+data:{{ include "scf.configData" . }}
+{{- end }}
