@@ -79,6 +79,18 @@ jobs:
           helm template scf "$CHART" --values "$CHART/ci/full-values.yaml" \
             | python3 "$CHART/ci/assert-container-argv.py"
 
+      # Pre-install hooks run before the release's ordinary resources exist, so a
+      # hook pod that needs one never starts on a first install. Schema-valid, so
+      # kubeconform cannot see it.
+      - name: Pre-install hooks only depend on what exists before them
+        run: |
+          for values in "$CHART"/ci/*-values.yaml; do
+            echo "::group::hook dependencies $(basename "$values")"
+            helm template scf "$CHART" --values "$values" \
+              | python3 "$CHART/ci/assert-hook-dependencies.py"
+            echo "::endgroup::"
+          done
+
       # helm validates values.schema.json BEFORE rendering, so a schema rule on a
       # field that ships empty makes the matching _validate.tpl message
       # unreachable on the one path that needs it most: a default install.
@@ -122,4 +134,7 @@ jobs:
           assert_refused "latest image tag"       --set backend.image.tag=latest
           assert_refused "endpoint without a public endpoint" \
             --set evidenceStorage.endpoint=http://minio.svc:9000
+          assert_refused "pre-install import without a pre-staged claim" \
+            --set catalogData.enabled=true --set catalogData.importer.enabled=true \
+            --set 'catalogData.importer.hook=pre-install\,pre-upgrade'
           exit "$fail"
