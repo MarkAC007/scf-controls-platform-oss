@@ -3133,6 +3133,14 @@ class ApiKeyCreate(BaseModel):
     """Schema for creating a new API key."""
     name: str = Field(..., min_length=1, max_length=255, description="Friendly name for the API key")
     expires_at: Optional[datetime] = Field(None, description="Optional expiry datetime (UTC)")
+    role: Optional[str] = Field(
+        None,
+        pattern=f"^({API_KEY_ROLES})$",
+        description=(
+            "Role the key acts with: admin, editor or viewer. Capped at the "
+            "creator's own role in the organisation; omitted means the creator's role."
+        ),
+    )
 
     @field_validator('expires_at', mode='before')
     @classmethod

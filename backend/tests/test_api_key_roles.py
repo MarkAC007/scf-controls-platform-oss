@@ -11,7 +11,10 @@ Now:
 * a key carries its creator's role, so an editor's key is an editor key;
 * an editor can revoke only their own keys;
 * the role frozen on a key is a ceiling — the owner's current access to the
-  key's org caps it, and an owner with no access left gets a 401.
+  key's org caps it, and an owner with no access left gets a 401;
+* (#1117) a creator may ask for a lower role than their own, so a read-only
+  integration can hold a viewer key; asking for a higher one is a 400, not a
+  silent clamp; the chosen role lands in the audit entry.
 """
 from __future__ import annotations
 
@@ -30,7 +33,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import auth as auth_mod  # noqa: E402
 import catalog_models  # noqa: E402,F401 — registers SystemCatalogTemplate for the ApiKey mapper
 from api import api_keys as api_keys_mod  # noqa: E402
+from pydantic import ValidationError  # noqa: E402
 from schemas import ApiKeyCreate  # noqa: E402
+from services.audit_service import API_KEY_TRACKED_FIELDS  # noqa: E402
 
 # CI runs pytest from the repository root, where backend/pytest.ini's
 # asyncio_mode=auto does not apply — mark explicitly.
@@ -146,6 +151,78 @@ async def test_editor_creates_an_editor_key():
     assert stored.user_id == OWNER
 
 
+# ── Choosing a role at creation (#1117) ─────────────────────────────────────
+
+async def _create(creator_role: str, body: ApiKeyCreate):
+    db = _ScriptedDB()
+    created = await api_keys_mod.create_api_key(
+        org_id=ORG, body=body, request=_request(),
+        membership=_membership(creator_role), db=db,
+    )
+    (stored,) = db.added
+    return created, stored
+
+
+def test_role_must_be_a_known_rank():
+    with pytest.raises(ValidationError):
+        ApiKeyCreate(name="k", role="owner")
+
+
+def test_role_is_optional():
+    assert ApiKeyCreate(name="k").role is None
+
+
+@pytest.mark.parametrize("creator,requested", [
+    ("editor", "viewer"),
+    ("admin", "editor"),
+    ("admin", "viewer"),
+    ("admin", "admin"),
+    ("editor", "editor"),
+])
+async def test_creator_may_choose_a_role_at_or_below_their_own(creator, requested):
+    created, stored = await _create(creator, ApiKeyCreate(name="ro", role=requested))
+    assert stored.role == requested
+    assert created.role == stored.role
+
+
+@pytest.mark.parametrize("creator,requested", [
+    ("editor", "admin"),
+    ("viewer", "editor"),
+    ("viewer", "admin"),
+])
+async def test_role_above_the_creators_is_refused_not_clamped(creator, requested):
+    db = _ScriptedDB()
+    with pytest.raises(HTTPException) as exc:
+        await api_keys_mod.create_api_key(
+            org_id=ORG, body=ApiKeyCreate(name="x", role=requested), request=_request(),
+            membership=_membership(creator), db=db,
+        )
+    assert exc.value.status_code == 400
+    assert db.added == []
+
+
+async def test_omitting_role_keeps_the_creators_role():
+    created, stored = await _create("admin", ApiKeyCreate(name="legacy"))
+    assert stored.role == "admin"
+    assert created.role == "admin"
+
+
+def test_role_is_an_audited_field():
+    assert "role" in API_KEY_TRACKED_FIELDS
+    assert "key_hash" not in API_KEY_TRACKED_FIELDS
+
+
+async def test_create_audit_entry_carries_the_role(monkeypatch):
+    seen = {}
+
+    async def _log(**kw):
+        seen.update(kw)
+    monkeypatch.setattr(api_keys_mod, "log_entity_changes", _log)
+    await _create("admin", ApiKeyCreate(name="ro", role="viewer"))
+    assert seen["new_values"]["role"] == "viewer"
+    assert "key_hash" not in seen["new_values"]
+
+
 # ── Revoke ──────────────────────────────────────────────────────────────────
 
 def _key(user_id, role="editor"):
@@ -231,6 +308,19 @@ async def test_removed_owner_key_is_rejected():
     with pytest.raises(HTTPException) as exc:
         await auth_mod.validate_user_api_key(TOKEN, db)
     assert exc.value.status_code == 401
+
+
+async def test_viewer_key_is_read_only_everywhere_editor_is_required():
+    """The whole point of #1117: a viewer key held by an admin owner still
+    cannot pass an editor gate, so no write route accepts it."""
+    db = _ScriptedDB([_stored_key("viewer")], _owner(), "admin")
+    user = await auth_mod.validate_user_api_key(TOKEN, db)
+    assert user._api_key_role == "viewer"
+    ok = await auth_mod.verify_org_membership(ORG, user, db, "viewer")
+    assert ok.role == "viewer"
+    with pytest.raises(HTTPException) as exc:
+        await auth_mod.verify_org_membership(ORG, user, db, "editor")
+    assert exc.value.status_code == 403
 
 
 async def test_capped_role_is_what_org_checks_enforce():

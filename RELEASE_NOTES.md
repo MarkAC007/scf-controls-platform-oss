@@ -1,11 +1,15 @@
-# v0.44.4
+# v0.45.0
 
 .
 
+## What's new
+
+- Scoped read-only API keys — role capped at the creator's role (PR 1118)
+
 ## Fixes and improvements
 
-- Hook-scoped ServiceAccount/ConfigMap so pre-install Jobs start on a first install (OSS `#124`) (PR 1114)
+- Keep CodeQL from reading Kubernetes Secret names as secret values (unblocks 0.44.4) (PR 1116)
 
 ## Upgrading
 
-- Run `scripts/upgrade.sh v0.44.4` (read `UPGRADING.md` first).
+- Run `scripts/upgrade.sh v0.45.0` (read `UPGRADING.md` first).

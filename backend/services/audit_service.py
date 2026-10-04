@@ -190,6 +190,7 @@ ASSIGNMENT_TRACKED_FIELDS: set = {
 API_KEY_TRACKED_FIELDS: set = {
     'name',
     'description',
+    'role',
     'is_active',
     'last_used_at',
     # NEVER include: key_hash, plaintext key value
