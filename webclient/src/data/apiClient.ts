@@ -2836,6 +2836,9 @@ export interface OrgApiKeyCreated extends OrgApiKey {
   warning: string
 }
 
+/** Ranks a key may carry. The backend caps the choice at the creator's own role. */
+export type OrgApiKeyRole = 'viewer' | 'editor' | 'admin'
+
 export async function getOrgApiKeys(orgId: string): Promise<OrgApiKey[]> {
   return apiFetch<OrgApiKey[]>(`/organizations/${orgId}/api-keys`)
 }
@@ -2843,12 +2846,18 @@ export async function getOrgApiKeys(orgId: string): Promise<OrgApiKey[]> {
 export async function createOrgApiKey(
   orgId: string,
   name: string,
-  expiresAt?: string
+  expiresAt?: string,
+  role?: OrgApiKeyRole
 ): Promise<OrgApiKeyCreated> {
   const body: Record<string, unknown> = { name }
   if (expiresAt && expiresAt.trim()) {
     // Convert date-only (YYYY-MM-DD) to full ISO datetime for Pydantic
     body.expires_at = expiresAt.includes('T') ? expiresAt : `${expiresAt}T23:59:59`
+  }
+  // Omitted means "the creator's role" on the server — keep the field out of
+  // the body rather than sending null so older backends ignore nothing new.
+  if (role) {
+    body.role = role
   }
   return apiFetch<OrgApiKeyCreated>(`/organizations/${orgId}/api-keys`, {
     method: 'POST',

@@ -1,9 +1,11 @@
 /**
  * ApiKeyManagement Component — Per-organisation API key CRUD.
  *
- * Editors and admins can create keys (for themselves); a key carries its creator's role.
- * Admins see and revoke every key; editors revoke their own; viewers only see their own.
- * The plaintext key is shown once at creation time with a copy button.
+ * Editors and admins can create keys (for themselves). A key carries a role
+ * chosen at creation, capped at the creator's own (#1117): an admin can mint
+ * a viewer key for a read-only integration, and that credential cannot write
+ * even if it leaks. Admins see and revoke every key; editors revoke their own;
+ * viewers only see their own. The plaintext key is shown once with a copy button.
  */
 import { useState, useEffect, useCallback } from 'react'
 import { toast } from 'react-hot-toast'
@@ -12,11 +14,21 @@ import {
   createOrgApiKey,
   revokeOrgApiKey,
 } from '../data/apiClient'
-import type { OrgApiKey, OrgApiKeyCreated } from '../data/apiClient'
+import type { OrgApiKey, OrgApiKeyCreated, OrgApiKeyRole } from '../data/apiClient'
 import { useModalDismiss } from '../hooks/useModalDismiss'
+import { useHasOrgRole } from '../hooks/useHasOrgRole'
 
 interface ApiKeyManagementProps {
   organizationId: string
+}
+
+/** Ascending; the picker offers every rank up to the creator's own. */
+const KEY_ROLES: OrgApiKeyRole[] = ['viewer', 'editor', 'admin']
+
+const ROLE_HELP: Record<OrgApiKeyRole, string> = {
+  viewer: 'Read-only. Cannot change anything, even if the key leaks.',
+  editor: 'Can read and write, but not manage members or settings.',
+  admin: 'Full access to this organisation.',
 }
 
 export default function ApiKeyManagement({ organizationId }: ApiKeyManagementProps) {
@@ -25,6 +37,17 @@ export default function ApiKeyManagement({ organizationId }: ApiKeyManagementPro
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [newKeyName, setNewKeyName] = useState('')
   const [newKeyExpiry, setNewKeyExpiry] = useState('')
+  const [newKeyRole, setNewKeyRole] = useState<OrgApiKeyRole | ''>('')
+  // The hook fails closed, so until the membership lookup lands both read
+  // false and the picker is held disabled rather than defaulting to viewer —
+  // an admin should not mint a weaker key than they meant by clicking fast.
+  const isAdmin = useHasOrgRole(organizationId, 'admin')
+  const isEditor = useHasOrgRole(organizationId, 'editor')
+  const creatorRole: OrgApiKeyRole | null = isAdmin ? 'admin' : isEditor ? 'editor' : null
+  const offeredRoles = creatorRole
+    ? KEY_ROLES.slice(0, KEY_ROLES.indexOf(creatorRole) + 1)
+    : []
+  const selectedRole: OrgApiKeyRole | '' = newKeyRole || creatorRole || ''
   const [creating, setCreating] = useState(false)
   const [createdKey, setCreatedKey] = useState<OrgApiKeyCreated | null>(null)
   const [copied, setCopied] = useState(false)
@@ -56,7 +79,8 @@ export default function ApiKeyManagement({ organizationId }: ApiKeyManagementPro
       const result = await createOrgApiKey(
         organizationId,
         newKeyName.trim(),
-        newKeyExpiry || undefined
+        newKeyExpiry || undefined,
+        selectedRole || undefined
       )
       setCreatedKey(result)
       toast.success('API key created')
@@ -91,6 +115,7 @@ export default function ApiKeyManagement({ organizationId }: ApiKeyManagementPro
     setShowCreateModal(false)
     setNewKeyName('')
     setNewKeyExpiry('')
+    setNewKeyRole('')
     setCreatedKey(null)
     setCopied(false)
   }
@@ -204,7 +229,8 @@ export default function ApiKeyManagement({ organizationId }: ApiKeyManagementPro
               <>
                 <div className="modal-body">
                   <p className="modal-description">
-                    The key will inherit your current role in this organisation.
+                    Choose the least access the integration needs. A key can never
+                    exceed your own role in this organisation.
                   </p>
 
                   <div className="form-group">
@@ -217,6 +243,26 @@ export default function ApiKeyManagement({ organizationId }: ApiKeyManagementPro
                       onChange={e => setNewKeyName(e.target.value)}
                       autoFocus
                     />
+                  </div>
+
+                  <div className="form-group">
+                    <label htmlFor="key-role">Role</label>
+                    <select
+                      id="key-role"
+                      value={selectedRole}
+                      disabled={!creatorRole}
+                      onChange={e => setNewKeyRole(e.target.value as OrgApiKeyRole)}
+                    >
+                      {!creatorRole && <option value="">Checking your role…</option>}
+                      {offeredRoles.map(r => (
+                        <option key={r} value={r}>{r}</option>
+                      ))}
+                    </select>
+                    {selectedRole && (
+                      <p className="form-help" style={{ marginTop: '6px', color: 'var(--muted)' }}>
+                        {ROLE_HELP[selectedRole]}
+                      </p>
+                    )}
                   </div>
 
                   <div className="form-group">

@@ -2,8 +2,10 @@
 API Key management endpoints.
 
 Allows organisation members to create, list, and revoke per-organisation
-API keys for programmatic access.  Keys are scoped to a single org and
-inherit the creating user's role at creation time.
+API keys for programmatic access.  Keys are scoped to a single org and carry
+a role chosen at creation time, capped at the creating user's own role — so
+a read-only integration can hold a viewer key that cannot write even if it
+leaks (#1117).
 """
 import hashlib
 import secrets
@@ -16,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from database import get_db
-from auth import require_org_role, OrgMembership
+from auth import require_org_role, OrgMembership, ROLE_HIERARCHY
 from models import ApiKey, User as DBUser
 from schemas import ApiKeyCreate, ApiKeyResponse, ApiKeyCreatedResponse
 from services.audit_service import log_entity_changes, detect_action_source, get_request_id, API_KEY_TRACKED_FIELDS
@@ -29,6 +31,25 @@ router = APIRouter(tags=["api-keys"])
 def _generate_key() -> str:
     """Generate an API key with ``scf_`` prefix + 36 random hex chars."""
     return "scf_" + secrets.token_hex(18)
+
+
+def _resolve_key_role(requested: str | None, creator_role: str) -> str:
+    """The role a new key will carry.
+
+    ``None`` keeps the pre-#1117 behaviour (the creator's role). Anything
+    else must sit at or below the creator's role in ``ROLE_HIERARCHY``.
+    """
+    if requested is None:
+        return creator_role
+    if ROLE_HIERARCHY.get(requested, 0) > ROLE_HIERARCHY.get(creator_role, 0):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Cannot create a '{requested}' key: your role in this "
+                f"organisation is '{creator_role}'"
+            ),
+        )
+    return requested
 
 
 @router.post(
@@ -47,15 +68,17 @@ async def create_api_key(
     Create a new API key for the current user, scoped to this organisation.
 
     The plaintext key is returned **once** in the response and is never stored.
-    Requires: org editor role or higher. The key carries the creator's role,
-    so an editor's key can never reach admin-only endpoints.
+    Requires: org editor role or higher. The key carries ``body.role`` when
+    given, otherwise the creator's role. A requested role above the creator's
+    own is refused rather than silently clamped, so a misconfigured
+    integration fails here, at the point of intent, instead of with a 403 on
+    some later write.
     """
+    role = _resolve_key_role(body.role, membership.role)
+
     plaintext = _generate_key()
     prefix = plaintext[:8]
     key_hash = hashlib.sha256(plaintext.encode()).hexdigest()
-
-    # Freeze role from the creating user's current membership role
-    role = membership.role
 
     api_key = ApiKey(
         user_id=UUID(membership.user.db_id),
