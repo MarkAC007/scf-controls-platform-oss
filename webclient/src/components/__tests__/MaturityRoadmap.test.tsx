@@ -186,3 +186,78 @@ describe('MaturityRoadmap — duo variant', () => {
     expect(screen.queryByText(maturity.level_3!)).not.toBeInTheDocument()
   })
 })
+
+describe('MaturityRoadmap — duo variant with a target (PIG R5)', () => {
+  it('reads current › target, with the gap between them', () => {
+    const { container } = render(
+      <MaturityRoadmap maturity={maturity} variant="duo" level="L1" target="L3" targetSource="domain" />
+    )
+    const chips = container.querySelectorAll('.roadmap-duo-chip')
+    expect(chips).toHaveLength(2)
+    expect(chips[0]).toHaveClass('current')
+    expect(chips[1]).toHaveClass('target')
+    expect(chips[1]).not.toHaveClass('next')
+    expect(chips[1]).toHaveTextContent('L3')
+    expect(chips[1]).toHaveTextContent('target')
+    expect(chips[1].getAttribute('title')).toContain('Target for this domain')
+    const hint = container.querySelector('.roadmap-duo-hint')
+    expect(hint).toHaveTextContent('2 levels to target')
+    expect(hint).toHaveClass('below-target')
+  })
+
+  it('says one level in the singular', () => {
+    render(<MaturityRoadmap maturity={maturity} variant="duo" level="L2" target="L3" />)
+    expect(screen.getByText('1 level to target')).toBeInTheDocument()
+  })
+
+  it('reads at target when the control has reached or passed it', () => {
+    const { container } = render(
+      <MaturityRoadmap maturity={maturity} variant="duo" level="L4" target="L3" />
+    )
+    const hint = container.querySelector('.roadmap-duo-hint')
+    expect(hint).toHaveTextContent('at target')
+    expect(hint).not.toHaveClass('below-target')
+  })
+
+  it('counts an unrated control from L0', () => {
+    render(<MaturityRoadmap maturity={maturity} variant="duo" level={null} target="L2" />)
+    expect(screen.getByText('2 levels to target')).toBeInTheDocument()
+  })
+
+  it('never reads an unrated control as at target, even against L0', () => {
+    const { container } = render(
+      <MaturityRoadmap maturity={maturity} variant="duo" level={null} target="L0" />
+    )
+    const hint = container.querySelector('.roadmap-duo-hint')
+    expect(hint).toHaveTextContent('not yet rated')
+    expect(hint).toHaveClass('below-target')
+  })
+
+  it("names the control's own override and its reason on the target chip", () => {
+    const { container } = render(
+      <MaturityRoadmap
+        maturity={maturity} variant="duo" level="L1" target="L5"
+        targetSource="control" targetReason="Crown jewel"
+      />
+    )
+    const target = container.querySelectorAll('.roadmap-duo-chip')[1]
+    expect(target.getAttribute('title')).toContain('Target set for this control: Crown jewel')
+    expect(target.getAttribute('data-target-source')).toBe('control')
+  })
+
+  it('reveals the target level guidance on hover', () => {
+    const { container } = render(
+      <MaturityRoadmap maturity={maturity} variant="duo" level="L1" target="L4" />
+    )
+    fireEvent.mouseEnter(container.querySelectorAll('.roadmap-duo-chip')[1])
+    expect(screen.getByText(maturity.level_4!)).toBeInTheDocument()
+  })
+
+  it('falls back to current › next for a target that is not a CMM level', () => {
+    const { container } = render(
+      <MaturityRoadmap maturity={maturity} variant="duo" level="L1" target="high" />
+    )
+    expect(container.querySelectorAll('.roadmap-duo-chip')[1]).toHaveClass('next')
+    expect(screen.getByText('hover for guidance')).toBeInTheDocument()
+  })
+})

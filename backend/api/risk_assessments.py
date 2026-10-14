@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, func
 from sqlalchemy.orm import selectinload
+from datetime import date
 from typing import List, Optional
 from uuid import UUID
 
@@ -13,6 +14,7 @@ from database import get_db
 from models import RiskAssessment, Organization, User, ScopedControl, OrganizationRiskProfile, CustomRiskDefinition, CustomRiskControlMapping
 from catalog_models import SCFCatalogControl
 from schemas import (
+    RiskAcceptanceRequest,
     RiskAssessmentResponse,
     RiskAssessmentCreate,
     RiskAssessmentUpdate,
@@ -24,6 +26,16 @@ from schemas import (
 )
 from auth import require_org_role, OrgMembership
 from services.audit_service import log_entity_changes, detect_action_source, get_request_id, RISK_ASSESSMENT_TRACKED_FIELDS
+from services.risk_acceptance import (
+    STATE_APPROVED,
+    STATE_EXPIRED,
+    STATE_UNAPPROVED,
+    accept_risk,
+    acceptance_state as state_of_acceptance,
+    after_ordinary_write,
+    revoke_acceptance,
+    state_filter,
+)
 
 router = APIRouter(tags=["risk-assessments"])
 
@@ -64,6 +76,11 @@ def enrich_risk_response(assessment: RiskAssessment, low_max: int = 4, medium_ma
         "inherent_risk_level": assessment.get_inherent_risk_level(low_max, medium_max, high_max),
         "residual_risk_level": assessment.get_residual_risk_level(low_max, medium_max, high_max),
         "owner": assessment.owner if assessment.owner else None,
+        "accepted_by": assessment.accepted_by,
+        "accepted_at": assessment.accepted_at,
+        "acceptance_rationale": assessment.acceptance_rationale,
+        "acceptance_expires_on": assessment.acceptance_expires_on,
+        "acceptance_state": state_of_acceptance(assessment),
     }
     return data
 
@@ -91,12 +108,20 @@ async def list_risk_assessments(
     treatment_status: Optional[str] = Query(None, description="Filter by treatment status"),
     risk_level: Optional[str] = Query(None, description="Filter by inherent risk level (low, medium, high, critical)"),
     category: Optional[str] = Query(None, description="Filter by risk category (e.g., AC, AM, BC)"),
+    acceptance_state: Optional[str] = Query(
+        None,
+        pattern=f"^({STATE_APPROVED}|{STATE_EXPIRED}|{STATE_UNAPPROVED})$",
+        description=(
+            "Accepted risks only, by their approval: approved (in force), "
+            "expired, or unapproved (accepted with no approval recorded)"
+        ),
+    ),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Get all risk assessments for an organisation.
     Requires: viewer role or higher.
-    Optionally filter by treatment_status, risk_level, or category.
+    Optionally filter by treatment_status, risk_level, category or acceptance_state.
     """
     # Build query
     query = select(RiskAssessment).where(
@@ -107,6 +132,9 @@ async def list_risk_assessments(
 
     if treatment_status:
         query = query.where(RiskAssessment.treatment_status == treatment_status)
+
+    if acceptance_state:
+        query = query.where(state_filter(acceptance_state, date.today()))
 
     if category:
         # Filter by risk code category (e.g., "AC" matches "R-AC-1", "R-AC-2", etc.)
@@ -206,6 +234,8 @@ async def create_or_update_risk_assessment(
         update_data = assessment_data.model_dump(exclude_unset=True, exclude={'risk_code'})
         for key, value in update_data.items():
             setattr(assessment, key, value)
+        # PIG R7: keep the recorded approval honest (see risk_acceptance).
+        after_ordinary_write(assessment, old_values, membership.is_admin)
         if current_user and current_user.db_id:
             assessment.updated_by_user_id = UUID(current_user.db_id)
 
@@ -297,6 +327,8 @@ async def update_risk_assessment(
     update_data = assessment_update.model_dump(exclude_unset=True)
     for key, value in update_data.items():
         setattr(assessment, key, value)
+    # PIG R7: keep the recorded approval honest (see risk_acceptance).
+    after_ordinary_write(assessment, old_values, membership.is_admin)
 
     # Track who updated
     if current_user and current_user.db_id:
@@ -755,3 +787,92 @@ async def get_controls_for_risk(
         "catalog_control_ids": catalog_control_ids,
         "scoped_controls": scoped_response
     }
+
+
+# =============================================================================
+# Risk acceptance (PIG R7)
+# =============================================================================
+
+async def _audited_acceptance_write(org_id, risk_code, request, membership, db, write):
+    """Run one acceptance write, audit it, and return the enriched risk."""
+    user_id = UUID(membership.user.db_id) if membership.user and membership.user.db_id else None
+    existing = (await db.execute(
+        select(RiskAssessment).where(
+            RiskAssessment.organization_id == org_id,
+            RiskAssessment.risk_code == risk_code,
+        )
+    )).scalar_one_or_none()
+    old_values = (
+        {f: getattr(existing, f) for f in RISK_ASSESSMENT_TRACKED_FIELDS if hasattr(existing, f)}
+        if existing is not None else {}
+    )
+    try:
+        assessment = await write(user_id)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    new_values = {f: getattr(assessment, f) for f in RISK_ASSESSMENT_TRACKED_FIELDS if hasattr(assessment, f)}
+    await log_entity_changes(
+        db=db, organization_id=org_id, entity_type='risk_assessment',
+        entity_id=assessment.id, action='update', changed_by_user_id=user_id,
+        old_values=old_values, new_values=new_values,
+        tracked_fields=RISK_ASSESSMENT_TRACKED_FIELDS,
+        action_source=detect_action_source(request),
+        request_id=get_request_id(request),
+    )
+    await db.commit()
+    assessment = (await db.execute(
+        select(RiskAssessment).where(RiskAssessment.id == assessment.id)
+        .options(selectinload(RiskAssessment.owner))
+        .execution_options(populate_existing=True)
+    )).scalar_one()
+    low_max, medium_max, high_max = await _load_thresholds(org_id, db)
+    return enrich_risk_response(assessment, low_max, medium_max, high_max)
+
+
+@router.put(
+    "/organizations/{org_id}/risk-assessments/{risk_code}/acceptance",
+    response_model=RiskAssessmentResponse,
+)
+async def put_risk_acceptance(
+    org_id: UUID,
+    risk_code: str,
+    body: RiskAcceptanceRequest,
+    request: Request,
+    membership: OrgMembership = Depends(require_org_role("admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Accept a risk, recording the approving admin, now, the rationale and expiry.
+
+    Requires: admin. The approver is the caller; a platform key with no user
+    behind it gets a 403. The expiry must be after today. Accepting an
+    already-accepted risk renews it. A standards exception (a custom risk
+    linked to a control and a document) is accepted here too.
+    """
+    return await _audited_acceptance_write(
+        org_id, risk_code, request, membership, db,
+        lambda user_id: accept_risk(
+            db, org_id, risk_code, body.rationale, body.expires_on, user_id,
+        ),
+    )
+
+
+@router.delete(
+    "/organizations/{org_id}/risk-assessments/{risk_code}/acceptance",
+    response_model=RiskAssessmentResponse,
+)
+async def delete_risk_acceptance(
+    org_id: UUID,
+    risk_code: str,
+    request: Request,
+    membership: OrgMembership = Depends(require_org_role("admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Withdraw a risk's acceptance; it returns to 'analysed'. Requires: admin."""
+    return await _audited_acceptance_write(
+        org_id, risk_code, request, membership, db,
+        lambda user_id: revoke_acceptance(db, org_id, risk_code, user_id),
+    )

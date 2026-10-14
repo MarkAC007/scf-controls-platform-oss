@@ -41,6 +41,9 @@ class DataRequirements:
     evidence: bool = False
     risks: bool = False
     systems: bool = False
+    #: The due-care governance figures (PIG R10): posture, validation,
+    #: deficiencies, risk acceptance, suppliers and the snapshot a quarter ago.
+    governance: bool = False
 
 
 @dataclass(frozen=True)
@@ -110,6 +113,7 @@ def _parse(entry: Dict[str, Any]) -> GeneratorSpec:
             evidence=bool(requires.get("evidence", False)),
             risks=bool(requires.get("risks", False)),
             systems=bool(requires.get("systems", False)),
+            governance=bool(requires.get("governance", False)),
         ),
     )
 

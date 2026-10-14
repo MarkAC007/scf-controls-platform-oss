@@ -11,6 +11,16 @@ interface Props {
   level?: string | null
   /** `full` = six-chip L0–L5 stepper (library detail page). `duo` = current › next (scoping top bar). */
   variant?: 'full' | 'duo'
+  /**
+   * `duo` only: the level this control is meant to reach (PIG R5). When set,
+   * the duo reads current › target with the gap between them, instead of
+   * current › next.
+   */
+  target?: string | null
+  /** Where the target came from: the control's own override, or its domain. */
+  targetSource?: 'control' | 'domain' | null
+  /** The override's reason, shown on the target chip's tooltip. */
+  targetReason?: string | null
 }
 
 const LEVELS = [
@@ -24,7 +34,14 @@ const LEVELS = [
 
 type Level = typeof LEVELS[number]
 
-export default function MaturityRoadmap({ maturity, level, variant = 'full' }: Props) {
+export default function MaturityRoadmap({
+  maturity,
+  level,
+  variant = 'full',
+  target = null,
+  targetSource = null,
+  targetReason = null,
+}: Props) {
   const [hoveredLevel, setHoveredLevel] = useState<string | null>(null)
 
   if (!maturity) {
@@ -55,14 +72,33 @@ export default function MaturityRoadmap({ maturity, level, variant = 'full' }: P
     // Level unset falls back to L0; L5 has no successor, so it stands alone.
     const current = LEVELS[levelIndex >= 0 ? levelIndex : 0]
     const currentIndex = LEVELS.indexOf(current)
-    const next = currentIndex < LEVELS.length - 1 ? LEVELS[currentIndex + 1] : null
+    const targetIndex = target ? LEVELS.findIndex(l => l.label === target) : -1
+    const targetLevel = targetIndex >= 0 ? LEVELS[targetIndex] : null
+    // With a target, the second chip is the target, not the next level.
+    const next = targetLevel ?? (currentIndex < LEVELS.length - 1 ? LEVELS[currentIndex + 1] : null)
+    const targetTitle = targetSource === 'control'
+      ? `Target set for this control${targetReason ? `: ${targetReason}` : ''}`
+      : 'Target for this domain'
+    // An unrated control is short of any target above L0 by the whole distance,
+    // and is never at target, even an L0 one: the gates and the report agree.
+    const unrated = levelIndex < 0
+    const gap = targetLevel ? targetIndex - (unrated ? 0 : levelIndex) : 0
+    const belowTarget = !!targetLevel && (gap > 0 || unrated)
+    const hint = !targetLevel
+      ? 'hover for guidance'
+      : gap > 0
+        ? `${gap} level${gap === 1 ? '' : 's'} to target`
+        : unrated
+          ? 'not yet rated'
+          : 'at target'
 
-    const chip = (l: Level, kind: 'current' | 'next') => (
+    const chip = (l: Level, kind: 'current' | 'next' | 'target') => (
       <span
         className={`roadmap-duo-chip ${kind}`}
         onMouseEnter={() => guidanceFor(l) && setHoveredLevel(l.key)}
         onMouseLeave={() => setHoveredLevel(null)}
-        title={l.title}
+        title={kind === 'target' ? `${l.title} — ${targetTitle}` : l.title}
+        data-target-source={kind === 'target' ? targetSource ?? undefined : undefined}
       >
         <span className="roadmap-duo-lv">{l.label}</span>
         <span className="roadmap-duo-nm">{kind}</span>
@@ -75,9 +111,9 @@ export default function MaturityRoadmap({ maturity, level, variant = 'full' }: P
         <span className="roadmap-duo-chips">
           {chip(current, 'current')}
           {next && <span className="roadmap-duo-arrow" aria-hidden="true">›</span>}
-          {next && chip(next, 'next')}
+          {next && chip(next, targetLevel ? 'target' : 'next')}
         </span>
-        <span className="roadmap-duo-hint">hover for guidance</span>
+        <span className={`roadmap-duo-hint${belowTarget ? ' below-target' : ''}`}>{hint}</span>
         {popover}
       </div>
     )

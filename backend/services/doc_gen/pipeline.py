@@ -179,7 +179,22 @@ def _render_tier1(spec: GeneratorSpec, ctx: OrganisationContext) -> tuple:
     """
     renderer = spec.resolve_renderer()
     content = renderer(ctx)
-    return content, f"tier1:{spec.renderer}", f"tier1:{spec.name}", None, False
+    user_prompt = f"tier1:{spec.name}"
+    if spec.renderer == "tier1.render_maturity_report":
+        # The report's gap section reads targets the fingerprint leaves out
+        # (PIG R5); see tier1.target_inputs_digest.
+        from .tier1 import target_inputs_digest
+
+        digest = target_inputs_digest(ctx)
+        if digest:
+            user_prompt = f"{user_prompt}:targets:{digest}"
+    elif spec.renderer == "tier1.render_governance_report":
+        # The report reads deficiencies, risks, suppliers and validations the
+        # fingerprint leaves out (PIG R10); see tier1.governance_inputs_digest.
+        from .tier1 import governance_inputs_digest
+
+        user_prompt = f"{user_prompt}:governance:{governance_inputs_digest(ctx)}"
+    return content, f"tier1:{spec.renderer}", user_prompt, None, False
 
 
 def run_generation(
@@ -249,6 +264,7 @@ def run_generation(
         include_evidence=spec.requires.evidence,
         include_risks=spec.requires.risks,
         include_systems=spec.requires.systems,
+        include_governance=spec.requires.governance,
     )
     if not ctx.all_controls:
         # Order matters: a domain-scoped run filters the context to one domain,

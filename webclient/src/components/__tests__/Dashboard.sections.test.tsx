@@ -1,6 +1,6 @@
 /**
- * The dashboard is one page answering three questions — what needs doing,
- * where we are, who owns it — rather than tabs split by data source.
+ * The dashboard is one page answering four questions — what needs doing,
+ * where we are, who owns it, how it has changed — rather than tabs split by data source.
  */
 import { act, render, screen, within } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -14,6 +14,12 @@ vi.mock('../../data/apiClient', () => ({
 
 vi.mock('../dashboard/WorkQueuePanel', () => ({
   default: () => <div data-testid="work-queue-panel" />,
+}))
+
+vi.mock('../dashboard/PostureHistoryPanel', () => ({
+  default: ({ organizationId, onOpenDocuments }: { organizationId: string; onOpenDocuments?: () => void }) => (
+    <button type="button" data-testid="posture-history-panel" data-org={organizationId} onClick={onOpenDocuments} />
+  ),
 }))
 
 const useDashboardStats = vi.fn()
@@ -56,7 +62,7 @@ const SCOPING: ScopedControlsFile = {
   controls: { 'CTL-001': { status: 'implemented' } },
 } as unknown as ScopedControlsFile
 
-async function renderDashboard(overrides: Partial<DashboardStats> = {}) {
+async function renderDashboard(overrides: Partial<DashboardStats> = {}, onNavigateToDocuments?: () => void) {
   useDashboardStats.mockReturnValue(makeStats(overrides))
   await act(async () => {
     render(
@@ -64,6 +70,7 @@ async function renderDashboard(overrides: Partial<DashboardStats> = {}) {
         controls={[] as EnrichedControl[]}
         scopingData={SCOPING}
         onScopingDataChange={() => {}}
+        onNavigateToDocuments={onNavigateToDocuments}
       />,
     )
   })
@@ -80,10 +87,20 @@ describe('Dashboard single page', () => {
     expect(screen.queryByRole('tab')).not.toBeInTheDocument()
   })
 
-  it('renders the three sections in order', async () => {
+  it('renders the sections in order', async () => {
     await renderDashboard()
     const headings = screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)
-    expect(headings).toEqual(['Needs attention', 'Where we are', 'Who owns it'])
+    expect(headings).toEqual(['Needs attention', 'Where we are', 'Who owns it', 'How it has changed'])
+  })
+
+  it('puts the posture snapshots under How it has changed, linked to Generated Documents', async () => {
+    const toDocuments = vi.fn()
+    await renderDashboard({}, toDocuments)
+    const change = screen.getByRole('region', { name: 'How it has changed' })
+    const panel = within(change).getByTestId('posture-history-panel')
+    expect(panel).toHaveAttribute('data-org', 'org-1')
+    panel.click()
+    expect(toDocuments).toHaveBeenCalledTimes(1)
   })
 
   it('puts the work queue under Needs attention', async () => {

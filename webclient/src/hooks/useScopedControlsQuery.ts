@@ -6,6 +6,7 @@ import {
   type PaginatedScopedControlsResponse,
   type ScopedControlWithCatalog,
   type ScopedControlStatsResponse,
+  type ObligationBasis,
 } from '../data/apiClient'
 
 const PAGE_SIZE = 50
@@ -40,6 +41,12 @@ export interface ScopedControlFilters {
    * unfiltered one.
    */
   accountable_owner_type?: MemberType
+  /** PIG R2 obligation basis. Part of the query key like every other filter. */
+  basis?: ObligationBasis | 'unclassified'
+  /** PIG R6: material controls only (true) or the rest (false). */
+  material?: boolean
+  /** PIG R6 order; part of the key, so changing it restarts from page one. */
+  sort?: 'scf_id' | 'weighting'
 }
 
 /**
@@ -69,6 +76,9 @@ export function useScopedControlsQuery(filters: ScopedControlFilters = {}, orgId
           my_teams: filters.my_teams || undefined,
           function_id: filters.function_id || undefined,
           accountable_owner_type: filters.accountable_owner_type || undefined,
+          basis: filters.basis || undefined,
+          material: filters.material,
+          sort: filters.sort || undefined,
         },
         orgId
       )

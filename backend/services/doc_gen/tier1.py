@@ -12,9 +12,11 @@ once, so the footer cannot drift between generators.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any, Dict, List, Optional
 
-from .context import IMPLEMENTED_STATUSES, DomainWithControls, OrganisationContext
+from .context import IMPLEMENTED_STATUSES, DomainWithControls, EnrichedControl, OrganisationContext
 
 #: Maturity levels in assessment order, so a report reads L0 to L5 rather than
 #: alphabetically. Anything unrecognised sorts last.
@@ -453,5 +455,345 @@ def render_maturity_report(ctx: OrganisationContext, **_: Any) -> str:
     else:
         lines.append("Every scoped control is rated L2 or above.")
 
+    lines += _target_gap_section(ctx)
+
     lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def target_inputs_digest(ctx: OrganisationContext) -> str:
+    """A short digest of the targets the Gap to Target section reads, or "".
+
+    Targets are kept out of the document fingerprint's controls hash on
+    purpose (adding them would mark every generated document stale). Folding
+    this digest into the maturity report's prompt key instead means a
+    changed target makes that one report regenerate rather than be skipped,
+    and an organisation with no targets keeps the key it had before.
+    """
+    pairs = sorted(
+        (c.scf_id, c.target_maturity, c.target_source, c.target_maturity_reason or "")
+        for c in ctx.all_controls
+        if c.target_maturity
+    )
+    if not pairs:
+        return ""
+    return hashlib.sha256(json.dumps(pairs).encode("utf-8")).hexdigest()[:16]
+
+
+def _level_index(level: Optional[str]) -> Optional[int]:
+    """Position of a CMM level, or None for anything that is not L0 to L5."""
+    cleaned = (level or "").strip().upper()
+    return MATURITY_ORDER.index(cleaned) if cleaned in MATURITY_ORDER else None
+
+
+def _domain_code(scf_id: str) -> str:
+    """The domain a control's target comes from: its scf_id prefix, as
+    services/target_maturity.py ``domain_of`` reads it."""
+    return (scf_id or "").split("-", 1)[0].strip().upper()
+
+
+def _target_gap_section(ctx: OrganisationContext) -> List[str]:
+    """Section 4: each control's maturity against its target (PIG R5).
+
+    An unrated control with a target is below it: nothing recorded is not
+    evidence of having reached anything. A control with no target is listed
+    by count, because a gap cannot be measured against a target nobody set.
+    """
+    with_target = [c for c in ctx.all_controls if c.target_maturity]
+    no_target = len(ctx.all_controls) - len(with_target)
+    below = []
+    for c in with_target:
+        current = _level_index(c.maturity_level)
+        target = _level_index(c.target_maturity)
+        if target is not None and (current is None or current < target):
+            below.append((c, current, target))
+
+    lines = ["", "## 4. Gap to Target", ""]
+    if not with_target:
+        lines.append(
+            "No target maturity is set. Set a target for each domain in the "
+            "organisation settings to measure the gap."
+        )
+        return lines
+
+    lines += [
+        f"{len(with_target) - len(below)} of {_tally(len(with_target), 'control')} "
+        f"with a target have reached it. {_tally(no_target, 'control')} "
+        f"{'has' if no_target == 1 else 'have'} no target.",
+        "",
+        "| Domain | Controls | With target | At target | Below target |",
+        "|--------|----------|-------------|-----------|--------------|",
+    ]
+    # Rows group by scf_id prefix, the attribution the targets and the gates
+    # use, not by the catalogue's domain name, so a control always sits in the
+    # row whose target it inherits.
+    below_ids = {c.scf_id for c, _, _ in below}
+    names = {(b.domain.identifier or "").strip().upper(): b.domain.name for b in ctx.domains}
+    by_code: Dict[str, List[EnrichedControl]] = {}
+    for c in ctx.all_controls:
+        by_code.setdefault(_domain_code(c.scf_id), []).append(c)
+    for code in sorted(by_code):
+        members = by_code[code]
+        targeted = [c for c in members if c.target_maturity]
+        short = sum(1 for c in targeted if c.scf_id in below_ids)
+        label = f"{_cell(code)} — {_cell(names[code])}" if names.get(code) else _cell(code)
+        lines.append(
+            f"| {label} | {len(members)} | {len(targeted)} | {len(targeted) - short} | {short} |"
+        )
+
+    lines += ["", f"### Controls Below Target ({len(below)})", ""]
+    if not below:
+        lines.append("Every control with a target has reached it.")
+        return lines
+    lines += [
+        "| SCF ID | Control | Domain | Current | Target | Gap | Target set by |",
+        "|--------|---------|--------|---------|--------|-----|---------------|",
+    ]
+    below.sort(key=lambda item: (-(item[2] - (item[1] if item[1] is not None else -1)), item[0].scf_id))
+    for c, current, target in below:
+        gap = f"{target - current} level{'s' if target - current != 1 else ''}" if current is not None else "unrated"
+        source = (
+            f"control: {_cell(c.target_maturity_reason, 60)}"
+            if c.target_source == "control" else "domain"
+        )
+        lines.append(
+            f"| {_cell(c.scf_id)} | {_cell(c.control_name)} | {_cell(_domain_code(c.scf_id))} | "
+            f"{_cell(MATURITY_ORDER[current] if current is not None else 'Unrated')} | "
+            f"{_cell(c.target_maturity)} | {gap} | {source} |"
+        )
+    return lines
+
+
+# ---------------------------------------------------------------------------
+# Governance Oversight Report (PIG R10)
+# ---------------------------------------------------------------------------
+
+
+def governance_inputs_digest(ctx: OrganisationContext) -> str:
+    """A short digest of the governance figures the report reads.
+
+    Deficiencies, risks, suppliers and validations are outside the document
+    fingerprint, so without this a changed figure would leave the report
+    skipped as unchanged. ``as_of`` is left out: the date alone moving on is
+    not new information, and would regenerate the report every day.
+    """
+    figures = {k: v for k, v in (ctx.governance or {}).items() if k != "as_of"}
+    return hashlib.sha256(
+        json.dumps(figures, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()[:16]
+
+
+def _implemented_in(status_counts: Dict[str, int]) -> int:
+    return sum(status_counts.get(s, 0) for s in IMPLEMENTED_STATUSES)
+
+
+def _change(now: int, before: Optional[int]) -> str:
+    if before is None:
+        return "—"
+    delta = now - before
+    return f"{delta:+d}" if delta else "no change"
+
+
+def _counts_table(counts: Dict[str, int], heading: str) -> List[str]:
+    lines = [f"| {heading} | Count |", "|---|---|"]
+    for key, value in counts.items():
+        lines.append(f"| {_cell(status_label(key))} | {value} |")
+    return lines
+
+
+def render_governance_report(ctx: OrganisationContext, **_: Any) -> str:
+    """Governance Oversight Report — the figures a board needs for due care.
+
+    One section per oversight question: are controls implemented and where
+    are we deficient; has the risk profile changed; what did validation find
+    and correct; which obligations are in scope. Then the red flags, then the
+    review record. Every figure comes from ``ctx.governance``.
+    """
+    from services.due_care import DUE_SOON_DAYS, red_flags
+
+    g = ctx.governance or {}
+    lines = _header(ctx, "Governance Oversight Report")
+    if not g:
+        lines += ["No governance figures were available for this report.", ""]
+        return "\n".join(lines).rstrip() + "\n"
+
+    posture = g["posture"]
+    in_scope = posture["in_scope"]
+    deficiencies = posture["deficiencies"]
+    previous = g.get("previous_snapshot")
+    lines += [
+        f"**Figures as of:** {g['as_of']}",
+        f"**Recent activity window:** the last {g['recent_days']} days",
+        "",
+        "This report gives the board the figures it needs to oversee the "
+        "control programme. It does not replace the board's judgement: each "
+        "section closes with the question the board should answer.",
+        "",
+    ]
+
+    # 1. Implementation and known deficiencies ----------------------------
+    material = posture["materiality"]["material"]
+    lines += [
+        "## 1. Implementation and Known Deficiencies",
+        "",
+        "| Measure | Count |",
+        "|---|---|",
+        f"| Controls in scope | {in_scope} |",
+        f"| Implemented | {g['implemented']} ({_pct(g['implemented'], in_scope)}) |",
+        f"| Material controls | {material} |",
+        f"| Material controls implemented | {g['material_implemented']} ({_pct(g['material_implemented'], material)}) |",
+        f"| Open deficiencies | {deficiencies['open']} |",
+        f"| Open material deficiencies | {deficiencies['material_open']} |",
+        f"| Open deficiencies past due | {deficiencies['overdue']} |",
+        f"| Open deficiencies without a due date | {deficiencies['without_due_date']} |",
+        f"| Open deficiencies without an owner | {g['deficiencies_without_owner']} |",
+        "",
+    ]
+    if posture["status"]:
+        lines += ["### Controls by implementation status", ""]
+        lines += _counts_table(posture["status"], "Status") + [""]
+    open_material = g["material_open_deficiencies"]
+    lines += [f"### Open material deficiencies ({len(open_material)})", ""]
+    if open_material:
+        lines += [
+            "| Deficiency | Control | Status | Due | Owner |",
+            "|---|---|---|---|---|",
+        ]
+        for d in open_material:
+            lines.append(
+                f"| {_cell(d['title'], 80)} | {_cell(d['scf_id'])} | {_cell(status_label(d['status']))} | "
+                f"{_cell(d['due_date'])} | {_cell(d['owner'])} |"
+            )
+    else:
+        lines.append("No material deficiency is open.")
+    lines += [
+        "",
+        "**For the board:** are the controls we rely on in place, where do we "
+        "know we fall short, and is the remediation owned, dated and resourced?",
+        "",
+    ]
+
+    # 2. Change in the risk profile -----------------------------------------
+    lines += ["## 2. Change in the Risk Profile", ""]
+    if previous:
+        before = previous["counts"]
+        before_def = before.get("deficiencies", {})
+        lines += [
+            f"Compared with the posture snapshot of {previous['period']}.",
+            "",
+            "| Measure | Then | Now | Change |",
+            "|---|---|---|---|",
+        ]
+        for label, now_value, then_value in (
+            ("Controls in scope", in_scope, before.get("in_scope")),
+            ("Implemented", g["implemented"], _implemented_in(before.get("status", {}))),
+            ("Material controls", material, before.get("materiality", {}).get("material")),
+            ("Open deficiencies", deficiencies["open"], before_def.get("open")),
+            ("Open material deficiencies", deficiencies["material_open"], before_def.get("material_open")),
+            ("Open deficiencies past due", deficiencies["overdue"], before_def.get("overdue")),
+        ):
+            then_cell = "—" if then_value is None else str(then_value)
+            lines.append(f"| {label} | {then_cell} | {now_value} | {_change(now_value, then_value)} |")
+        lines.append("")
+    else:
+        lines += [
+            "No posture snapshot from three or more months ago is on record, so "
+            "the change cannot be shown yet. A snapshot is taken on the first of "
+            "every month.",
+            "",
+        ]
+    acceptance = g["risk_acceptance"]
+    lines += [
+        "### Risk acceptance",
+        "",
+        "| Accepted risks | Count |",
+        "|---|---|",
+        f"| Approved and current | {acceptance['approved']} |",
+        f"| Approval expired | {acceptance['expired']} |",
+        f"| Without an approval | {acceptance['unapproved']} |",
+        "",
+    ]
+    if g["risk_treatment"]:
+        lines += ["### Risks by treatment status", ""]
+        lines += _counts_table(g["risk_treatment"], "Treatment") + [""]
+    lines += ["### Suppliers", ""]
+    if g["vendors_by_criticality"]:
+        lines += _counts_table(g["vendors_by_criticality"], "Criticality") + [""]
+    lines += [
+        f"{_tally(g['vendors_added_recently'], 'supplier')} added in the last {g['recent_days']} days.",
+        "",
+        "**For the board:** has our exposure changed since the last review, "
+        "have suppliers or partners brought new risk, and do the risks we "
+        "accepted still sit within our appetite?",
+        "",
+    ]
+
+    # 3. Validation: what failed and what was corrected -----------------------
+    v = g["validation"]
+    raised = g["deficiencies_raised_recently"]
+    lines += [
+        "## 3. Validation: What Failed and What Was Corrected",
+        "",
+        "| Control validation | Count |",
+        "|---|---|",
+        f"| Validated within their cadence | {v.get('current', 0) + v.get('due_soon', 0)} |",
+        f"| Of which due again within {DUE_SOON_DAYS} days | {v.get('due_soon', 0)} |",
+        f"| Validation overdue | {v.get('overdue', 0)} |",
+        f"| Never validated | {v.get('never', 0)} |",
+        f"| No validation cadence | {v.get('unknown_cadence', 0)} |",
+        f"| Validated in the last {g['recent_days']} days | {g['validated_recently']} |",
+        "",
+        f"Deficiencies raised in the last {g['recent_days']} days: "
+        f"{sum(raised.values())}"
+        + (" (" + ", ".join(f"{_cell(status_label(k))} {n}" for k, n in raised.items()) + ")" if raised else "")
+        + ".",
+        f"Deficiencies closed in the same period: {g['deficiencies_completed_recently']}.",
+        "",
+        "**For the board:** what did testing find, which of our assumptions "
+        "did it prove wrong, and what have we changed as a result?",
+        "",
+    ]
+
+    # 4. Obligations in scope -------------------------------------------------
+    basis = posture["basis"]
+    lines += [
+        "## 4. Obligations in Scope",
+        "",
+        "Mandatory (MCR) obligations come from law, regulation or contract; "
+        "discretionary (DSR) ones are adopted by choice.",
+        "",
+    ]
+    if g["frameworks"]:
+        lines += ["| Framework | Basis |", "|---|---|"]
+        for fw in g["frameworks"]:
+            lines.append(f"| {_cell(fw['framework_id'])} | {_cell((fw['basis'] or 'not set').upper())} |")
+        lines.append("")
+    else:
+        lines += ["No framework is in scope.", ""]
+    lines += [
+        f"Controls by basis: {basis['mcr']} mandatory, {basis['dsr']} discretionary, "
+        f"{basis['none']} with no basis recorded.",
+        "",
+        "**For the board:** how do changes to the laws, regulations and "
+        "frameworks we are bound by affect us, and what legal, financial and "
+        "reputational harm would non-compliance cause?",
+        "",
+    ]
+
+    # 5. Red flags --------------------------------------------------------------
+    flags = red_flags(g)
+    lines += ["## 5. Red Flags", ""]
+    if flags:
+        lines += [f"- {flag}" for flag in flags]
+    else:
+        lines.append("None of the due-care red flags this report checks for is raised.")
+    lines += [
+        "",
+        "## 6. Review Record",
+        "",
+        "Approving this document in the platform records the board's review of "
+        "these figures: the approver and the date are kept in the document's "
+        "lifecycle history and the audit log.",
+        "",
+    ]
     return "\n".join(lines).rstrip() + "\n"

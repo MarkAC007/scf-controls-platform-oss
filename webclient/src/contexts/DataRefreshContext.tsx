@@ -12,6 +12,7 @@ import {
 import { useIsFetching, useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { apiClient, clearCurrentOrganizationCache } from '../data/apiClient'
 import { useOrganization } from './OrganizationContext'
+import { keyEventBelongsToModal } from '../hooks/useModalDismiss'
 
 export interface DataRefreshValue {
   epoch: number
@@ -256,6 +257,11 @@ export function DataRefreshProvider({
       }
 
       if (targetBlocksShortcutRefresh(event.target)) {
+        return
+      }
+
+      // Not under an open dialog: the data it is asking about would change.
+      if (keyEventBelongsToModal(event)) {
         return
       }
 

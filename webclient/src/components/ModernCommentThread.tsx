@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import DOMPurify from 'dompurify';
 import { apiClient } from '../data/apiClient';
+import { useConfirm } from '../contexts/ConfirmContext';
 
 // Configure DOMPurify for safe HTML rendering
 // Only allow specific tags and attributes we generate in renderContent
@@ -9,6 +10,14 @@ const DOMPURIFY_CONFIG = {
   ALLOWED_ATTR: ['style'] as string[],
   ALLOW_DATA_ATTR: false,
 };
+
+// Mention and code highlights are built as an HTML string and pass through
+// DOMPurify, which keeps only the `style` attribute (see DOMPURIFY_CONFIG), so
+// they carry theme tokens inline rather than a class.
+const MENTION_STYLE =
+  'background-color: var(--primary-bg); color: var(--primary-ink); padding: 2px 6px; border-radius: 3px; font-weight: 600;';
+
+const AVATAR_TONES = ['blue', 'green', 'orange', 'purple', 'teal', 'pink'] as const;
 
 interface User {
   id: string;
@@ -32,6 +41,13 @@ interface ModernCommentThreadProps {
   commentableId: string;
   organizationId: string;
   readOnly?: boolean;
+  /**
+   * 'plain' (default): an h4 heading, for mount sites that already print a
+   * section label above the thread. 'strip': the h4 sits in the bench header
+   * strip, for a mount inside a `.detail-section-container` card (the Scoping
+   * Notes & history tab, beside the Implementation notes panel).
+   */
+  header?: 'plain' | 'strip';
 }
 
 export const ModernCommentThread: React.FC<ModernCommentThreadProps> = ({
@@ -39,11 +55,13 @@ export const ModernCommentThread: React.FC<ModernCommentThreadProps> = ({
   commentableId,
   organizationId,
   readOnly = false,
+  header = 'plain',
 }) => {
   const [comments, setComments] = useState<Comment[]>([]);
   const [newComment, setNewComment] = useState('');
   const [replyTo, setReplyTo] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const confirm = useConfirm();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editContent, setEditContent] = useState('');
   const [members, setMembers] = useState<User[]>([]);
@@ -191,7 +209,7 @@ export const ModernCommentThread: React.FC<ModernCommentThreadProps> = ({
       );
 
       if (user && mentions.includes(user.id)) {
-        return `<span style="background-color: rgba(59, 130, 246, 0.15); color: #3b82f6; padding: 2px 6px; border-radius: 3px; font-weight: 600;">@${escapeHtml(name)}</span>`;
+        return `<span style="${MENTION_STYLE}">@${escapeHtml(name)}</span>`;
       }
       return `@${escapeHtml(name)}`; // Not a valid mention, just display as text
     });
@@ -202,7 +220,7 @@ export const ModernCommentThread: React.FC<ModernCommentThreadProps> = ({
         const name = user.display_name;
         // Match @Name but not @[Name]
         const regex = new RegExp(`@(${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})(?!\\])`, 'g');
-        rendered = rendered.replace(regex, `<span style="background-color: rgba(59, 130, 246, 0.15); color: #3b82f6; padding: 2px 6px; border-radius: 3px; font-weight: 600;">@$1</span>`);
+        rendered = rendered.replace(regex, `<span style="${MENTION_STYLE}">@$1</span>`);
       }
     });
 
@@ -266,7 +284,13 @@ export const ModernCommentThread: React.FC<ModernCommentThreadProps> = ({
   };
 
   const handleDelete = async (commentId: string) => {
-    if (!confirm('Delete this comment?')) return;
+    const ok = await confirm({
+      title: 'Delete comment',
+      message: 'Delete this comment?',
+      confirmLabel: 'Delete',
+      destructive: true,
+    });
+    if (!ok) return;
 
     setLoading(true);
     try {
@@ -290,11 +314,11 @@ export const ModernCommentThread: React.FC<ModernCommentThreadProps> = ({
     return user.email.substring(0, 2).toUpperCase();
   };
 
-  const getAvatarColor = (userId: string) => {
-    const colors = ['#1976d2', '#388e3c', '#f57c00', '#7b1fa2', '#0288d1', '#d32f2f'];
-    const index = userId.charCodeAt(0) % colors.length;
-    return colors[index];
-  };
+  // Avatar tones come from the theme's --avatar-* tokens, so both themes get a
+  // palette tuned for them. Same hash as before: first char code of the id.
+  // An empty id has no first char code (NaN), so it falls back to the first tone.
+  const getAvatarTone = (userId: string) => AVATAR_TONES[(userId.charCodeAt(0) || 0) % AVATAR_TONES.length];
+
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
@@ -322,95 +346,44 @@ export const ModernCommentThread: React.FC<ModernCommentThreadProps> = ({
     return name.includes(mentionSearch);
   });
 
+
   const renderComment = (comment: Comment, isReply: boolean = false) => {
     const isEditing = !readOnly && editingId === comment.id;
     const replies = getReplies(comment.id);
+    const isReplyTarget = replyTo === comment.id;
 
     return (
-      <div key={comment.id} style={{ marginLeft: isReply ? '3rem' : 0 }}>
-        <div
-          className="comment-item"
-          style={{
-            display: 'flex',
-            gap: '1rem',
-            padding: '1rem',
-            backgroundColor: isReply ? 'var(--secondary)' : 'var(--card)',
-            borderRadius: '8px',
-            marginBottom: '0.75rem',
-            border: isReply ? '1px solid var(--border)' : 'none'
-          }}
-        >
-          {/* Avatar */}
-          <div
-            style={{
-              width: '40px',
-              height: '40px',
-              borderRadius: '50%',
-              backgroundColor: getAvatarColor(comment.user.id),
-              color: 'white',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontWeight: 600,
-              fontSize: '0.875rem',
-              flexShrink: 0
-            }}
-          >
+      <div key={comment.id} className={`comment-thread-entry${isReply ? ' comment-thread-entry--reply' : ''}`}>
+        <div className={`comment-thread-item${isReply ? ' comment-thread-item--reply' : ''}`}>
+          <div className={`comment-thread-avatar comment-thread-avatar--${getAvatarTone(comment.user.id)}`}>
             {getInitials(comment.user)}
           </div>
 
-          {/* Comment Content */}
-          <div style={{ flex: 1, minWidth: 0 }}>
+          <div className="comment-thread-main">
             {isEditing ? (
-              /* Edit Mode */
               <div>
                 <textarea
+                  className="comment-thread-input comment-thread-input--edit"
+                  aria-label="Edit comment"
                   value={editContent}
                   onChange={(e) => setEditContent(e.target.value)}
-                  style={{
-                    width: '100%',
-                    minHeight: '80px',
-                    padding: '0.75rem',
-                    border: '1px solid var(--border)',
-                    borderRadius: '4px',
-                    fontSize: '0.875rem',
-                    fontFamily: 'inherit',
-                    marginBottom: '0.5rem',
-                    backgroundColor: 'var(--panel)',
-                    color: 'var(--text)'
-                  }}
                   autoFocus
                 />
-                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <div className="comment-thread-edit-actions">
                   <button
+                    type="button"
+                    className="btn-primary btn-small"
                     onClick={() => handleEdit(comment.id)}
                     disabled={loading}
-                    style={{
-                      padding: '0.5rem 1rem',
-                      backgroundColor: '#1976d2',
-                      color: 'white',
-                      border: 'none',
-                      borderRadius: '4px',
-                      cursor: 'pointer',
-                      fontSize: '0.875rem',
-                      fontWeight: 500
-                    }}
                   >
                     Save
                   </button>
                   <button
+                    type="button"
+                    className="btn-secondary btn-small"
                     onClick={() => {
                       setEditingId(null);
                       setEditContent('');
-                    }}
-                    style={{
-                      padding: '0.5rem 1rem',
-                      backgroundColor: 'var(--secondary)',
-                      color: 'var(--muted)',
-                      border: '1px solid var(--border)',
-                      borderRadius: '4px',
-                      cursor: 'pointer',
-                      fontSize: '0.875rem'
                     }}
                   >
                     Cancel
@@ -418,68 +391,45 @@ export const ModernCommentThread: React.FC<ModernCommentThreadProps> = ({
                 </div>
               </div>
             ) : (
-              /* View Mode */
               <>
-                <div style={{ marginBottom: '0.5rem' }}>
-                  <strong style={{ fontSize: '0.9375rem', color: 'var(--text)' }}>
+                <div className="comment-thread-byline">
+                  <strong className="comment-thread-author">
                     {comment.user.display_name || comment.user.email}
                   </strong>
-                  <span style={{ marginLeft: '0.75rem', fontSize: '0.8125rem', color: 'var(--muted)' }}>
+                  <span className="comment-thread-meta">
                     {formatDate(comment.created_at)}
-                    {comment.is_edited && <span style={{ marginLeft: '0.5rem', fontStyle: 'italic' }}>(edited)</span>}
+                    {comment.is_edited && <span className="comment-thread-edited">(edited)</span>}
                   </span>
                 </div>
 
                 <div
-                  style={{
-                    fontSize: '0.9375rem',
-                    lineHeight: '1.6',
-                    color: 'var(--text)',
-                    marginBottom: '0.75rem',
-                    whiteSpace: 'pre-wrap',
-                    wordBreak: 'break-word'
-                  }}
+                  className="comment-thread-body"
                   dangerouslySetInnerHTML={{ __html: renderContent(comment.content, comment.mentions) }}
                 />
 
-                {!readOnly && <div style={{ display: 'flex', gap: '1rem', fontSize: '0.8125rem' }}>
+                {!readOnly && <div className="comment-thread-actions">
                   <button
-                    onClick={() => setReplyTo(replyTo === comment.id ? null : comment.id)}
-                    style={{
-                      background: 'none',
-                      border: 'none',
-                      color: replyTo === comment.id ? '#3b82f6' : 'var(--muted)',
-                      cursor: 'pointer',
-                      fontWeight: replyTo === comment.id ? 600 : 400,
-                      padding: 0
-                    }}
+                    type="button"
+                    className={`btn-text comment-thread-action${isReplyTarget ? ' is-active' : ''}`}
+                    aria-pressed={isReplyTarget}
+                    onClick={() => setReplyTo(isReplyTarget ? null : comment.id)}
                   >
                     💬 Reply
                   </button>
                   <button
+                    type="button"
+                    className="btn-text comment-thread-action"
                     onClick={() => {
                       setEditingId(comment.id);
                       setEditContent(comment.content);
-                    }}
-                    style={{
-                      background: 'none',
-                      border: 'none',
-                      color: 'var(--muted)',
-                      cursor: 'pointer',
-                      padding: 0
                     }}
                   >
                     ✏️ Edit
                   </button>
                   <button
-                    onClick={() => handleDelete(comment.id)}
-                    style={{
-                      background: 'none',
-                      border: 'none',
-                      color: '#f87171',
-                      cursor: 'pointer',
-                      padding: 0
-                    }}
+                    type="button"
+                    className="btn-text comment-thread-action comment-thread-action--danger"
+                    onClick={() => void handleDelete(comment.id)}
                   >
                     🗑️ Delete
                   </button>
@@ -496,172 +446,91 @@ export const ModernCommentThread: React.FC<ModernCommentThreadProps> = ({
   };
 
   return (
-    <div style={{ marginTop: '1.5rem' }}>
-      <h4 style={{ marginBottom: '1rem', fontSize: '1rem', fontWeight: 600 }}>
-        Comments ({comments.length})
-      </h4>
-
-      {/* Comment List */}
-      <div style={{ marginBottom: '1.5rem' }}>
-        {comments.length === 0 ? (
-          <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--muted)', backgroundColor: 'var(--secondary)', borderRadius: '8px' }}>
-            No comments yet. Be the first to comment!
-          </div>
-        ) : (
-          topLevelComments.map(comment => renderComment(comment))
-        )}
-      </div>
-
-      {/* Reply Indicator */}
-      {!readOnly && replyTo && (
-        <div
-          style={{
-            padding: '0.5rem 1rem',
-            backgroundColor: 'rgba(59, 130, 246, 0.15)',
-            borderRadius: '4px',
-            marginBottom: '0.5rem',
-            fontSize: '0.875rem',
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            color: 'var(--text)'
-          }}
-        >
-          <span>
-            💬 Replying to <strong>{comments.find(c => c.id === replyTo)?.user.display_name || 'comment'}</strong>
-          </span>
-          <button
-            onClick={() => setReplyTo(null)}
-            style={{
-              background: 'none',
-              border: 'none',
-              color: '#3b82f6',
-              cursor: 'pointer',
-              fontWeight: 600
-            }}
-          >
-            Cancel
-          </button>
+    <div className="comment-thread">
+      {header === 'strip' ? (
+        <div className="container-header bench-header">
+          <h4 className="container-title">Comments · {comments.length}</h4>
         </div>
+      ) : (
+        <h4 className="comment-thread-heading">Comments · {comments.length}</h4>
       )}
 
-      {/* New Comment Form */}
-      {!readOnly && <form onSubmit={handleSubmit}>
-        <div style={{ position: 'relative' }}>
-          <textarea
-            ref={textareaRef}
-            value={newComment}
-            onChange={handleInputChange}
-            placeholder="Write a comment... Use @ to mention someone, **bold**, *italic*, or `code`"
-            disabled={loading}
-            style={{
-              width: '100%',
-              minHeight: '100px',
-              padding: '0.75rem',
-              border: '2px solid var(--border)',
-              borderRadius: '8px',
-              fontSize: '0.9375rem',
-              fontFamily: 'inherit',
-              resize: 'vertical',
-              transition: 'border-color 0.2s',
-              outline: 'none',
-              backgroundColor: 'var(--panel)',
-              color: 'var(--text)'
-            }}
-            onFocus={(e) => e.target.style.borderColor = '#3b82f6'}
-            onBlur={(e) => e.target.style.borderColor = 'var(--border)'}
-          />
-
-          {/* Mention Autocomplete Dropdown */}
-          {showMentions && filteredMembers.length > 0 && (
-            <div
-              style={{
-                position: 'absolute',
-                bottom: '100%',
-                left: 0,
-                marginBottom: '0.5rem',
-                backgroundColor: 'var(--card)',
-                border: '1px solid var(--border)',
-                borderRadius: '8px',
-                boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
-                maxHeight: '200px',
-                overflowY: 'auto',
-                zIndex: 1000,
-                minWidth: '250px'
-              }}
-            >
-              {filteredMembers.slice(0, 5).map(member => (
-                <div
-                  key={member.id}
-                  onClick={() => insertMention(member)}
-                  style={{
-                    padding: '0.75rem 1rem',
-                    cursor: 'pointer',
-                    borderBottom: '1px solid var(--border)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '0.75rem',
-                    color: 'var(--text)'
-                  }}
-                  onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--secondary)'}
-                  onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'var(--card)'}
-                >
-                  <div
-                    style={{
-                      width: '32px',
-                      height: '32px',
-                      borderRadius: '50%',
-                      backgroundColor: getAvatarColor(member.id),
-                      color: 'white',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      fontWeight: 600,
-                      fontSize: '0.75rem'
-                    }}
-                  >
-                    {getInitials(member)}
-                  </div>
-                  <div>
-                    <div style={{ fontWeight: 600, fontSize: '0.875rem', color: 'var(--text)' }}>
-                      {member.display_name || 'No name'}
-                    </div>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>
-                      {member.email}
-                    </div>
-                  </div>
-                </div>
-              ))}
+      <div className="comment-thread-content">
+        <div className="comment-thread-list">
+          {comments.length === 0 ? (
+            <div className="comment-thread-empty">
+              No comments yet. Be the first to comment!
             </div>
+          ) : (
+            topLevelComments.map(comment => renderComment(comment))
           )}
         </div>
 
-        <div style={{ marginTop: '0.75rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>
-            Tip: Use **bold**, *italic*, `code`, or @mention users
+        {/* Reply Indicator */}
+        {!readOnly && replyTo && (
+          <div className="comment-thread-replying">
+            <span>
+              💬 Replying to <strong>{comments.find(c => c.id === replyTo)?.user.display_name || 'comment'}</strong>
+            </span>
+            <button type="button" className="btn-text comment-thread-action is-active" onClick={() => setReplyTo(null)}>
+              Cancel
+            </button>
           </div>
-          <button
-            type="submit"
-            disabled={loading || !newComment.trim()}
-            style={{
-              padding: '0.625rem 1.5rem',
-              backgroundColor: '#1976d2',
-              color: 'white',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: !newComment.trim() ? 'not-allowed' : 'pointer',
-              opacity: !newComment.trim() ? 0.5 : 1,
-              fontSize: '0.9375rem',
-              fontWeight: 600,
-              transition: 'background-color 0.2s'
-            }}
-            onMouseEnter={(e) => newComment.trim() && (e.currentTarget.style.backgroundColor = '#1565c0')}
-            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#1976d2'}
-          >
-            {loading ? 'Posting...' : replyTo ? 'Post Reply' : 'Post Comment'}
-          </button>
-        </div>
-      </form>}
+        )}
+
+        {/* New Comment Form */}
+        {!readOnly && <form className="comment-thread-form" onSubmit={handleSubmit}>
+          <div className="comment-thread-compose">
+            <textarea
+              ref={textareaRef}
+              className="comment-thread-input"
+              aria-label={replyTo ? 'Write a reply' : 'Write a comment'}
+              value={newComment}
+              onChange={handleInputChange}
+              placeholder="Write a comment…"
+              disabled={loading}
+            />
+
+            {/* Mention Autocomplete Dropdown */}
+            {showMentions && filteredMembers.length > 0 && (
+              <div className="comment-thread-mentions">
+                {filteredMembers.slice(0, 5).map(member => (
+                  <div
+                    key={member.id}
+                    className="comment-thread-mention-option"
+                    onClick={() => insertMention(member)}
+                  >
+                    <div className={`comment-thread-avatar comment-thread-avatar--sm comment-thread-avatar--${getAvatarTone(member.id)}`}>
+                      {getInitials(member)}
+                    </div>
+                    <div>
+                      <div className="comment-thread-mention-name">
+                        {member.display_name || 'No name'}
+                      </div>
+                      <div className="comment-thread-mention-email">
+                        {member.email}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="comment-thread-footer">
+            <div className="comment-thread-tip">
+              Tip: Use **bold**, *italic*, `code`, or @mention users
+            </div>
+            <button
+              type="submit"
+              className="btn-primary btn-small"
+              disabled={loading || !newComment.trim()}
+            >
+              {loading ? 'Posting…' : replyTo ? 'Post reply' : 'Post comment'}
+            </button>
+          </div>
+        </form>}
+      </div>
     </div>
   );
 };

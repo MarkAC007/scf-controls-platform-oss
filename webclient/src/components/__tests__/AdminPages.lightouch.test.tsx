@@ -14,6 +14,7 @@
  *   - CatalogChangelogPage — tested in its own file; placeholder here
  */
 import { render, screen, waitFor } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 // ── EngagementsPage ─────────────────────────────────────────────────────────
@@ -54,6 +55,7 @@ vi.mock('../../data/apiClient', () => ({
   rotateWebhookSecret: vi.fn(),
   revokeWebhookEndpoint: vi.fn(),
   getWebhookDeliveries: vi.fn(),
+  getOrgMembers: vi.fn(() => Promise.resolve([])),
 }))
 
 vi.mock('../../data/catalogApi', () => ({
@@ -207,8 +209,15 @@ vi.mock('../../data/apiClient', async (importOriginal) => {
     revokeWebhookEndpoint: vi.fn(),
     getWebhookDeliveries: vi.fn(),
     getOrgAuditLog: vi.fn(),
+    getOrgMembers: vi.fn(() => Promise.resolve([])),
   }
 })
+
+// The page reads the org members (to name user ids) through react-query.
+function withQueryClient(ui: React.ReactElement) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return <QueryClientProvider client={client}>{ui}</QueryClientProvider>
+}
 
 describe('AuditLogPage', () => {
   it('leaves the page title to the header bar and keeps its subtitle', async () => {
@@ -216,7 +225,7 @@ describe('AuditLogPage', () => {
       entries: [],
       total: 0,
     } as never)
-    render(<AuditLogPage organizationId={ORG_ID} />)
+    render(withQueryClient(<AuditLogPage organizationId={ORG_ID} />))
     await waitFor(() =>
       expect(screen.queryByText(/loading audit log/i)).not.toBeInTheDocument()
     )
@@ -231,7 +240,7 @@ describe('AuditLogPage', () => {
       entries: [],
       total: 0,
     } as never)
-    render(<AuditLogPage organizationId={ORG_ID} />)
+    render(withQueryClient(<AuditLogPage organizationId={ORG_ID} />))
     await waitFor(() =>
       expect(screen.queryByText(/loading audit log/i)).not.toBeInTheDocument()
     )

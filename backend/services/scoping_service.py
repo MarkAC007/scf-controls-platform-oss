@@ -27,6 +27,13 @@ from models import (
     ScopedControl,
 )
 from catalog_models import SCFCatalogControl
+from services.materiality import resolve_material
+from services.obligation_basis import (
+    derive_basis,
+    rank,
+    selection_bases,
+    require_approver,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -711,6 +718,9 @@ async def framework_scope_summary(db: AsyncSession, org_id: UUID) -> Dict[str, A
     selections = {
         row.framework_id: row for row in selection_result.scalars().all()
     }
+    basis_by_framework = {
+        fw: sel.basis for fw, sel in selections.items() if sel.active and sel.basis
+    }
 
     # The same names the Control Library and engagement drawer show (UIP-022).
     from api.catalog import format_framework_name, live_framework_names
@@ -760,13 +770,29 @@ async def framework_scope_summary(db: AsyncSession, org_id: UUID) -> Dict[str, A
                 "source": selection.source if selection else None,
                 "selected_at": selection.selected_at if selection else None,
                 "selected_by": selection.selected_by if selection else None,
+                "basis": selection.basis if selection else None,
+                "obligation_type": selection.obligation_type if selection else None,
+                "obligation_source": selection.obligation_source if selection else None,
             }
         )
+
+    # In-scope controls split by obligation basis. Unclassified is its own
+    # bucket: a control nobody has given a basis is neither MCR nor DSR.
+    mappings_by_id = {c.scf_id: (c.framework_mappings or {}).keys() for c in catalog_controls}
+    basis_counts = {"mcr": 0, "dsr": 0, "unclassified": 0}
+    for scf_id, row in scoped_by_id.items():
+        if not row.selected:
+            continue
+        basis, _ = derive_basis(
+            mappings_by_id.get(scf_id, ()), basis_by_framework, row.basis_override
+        )
+        basis_counts[basis or "unclassified"] += 1
 
     frameworks.sort(key=lambda item: (not item["active"], item["name"]))
     return {
         "total": len(frameworks),
         "selected_count": sum(1 for item in frameworks if item["active"]),
+        "basis_counts": basis_counts,
         "frameworks": frameworks,
     }
 
@@ -795,14 +821,16 @@ async def preview_framework_change(
     scoped = {row.scf_id: row for row in scoped_result.scalars().all()}
 
     selection_result = await db.execute(
-        select(OrganizationFrameworkSelection.framework_id).where(
+        select(OrganizationFrameworkSelection.framework_id, OrganizationFrameworkSelection.basis).where(
             and_(
                 OrganizationFrameworkSelection.organization_id == org_id,
                 OrganizationFrameworkSelection.active == True,  # noqa: E712
             )
         )
     )
-    active_frameworks = {row[0] for row in selection_result.fetchall()}
+    selection_rows = selection_result.fetchall()
+    active_frameworks = {row[0] for row in selection_rows}
+    basis_before = {row[0]: row[1] for row in selection_rows if row[1]}
     # The frameworks that justify a control independently of the one being changed. For a
     # remove this is the post-change active set; for an add it is the pre-change set minus
     # the requested framework. Both are the same expression, and using it for `add` is what
@@ -824,6 +852,9 @@ async def preview_framework_change(
         # Always empty/zero for an add.
         "orphaned_evidence": [],
         "open_tasks_affected": 0,
+        # Remove only: in-scope controls whose obligation basis this change
+        # weakens (MCR to DSR, or either to unclassified or out of scope).
+        "basis_downgrades": [],
     }
 
     for scf_id, mappings in mappings_by_control.items():
@@ -857,8 +888,25 @@ async def preview_framework_change(
         preview["orphaned_evidence"] = impact.evidence_ids
         preview["open_tasks_affected"] = impact.open_tasks
 
+    if operation == "remove":
+        basis_after = {fw: b for fw, b in basis_before.items() if fw not in requested}
+        leaving = set(preview["controls_leaving_scope"])
+        for scf_id, mappings in mappings_by_control.items():
+            row = scoped.get(scf_id)
+            if not (row and row.selected):
+                continue
+            before, _ = derive_basis(mappings, basis_before, row.basis_override)
+            after = None if scf_id in leaving else derive_basis(
+                mappings, basis_after, row.basis_override
+            )[0]
+            if rank(after) < rank(before):
+                preview["basis_downgrades"].append(
+                    {"scf_id": scf_id, "from_basis": before, "to_basis": after}
+                )
+        preview["basis_downgrades"].sort(key=lambda item: item["scf_id"])
+
     for key, value in preview.items():
-        if isinstance(value, list):
+        if isinstance(value, list) and all(isinstance(v, str) for v in value):
             value.sort()
     return preview
 
@@ -872,8 +920,16 @@ async def set_individual_scope_override(
     user_id: Optional[UUID],
     *,
     commit: bool = True,
+    approver_user_id: Optional[UUID] = None,
 ) -> ScopedControl:
-    """Apply framework-baseline + individual-override precedence to one control."""
+    """Apply framework-baseline + individual-override precedence to one control.
+
+    Excluding a material control (PIG R6), or one whose obligation basis is MCR, also needs an approving
+    admin (PIG R2): ``approver_user_id`` is the caller's own id, passed only
+    when the caller is an organisation admin, and ``PermissionError`` when it
+    is absent. The approver is recorded on the row. ``inherit`` may not take an
+    MCR control out of scope; that is an exclusion and goes through ``exclude``.
+    """
     result = await db.execute(
         select(ScopedControl).where(
             and_(
@@ -914,6 +970,23 @@ async def set_individual_scope_override(
         cleaned = (reason or "").strip()
         if not cleaned:
             raise ValueError("An exclusion rationale is required")
+        basis, _ = derive_basis(
+            (catalog.framework_mappings or {}).keys(),
+            await selection_bases(db, org_id),
+            control.basis_override,
+        )
+        if basis == "mcr":
+            control.scope_override_approved_by = require_approver(approver_user_id)
+        elif resolve_material(control.material_override, catalog.control_weighting)[0]:
+            # PIG R6: a material control is excluded only with an approving admin.
+            if approver_user_id is None:
+                raise PermissionError(
+                    "Excluding a material control needs an admin of this organisation; "
+                    "the admin who makes the change is recorded as the approver"
+                )
+            control.scope_override_approved_by = approver_user_id
+        else:
+            control.scope_override_approved_by = None
         control.selected = False
         control.scope_override = "exclude"
         control.scope_override_reason = cleaned
@@ -928,11 +1001,33 @@ async def set_individual_scope_override(
             )
         )
         active_frameworks = {row[0] for row in selection_result.fetchall()}
-        control.selected = bool(set((catalog.framework_mappings or {}).keys()) & active_frameworks)
+        inherited = bool(set((catalog.framework_mappings or {}).keys()) & active_frameworks)
+        if previously_selected and not inherited and control.basis_override == "mcr":
+            # Only an override can make a control MCR without an active MCR
+            # selection mapping it, so this is the one way inherit could drop
+            # an owed obligation silently.
+            raise ValueError(
+                f"{scf_id} is MCR by override and no scoped framework keeps it in "
+                "scope; exclude it with a reason, or clear the basis override first"
+            )
+        if (
+            previously_selected
+            and not inherited
+            and resolve_material(control.material_override, catalog.control_weighting)[0]
+        ):
+            # Reverting to inherit would drop a material control from scope
+            # with no approver; that is an exclusion (PIG R6).
+            raise ValueError(
+                f"{scf_id} is a material control and no scoped framework keeps it in "
+                "scope; an admin can exclude it with a reason"
+            )
+        control.selected = inherited
         control.scope_override = None
         control.scope_override_reason = None
         control.out_of_scope_justification = None
 
+    if action != "exclude":
+        control.scope_override_approved_by = None
     control.scope_override_set_at = now if action != "inherit" else None
     control.scope_override_set_by = user_id if action != "inherit" else None
     if control.selected and not previously_selected:

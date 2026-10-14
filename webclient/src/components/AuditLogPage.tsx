@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import { getOrgAuditLog } from '../data/apiClient'
+import { useOrgMembersQuery } from '../hooks/useDeficiencies'
 import type { AuditLogEntry, AuditLogListResponse } from '../types'
-import { decodeAuditValue, formatAuditDate, isDateField } from '../utils/auditValue'
+import { AUDIT_ENTITY_TYPES, auditEntityTypeLabel, auditFieldLabel, formatAuditField } from '../utils/auditLabels'
 import AppLink, { type AppDestination } from './AppLink'
 
 interface AuditLogPageProps {
@@ -36,7 +37,7 @@ export function auditEntityDestination(
 }
 
 // Audit entity types whose objects have a page, keyed as the API resolves them.
-const AUDIT_ENTITY_KINDS: Record<string, Exclude<AppDestination['kind'], 'control'>> = {
+const AUDIT_ENTITY_KINDS: Record<string, Exclude<AppDestination['kind'], 'control' | 'library'>> = {
   risk_assessment: 'risk',
   evidence_tracking: 'evidence',
   vendor: 'vendor',
@@ -48,42 +49,12 @@ function shortId(id: string): string {
   return id.length > 12 ? id.substring(0, 12) + '...' : id
 }
 
-const FIELD_LABELS: Record<string, string> = {
-  selected: 'Scoped',
-  implementation_status: 'Status',
-  priority: 'Priority',
-  owner: 'Owner',
-  assigned_to: 'Assigned To',
-  maturity_level: 'Maturity Level',
-  selection_reason: 'Selection Reason',
-  target_date: 'Target Date',
-  completion_date: 'Completion Date',
-  implementation_notes: 'Notes',
-  control_weighting: 'Control Weighting',
-  validation_cadence: 'Validation Cadence',
-  nist_csf_function: 'NIST CSF Function',
-  control_question: 'Control Question',
-  related_documentation: 'Documentation',
-  custom_fields: 'Custom Fields',
-}
-
 function friendlyError(message?: string): string {
   if (!message) return 'Failed to load audit log'
   if (/validation error|Internal Server Error|Traceback/i.test(message) || message.length > 160) {
     return 'Failed to load audit log — the server returned an unexpected error.'
   }
   return message
-}
-
-function formatValue(field: string, raw: string | undefined): string {
-  const value = decodeAuditValue(raw)
-  if (value === null) return '\u2014'
-  if (field === 'selected') return value.toLowerCase() === 'true' ? 'Yes' : 'No'
-  if (field === 'implementation_status') return value.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
-  if (field === 'priority') return value.charAt(0).toUpperCase() + value.slice(1)
-  if (field === 'maturity_level') return value.toUpperCase()
-  if (isDateField(field)) return formatAuditDate(value)
-  return value.length > 80 ? value.substring(0, 77) + '...' : value
 }
 
 function formatTime(iso: string): string {
@@ -192,6 +163,11 @@ export default function AuditLogPage({ organizationId }: AuditLogPageProps) {
   const [total, setTotal] = useState(0)
   const [offset, setOffset] = useState(0)
   const [loading, setLoading] = useState(true)
+  // Fields such as Last Validated By store a user id; the members name it.
+  // Only those values wait for the members (reading "Loading…"); if the
+  // members cannot be read, the ids are shown as stored.
+  const members = useOrgMembersQuery(organizationId)
+  const valueFormat = { members: members.data, membersLoading: members.isLoading }
   const [error, setError] = useState<string | null>(null)
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS)
   const [appliedFilters, setAppliedFilters] = useState<Filters>(EMPTY_FILTERS)
@@ -285,14 +261,9 @@ export default function AuditLogPage({ organizationId }: AuditLogPageProps) {
             style={selectStyle}
           >
             <option value="">All</option>
-            <option value="scoped_control">Scoped Control</option>
-            <option value="evidence">Evidence</option>
-            <option value="risk">Risk</option>
-            <option value="vendor">Vendor</option>
-            <option value="system">System</option>
-            <option value="user">User</option>
-            <option value="organization">Organization</option>
-            <option value="webhook">Webhook</option>
+            {AUDIT_ENTITY_TYPES.map(type => (
+              <option key={type} value={type}>{auditEntityTypeLabel(type)}</option>
+            ))}
           </select>
         </div>
 
@@ -447,7 +418,7 @@ export default function AuditLogPage({ organizationId }: AuditLogPageProps) {
                       </span>
                     </td>
                     <td style={{ ...tdStyle, fontSize: 12 }}>
-                      {entry.entity_type.replace(/_/g, ' ')}
+                      {auditEntityTypeLabel(entry.entity_type)}
                     </td>
                     <td style={{ ...tdStyle, fontSize: 11, fontFamily: 'monospace', color: 'var(--muted)' }}>
                       {(() => {
@@ -466,8 +437,8 @@ export default function AuditLogPage({ organizationId }: AuditLogPageProps) {
                           return (
                             <AppLink
                               to={dest.to}
-                              title={`${entry.entity_type.replace(/_/g, ' ')} ${entry.entity_id}`}
-                              aria-label={`Open ${entry.entity_type.replace(/_/g, ' ')} ${dest.label}`}
+                              title={`${auditEntityTypeLabel(entry.entity_type)} ${entry.entity_id}`}
+                              aria-label={`Open ${auditEntityTypeLabel(entry.entity_type).toLowerCase()} ${dest.label}`}
                             >
                               {dest.label}
                             </AppLink>
@@ -484,7 +455,7 @@ export default function AuditLogPage({ organizationId }: AuditLogPageProps) {
                     </td>
                     <td style={{ ...tdStyle, fontSize: 12 }}>
                       {entry.field_name
-                        ? (FIELD_LABELS[entry.field_name] || entry.field_name)
+                        ? auditFieldLabel(entry.field_name)
                         : '\u2014'}
                     </td>
                     <td style={{ ...tdStyle, fontSize: 12, maxWidth: 280 }}>
@@ -495,11 +466,11 @@ export default function AuditLogPage({ organizationId }: AuditLogPageProps) {
                       ) : (
                         <span style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'baseline' }}>
                           <span style={{ textDecoration: 'line-through', opacity: 0.5, fontSize: 11 }}>
-                            {formatValue(entry.field_name || '', entry.old_value)}
+                            {formatAuditField(entry.field_name || '', entry.old_value, { ...valueFormat, maxLength: 80, entityType: entry.entity_type })}
                           </span>
                           <span style={{ color: 'var(--muted)' }}>{'\u2192'}</span>
                           <span style={{ color: 'var(--success)', fontWeight: 500, fontSize: 11 }}>
-                            {formatValue(entry.field_name || '', entry.new_value)}
+                            {formatAuditField(entry.field_name || '', entry.new_value, { ...valueFormat, maxLength: 80, entityType: entry.entity_type })}
                           </span>
                         </span>
                       )}

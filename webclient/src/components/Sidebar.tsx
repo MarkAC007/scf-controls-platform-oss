@@ -6,7 +6,7 @@ import { getCatalogStatusExtended } from '../data/catalogUpgradeApi'
 import { DEFAULT_APP_TITLE, getAppLogo } from '../branding'
 import { getConfig } from '../data/runtimeConfig'
 
-type Tab = 'dashboard' | 'journey' | 'capability-posture' | 'library' | 'scoping' | 'evidence' | 'mapping-matrix' | 'tasks' | 'systems' | 'users' | 'consultant-portal' | 'risk-register' | 'vendors' | 'settings' | 'webhooks' | 'audit-log' | 'engagements' | 'documents' | 'platform-catalog' | 'platform-tenants' | 'catalog-changelog'
+type Tab = 'dashboard' | 'journey' | 'capability-posture' | 'library' | 'scoping' | 'evidence' | 'mapping-matrix' | 'tasks' | 'systems' | 'users' | 'consultant-portal' | 'risk-register' | 'vendors' | 'settings' | 'webhooks' | 'audit-log' | 'engagements' | 'documents' | 'platform-catalog' | 'platform-tenants' | 'catalog-changelog' | 'deficiencies' | 'capability-tests'
 
 interface SidebarProps {
   activeTab: Tab
@@ -192,6 +192,20 @@ const Icons = {
       <rect x="13" y="13" width="8" height="8" rx="1" />
     </svg>
   ),
+  deficiency: (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+      <line x1="12" y1="9" x2="12" y2="13" />
+      <line x1="12" y1="17" x2="12.01" y2="17" />
+    </svg>
+  ),
+  capabilityTest: (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9 3h6" />
+      <path d="M10 3v6.5L4.5 19a1.5 1.5 0 0 0 1.3 2.2h12.4a1.5 1.5 0 0 0 1.3-2.2L14 9.5V3" />
+      <line x1="7" y1="15" x2="17" y2="15" />
+    </svg>
+  ),
   changelog: (
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <circle cx="12" cy="12" r="10" />
@@ -227,6 +241,8 @@ const navSections: NavSection[] = [
       { id: 'library', label: 'Control Library', icon: Icons.library },
       { id: 'mapping-matrix', label: 'Framework Mappings', icon: Icons.matrix },
       { id: 'scoping', label: 'Framework Scoping', icon: Icons.scope },
+      { id: 'deficiencies', label: 'Deficiencies (POA&M)', icon: Icons.deficiency },
+      { id: 'capability-tests', label: 'Capability Tests', icon: Icons.capabilityTest },
     ],
   },
   {

@@ -55,6 +55,7 @@ from auth import (
 )
 from services.audit_service import log_entity_changes, detect_action_source, get_request_id
 from services.engagement_presentation import build_framework_presentation
+from services.obligation_basis import derive_basis, selection_bases
 from services.engagement_queries import status_after_response, is_valid_query_transition
 from services.notifications import create_engagement_query_raised_notifications
 
@@ -243,6 +244,7 @@ async def _materialise_scope(
             ScopedControl.scf_id,
             ScopedControl.selected,
             ScopedControl.out_of_scope_justification,
+            ScopedControl.basis_override,
         ).where(
             and_(
                 ScopedControl.organization_id == org_id,
@@ -251,6 +253,12 @@ async def _materialise_scope(
         )
     )
     scoped_by_scf = {row[1]: row for row in scoped_result.fetchall()}
+
+    # Obligation basis is part of the audit assertion (PIG R2): frozen here,
+    # never re-derived on read, so a later reclassification cannot rewrite
+    # what the engagement was scoped against.
+    basis_by_framework = await selection_bases(db, org_id)
+    mappings_by_scf = {scf_id: (mappings or {}).keys() for scf_id, mappings in catalog_rows}
 
     scope_rows = []
     for scf_id in sorted(framework_scf_ids):
@@ -276,6 +284,9 @@ async def _materialise_scope(
                 scope_status=scope_status,
                 out_of_scope_justification=justification,
                 source_frameworks=source_frameworks_by_scf[scf_id],
+                obligation_basis=derive_basis(
+                    mappings_by_scf[scf_id], basis_by_framework, scoped[4] if scoped else None
+                )[0],
             )
         )
 
@@ -614,6 +625,7 @@ async def get_engagement_scope(
             EngagementControlScope.scope_status,
             EngagementControlScope.out_of_scope_justification,
             EngagementControlScope.source_frameworks,
+            EngagementControlScope.obligation_basis,
             SCFCatalogControl.control_name,
             SCFCatalogControl.status,
             SCFCatalogControl.retired_in_version,
@@ -634,10 +646,11 @@ async def get_engagement_scope(
             scope_status=row[4],
             out_of_scope_justification=row[5],
             source_frameworks=row[6] or [],
-            control_name=row[7],
-            catalog_status=row[8],
-            retired_in_version=row[9],
-            superseded_by=row[10],
+            obligation_basis=row[7],
+            control_name=row[8],
+            catalog_status=row[9],
+            retired_in_version=row[10],
+            superseded_by=row[11],
         )
         for row in rows
     ]

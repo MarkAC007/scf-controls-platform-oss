@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
 from sqlalchemy.orm import selectinload
-from typing import List, Optional
+from typing import List, Literal, Optional
 from uuid import UUID
 
 from database import get_db
@@ -34,12 +34,15 @@ async def list_systems(
     system_type: Optional[str] = Query(None, description="Filter by system type"),
     status: Optional[str] = Query(None, description="Filter by status (active, inactive, deprecated)"),
     vendor_id: Optional[UUID] = Query(None, description="Filter by linked TPRM vendor id"),
+    in_scope: Optional[Literal["true", "false", "undecided"]] = Query(
+        None, description="Filter by the boundary flag: true, false, or undecided (not yet placed); omit for all"
+    ),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Get all systems for an organization.
     Requires: viewer role or higher.
-    Optionally filter by system_type, status and/or linked vendor_id.
+    Optionally filter by system_type, status, linked vendor_id and/or in_scope.
     """
     # Organization existence verified by require_org_role
 
@@ -52,6 +55,10 @@ async def list_systems(
         query = query.where(System.status == status)
     if vendor_id:
         query = query.where(System.vendor_id == vendor_id)
+    if in_scope == "undecided":
+        query = query.where(System.in_scope.is_(None))
+    elif in_scope is not None:
+        query = query.where(System.in_scope.is_(in_scope == "true"))
 
     # Include user and linked-vendor relationships for response
     query = query.options(

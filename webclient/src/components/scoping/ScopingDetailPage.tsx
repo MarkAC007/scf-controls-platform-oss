@@ -25,6 +25,7 @@ import type {
   SCRMFocus,
   CMMaturityGuidance,
   BusinessSizeGuidance as BusinessSizeGuidanceType,
+  BusinessSizeKey,
   RiskThreatMapping,
   NistCsfFunction,
 } from '../../types'
@@ -41,6 +42,9 @@ import { AuditLogPanel } from '../AuditLogPanel'
 import OwningTeams from '../OwningTeams'
 import TabRow from '../explorer/TabRow'
 import ControlStatusHelp from './ControlStatusHelp'
+import { resolveTargetMaturity, type ResolvedTarget } from '../../data/targetMaturity'
+import GovernanceTab from '../governance/GovernanceTab'
+import { keyEventBelongsToModal } from '../../hooks/useModalDismiss'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -83,6 +87,9 @@ export interface ScopingEntry {
   implementation_status?: ImplementationStatus
   priority?: Priority
   maturity_level?: MaturityLevel
+  /** PIG R5: this control's own target override and its reason; null inherits. */
+  target_maturity_override?: MaturityLevel | null
+  target_maturity_reason?: string | null
   selection_reason?: string
   target_date?: string
   completion_date?: string
@@ -132,9 +139,24 @@ export interface ScopingDetailPageProps {
   canManageTeams?: boolean
   /** Viewer mode: preserve every section while disabling organization mutations. */
   readOnly?: boolean
+  /** The organisation's recorded business size; marks its guidance row. */
+  orgBusinessSize?: BusinessSizeKey | null
+  /** The organisation's target maturity per domain code (PIG R5). */
+  orgMaturityTargets?: Record<string, string> | null
+  /**
+   * The target the server resolved for this control (the same value the
+   * GOVERNANCE tab shows). Preferred over resolving `orgMaturityTargets` here,
+   * which can be stale or missing when the settings read fails.
+   */
+  serverTarget?: ResolvedTarget
+  /**
+   * Called after the GOVERNANCE tab saves a change this page also shows (the
+   * target override on the roadmap), so the container can reload the record.
+   */
+  onGovernanceChange?: () => void
 }
 
-type ScopingTab = 'details' | 'notes' | 'assignments' | 'history'
+type ScopingTab = 'details' | 'governance' | 'notes' | 'assignments' | 'history'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -170,6 +192,8 @@ function isInternalMapping(frameworkKey: string): boolean {
 
 /** True when the keyboard event target should suppress page-level shortcuts. */
 function isSuppressed(e: KeyboardEvent): boolean {
+  // A key pressed in an open dialog is the dialog's, not the pager's.
+  if (keyEventBelongsToModal(e)) return true
   const t = e.target
   if (!t || !(t instanceof Element)) return false
   const tag = (t as HTMLElement).tagName?.toLowerCase()
@@ -212,6 +236,10 @@ export default function ScopingDetailPage({
   accountableTeamLabel = null,
   canManageTeams = false,
   readOnly = false,
+  orgBusinessSize = null,
+  orgMaturityTargets = null,
+  serverTarget,
+  onGovernanceChange,
 }: ScopingDetailPageProps): JSX.Element {
   const [activeTab, setActiveTab] = useState<ScopingTab>('details')
   const [frameworksCollapsed, setFrameworksCollapsed] = useState(true)
@@ -220,6 +248,14 @@ export default function ScopingDetailPage({
   // Local implementation_notes mirror — prevents prop round-trip snap-back on 300 ms debounce
   const [notesValue, setNotesValue] = useState(scopingEntry?.implementation_notes ?? '')
   // Local maturity level override — makes roadmap highlight move immediately on select
+  // PIG R5: the level this control is meant to reach — its own override, else
+  // its domain's target from the organisation settings. Only a control with a
+  // scope record (a database id) has one, as the server resolves it: a
+  // placeholder entry for an unscoped control must not inherit its domain's.
+  const target = serverTarget
+    ?? (scopingEntry?.id
+      ? resolveTargetMaturity(control.scf_id, scopingEntry.target_maturity_override, orgMaturityTargets)
+      : { level: null, source: null })
   const [localMaturityLevel, setLocalMaturityLevel] = useState<string | undefined>(
     scopingEntry?.maturity_level,
   )
@@ -330,6 +366,7 @@ export default function ScopingDetailPage({
 
   const tabs = [
     { id: 'details', label: 'DETAILS' },
+    { id: 'governance', label: 'GOVERNANCE' },
     { id: 'notes', label: 'NOTES & HISTORY' },
     { id: 'assignments', label: 'ASSIGNMENTS' },
     { id: 'history', label: 'AUDIT ARTIFACTS' },
@@ -449,6 +486,9 @@ export default function ScopingDetailPage({
               variant="duo"
               maturity={control.cmm_maturity}
               level={(localMaturityLevel as MaturityLevel | undefined) ?? null}
+              target={target.level}
+              targetSource={target.source}
+              targetReason={scopingEntry?.target_maturity_reason ?? null}
             />
           </div>
 
@@ -498,7 +538,11 @@ export default function ScopingDetailPage({
                   </div>
                 </div>
               </div>
-              <BusinessSizeGuidance guidance={control.business_size_guidance} />
+              <BusinessSizeGuidance
+                key={control.scf_id}
+                guidance={control.business_size_guidance}
+                orgSize={orgBusinessSize}
+              />
             </div>
             <div className="detail-header-scrm">
               <SCRMFocusBadges focus={control.scrm_focus} />
@@ -713,12 +757,13 @@ export default function ScopingDetailPage({
             </div>
 
             {controlDbId && organizationId ? (
-              <div className="scoping-comments-section">
+              <div className="detail-section-container surface-bench scoping-comments-section">
                 <ModernCommentThread
                   commentableType="control"
                   commentableId={controlDbId}
                   organizationId={organizationId}
                   readOnly={readOnly}
+                  header="strip"
                 />
               </div>
             ) : (
@@ -740,6 +785,18 @@ export default function ScopingDetailPage({
               </div>
             </div>
           </>
+        )}
+
+        {/* ── Tab: GOVERNANCE ────────────────────────────────────────────────── */}
+        {activeTab === 'governance' && (
+          <div className="detail-section-container surface-bench">
+            <div className="container-header bench-header">
+              <span className="container-title">Governance</span>
+            </div>
+            <div className="container-content">
+              <GovernanceTab organizationId={organizationId} scfId={control.scf_id} onChange={onGovernanceChange} />
+            </div>
+          </div>
         )}
 
         {/* ── Tab: ASSIGNMENTS ────────────────────────────────────────────────── */}

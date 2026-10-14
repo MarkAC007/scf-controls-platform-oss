@@ -158,6 +158,24 @@ TENANT_SCOPED_EXCLUDED_TABLES: Dict[str, str] = {
     # Vendors — not yet in the export set.
     "vendors": "not yet represented in the export set",
     "vendor_reports": "not yet represented in the export set",
+    "vendor_action_items": (
+        "not yet represented in the export set; includes the control deficiency "
+        "record (POA&M, items with no vendor), which a tenant move does not carry yet"
+    ),
+    "vendor_compensating_controls": (
+        "not yet represented in the export set; includes organisation compensating "
+        "controls (rows with no vendor), which a tenant move does not carry yet"
+    ),
+    # Due-care pack (PIG R10).
+    "posture_snapshots": (
+        "not yet represented in the export set; monthly posture history of the "
+        "source deployment, which a tenant move does not carry yet"
+    ),
+    # Capability test records (PIG R11).
+    "capability_tests": (
+        "not yet represented in the export set; capability test records, whose "
+        "findings are deficiencies in vendor_action_items, which a tenant move does not carry yet"
+    ),
 }
 
 

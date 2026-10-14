@@ -66,6 +66,14 @@ from services.org_utils import MEMBER_TYPES
 
 SYSTEM_TYPES = "|".join(SYSTEM_TYPE_LIST)
 SYSTEM_STATUSES = "active|inactive|deprecated"
+# PIG R4: the same vocabularies the vendor record already uses, so a system and
+# the vendor behind it are rated on one scale.
+SYSTEM_CRITICALITIES = "low|medium|high|critical"
+SYSTEM_DATA_CLASSIFICATIONS = "public|internal|confidential|restricted"
+#: Business size, keyed like the catalogue's business_size_guidance.
+BusinessSize = Literal["micro_small", "small", "medium", "large", "enterprise"]
+#: CMM maturity levels an organisation can set as a target (PIG R5).
+MaturityLevel = Literal["L0", "L1", "L2", "L3", "L4", "L5"]
 #: Rendered into every member_type Pydantic pattern (#822 phase 2), the same
 #: way SYSTEM_TYPES and TEAM_ASSIGNMENT_TYPES_PATTERN are, so the accepted
 #: values cannot drift from the vocabulary the endpoints validate against or
@@ -239,6 +247,27 @@ class ScopedControlResponse(ScopedControlBase):
     scope_override_reason: Optional[str] = None
     scope_override_set_at: Optional[datetime] = None
     scope_override_set_by: Optional[UUID] = None
+    # Admin who approved excluding an MCR control (PIG R2).
+    scope_override_approved_by: Optional[UUID] = None
+    # Per-control obligation basis override (PIG R2); NULL derives the basis
+    # from the org's classified framework selections.
+    basis_override: Optional[Literal["mcr", "dsr"]] = None
+    basis_override_reason: Optional[str] = None
+    basis_override_set_at: Optional[datetime] = None
+    basis_override_set_by: Optional[UUID] = None
+    # Per-control target maturity override (PIG R5); NULL inherits the target
+    # for the control's domain from the organisation settings.
+    target_maturity_override: Optional[MaturityLevel] = None
+    target_maturity_reason: Optional[str] = None
+    target_maturity_set_at: Optional[datetime] = None
+    target_maturity_set_by: Optional[UUID] = None
+    # Materiality (PIG R6): the raw per-control override; the effective flag,
+    # which falls back to the catalogue weighting, is on the paginated list.
+    material_override: Optional[bool] = None
+    material_reason: Optional[str] = None
+    material_set_at: Optional[datetime] = None
+    material_set_by: Optional[UUID] = None
+    procedure_document_id: Optional[UUID] = None
     # Re-scope staleness: status/maturity recorded before the control was
     # restored to scope. Values are kept on un-scope by design; this says
     # whether they pre-date the latest return to scope.
@@ -330,9 +359,29 @@ class ScopedControlListItem(BaseModel):
     scope_override: Optional[Literal["include", "exclude"]] = None
     scope_override_reason: Optional[str] = None
     scope_override_set_at: Optional[datetime] = None
+    # Obligation basis (PIG R2): mcr | dsr | None (unclassified), and whether a
+    # per-control override or a classified framework selection decided it.
+    obligation_basis: Optional[Literal["mcr", "dsr"]] = None
+    basis_source: Optional[Literal["override", "framework"]] = None
+    basis_override_reason: Optional[str] = None
     # The ORG's own CMM level for this control. Distinct from ``cmm_maturity``
     # below, which is the catalogue's recommendation.
     maturity_level: Optional[str] = None
+    # Target maturity (PIG R5): the level this control is meant to reach, and
+    # whether a per-control override or the domain target set it.
+    target_maturity: Optional[MaturityLevel] = None
+    target_source: Optional[Literal["control", "domain"]] = None
+    target_maturity_reason: Optional[str] = None
+    # Materiality (PIG R6): whether the control is material, and whether a
+    # per-control override or the catalogue weighting (10 = material) decided it.
+    material: bool = False
+    material_source: Optional[Literal["control", "weighting"]] = None
+    material_reason: Optional[str] = None
+    # The signed-off procedure linked to this control, and that document's
+    # lifecycle status now: "approved" or "published" is signed off; an edit
+    # after linking sends it back to "in_review", which is the drift to show.
+    procedure_document_id: Optional[UUID] = None
+    procedure_document_status: Optional[str] = None
     # Re-scope staleness (see ScopedControlResponse)
     scope_restored_at: Optional[datetime] = None
     assessment_recorded_at: Optional[datetime] = None
@@ -405,6 +454,13 @@ class OrganizationSettingsResponse(BaseModel):
     # sweep and the tracking write paths both honour it. Off means only tasks
     # a person creates by hand exist. Absent from the JSON means on.
     auto_task_generation_enabled: bool = True
+    # PIG R4: the organisation profile. Business size picks the matching row
+    # of each control's right-sizing guidance.
+    business_size: Optional[BusinessSize] = None
+    mission_statement: Optional[str] = None
+    # PIG R5: target maturity per SCF domain, keyed by domain code. A control
+    # inherits its domain's target unless it carries its own override.
+    maturity_targets: Dict[str, MaturityLevel] = Field(default_factory=dict)
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -421,6 +477,11 @@ class OrganizationSettingsUpdate(BaseModel):
     # rather than persisted — an empty org name breaks every document header.
     name: Optional[str] = Field(default=None, min_length=1, max_length=255)
     industry: Optional[str] = Field(default=None, max_length=255)
+    business_size: Optional[BusinessSize] = None
+    mission_statement: Optional[str] = Field(default=None, max_length=4000)
+    # Replaces the whole map when present; ``{}`` clears every domain target.
+    # Each key must be a domain code in the SCF catalogue (checked in the API).
+    maturity_targets: Optional[Dict[str, MaturityLevel]] = None
 
     @field_validator("name")
     @classmethod
@@ -428,6 +489,28 @@ class OrganizationSettingsUpdate(BaseModel):
         if v is not None and not v.strip():
             raise ValueError("Organisation name cannot be blank")
         return v.strip() if v is not None else None
+
+    @field_validator("mission_statement")
+    @classmethod
+    def _blank_mission_clears(cls, v: Optional[str]) -> Optional[str]:
+        # A blank statement clears the field rather than storing whitespace.
+        return v.strip() or None if v is not None else None
+
+    @field_validator("maturity_targets")
+    @classmethod
+    def _one_target_per_domain(
+        cls, v: Optional[Dict[str, str]]
+    ) -> Optional[Dict[str, str]]:
+        # Domain codes are case-insensitive, so "GOV" and "gov" in one request
+        # name the same domain twice; refuse rather than keep whichever came last.
+        if v is not None:
+            seen: Dict[str, str] = {}
+            for key in v:
+                code = key.strip().upper()
+                if code in seen:
+                    raise ValueError(f"Domain {code} is given more than once ({seen[code]!r}, {key!r})")
+                seen[code] = key
+        return v
 
 
 class OrganizationLogoResponse(BaseModel):
@@ -937,9 +1020,10 @@ class NotificationBase(BaseModel):
         "^(assignment|mention|task_due|task_overdue|task_assigned"
         "|evidence_rejected|control_ready_for_review|composite_insufficient"
         "|engagement_query_raised|catalog_reconciliation_applied"
-        "|catalog_reconciliation_rolled_back|team_assignment)$"
+        "|catalog_reconciliation_rolled_back|team_assignment"
+        "|risk_acceptance_expired|control_validation_due)$"
     ))
-    reference_type: str = Field(..., pattern="^(control|evidence|comment|task|engagement_query|catalog|team)$")
+    reference_type: str = Field(..., pattern="^(control|evidence|comment|task|engagement_query|catalog|team|risk)$")
     reference_id: UUID
     message: str
 
@@ -956,8 +1040,9 @@ class NotificationResponse(NotificationBase):
     is_read: bool
     read_at: Optional[datetime] = None
     created_at: datetime
-    # Human-readable key for the referenced item (e.g. "E-HRS-16"), resolved on
-    # read from the row reference_id points at. Not a stored column -- see
+    # Human-readable key for the referenced item (an evidence id such as
+    # "E-HRS-16", or a control's SCF id such as "AST-14"), resolved on read from
+    # the row reference_id points at. Not a stored column -- see
     # services/notification_targets.py. None when the reference has no navigable
     # key or the referenced row has since been deleted.
     reference_key: Optional[str] = None
@@ -999,6 +1084,25 @@ class SystemBase(BaseModel):
         None,
         description="FK to the rich TPRM Vendor entity (distinct from the legacy free-text 'vendor' field)"
     )
+    # PIG R4: boundary and recovery record. All optional; None means not recorded.
+    in_scope: Optional[bool] = Field(
+        None, description="Inside the assessment boundary (true), outside (false), or not decided (null)"
+    )
+    criticality: Optional[str] = Field(
+        None, pattern=f"^({SYSTEM_CRITICALITIES})$", description="Business criticality"
+    )
+    rto_hours: Optional[float] = Field(
+        None, ge=0, allow_inf_nan=False, description="Recovery time objective, in hours"
+    )
+    rpo_hours: Optional[float] = Field(
+        None, ge=0, allow_inf_nan=False, description="Recovery point objective, in hours"
+    )
+    data_classification: Optional[str] = Field(
+        None, pattern=f"^({SYSTEM_DATA_CLASSIFICATIONS})$", description="Highest classification of data held"
+    )
+    hosting_location: Optional[str] = Field(
+        None, max_length=255, description="Where the system runs, e.g. a cloud region or data centre"
+    )
 
 
 class SystemCreate(SystemBase):
@@ -1017,6 +1121,12 @@ class SystemUpdate(BaseModel):
     connection_config: Optional[Dict[str, Any]] = None
     catalog_template_id: Optional[int] = None
     vendor_id: Optional[UUID] = None
+    in_scope: Optional[bool] = None
+    criticality: Optional[str] = Field(None, pattern=f"^({SYSTEM_CRITICALITIES})$")
+    rto_hours: Optional[float] = Field(None, ge=0, allow_inf_nan=False)
+    rpo_hours: Optional[float] = Field(None, ge=0, allow_inf_nan=False)
+    data_classification: Optional[str] = Field(None, pattern=f"^({SYSTEM_DATA_CLASSIFICATIONS})$")
+    hosting_location: Optional[str] = Field(None, max_length=255)
 
 
 class SystemResponse(SystemBase):
@@ -1680,12 +1790,76 @@ class FrameworkScopeSummaryItem(BaseModel):
     source: Optional[str] = None
     selected_at: Optional[datetime] = None
     selected_by: Optional[UUID] = None
+    basis: Optional[Literal["mcr", "dsr"]] = None
+    obligation_type: Optional[Literal["statutory", "regulatory", "contractual", "discretionary"]] = None
+    obligation_source: Optional[str] = None
 
 
 class FrameworkScopeSummaryResponse(BaseModel):
     total: int
     selected_count: int
+    basis_counts: Dict[str, int] = Field(
+        default_factory=lambda: {"mcr": 0, "dsr": 0, "unclassified": 0},
+        description="In-scope controls by obligation basis",
+    )
     frameworks: List[FrameworkScopeSummaryItem] = Field(default_factory=list)
+
+
+class FrameworkBasisRequest(BaseModel):
+    """Why a scoped framework is in scope (PIG R2). Replaces all three fields."""
+    basis: Optional[Literal["mcr", "dsr"]] = None
+    obligation_type: Optional[Literal["statutory", "regulatory", "contractual", "discretionary"]] = None
+    obligation_source: Optional[str] = Field(None, max_length=2000)
+
+
+class ControlBasisOverrideRequest(BaseModel):
+    """Override one control's derived obligation basis; ``basis: null`` clears it."""
+    basis: Optional[Literal["mcr", "dsr"]] = None
+    reason: Optional[str] = Field(None, max_length=2000)
+
+    @model_validator(mode="after")
+    def override_requires_reason(self):
+        if self.basis is not None and not (self.reason or "").strip():
+            raise ValueError("A basis override needs a reason")
+        return self
+
+
+class ControlTargetMaturityRequest(BaseModel):
+    """Override one control's inherited target maturity; ``level: null`` clears it."""
+    level: Optional[MaturityLevel] = None
+    reason: Optional[str] = Field(None, max_length=2000)
+
+    @model_validator(mode="after")
+    def override_requires_reason(self):
+        if self.level is not None and not (self.reason or "").strip():
+            raise ValueError("A target maturity override needs a reason")
+        return self
+
+
+class ControlMaterialityRequest(BaseModel):
+    """Override whether one control is material; ``material: null`` returns it
+    to its catalogue default (material at weighting 10). A clear that makes the
+    control not material needs a reason too; the service checks that, since it
+    depends on the catalogue weighting."""
+    material: Optional[bool] = None
+    reason: Optional[str] = Field(None, max_length=2000)
+
+    @model_validator(mode="after")
+    def override_requires_reason(self):
+        if self.material is not None and not (self.reason or "").strip():
+            raise ValueError("Changing whether a control is material needs a reason")
+        return self
+
+
+class ControlProcedureDocumentRequest(BaseModel):
+    """Link the approved procedure document for one control; null unlinks it."""
+    document_id: Optional[UUID] = None
+
+
+class BasisDowngrade(BaseModel):
+    scf_id: str
+    from_basis: Optional[Literal["mcr", "dsr"]] = None
+    to_basis: Optional[Literal["mcr", "dsr"]] = None
 
 
 class FrameworkScopePreviewRequest(BaseModel):
@@ -1709,6 +1883,10 @@ class FrameworkScopePreviewResponse(BaseModel):
     )
     open_tasks_affected: int = Field(
         0, description="Remove only: open tasks on that evidence"
+    )
+    basis_downgrades: List[BasisDowngrade] = Field(
+        default_factory=list,
+        description="Remove only: in-scope controls whose obligation basis this change weakens; to_basis null means unclassified or leaving scope",
     )
 
 
@@ -2190,7 +2368,29 @@ class RiskAssessmentResponse(RiskAssessmentBase):
     # Owner relationship
     owner: Optional[UserSimple] = None
 
+    # Recorded acceptance (PIG R7). acceptance_state is set only for an
+    # accepted risk: 'approved' (approval in force), 'expired' (its expiry
+    # has passed) or 'unapproved' (accepted with no approval recorded).
+    accepted_by: Optional[UUID] = None
+    accepted_at: Optional[datetime] = None
+    acceptance_rationale: Optional[str] = None
+    acceptance_expires_on: Optional[date] = None
+    acceptance_state: Optional[str] = None
+
     model_config = ConfigDict(from_attributes=True)
+
+
+class RiskAcceptanceRequest(BaseModel):
+    """Accept a risk (PIG R7). The approver is the admin making the call."""
+    rationale: str = Field(..., min_length=1, description="Why the risk is accepted")
+    expires_on: date = Field(..., description="When the acceptance lapses; must be after today")
+
+    @field_validator("rationale")
+    @classmethod
+    def _rationale_not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("rationale must not be blank")
+        return value.strip()
 
 
 class RiskMatrixCell(BaseModel):
@@ -2292,6 +2492,19 @@ class CustomRiskDefinitionResponse(BaseModel):
 class CustomRiskControlMappingCreate(BaseModel):
     """Schema for linking a control to a custom risk."""
     scf_id: str = Field(..., min_length=1, max_length=50, description="SCF control ID to link")
+    document_id: Optional[UUID] = Field(
+        None,
+        description=(
+            "The organisation document that sets the standard this risk is an "
+            "exception against (PIG R7). A link with a document makes the custom "
+            "risk a standards exception."
+        ),
+    )
+
+
+class CustomRiskControlMappingUpdate(BaseModel):
+    """Set or clear the standard's document on an existing control link."""
+    document_id: Optional[UUID] = None
 
 
 # ============================================================================
@@ -2629,6 +2842,16 @@ class VendorBase(BaseModel):
         pattern=f"^({VENDOR_DATA_CLASSIFICATIONS})$",
         description="Data classification"
     )
+    # PIG R4
+    data_location: Optional[str] = Field(
+        None, max_length=255, description="Where the vendor stores or processes our data"
+    )
+    flow_down_requirements: Optional[str] = Field(
+        None, description="Requirements passed down to the vendor by contract"
+    )
+    shared_responsibility_note: Optional[str] = Field(
+        None, description="Who is responsible for what between us and the vendor"
+    )
 
 
 class VendorCreate(VendorBase):
@@ -2653,6 +2876,9 @@ class VendorUpdate(BaseModel):
     risk_score: Optional[int] = Field(None, ge=1, le=25)
     risk_level: Optional[str] = Field(None, pattern=f"^({VENDOR_CRITICALITIES})$")
     data_classification: Optional[str] = Field(None, pattern=f"^({VENDOR_DATA_CLASSIFICATIONS})$")
+    data_location: Optional[str] = Field(None, max_length=255)
+    flow_down_requirements: Optional[str] = None
+    shared_responsibility_note: Optional[str] = None
 
 
 class VendorResponse(VendorBase):
@@ -3003,6 +3229,102 @@ class VendorActionItemResponse(VendorActionItemBase):
 
 
 # ============================================================================
+# Control deficiency record (PIG R8)
+# ============================================================================
+
+
+class DeficiencyCreate(BaseModel):
+    """A deficiency raised by hand, against a scoped control, a risk, or both."""
+    title: str = Field(..., min_length=1, max_length=255)
+    description: Optional[str] = None
+    priority: str = Field(default="medium", pattern=f"^({ACTION_ITEM_PRIORITIES})$")
+    owner_name: Optional[str] = Field(None, max_length=255)
+    owner_user_id: Optional[UUID] = Field(None, description="Must be a member of the organisation")
+    due_date: Optional[date] = None
+    scf_id: Optional[str] = Field(None, max_length=50, description="A control the organisation has in scope")
+    risk_code: Optional[str] = Field(None, max_length=50, description="A risk the organisation has assessed")
+    root_cause: Optional[str] = Field(None, description="Why the deficiency arose")
+
+    @field_validator("title")
+    @classmethod
+    def _title_not_blank(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("title cannot be blank")
+        return v.strip()
+
+
+class DeficiencyUpdate(BaseModel):
+    """Changes to a deficiency. What it is raised against does not change."""
+    title: Optional[str] = Field(None, min_length=1, max_length=255)
+    description: Optional[str] = None
+    priority: Optional[str] = Field(None, pattern=f"^({ACTION_ITEM_PRIORITIES})$")
+    status: Optional[str] = Field(None, pattern=f"^({ACTION_ITEM_STATUSES})$")
+    owner_name: Optional[str] = Field(None, max_length=255)
+    owner_user_id: Optional[UUID] = None
+    due_date: Optional[date] = None
+    retest_note: Optional[str] = Field(
+        None, description="Required to complete a deficiency: what was retested, and the result. "
+        "Ignored when reopening: a reopened deficiency starts without one"
+    )
+    root_cause: Optional[str] = Field(None, description="Why the deficiency arose; null clears it")
+
+    @field_validator("title")
+    @classmethod
+    def _title_not_blank(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and not v.strip():
+            raise ValueError("title cannot be blank")
+        return v.strip() if v is not None else v
+
+
+class DeficiencyResponse(BaseModel):
+    id: UUID
+    organization_id: UUID
+    title: str
+    description: Optional[str] = None
+    priority: str
+    status: str
+    owner_name: Optional[str] = None
+    owner_user_id: Optional[UUID] = None
+    due_date: Optional[date] = None
+    completed_date: Optional[date] = None
+    scoped_control_id: Optional[UUID] = None
+    scf_id: Optional[str] = Field(None, description="The control's SCF id, kept if the control is deleted")
+    domain: Optional[str] = Field(None, description="The control's SCF domain code")
+    risk_code: Optional[str] = None
+    auto_generated: bool = False
+    source: Optional[str] = Field(
+        None, description="control_at_risk, composite_insufficient, evidence_rejected or capability_test; "
+        "null if raised by hand"
+    )
+    source_ref: Optional[str] = None
+    retest_note: Optional[str] = None
+    closed_by_user_id: Optional[UUID] = None
+    capability_test_id: Optional[UUID] = Field(None, description="The capability test it was found in")
+    root_cause: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class DeficiencyControlCount(BaseModel):
+    scf_id: str
+    open_count: int
+    material: bool
+
+
+class DeficiencyDomainCount(BaseModel):
+    domain: str
+    open_count: int
+
+
+class DeficiencySummary(BaseModel):
+    open_total: int
+    material_open_total: int
+    unlinked_open: int = Field(description="Open deficiencies raised against a risk alone, with no control")
+    by_control: List[DeficiencyControlCount]
+    by_domain: List[DeficiencyDomainCount]
+
+
+# ============================================================================
 # Vendor Compensating Control Schemas (DPSIA Enhancement)
 # ============================================================================
 
@@ -3043,6 +3365,235 @@ class VendorCompensatingControlResponse(VendorCompensatingControlBase):
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# ---------------------------------------------------------------------------
+# Organisation compensating controls (PIG R9)
+# ---------------------------------------------------------------------------
+
+def _required_text(name: str, v: Optional[str]) -> Optional[str]:
+    if v is not None and not v.strip():
+        raise ValueError(f"{name} cannot be blank")
+    return v.strip() if v is not None else v
+
+
+class CompensatingControlCreate(BaseModel):
+    """A compensating control for one of the organisation's controls."""
+    model_config = ConfigDict(extra="forbid")
+
+    scf_id: str = Field(..., min_length=1, max_length=50, description="A control the organisation has in scope")
+    gap_description: str = Field(..., min_length=1, description="What the control does not meet")
+    compensating_control: str = Field(..., min_length=1, description="What compensates for the gap")
+    effectiveness_rating: str = Field(default="partial", pattern=f"^({EFFECTIVENESS_RATINGS})$")
+    risk_reduction_notes: Optional[str] = None
+    risk_code: Optional[str] = Field(
+        None, max_length=50,
+        description="The accepted risk that justifies compensating: a risk linked to the control "
+        "(catalogue or custom) that the organisation has assessed. Required on a material control, "
+        "where it must be accepted with an approval in force",
+    )
+
+    @field_validator("gap_description", "compensating_control")
+    @classmethod
+    def _not_blank(cls, v: str, info) -> str:
+        return _required_text(info.field_name, v)
+
+
+class CompensatingControlUpdate(BaseModel):
+    """Changes to a compensating control. The control it is for does not change."""
+    model_config = ConfigDict(extra="forbid")
+
+    gap_description: Optional[str] = Field(None, min_length=1)
+    compensating_control: Optional[str] = Field(None, min_length=1)
+    effectiveness_rating: Optional[str] = Field(None, pattern=f"^({EFFECTIVENESS_RATINGS})$")
+    risk_reduction_notes: Optional[str] = None
+    risk_code: Optional[str] = Field(
+        None, max_length=50,
+        description="Re-checked as on create; null clears it, which a material control refuses",
+    )
+
+    @field_validator("gap_description", "compensating_control")
+    @classmethod
+    def _not_blank(cls, v: Optional[str], info) -> Optional[str]:
+        return _required_text(info.field_name, v)
+
+
+class CompensatingControlResponse(BaseModel):
+    id: UUID
+    organization_id: UUID
+    scoped_control_id: Optional[UUID] = Field(None, description="Null once the control is deleted")
+    scf_id: str
+    domain: Optional[str] = None
+    gap_description: str
+    compensating_control: str
+    effectiveness_rating: str
+    risk_reduction_notes: Optional[str] = None
+    risk_code: Optional[str] = None
+    risk_acceptance_state: Optional[str] = Field(
+        None, description="approved, expired or unapproved when risk_code is an accepted risk still "
+        "linked to the control; null when it is not accepted, no longer linked, or there is no risk_code",
+    )
+    material: bool = Field(..., description="Whether the control is material now (unknown controls are)")
+    justified: bool = Field(
+        ..., description="False when the control is material and risk_code is not an accepted risk, "
+        "linked to it, with an approval in force: an acceptance lapsed, was withdrawn or unlinked, or "
+        "the control became material after the record was made",
+    )
+    created_at: datetime
+    updated_at: datetime
+
+
+# ---------------------------------------------------------------------------
+# Due-care pack (PIG R10): control validation and posture snapshots
+# ---------------------------------------------------------------------------
+
+class ControlValidationRequest(BaseModel):
+    """Record that a control has been validated."""
+    model_config = ConfigDict(extra="forbid")
+
+    note: str = Field(
+        ..., min_length=1,
+        description="What was checked and what was found: the record a reviewer reads later",
+    )
+
+    @field_validator("note")
+    @classmethod
+    def _not_blank(cls, v: str) -> str:
+        return _required_text("note", v)
+
+
+class ControlValidationResponse(BaseModel):
+    """One in-scope control's validation: the last one and when the next is due."""
+    scoped_control_id: UUID
+    scf_id: str
+    validation_cadence: Optional[str] = Field(
+        None, description="The control's own cadence, else the catalogue's"
+    )
+    last_validated_at: Optional[datetime] = None
+    last_validated_by: Optional[UUID] = None
+    last_validation_note: Optional[str] = None
+    next_validation_due: Optional[date] = Field(
+        None, description="Last validation plus the cadence; null when never validated or the cadence is unknown"
+    )
+    validation_state: str = Field(
+        ..., description="current | due_soon (within 30 days) | overdue | never | unknown_cadence"
+    )
+
+
+class ControlValidationListResponse(BaseModel):
+    """The organisation's validation schedule and a count per state."""
+    counts: Dict[str, int]
+    controls: List[ControlValidationResponse]
+
+
+class PostureSnapshotResponse(BaseModel):
+    """One month's posture snapshot."""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    organization_id: UUID
+    # Sent as ``YYYY-MM``: the month, in the form ``GET …/posture-snapshots/{period}`` takes.
+    period: Annotated[date, PlainSerializer(lambda v: v.strftime("%Y-%m"), return_type=str, when_used="json")] = Field(
+        ..., description="The month the snapshot is for, as YYYY-MM"
+    )
+    taken_at: datetime
+    trigger: str = Field(..., description="scheduled | manual")
+    taken_by_user_id: Optional[UUID] = None
+    counts: Dict[str, Any]
+
+
+# ---------------------------------------------------------------------------
+# Capability tests (PIG R11)
+# ---------------------------------------------------------------------------
+
+CAPABILITY_TEST_TYPES = "incident_response|continuity|other"
+CAPABILITY_TEST_RESULTS = "passed|passed_with_findings|failed"
+
+
+class CapabilityTestFinding(BaseModel):
+    """A finding from a capability test. It is recorded as a deficiency (R8)."""
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(..., min_length=1, max_length=255)
+    description: Optional[str] = None
+    priority: str = Field(default="medium", pattern=f"^({ACTION_ITEM_PRIORITIES})$")
+    owner_name: Optional[str] = Field(None, max_length=255)
+    owner_user_id: Optional[UUID] = Field(None, description="Must be a member of the organisation")
+    due_date: Optional[date] = None
+    scf_id: Optional[str] = Field(
+        None, max_length=50, description="The control the finding is against, if any: one in scope"
+    )
+    risk_code: Optional[str] = Field(None, max_length=50, description="A risk the organisation has assessed")
+    root_cause: Optional[str] = Field(None, description="Why the finding arose")
+
+    @field_validator("title")
+    @classmethod
+    def _not_blank(cls, v: str, info) -> str:
+        return _required_text(info.field_name, v)
+
+
+class CapabilityTestCreate(BaseModel):
+    """A capability test as run: an incident response exercise, a continuity test or another."""
+    model_config = ConfigDict(extra="forbid")
+
+    test_type: str = Field(..., pattern=f"^({CAPABILITY_TEST_TYPES})$")
+    title: str = Field(..., min_length=1, max_length=255)
+    tested_on: date = Field(..., description="The day the test was run; not in the future")
+    scenario: str = Field(..., min_length=1, description="What was tested, and how")
+    result: str = Field(
+        ..., pattern=f"^({CAPABILITY_TEST_RESULTS})$",
+        description="passed (no findings), passed_with_findings or failed (at least one finding)",
+    )
+    outcome: str = Field(..., min_length=1, description="What happened, and what was learned")
+    findings: List[CapabilityTestFinding] = Field(
+        default_factory=list, max_length=100, description="Each is recorded as a deficiency"
+    )
+
+    @field_validator("title", "scenario", "outcome")
+    @classmethod
+    def _not_blank(cls, v: str, info) -> str:
+        return _required_text(info.field_name, v)
+
+
+class CapabilityTestUpdate(BaseModel):
+    """Corrections to a capability test. Findings are added, not edited, here."""
+    model_config = ConfigDict(extra="forbid")
+
+    test_type: Optional[str] = Field(None, pattern=f"^({CAPABILITY_TEST_TYPES})$")
+    title: Optional[str] = Field(None, min_length=1, max_length=255)
+    tested_on: Optional[date] = None
+    scenario: Optional[str] = Field(None, min_length=1)
+    result: Optional[str] = Field(None, pattern=f"^({CAPABILITY_TEST_RESULTS})$")
+    outcome: Optional[str] = Field(None, min_length=1)
+    findings: Optional[List[CapabilityTestFinding]] = Field(
+        None, max_length=100,
+        description="Findings to add with this correction, e.g. when a test recorded as passed "
+        "is corrected to failed",
+    )
+
+    @field_validator("title", "scenario", "outcome")
+    @classmethod
+    def _not_blank(cls, v: Optional[str], info) -> Optional[str]:
+        return _required_text(info.field_name, v)
+
+
+class CapabilityTestResponse(BaseModel):
+    id: UUID
+    organization_id: UUID
+    test_type: str
+    title: str
+    tested_on: date
+    scenario: str
+    result: str
+    outcome: str
+    recorded_by_user_id: Optional[UUID] = None
+    finding_count: int = Field(..., description="Findings recorded, cancelled ones excluded")
+    open_finding_count: int
+    findings: Optional[List[DeficiencyResponse]] = Field(
+        None, description="The findings, as deficiencies; in a single test's response only"
+    )
+    created_at: datetime
+    updated_at: datetime
 
 
 # ---------------------------------------------------------------------------
@@ -4768,6 +5319,7 @@ class EngagementScopeItem(BaseModel):
     scope_status: str = "in_scope"  # in_scope | excluded | not_tracked (see ScopeStatus)
     out_of_scope_justification: Optional[str] = None  # populated for excluded controls
     source_frameworks: list[str] = []  # engagement frameworks that pulled this control in
+    obligation_basis: Optional[str] = None  # mcr | dsr, frozen at materialisation (PIG R2)
     added_at: datetime
 
     model_config = ConfigDict(from_attributes=True)

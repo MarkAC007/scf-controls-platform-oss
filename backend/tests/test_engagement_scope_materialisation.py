@@ -11,7 +11,8 @@ frozen out-of-scope justification.
 These are pure-logic unit tests over the helper, using a scripted fake async
 session in the style of the other backend tests (no real Postgres): the first
 ``execute`` returns the catalog query (scf_id, framework_mappings); the second
-returns the org's scoped controls (id, scf_id, selected, out_of_scope_justification).
+returns the org's scoped controls (id, scf_id, selected, out_of_scope_justification,
+basis_override); the third returns the org's classified selections (framework_id, basis).
 The rows the helper would persist are captured via ``add_all``.
 """
 from __future__ import annotations
@@ -79,10 +80,10 @@ async def test_materialise_tags_in_scope_excluded_and_not_tracked():
         ("GOV-03", {"iso_27001_2022": ["5.3"]}),  # org never tracked this one
     ]
     scoped_rows = [
-        (SC_SELECTED, "GOV-01", True, None),
-        (SC_EXCLUDED, "GOV-02", False, "Handled by the parent group's certified ISMS."),
+        (SC_SELECTED, "GOV-01", True, None, None),
+        (SC_EXCLUDED, "GOV-02", False, "Handled by the parent group's certified ISMS.", None),
     ]
-    session = _FakeAsyncSession([catalog_rows, scoped_rows])
+    session = _FakeAsyncSession([catalog_rows, scoped_rows, []])
 
     count = await _materialise_scope(
         db=session, engagement_id=ENG_ID, org_id=ORG_ID, frameworks=["iso_27001_2022"]
@@ -117,8 +118,8 @@ async def test_source_frameworks_records_only_matching_engagement_frameworks():
         # GOV-01 maps to three frameworks, but the engagement only covers two.
         ("GOV-01", {"iso_27001_2022": ["5.1"], "soc2": ["CC1.1"], "pci_dss_4_0_1": ["12.1"]}),
     ]
-    scoped_rows = [(SC_SELECTED, "GOV-01", True, None)]
-    session = _FakeAsyncSession([catalog_rows, scoped_rows])
+    scoped_rows = [(SC_SELECTED, "GOV-01", True, None, None)]
+    session = _FakeAsyncSession([catalog_rows, scoped_rows, []])
 
     await _materialise_scope(
         db=session,
@@ -149,3 +150,42 @@ async def test_no_catalog_matches_returns_zero():
     )
     assert count == 0
     assert session.added == []
+
+
+@pytest.mark.asyncio
+async def test_obligation_basis_is_frozen_from_selections_and_overrides():
+    """PIG R2: each row carries the basis it was scoped under.
+
+    The strongest classified selection mapping the control decides it, a
+    per-control override replaces that, and a control mapped only by
+    unclassified selections stays unclassified rather than being guessed.
+    """
+    catalog_rows = [
+        ("ctl-mcr", {"fw_mcr": ["1"], "fw_dsr": ["1"]}),
+        ("ctl-dsr", {"fw_dsr": ["2"]}),
+        ("ctl-override", {"fw_mcr": ["3"]}),
+        ("ctl-none", {"fw_unclassified": ["4"]}),
+    ]
+    scoped_rows = [
+        (uuid4(), "ctl-mcr", True, None, None),
+        (uuid4(), "ctl-dsr", True, None, None),
+        (uuid4(), "ctl-override", True, None, "dsr"),
+        (uuid4(), "ctl-none", True, None, None),
+    ]
+    selections = [("fw_mcr", "mcr"), ("fw_dsr", "dsr")]
+    session = _FakeAsyncSession([catalog_rows, scoped_rows, selections])
+
+    await _materialise_scope(
+        db=session,
+        engagement_id=ENG_ID,
+        org_id=ORG_ID,
+        frameworks=["fw_mcr", "fw_dsr", "fw_unclassified"],
+    )
+
+    basis = {r.scf_id: r.obligation_basis for r in session.added}
+    assert basis == {
+        "ctl-mcr": "mcr",
+        "ctl-dsr": "dsr",
+        "ctl-override": "dsr",
+        "ctl-none": None,
+    }

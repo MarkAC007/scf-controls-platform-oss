@@ -43,6 +43,7 @@ import { PER_WINDOW_REVIEW_ENABLED } from '../../data/featureFlags'
 import { getEvidenceTracking } from '../../data/scopingService'
 import { useIsOrgEditor } from '../../hooks/useHasOrgRole'
 import DetailSplitLayout from '../explorer/DetailSplitLayout'
+import { keyEventBelongsToModal } from '../../hooks/useModalDismiss'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -97,6 +98,8 @@ export interface EvidenceDetailPageProps {
 
 /** True when the keyboard event target should suppress pager shortcuts. */
 function isSuppressed(e: KeyboardEvent): boolean {
+  // A key pressed in an open dialog is the dialog's, not the pager's.
+  if (keyEventBelongsToModal(e)) return true
   const t = e.target
   if (!t || !(t instanceof Element)) return false
   const tag = (t as HTMLElement).tagName?.toLowerCase()

@@ -59,6 +59,13 @@ class EnrichedControl:
     domain_identifier: str
     implementation_status: str
     maturity_level: Optional[str] = None
+    # Target maturity (PIG R5): the control's own override, else its domain's
+    # target from the organisation settings. ``target_source`` says which.
+    # Not in the fingerprint: adding a key there would mark every existing
+    # document stale on upgrade and break parity with the TypeScript original.
+    target_maturity: Optional[str] = None
+    target_source: Optional[str] = None
+    target_maturity_reason: Optional[str] = None
     owner: Optional[str] = None
     priority: Optional[str] = None
     implementation_notes: Optional[str] = None
@@ -124,6 +131,8 @@ class OrganisationContext:
     vendors: List[Dict[str, Any]] = field(default_factory=list)
     risk_profile: Dict[str, Any] = field(default_factory=dict)
     frameworks: List[Dict[str, Any]] = field(default_factory=list)
+    #: Due-care governance figures (PIG R10); see services.due_care.governance_data.
+    governance: Dict[str, Any] = field(default_factory=dict)
 
     maturity_distribution: Dict[str, int] = field(default_factory=dict)
     status_distribution: Dict[str, int] = field(default_factory=dict)
@@ -193,6 +202,7 @@ def build_context(
     include_evidence: bool = True,
     include_risks: bool = True,
     include_systems: bool = True,
+    include_governance: bool = False,
 ) -> OrganisationContext:
     """Assemble an :class:`OrganisationContext` from the database.
 
@@ -208,6 +218,8 @@ def build_context(
             need it.
         include_risks: Skip risk assessments likewise.
         include_systems: Skip systems and vendors likewise.
+        include_governance: Read the due-care governance figures, which only
+            the Governance Oversight Report uses.
 
     Returns:
         A populated context. Absent optional sections are empty lists, never
@@ -232,6 +244,7 @@ def build_context(
         SCFCatalogDomain,
         SCFCatalogEvidence,
     )
+    from services.target_maturity import resolve_target, stored_domain_targets
 
     org = session.query(Organization).filter(Organization.id == organization_id).one_or_none()
     if org is None:
@@ -318,8 +331,13 @@ def build_context(
                         "area_of_focus": ev.area_of_focus,
                     })
 
+    domain_targets = stored_domain_targets(org.settings)
+
     controls: List[EnrichedControl] = []
     for scoped, catalog in rows:
+        target, target_source = resolve_target(
+            scoped.scf_id, scoped.target_maturity_override, domain_targets
+        )
         controls.append(EnrichedControl(
             scf_id=scoped.scf_id,
             control_name=catalog.control_name or "",
@@ -329,6 +347,11 @@ def build_context(
             ),
             implementation_status=scoped.implementation_status or "not_started",
             maturity_level=scoped.maturity_level,
+            target_maturity=target,
+            target_source=target_source,
+            target_maturity_reason=(
+                scoped.target_maturity_reason if target_source == "control" else None
+            ),
             owner=scoped.owner,
             priority=scoped.priority,
             implementation_notes=scoped.implementation_notes,
@@ -472,6 +495,12 @@ def build_context(
                 "criticality": getattr(v, "criticality", None),
             })
 
+    governance: Dict[str, Any] = {}
+    if include_governance:
+        from services.due_care import governance_data
+
+        governance = governance_data(session, organization_id)
+
     ctx = OrganisationContext(
         organization_id=str(organization_id),
         name=org.name,
@@ -488,6 +517,7 @@ def build_context(
         systems=systems,
         vendors=vendors,
         risk_profile=risk_profile,
+        governance=governance,
         maturity_distribution=_breakdown(c.maturity_level for c in controls),
         status_distribution=_breakdown(c.implementation_status for c in controls),
         total_scoped_controls=len(controls),

@@ -16,7 +16,9 @@ import {
   useScopedControlsStats,
 } from '../../hooks/useScopedControlsQuery'
 import { useWorkScope } from '../../contexts/WorkScopeContext'
-import { listTeams } from '../../data/apiClient'
+import { listTeams, type ObligationBasis } from '../../data/apiClient'
+import ObligationBasisBadge from '../governance/ObligationBasisBadge'
+import MaterialityBadge from '../governance/MaterialityBadge'
 import { useCatalogFilters } from '../../hooks/useCatalogFilters'
 import { useDebounce } from '../../hooks/useDebounce'
 import { getCatalogLifecycle } from '../DeprecatedBadge'
@@ -40,6 +42,20 @@ export interface UnifiedLibraryFilters {
   weight: string
   framework: string
   scope: 'all' | 'in_scope' | 'out_of_scope'
+  /** PIG R2 obligation basis; 'all' applies no filter. */
+  basis: 'all' | ObligationBasis | 'unclassified'
+  /** PIG R6 materiality; 'all' applies no filter. */
+  material: 'all' | 'material' | 'not_material'
+  /** PIG R6: 'weighting' lists material controls first, then the heaviest. */
+  sort: 'scf_id' | 'weighting'
+}
+
+/** The materiality filter and order as the paginated query takes them. */
+export function materialityParams(filters: UnifiedLibraryFilters): { material?: boolean; sort?: 'weighting' } {
+  return {
+    material: filters.material === 'all' ? undefined : filters.material === 'material',
+    sort: filters.sort === 'weighting' ? 'weighting' : undefined,
+  }
 }
 
 interface Props {
@@ -139,6 +155,8 @@ export default function UnifiedLibraryList({
       framework: filters.framework !== 'all' ? filters.framework : undefined,
       scope_status: mode === 'in-scope' ? 'in_scope' : filters.scope,
       my_teams: isMyTeams || undefined,
+      basis: filters.basis !== 'all' ? filters.basis : undefined,
+      ...materialityParams(filters),
     },
     organizationId,
   )
@@ -254,6 +272,18 @@ export default function UnifiedLibraryList({
             {lifecycle.catalog_status === 'deprecated' && (
               <DeprecatedBadge {...lifecycle} compact />
             )}
+            {control.obligation_basis && (
+              <ObligationBasisBadge
+                basis={control.obligation_basis}
+                title={control.basis_source === 'override' ? 'Set on this control' : 'From a classified framework'}
+              />
+            )}
+            {control.material && (
+              <MaterialityBadge
+                material
+                title={control.material_source === 'control' ? 'Set on this control' : 'Catalogue weighting 10'}
+              />
+            )}
             {mode === 'in-scope' ? (
               <>
                 <RowChip tone={control.implementation_status}>{label(control.implementation_status)}</RowChip>
@@ -350,6 +380,41 @@ export default function UnifiedLibraryList({
             value={filters.framework}
             onChange={(value) => onFiltersChange({ ...filters, framework: value })}
             options={frameworkOptions}
+          />
+        </FilterGroup>
+        <FilterGroup label="OBLIGATION BASIS">
+          <FilterSelect
+            value={filters.basis}
+            onChange={(value) => onFiltersChange({ ...filters, basis: value as UnifiedLibraryFilters['basis'] })}
+            options={[
+              { value: 'all', label: 'All bases' },
+              { value: 'mcr', label: 'Mandatory (MCR)' },
+              { value: 'dsr', label: 'Discretionary (DSR)' },
+              { value: 'unclassified', label: 'Unclassified' },
+            ]}
+          />
+        </FilterGroup>
+        <FilterGroup label="MATERIALITY">
+          <FilterSelect
+            ariaLabel="Materiality"
+            value={filters.material}
+            onChange={(value) => onFiltersChange({ ...filters, material: value as UnifiedLibraryFilters['material'] })}
+            options={[
+              { value: 'all', label: 'Any materiality' },
+              { value: 'material', label: 'Material' },
+              { value: 'not_material', label: 'Not material' },
+            ]}
+          />
+        </FilterGroup>
+        <FilterGroup label="ORDER">
+          <FilterSelect
+            ariaLabel="Order"
+            value={filters.sort}
+            onChange={(value) => onFiltersChange({ ...filters, sort: value as UnifiedLibraryFilters['sort'] })}
+            options={[
+              { value: 'scf_id', label: 'Control ID' },
+              { value: 'weighting', label: 'Material first, then weighting' },
+            ]}
           />
         </FilterGroup>
         <FilterGroup label="WEIGHT">

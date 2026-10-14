@@ -3,6 +3,7 @@ import { useAttestStage, useImportJourney, useJourney } from '../../hooks/useJou
 import { readFileText, readJourneyArtefact } from './journeyArtefact'
 import { useHasOrgRole } from '../../hooks/useHasOrgRole'
 import { deriveJourneyCompletion } from './journeyCompletion'
+import { checkState } from './journeyCheck'
 import type { JourneyStage, JourneyStageState } from '../../data/apiClient'
 
 interface Props {
@@ -245,15 +246,19 @@ export default function JourneyPage({ organizationId, onNavigateToTasks }: Props
 
                 {stage.preconditions.checks.length > 0 && (
                   <ul className="journey-check-list">
-                    {stage.preconditions.checks.map((c, i) => (
-                      <li key={i} className={`journey-check journey-check-${c.met === true ? 'met' : c.met === null ? 'unknown' : 'unmet'}`}>
-                        <span className="journey-check-glyph" aria-hidden="true">
-                          {c.met === true ? '✓' : c.met === null ? '?' : '·'}
-                        </span>
-                        <span className="journey-check-label">{c.label}</span>
-                        <span className="journey-check-detail">{c.detail}</span>
-                      </li>
-                    ))}
+                    {stage.preconditions.checks.map((c, i) => {
+                      const state = checkState(c.met)
+                      return (
+                        <li key={i} className={`journey-check journey-check-${state.key}`}>
+                          <span className="journey-check-glyph" aria-hidden="true">{state.glyph}</span>
+                          <span className="journey-check-label">{c.label}</span>
+                          <span className="journey-sr-only">, </span>
+                          <span className="journey-check-state">{state.label}</span>
+                          <span className="journey-sr-only">: </span>
+                          <span className="journey-check-detail">{c.detail}</span>
+                        </li>
+                      )
+                    })}
                   </ul>
                 )}
 
@@ -404,12 +409,20 @@ export default function JourneyPage({ organizationId, onNavigateToTasks }: Props
             </p>
           ) : (
             <ul className="journey-focus-list">
-              {data.focus.map((c, i) => (
-                <li key={i} className="journey-focus-item">
-                  <span className="journey-focus-label">{c.label}</span>
-                  <span className="journey-focus-detail">{c.detail}</span>
-                </li>
-              ))}
+              {data.focus.map((c, i) => {
+                const state = checkState(c.met)
+                return (
+                  <li key={i} className="journey-focus-item">
+                    <span className="journey-focus-label">
+                      {c.label}
+                      <span className="journey-sr-only">, </span>
+                      <span className="journey-check-state">{state.label}</span>
+                    </span>
+                    <span className="journey-sr-only">: </span>
+                    <span className="journey-focus-detail">{c.detail}</span>
+                  </li>
+                )
+              })}
             </ul>
           )}
           {onNavigateToTasks && (

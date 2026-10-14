@@ -104,6 +104,26 @@ generators:
       risks: false
       systems: false
 
+  - name: governance-report
+    display_name: Governance Oversight Report
+    tier: 1
+    document_type: report
+    is_derivative: false
+    domain_scoped: false
+    renderer: tier1.render_governance_report
+    filename: governance-oversight-report.md
+    description: >-
+      The figures a board needs to exercise due care: implementation and known
+      deficiencies, change in the risk profile, what validation found and
+      corrected, and the obligations in scope, with the red flags. Approving it
+      records the board's review.
+    requires:
+      controls: true
+      evidence: false
+      risks: false
+      systems: false
+      governance: true
+
   # ── Tier 2 — AI-augmented, derivative ────────────────────────────────────
   - name: policy
     display_name: Domain Policy

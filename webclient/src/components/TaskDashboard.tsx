@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { apiClient } from '../data/apiClient';
+import { useConfirm } from '../contexts/ConfirmContext';
 import { frequencyLabel } from '../data/frequencyVocabulary'
 
 interface DashboardData {
@@ -28,6 +29,7 @@ interface TaskDashboardProps {
 export const TaskDashboard: React.FC<TaskDashboardProps> = ({ onNavigateToEvidence }) => {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
+  const confirm = useConfirm();
 
   useEffect(() => {
     loadDashboard();
@@ -47,7 +49,12 @@ export const TaskDashboard: React.FC<TaskDashboardProps> = ({ onNavigateToEviden
   const handleCompleteTask = async (taskId: string, e: React.MouseEvent) => {
     e.stopPropagation(); // Prevent navigation when clicking complete button
 
-    if (!confirm('Mark this task as completed?')) return;
+    const ok = await confirm({
+      title: 'Complete task',
+      message: 'Mark this task as completed?',
+      confirmLabel: 'Mark completed',
+    });
+    if (!ok) return;
 
     try {
       await apiClient.post(`/evidence-tasks/${taskId}/complete`, {
@@ -168,7 +175,7 @@ export const TaskDashboard: React.FC<TaskDashboardProps> = ({ onNavigateToEviden
                   </div>
 
                   <button
-                    onClick={(e) => handleCompleteTask(task.id, e)}
+                    onClick={(e) => void handleCompleteTask(task.id, e)}
                     className="task-dashboard-complete-btn"
                   >
                     ✓ Complete

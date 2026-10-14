@@ -1,31 +1,12 @@
 import { useState, useEffect } from 'react'
 import { getAuditLog } from '../data/apiClient'
+import { useOrgMembersQuery } from '../hooks/useDeficiencies'
 import type { AuditLogEntry } from '../types'
-import { decodeAuditValue, formatAuditDate, isDateField } from '../utils/auditValue'
+import { auditFieldLabel, formatAuditField } from '../utils/auditLabels'
 
 interface AuditLogPanelProps {
   scfId: string
   organizationId: string
-}
-
-/** Human-readable labels for tracked fields */
-const FIELD_LABELS: Record<string, string> = {
-  selected: 'Scoped',
-  implementation_status: 'Status',
-  priority: 'Priority',
-  owner: 'Owner',
-  assigned_to: 'Assigned To',
-  maturity_level: 'Maturity Level',
-  selection_reason: 'Selection Reason',
-  target_date: 'Target Date',
-  completion_date: 'Completion Date',
-  implementation_notes: 'Notes',
-  control_weighting: 'Control Weighting',
-  validation_cadence: 'Validation Cadence',
-  nist_csf_function: 'NIST CSF Function',
-  control_question: 'Control Question',
-  related_documentation: 'Documentation',
-  custom_fields: 'Custom Fields',
 }
 
 /** Keep raw server internals (pydantic/traceback text) out of the UI */
@@ -35,18 +16,6 @@ function friendlyError(message?: string): string {
     return 'Failed to load audit log — the server returned an unexpected error.'
   }
   return message
-}
-
-/** Format a stored audit value for display */
-function formatValue(field: string, raw: string | undefined): string {
-  const value = decodeAuditValue(raw)
-  if (value === null) return '\u2014'
-  if (field === 'selected') return value.toLowerCase() === 'true' ? 'Yes' : 'No'
-  if (field === 'implementation_status') return value.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
-  if (field === 'priority') return value.charAt(0).toUpperCase() + value.slice(1)
-  if (field === 'maturity_level') return value.toUpperCase()
-  if (isDateField(field)) return formatAuditDate(value)
-  return value.length > 60 ? value.substring(0, 57) + '...' : value
 }
 
 /** Format timestamp to relative or absolute */
@@ -106,6 +75,11 @@ export function AuditLogPanel({ scfId, organizationId }: AuditLogPanelProps) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [total, setTotal] = useState(0)
+  // Fields such as Last Validated By store a user id; the members name it.
+  // Only those values wait for the members (reading "Loading…"); if the
+  // members cannot be read, the ids are shown as stored.
+  const members = useOrgMembersQuery(organizationId)
+  const valueFormat = { members: members.data, membersLoading: members.isLoading }
 
   useEffect(() => {
     let cancelled = false
@@ -187,14 +161,14 @@ export function AuditLogPanel({ scfId, organizationId }: AuditLogPanelProps) {
               {group.changes.map((ch, j) => (
                 <div key={j} style={{ color: 'var(--muted)', display: 'flex', gap: '0.3rem', flexWrap: 'wrap' }}>
                   <span style={{ color: 'var(--text)', fontWeight: 500 }}>
-                    {FIELD_LABELS[ch.field_name || ''] || ch.field_name}:
+                    {auditFieldLabel(ch.field_name || '')}:
                   </span>
                   <span style={{ textDecoration: 'line-through', opacity: 0.45 }}>
-                    {formatValue(ch.field_name || '', ch.old_value)}
+                    {formatAuditField(ch.field_name || '', ch.old_value, { ...valueFormat, maxLength: 60, entityType: ch.entity_type })}
                   </span>
                   <span>{'\u2192'}</span>
                   <span style={{ color: '#059669', fontWeight: 500 }}>
-                    {formatValue(ch.field_name || '', ch.new_value)}
+                    {formatAuditField(ch.field_name || '', ch.new_value, { ...valueFormat, maxLength: 60, entityType: ch.entity_type })}
                   </span>
                 </div>
               ))}

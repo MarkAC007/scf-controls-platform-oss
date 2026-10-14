@@ -194,6 +194,7 @@ class TestConsumer6Engagements:
             "in_scope",              # scope_status
             None,                    # out_of_scope_justification
             ["soc2"],                # source_frameworks
+            None,                    # obligation_basis
             "Some retired control",  # control_name (still resolves)
             "deprecated",            # catalog status
             "2026.2",                # retired_in_version

@@ -10,6 +10,7 @@ import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { ConfirmProvider, answerConfirm } from '../../__tests__/confirmDialog'
 import TeamManagement from '../TeamManagement'
 import {
   addTeamMember,
@@ -139,7 +140,7 @@ describe('TeamManagement health warnings', () => {
       }),
     ])
 
-    render(<TeamManagement organizationId={ORG_ID} />)
+    render(<TeamManagement organizationId={ORG_ID} />, { wrapper: ConfirmProvider })
 
     expect(await screen.findByText('Security Operations')).toBeInTheDocument()
     expect(screen.getByText('No primary')).toBeInTheDocument()
@@ -149,7 +150,7 @@ describe('TeamManagement health warnings', () => {
   it('renders a team with zero members, warns, and does not block it', async () => {
     primeLoad([team({ members: [] })])
 
-    render(<TeamManagement organizationId={ORG_ID} />)
+    render(<TeamManagement organizationId={ORG_ID} />, { wrapper: ConfirmProvider })
 
     expect(await screen.findByText('Security Operations')).toBeInTheDocument()
     expect(screen.getByText('No members')).toBeInTheDocument()
@@ -169,7 +170,7 @@ describe('TeamManagement health warnings', () => {
       [opsFn, fn()]
     )
 
-    render(<TeamManagement organizationId={ORG_ID} />)
+    render(<TeamManagement organizationId={ORG_ID} />, { wrapper: ConfirmProvider })
 
     await screen.findByText('Security Operations')
     const headings = screen.getAllByRole('heading', { level: 2 }).map(h => h.textContent)
@@ -195,7 +196,7 @@ describe('TeamManagement promote to primary', () => {
     primeLoad([detail])
     mockUpdateRole.mockResolvedValue(member('u2', 'primary', 'Grace Hopper'))
 
-    render(<TeamManagement organizationId={ORG_ID} />)
+    render(<TeamManagement organizationId={ORG_ID} />, { wrapper: ConfirmProvider })
 
     await user.click(await screen.findByRole('button', { name: /Security Operations/ }))
     await user.selectOptions(
@@ -225,7 +226,7 @@ describe('TeamManagement promote to primary', () => {
       }),
     ])
 
-    render(<TeamManagement organizationId={ORG_ID} />)
+    render(<TeamManagement organizationId={ORG_ID} />, { wrapper: ConfirmProvider })
 
     await user.click(await screen.findByRole('button', { name: /Security Operations/ }))
     await user.selectOptions(
@@ -245,7 +246,7 @@ describe('TeamManagement promote to primary', () => {
     primeLoad([team({ members: [member('u2', 'member', 'Grace Hopper')] })])
     mockUpdateRole.mockResolvedValue(member('u2', 'primary', 'Grace Hopper'))
 
-    render(<TeamManagement organizationId={ORG_ID} />)
+    render(<TeamManagement organizationId={ORG_ID} />, { wrapper: ConfirmProvider })
 
     await user.click(await screen.findByRole('button', { name: /Security Operations/ }))
     await user.selectOptions(
@@ -263,7 +264,7 @@ describe('TeamManagement membership and archiving', () => {
     const user = userEvent.setup()
     primeLoad([team({ members: [member('u1', 'primary', 'Ada Lovelace')] })])
 
-    render(<TeamManagement organizationId={ORG_ID} />)
+    render(<TeamManagement organizationId={ORG_ID} />, { wrapper: ConfirmProvider })
 
     await user.click(await screen.findByRole('button', { name: /Security Operations/ }))
     const picker = screen.getByLabelText('Add a member to Security Operations')
@@ -280,13 +281,13 @@ describe('TeamManagement membership and archiving', () => {
 
   it('removes a member after confirmation', async () => {
     const user = userEvent.setup()
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
     primeLoad([team({ members: [member('u1', 'primary', 'Ada Lovelace')] })])
 
-    render(<TeamManagement organizationId={ORG_ID} />)
+    render(<TeamManagement organizationId={ORG_ID} />, { wrapper: ConfirmProvider })
 
     await user.click(await screen.findByRole('button', { name: /Security Operations/ }))
     await user.click(screen.getByRole('button', { name: 'Remove' }))
+    expect(await answerConfirm(true)).toBe('Remove Ada Lovelace from "Security Operations"?')
 
     await waitFor(() =>
       expect(mockRemoveMember).toHaveBeenCalledWith(ORG_ID, 'team-1', 'u1')
@@ -295,15 +296,20 @@ describe('TeamManagement membership and archiving', () => {
 
   it('archives rather than deletes, and says so before doing it', async () => {
     const user = userEvent.setup()
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
     primeLoad([team()])
     mockArchive.mockResolvedValue(undefined)
 
-    render(<TeamManagement organizationId={ORG_ID} />)
+    render(<TeamManagement organizationId={ORG_ID} />, { wrapper: ConfirmProvider })
 
     await user.click(await screen.findByRole('button', { name: 'Archive' }))
 
-    expect(confirmSpy.mock.calls[0][0]).toMatch(/nothing is deleted/)
+    const message = await answerConfirm(true)
+    expect(message).toMatch(/nothing is deleted/)
+    // Word for word, blank line included.
+    expect(message).toBe(
+      'Archive "Security Operations"?\n\nThe team is hidden from this list but nothing is deleted — its ' +
+        'members and history are kept, and you can restore it from "Show archived teams".',
+    )
     await waitFor(() => expect(mockArchive).toHaveBeenCalledWith(ORG_ID, 'team-1'))
   })
 
@@ -312,7 +318,7 @@ describe('TeamManagement membership and archiving', () => {
     primeLoad([team({ is_active: false })])
     mockUpdateTeam.mockResolvedValue(team({ is_active: true }))
 
-    render(<TeamManagement organizationId={ORG_ID} />)
+    render(<TeamManagement organizationId={ORG_ID} />, { wrapper: ConfirmProvider })
 
     await user.click(await screen.findByLabelText('Show archived teams'))
     await user.click(await screen.findByRole('button', { name: 'Restore' }))
@@ -327,7 +333,7 @@ describe('TeamManagement membership and archiving', () => {
     primeLoad([])
     mockCreate.mockResolvedValue(team({ id: 'team-new', name: 'Incident Response' }) as Team)
 
-    render(<TeamManagement organizationId={ORG_ID} />)
+    render(<TeamManagement organizationId={ORG_ID} />, { wrapper: ConfirmProvider })
 
     await user.click(await screen.findByRole('button', { name: 'New team' }))
     await user.type(screen.getByLabelText('Team name'), 'Incident Response')
@@ -351,7 +357,7 @@ describe('TeamManagement membership and archiving', () => {
     primeLoad([], [fn(), opsFn])
     mockCreate.mockResolvedValue(team({ id: 'team-new' }) as Team)
 
-    render(<TeamManagement organizationId={ORG_ID} />)
+    render(<TeamManagement organizationId={ORG_ID} />, { wrapper: ConfirmProvider })
 
     await user.click(await screen.findByRole('button', { name: 'New team' }))
     await user.type(screen.getByLabelText('Team name'), 'Platform')
@@ -394,7 +400,7 @@ describe('TeamManagement business function chips', () => {
     const user = userEvent.setup()
     primeLoad([], [fn(), opsFn])
 
-    render(<TeamManagement organizationId={ORG_ID} />)
+    render(<TeamManagement organizationId={ORG_ID} />, { wrapper: ConfirmProvider })
 
     await user.click(await screen.findByRole('button', { name: 'New team' }))
     const picker = screen.getByLabelText('Business functions')
@@ -416,7 +422,7 @@ describe('TeamManagement business function chips', () => {
     primeLoad([], [fn(), opsFn])
     mockCreate.mockResolvedValue(team({ id: 'team-new' }) as Team)
 
-    render(<TeamManagement organizationId={ORG_ID} />)
+    render(<TeamManagement organizationId={ORG_ID} />, { wrapper: ConfirmProvider })
 
     await user.click(await screen.findByRole('button', { name: 'New team' }))
     await user.type(screen.getByLabelText('Team name'), 'Platform')
@@ -440,7 +446,7 @@ describe('TeamManagement business function chips', () => {
     const user = userEvent.setup()
     primeLoad([], [fn(), opsFn])
 
-    render(<TeamManagement organizationId={ORG_ID} />)
+    render(<TeamManagement organizationId={ORG_ID} />, { wrapper: ConfirmProvider })
 
     await user.click(await screen.findByRole('button', { name: 'New team' }))
     await user.selectOptions(screen.getByLabelText('Business functions'), FUNCTION_ID)
@@ -452,7 +458,7 @@ describe('TeamManagement business function chips', () => {
     const user = userEvent.setup()
     primeLoad([], [fn(), retiredFn])
 
-    render(<TeamManagement organizationId={ORG_ID} />)
+    render(<TeamManagement organizationId={ORG_ID} />, { wrapper: ConfirmProvider })
 
     await user.click(await screen.findByRole('button', { name: 'New team' }))
     const picker = screen.getByLabelText('Business functions')
@@ -475,7 +481,7 @@ describe('TeamManagement business function chips', () => {
       [fn(), retiredFn]
     )
 
-    render(<TeamManagement organizationId={ORG_ID} />)
+    render(<TeamManagement organizationId={ORG_ID} />, { wrapper: ConfirmProvider })
 
     await user.click(await screen.findByRole('button', { name: /Security Operations/ }))
 
@@ -507,7 +513,7 @@ describe('TeamManagement business function chips', () => {
       [fn(), opsFn]
     )
 
-    render(<TeamManagement organizationId={ORG_ID} />)
+    render(<TeamManagement organizationId={ORG_ID} />, { wrapper: ConfirmProvider })
 
     await user.click(await screen.findByRole('button', { name: /Security Operations/ }))
     await user.selectOptions(
@@ -526,7 +532,7 @@ describe('TeamManagement business function chips', () => {
     primeLoad([detail], [fn(), opsFn])
     mockUpdateTeam.mockResolvedValue(detail)
 
-    render(<TeamManagement organizationId={ORG_ID} />)
+    render(<TeamManagement organizationId={ORG_ID} />, { wrapper: ConfirmProvider })
 
     await user.click(await screen.findByRole('button', { name: /Security Operations/ }))
     await user.selectOptions(
@@ -549,7 +555,7 @@ describe('TeamManagement business function chips', () => {
       [fn(), opsFn]
     )
 
-    render(<TeamManagement organizationId={ORG_ID} />)
+    render(<TeamManagement organizationId={ORG_ID} />, { wrapper: ConfirmProvider })
 
     await user.click(await screen.findByRole('button', { name: /Security Operations/ }))
     await user.selectOptions(

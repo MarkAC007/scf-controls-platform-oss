@@ -23,7 +23,9 @@
  * fixing that baseline error. Expected tsc baseline drops from 2 → 1
  * (AccountableOwnerTypeFilter one remains).
  */
-import { useState, useEffect, useMemo, useRef, useCallback, type JSX } from 'react'
+import { useState, useEffect, useMemo, useRef, useCallback, Fragment, type JSX } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { toast } from 'react-hot-toast'
 import type {
   RiskAssessment,
   RiskAssessmentUpdate,
@@ -40,7 +42,6 @@ import {
 } from '../types'
 import {
   getControlsForRisk,
-  getScopedControls,
   addCustomRiskControl,
   removeCustomRiskControl,
   type ControlsForRiskResponse,
@@ -48,6 +49,20 @@ import {
 } from '../data/apiClient'
 import { useOrganization } from '../contexts/OrganizationContext'
 import { WorkspaceRecord } from './provenance/WorkspaceRecord'
+import RiskAcceptancePanel, {
+  RiskAcceptanceBadge,
+  approvalInForce,
+  saveEffectOnApproval,
+  withdrawApprovalMessage,
+} from './RiskAcceptancePanel'
+import CustomRiskLinkDocument, { LinkDocumentSelect } from './CustomRiskLinkDocument'
+import { useConfirm } from '../contexts/ConfirmContext'
+import { customRiskLinksKey, useCustomRiskLinks } from '../hooks/useCustomRiskLinks'
+import { useIsOrgAdmin } from '../hooks/useIsOrgAdmin'
+import { JOURNEY_QUERY_ROOT } from '../hooks/useJourney'
+import { useDebounce } from '../hooks/useDebounce'
+import { rankControlMatches, searchInScopeControls } from './riskControlSearch'
+import { keyEventBelongsToModal } from '../hooks/useModalDismiss'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -67,12 +82,21 @@ export interface RiskDetailPageProps {
   users?: UserSimple[]
   onNavigateToControl?: (scfId: string) => void
   onDeleteCustomRisk?: (riskCode: string) => Promise<void>
+  /** The server's record after an acceptance decision (PIG R7). */
+  onAssessmentChange?: (updated: RiskAssessment) => void
+  /**
+   * Re-read one risk: a control-link change can withdraw its approval
+   * server-side. Resolves to the fresh record, or null when it could not be read.
+   */
+  onRefreshAssessment?: (riskCode: string) => Promise<RiskAssessment | null> | void
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 /** True when the keyboard event target should suppress pager shortcuts. */
 function isSuppressed(e: KeyboardEvent): boolean {
+  // A key pressed in an open dialog is the dialog's, not the pager's.
+  if (keyEventBelongsToModal(e)) return true
   const t = e.target
   if (!t || !(t instanceof Element)) return false
   const tag = (t as HTMLElement).tagName?.toLowerCase()
@@ -119,8 +143,13 @@ export default function RiskDetailPage({
   users = [],
   onNavigateToControl,
   onDeleteCustomRisk,
+  onAssessmentChange,
+  onRefreshAssessment,
 }: RiskDetailPageProps): JSX.Element {
   const { currentOrg } = useOrganization()
+  const queryClient = useQueryClient()
+  const confirm = useConfirm()
+  const isAdmin = useIsOrgAdmin(currentOrg?.id)
 
   // ── Form state ──────────────────────────────────────────────────────────
 
@@ -147,8 +176,24 @@ export default function RiskDetailPage({
 
   const [showControlSearch, setShowControlSearch] = useState(false)
   const [controlSearchTerm, setControlSearchTerm] = useState('')
-  const [allScopedControls, setAllScopedControls] = useState<ScopedControlForRisk[]>([])
   const [addingControl, setAddingControl] = useState(false)
+  // PIG R7: the document a new link carries, and a link write the server refused.
+  const [newLinkDocumentId, setNewLinkDocumentId] = useState('')
+  const [linkError, setLinkError] = useState<string | null>(null)
+
+  const riskCode = assessment?.risk_code ?? ''
+  const isCustom = riskCode.startsWith('R-ORG-')
+  const customLinks = useCustomRiskLinks(currentOrg?.id, riskCode, isCustom)
+  const documentByControl = useMemo(
+    () => new Map((customLinks.data ?? []).map((link) => [link.scf_id, link.document_id])),
+    [customLinks.data],
+  )
+
+  // A document picked for one risk's link is never carried to another risk.
+  useEffect(() => {
+    setNewLinkDocumentId('')
+    setLinkError(null)
+  }, [riskCode])
 
   // ── Populate form when assessment changes ────────────────────────────────
 
@@ -200,58 +245,71 @@ export default function RiskDetailPage({
     fetchControls()
   }, [assessment?.risk_code, currentOrg?.id])
 
-  // ── Load scoped controls for custom risk control search ──────────────────
-  // NOTE: This rewrite uses ScopedControlForRisk[] instead of ScopedControl[] (types.ts),
-  // which fixes the tsc baseline error in the old RiskAssessmentDetail.tsx line ~134
-  // (selection_reason: string|null|undefined incompatible). We use the API's own
-  // response type directly, avoiding the cross-module ScopedControl mismatch.
+  // ── Search the organisation's in-scope controls ─────────────────────────
+  // The server's search returns each control's catalogue title, which the
+  // plain scoped-controls list does not carry (#1156: results read as a bare
+  // id). Results show only once they answer the term as typed now.
 
-  useEffect(() => {
-    if (!currentOrg) return
-    getScopedControls(currentOrg.id)
-      .then(controls => {
-        // Map to ScopedControlForRisk shape — we only need scf_id + control_name
-        const filtered = controls
-          .filter(c => c.selected)
-          .map(c => ({
-            scf_id: c.scf_id,
-            control_name: (c as any).control_name || '',
-            implementation_status: (c as any).implementation_status || null,
-            priority: null,
-            target_date: null,
-          } satisfies ScopedControlForRisk))
-        setAllScopedControls(filtered)
-      })
-      .catch(err => console.error('Failed to load scoped controls:', err))
-  }, [currentOrg?.id])
-
-  // ── Filter scoped controls for search ────────────────────────────────────
+  const debouncedSearchTerm = useDebounce(controlSearchTerm.trim(), 250)
+  const controlSearch = useQuery({
+    queryKey: ['risk-control-search', currentOrg?.id, debouncedSearchTerm],
+    queryFn: () => searchInScopeControls(currentOrg!.id, debouncedSearchTerm),
+    enabled: showControlSearch && !!currentOrg && !!debouncedSearchTerm,
+    staleTime: 60_000,
+  })
+  const searchSettled =
+    debouncedSearchTerm === controlSearchTerm.trim() && !controlSearch.isFetching
 
   const filteredSearchControls = useMemo(() => {
-    if (!showControlSearch || !controlSearchTerm.trim()) return []
+    if (!showControlSearch || !debouncedSearchTerm) return []
     const linked = new Set(controlsData?.catalog_control_ids || [])
-    const term = controlSearchTerm.toLowerCase()
-    return allScopedControls
-      .filter(c => !linked.has(c.scf_id))
-      .filter(c =>
-        c.scf_id.toLowerCase().includes(term) || c.control_name.toLowerCase().includes(term)
-      )
-      .slice(0, 10)
-  }, [showControlSearch, controlSearchTerm, allScopedControls, controlsData])
+    return rankControlMatches(controlSearch.data ?? [], debouncedSearchTerm, linked)
+  }, [showControlSearch, debouncedSearchTerm, controlSearch.data, controlsData])
 
   // ── Handle adding a control to a custom risk ──────────────────────────────
 
+  // Any link change on an accepted exception withdraws its approval
+  // server-side, so the change is confirmed first while one is in force.
+  const linkConfirmMessage =
+    assessment && approvalInForce(assessment) ? withdrawApprovalMessage(assessment.risk_code) : null
+
+  // The risk itself is re-read along with its links, and the caches that
+  // count approvals (the journey gate, the risk context) are refreshed.
+  const afterLinkChange = async (done: string) => {
+    if (!assessment || !currentOrg) return
+    const code = assessment.risk_code
+    const hadApproval = !!assessment.accepted_at
+    void queryClient.invalidateQueries({ queryKey: customRiskLinksKey(currentOrg.id, code) })
+    void queryClient.invalidateQueries({ queryKey: ['risk-assessments', currentOrg.id] })
+    void queryClient.invalidateQueries({ queryKey: [JOURNEY_QUERY_ROOT, currentOrg.id] })
+    const fresh = await onRefreshAssessment?.(code)
+    if (hadApproval && fresh && !fresh.accepted_at) {
+      toast.success(`${done}. Approval withdrawn: ${code}'s control links changed.`)
+    } else {
+      toast.success(done)
+    }
+  }
+
   const handleAddControl = async (scfId: string) => {
     if (!assessment || !currentOrg) return
+    if (
+      linkConfirmMessage &&
+      !(await confirm({ title: 'Link a control', message: linkConfirmMessage, confirmLabel: 'Link control', destructive: true }))
+    )
+      return
     setAddingControl(true)
+    setLinkError(null)
     try {
-      await addCustomRiskControl(assessment.risk_code, scfId, currentOrg.id)
+      await addCustomRiskControl(assessment.risk_code, scfId, currentOrg.id, newLinkDocumentId || null)
       const data = await getControlsForRisk(assessment.risk_code, currentOrg.id)
       setControlsData(data)
       setControlSearchTerm('')
+      setNewLinkDocumentId('')
       setShowControlSearch(false)
+      void afterLinkChange(`${scfId} linked`)
     } catch (err) {
       console.error('Failed to add control:', err)
+      setLinkError(err instanceof Error ? err.message : 'Could not link the control')
     } finally {
       setAddingControl(false)
     }
@@ -261,23 +319,40 @@ export default function RiskDetailPage({
 
   const handleRemoveControl = async (scfId: string) => {
     if (!assessment || !currentOrg) return
+    if (
+      linkConfirmMessage &&
+      !(await confirm({ title: 'Unlink a control', message: linkConfirmMessage, confirmLabel: 'Unlink control', destructive: true }))
+    )
+      return
+    setLinkError(null)
     try {
       await removeCustomRiskControl(assessment.risk_code, scfId, currentOrg.id)
       const data = await getControlsForRisk(assessment.risk_code, currentOrg.id)
       setControlsData(data)
+      void afterLinkChange(`${scfId} unlinked`)
     } catch (err) {
       console.error('Failed to remove control:', err)
+      setLinkError(err instanceof Error ? err.message : 'Could not remove the control link')
     }
   }
 
   // ── Debounced auto-save ───────────────────────────────────────────────────
+
+  // Every field changed since the last save. Two changes can land in one
+  // render (both waiting on the same approval question), and each call below
+  // closes over that render's state: without this the second save drops the
+  // first change.
+  const pendingUpdatesRef = useRef<Partial<RiskAssessmentUpdate>>({})
 
   const debouncedSave = useCallback(
     (updates: Partial<RiskAssessmentUpdate>) => {
       if (!assessment) return
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current)
       setSaving(true)
+      pendingUpdatesRef.current = { ...pendingUpdatesRef.current, ...updates }
       saveTimeoutRef.current = setTimeout(async () => {
+        const pending = pendingUpdatesRef.current
+        pendingUpdatesRef.current = {}
         try {
           await onSave(assessment.risk_code, {
             likelihood,
@@ -290,7 +365,7 @@ export default function RiskDetailPage({
             owner_user_id: ownerUserId,
             next_review_date: nextReviewDate || null,
             notes: notes || null,
-            ...updates,
+            ...pending,
           })
         } catch (error) {
           console.error('Failed to save risk assessment:', error)
@@ -315,7 +390,68 @@ export default function RiskDetailPage({
     ],
   )
 
+  // An approval in force is withdrawn by the server on a re-score or (by an
+  // admin) a status change away from Accepted; an editor's status change is
+  // refused. Either way the user is asked first, once per approval.
+  const confirmedApprovalRef = useRef<string | null>(null)
+  // The withdraw question while it is open. A second change to the same
+  // approval made meanwhile waits on this answer instead of asking again.
+  const askingApprovalRef = useRef<{ key: string; answer: Promise<boolean> } | null>(null)
+
+  //
+  // Null when there is nothing to ask, and the change applies at once: the
+  // notes and plan fields are controlled inputs, and a state update deferred
+  // past the keystroke's event makes the caret jump. Otherwise the answer.
+  const confirmApprovalEffect = (field: keyof RiskAssessmentUpdate, value: unknown): Promise<boolean> | null => {
+    if (!assessment) return null
+    const effect = saveEffectOnApproval(assessment, field, value, isAdmin)
+    if (!effect) return null
+    const riskCode = assessment.risk_code
+    const approvalKey = `${riskCode}|${assessment.accepted_at}`
+    if (effect === 'withdraw') {
+      if (confirmedApprovalRef.current === approvalKey) return null
+      if (askingApprovalRef.current?.key === approvalKey) return askingApprovalRef.current.answer
+      const answer = (async () => {
+        const ok = await confirm({
+          title: 'Withdraw the approval',
+          message: withdrawApprovalMessage(riskCode),
+          confirmLabel: 'Continue',
+          destructive: true,
+        })
+        if (ok) confirmedApprovalRef.current = approvalKey
+        return ok
+      })()
+      askingApprovalRef.current = { key: approvalKey, answer }
+      const done = () => {
+        if (askingApprovalRef.current?.answer === answer) askingApprovalRef.current = null
+      }
+      answer.then(done, done)
+      return answer
+    }
+    return confirm({
+      title: 'Change an approved risk',
+      message:
+        `${riskCode}'s acceptance is approved, and only an admin can withdraw it: ` +
+        'the status will stay Accepted. Continue?',
+      confirmLabel: 'Continue',
+    })
+  }
+
   const updateField = <K extends keyof RiskAssessmentUpdate>(
+    field: K,
+    value: RiskAssessmentUpdate[K],
+  ) => {
+    const asking = confirmApprovalEffect(field, value)
+    if (asking === null) {
+      applyField(field, value)
+      return
+    }
+    void asking.then((ok) => {
+      if (ok) applyField(field, value)
+    })
+  }
+
+  const applyField = <K extends keyof RiskAssessmentUpdate>(
     field: K,
     value: RiskAssessmentUpdate[K],
   ) => {
@@ -392,7 +528,11 @@ export default function RiskDetailPage({
   const codeInfo = riskCodes.codes[assessment.risk_code]
   const category = assessment.risk_code.split('-')[1]
   const categoryInfo = riskCodes.categories[category as keyof typeof riskCodes.categories]
-  const isCustomRisk = assessment.risk_code.startsWith('R-ORG-')
+  const isCustomRisk = isCustom
+  // While the links (and their documents) load or after they fail, an empty
+  // map would read as "no document": offer no edit until they are known.
+  const linksLoading = customLinks.isLoading
+  const linksReady = !customLinks.isLoading && !customLinks.isError
 
   // Score calculations
   const inherentScore = likelihood && impact ? likelihood * impact : null
@@ -512,6 +652,7 @@ export default function RiskDetailPage({
                 {treatmentLabel}
               </span>
             )}
+            <RiskAcceptanceBadge assessment={assessment} />
             {ownerName && (
               <div className="risk-detail-page-owner">
                 <div className="risk-detail-page-owner-avatar" aria-hidden="true">
@@ -736,6 +877,18 @@ export default function RiskDetailPage({
           </div>
         </div>
 
+        {/* ── Risk acceptance (PIG R7) ──────────────────────────────────────── */}
+        {currentOrg && (
+          <RiskAcceptancePanel
+            organizationId={currentOrg.id}
+            assessment={assessment}
+            users={users}
+            autosavePending={saving}
+            onChange={(updated) => onAssessmentChange?.(updated)}
+            onRefresh={(code) => void onRefreshAssessment?.(code)}
+          />
+        )}
+
         {/* ── Ownership + Notes ─────────────────────────────────────────────── */}
         <WorkspaceRecord title="Ownership &amp; Notes" className="risk-detail-page-section">
           <div className="field-row">
@@ -795,13 +948,27 @@ export default function RiskDetailPage({
           {controlsError && (
             <div className="risk-detail-page-controls-error">{controlsError}</div>
           )}
+          {isCustomRisk && assessment.accepted_at && (
+            <p className="gov-note">
+              This risk's acceptance was approved for these controls and documents. Changing them withdraws
+              the approval.
+            </p>
+          )}
+          {linkError && <div role="alert" className="gov-error">{linkError}</div>}
+          {isCustomRisk && customLinks.isError && (
+            <div role="alert" className="gov-error">
+              Could not load the control links' supporting documents:{' '}
+              {customLinks.error instanceof Error ? customLinks.error.message : 'unknown error'}
+            </div>
+          )}
 
           {!loadingControls && !controlsError && (
             <>
               {controlsData && controlsData.scoped_controls.length > 0 ? (
                 <div className="risk-detail-page-controls-list">
                   {controlsData.scoped_controls.map((control: ScopedControlForRisk) => (
-                    <div key={control.scf_id} className="risk-detail-page-control-row">
+                    <Fragment key={control.scf_id}>
+                    <div className="risk-detail-page-control-row">
                       <button
                         className="risk-detail-page-control-btn"
                         onClick={() => onNavigateToControl?.(control.scf_id)}
@@ -828,6 +995,19 @@ export default function RiskDetailPage({
                         )}
                       </div>
                     </div>
+                    {isCustomRisk && currentOrg && (linksLoading ? (
+                      <div className="risk-link-document">Loading supporting document…</div>
+                    ) : linksReady ? (
+                      <CustomRiskLinkDocument
+                        organizationId={currentOrg.id}
+                        riskCode={assessment.risk_code}
+                        scfId={control.scf_id}
+                        documentId={documentByControl.get(control.scf_id) ?? null}
+                        onChanged={() => void afterLinkChange('Supporting document saved')}
+                        confirmMessage={linkConfirmMessage}
+                      />
+                    ) : null)}
+                    </Fragment>
                   ))}
                 </div>
               ) : !isCustomRisk &&
@@ -864,7 +1044,7 @@ export default function RiskDetailPage({
               ) : null}
 
               {/* Add Control button + search for custom risks */}
-              {isCustomRisk && (
+              {isCustomRisk && linksReady && (
                 <div className="risk-detail-page-add-control">
                   {!showControlSearch ? (
                     <button
@@ -889,6 +1069,7 @@ export default function RiskDetailPage({
                           onClick={() => {
                             setShowControlSearch(false)
                             setControlSearchTerm('')
+                            setNewLinkDocumentId('')
                           }}
                         >
                           Cancel
@@ -896,7 +1077,13 @@ export default function RiskDetailPage({
                       </div>
                       {controlSearchTerm.trim() && (
                         <div className="control-search-results">
-                          {filteredSearchControls.length > 0 ? (
+                          {!searchSettled ? (
+                            <div className="control-search-no-results">Searching…</div>
+                          ) : controlSearch.isError ? (
+                            <div className="control-search-no-results" role="alert">
+                              Could not search the controls
+                            </div>
+                          ) : filteredSearchControls.length > 0 ? (
                             filteredSearchControls.map((c) => (
                               <button
                                 key={c.scf_id}
@@ -906,7 +1093,7 @@ export default function RiskDetailPage({
                               >
                                 <span className="control-search-result-id">{c.scf_id}</span>
                                 <span className="control-search-result-name">
-                                  {c.control_name}
+                                  {c.control_name ? ` — ${c.control_name}` : ''}
                                 </span>
                               </button>
                             ))
@@ -916,6 +1103,14 @@ export default function RiskDetailPage({
                             </div>
                           )}
                         </div>
+                      )}
+                      {currentOrg && (
+                        <LinkDocumentSelect
+                          organizationId={currentOrg.id}
+                          value={newLinkDocumentId}
+                          onChange={setNewLinkDocumentId}
+                          disabled={addingControl}
+                        />
                       )}
                     </div>
                   )}
@@ -953,13 +1148,15 @@ export default function RiskDetailPage({
               className="btn-destructive"
               aria-label="Delete Risk"
               onClick={() => {
-                if (
-                  window.confirm(
-                    `Delete custom risk ${assessment.risk_code}? This cannot be undone.`,
-                  )
-                ) {
-                  onDeleteCustomRisk(assessment.risk_code)
-                }
+                const riskCode = assessment.risk_code
+                void confirm({
+                  title: 'Delete custom risk',
+                  message: `Delete custom risk ${riskCode}? This cannot be undone.`,
+                  confirmLabel: 'Delete risk',
+                  destructive: true,
+                }).then((ok) => {
+                  if (ok) onDeleteCustomRisk(riskCode)
+                })
               }}
             >
               Delete Risk

@@ -54,6 +54,11 @@ JOURNEY_STAGE_TRACKED_FIELDS = (
 # What the attestation cascades onto the next stone when it opens.
 JOURNEY_UNLOCK_TRACKED_FIELDS = ('state', 'started_at')
 
+# What an import writes on each stage from the template. The gate is the part
+# that matters: a revision that narrows a stage to named controls, or to one
+# approved document, changes what "green" means, and that has to be on record.
+JOURNEY_TEMPLATE_TRACKED_FIELDS = ('title', 'precondition_spec')
+
 #: `audit_log.scf_id` is sized for an SCF control id. A stage key is a template
 #: author's free text and may be longer, so it is carried as a readable label
 #: only when it fits whole — half a key names nothing, and the stage's real
@@ -113,6 +118,59 @@ class AttestRequest(BaseModel):
     note: Optional[str] = Field(default=None, description="What was checked, and by whom, in the attester's words")
     conditional: bool = Field(default=False, description="Pass with named items still outstanding")
     target_date: Optional[date] = Field(default=None, description="When outstanding items are due; required when conditional")
+
+
+async def _audit_import(
+    db: AsyncSession,
+    org_id: UUID,
+    journey_id: UUID,
+    prior: Dict[str, Any],
+    membership: OrgMembership,
+    request: Request,
+) -> None:
+    """Field-level audit rows for what an import wrote on each stage.
+
+    The middleware's baseline row records that the import endpoint was called.
+    These record what each stage's gate became: a new stage is a create, a
+    kept stage whose title or gate moved is an update, and a stage the
+    revision dropped is a delete.
+    """
+    user_db_id = membership.user.db_id if membership.user else None
+    changed_by = UUID(user_db_id) if user_db_id else None
+    source = detect_action_source(request)
+    request_id = get_request_id(request)
+
+    stages = (await db.execute(
+        select(JourneyStage).where(JourneyStage.journey_id == journey_id).order_by(JourneyStage.ordinal)
+    )).scalars().all()
+    seen = set()
+    for stage in stages:
+        seen.add(stage.key)
+        new_values = {f: getattr(stage, f) for f in JOURNEY_TEMPLATE_TRACKED_FIELDS}
+        before = prior.get(stage.key)
+        await log_entity_changes(
+            db=db, organization_id=org_id, entity_type='journey_stage',
+            entity_id=stage.id, action='update' if before else 'create',
+            changed_by_user_id=changed_by,
+            old_values=before[1] if before else {},
+            new_values=new_values,
+            tracked_fields=set(JOURNEY_TEMPLATE_TRACKED_FIELDS),
+            scf_id=_stage_label(stage.key),
+            action_source=source,
+            request_id=request_id,
+        )
+    for key, (stage_id, old_values) in prior.items():
+        if key in seen:
+            continue
+        await log_entity_changes(
+            db=db, organization_id=org_id, entity_type='journey_stage',
+            entity_id=stage_id, action='delete', changed_by_user_id=changed_by,
+            old_values=old_values, new_values={},
+            tracked_fields=set(JOURNEY_TEMPLATE_TRACKED_FIELDS),
+            scf_id=_stage_label(key),
+            action_source=source,
+            request_id=request_id,
+        )
 
 
 async def _practitioner(db: AsyncSession, org_id: UUID) -> Optional[Dict[str, Any]]:
@@ -292,6 +350,7 @@ async def list_templates(
 @router.post("/organizations/{org_id}/journey/import")
 async def import_journey(
     org_id: UUID,
+    request: Request,
     payload: ImportRequest = Body(...),
     membership: OrgMembership = Depends(require_org_role("admin")),
     db: AsyncSession = Depends(get_db),
@@ -326,6 +385,16 @@ async def import_journey(
                 detail="This deployment cannot evaluate these check types: "
                        + ", ".join(sorted(unknown)),
             )
+        problems = await journey_service.template_param_problems(db, template)
+        if problems:
+            # Same reasoning, one level down: a filter naming a control the
+            # catalogue does not carry, or a generator that does not exist,
+            # would leave a gate that can never be evaluated.
+            raise HTTPException(
+                status_code=422,
+                detail="This template has check parameters the engine cannot honour: "
+                       + "; ".join(problems),
+            )
     else:
         try:
             template = journey_service.load_template(payload.template_key)
@@ -335,6 +404,17 @@ async def import_journey(
 
     practitioner = await _practitioner(db, org_id)
     name = payload.practitioner_name or (practitioner or {}).get("company_name")
+
+    # What each stage asked for before this import, so the audit trail can
+    # say what a revision changed and not only that one happened.
+    prior = {
+        st.key: (st.id, {f: getattr(st, f) for f in JOURNEY_TEMPLATE_TRACKED_FIELDS})
+        for st in (await db.execute(
+            select(JourneyStage)
+            .join(OrgJourney, OrgJourney.id == JourneyStage.journey_id)
+            .where(OrgJourney.organization_id == org_id)
+        )).scalars().all()
+    }
 
     try:
         journey = await journey_service.import_template(
@@ -348,6 +428,8 @@ async def import_journey(
         # A revision that would erase a signature.
         await db.rollback()
         raise HTTPException(status_code=409, detail=str(exc))
+
+    await _audit_import(db, org_id, journey.id, prior, membership, request)
     await db.commit()
 
     logger.info(

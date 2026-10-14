@@ -9,6 +9,7 @@ import {
   readAppLocation,
   replaceSearch,
   toSearchString,
+  withCapabilityTestItem,
   withEvidenceItem,
   withEvidenceView,
   withTab,
@@ -31,6 +32,20 @@ describe('readAppLocation', () => {
 
   it('honours tab=documents', () => {
     expect(readAppLocation('?tab=documents').tab).toBe('documents')
+  })
+
+  it('honours tab=deficiencies', () => {
+    expect(readAppLocation('?tab=deficiencies').tab).toBe('deficiencies')
+  })
+
+  it('honours tab=capability-tests, with the test to open (PIG R11)', () => {
+    const location = readAppLocation('?tab=capability-tests&test=t-1')
+    expect(location.tab).toBe('capability-tests')
+    expect(location.capabilityTestItem).toBe('t-1')
+  })
+
+  it('reads ?test= only on the capability tests tab', () => {
+    expect(readAppLocation('?tab=deficiencies&test=t-1').capabilityTestItem).toBeNull()
   })
 
   it('honours tab=evidence', () => {
@@ -156,6 +171,8 @@ describe('writers', () => {
       vendorItem: null,
       systemItem: null,
       taskItem: null,
+      capabilityTestItem: null,
+      deficiencyView: null,
     })
   })
 
@@ -213,5 +230,20 @@ describe('history helpers', () => {
   it('keeps the path when the search is empty', () => {
     replaceSearch('')
     expect(replaceSpy.mock.calls[0][2]).toBe(window.location.pathname)
+  })
+})
+
+describe('capability test links (PIG R11)', () => {
+  it('names the test on the capability tests tab, leaving the deficiencies tab', () => {
+    const next = withCapabilityTestItem('tab=deficiencies&invite_type=x', 't-1')
+    const p = new URLSearchParams(next)
+    expect(p.get('tab')).toBe('capability-tests')
+    expect(p.get('test')).toBe('t-1')
+    expect(p.get('invite_type')).toBe('x')
+  })
+
+  it('takes ?test= away with the tab', () => {
+    expect(new URLSearchParams(withoutTab('tab=capability-tests&test=t-1')).get('test')).toBeNull()
+    expect(new URLSearchParams(withTab('tab=capability-tests&test=t-1', 'deficiencies')).get('test')).toBeNull()
   })
 })

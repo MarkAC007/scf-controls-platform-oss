@@ -59,6 +59,29 @@ _METHOD_ACTION_MAP = {
     "DELETE": "delete",
 }
 
+# DELETEs that remove part of an entity, not the entity: the baseline row is
+# an update of the entity the path names. Withdrawing a risk acceptance must
+# not read as deleting the risk assessment (PIG R7).
+_DELETE_AS_UPDATE_PATTERNS = (
+    re.compile(r'^/api/organizations/[^/]+/risk-assessments/[^/]+/acceptance/?$'),
+)
+
+
+# POSTs that record something on an existing entity: recording a control's
+# validation updates the scoped control, it creates nothing (PIG R10).
+_POST_AS_UPDATE_PATTERNS = (
+    re.compile(r'^/api/organizations/[^/]+/scoped-controls/[^/]+/validation/?$'),
+    re.compile(r'^/api/organizations/[^/]+/capability-tests/[^/]+/findings/?$'),
+)
+
+
+def _action_for(method: str, path: str) -> str:
+    if method == "DELETE" and any(p.match(path) for p in _DELETE_AS_UPDATE_PATTERNS):
+        return "update"
+    if method == "POST" and any(p.match(path) for p in _POST_AS_UPDATE_PATTERNS):
+        return "update"
+    return _METHOD_ACTION_MAP.get(method, "unknown")
+
 # URL path -> entity_type extraction patterns
 # Match: /api/organizations/{uuid}/entity-segment/...
 _ENTITY_PATTERN = re.compile(
@@ -78,6 +101,10 @@ _SEGMENT_TO_ENTITY: dict[str, str] = {
     "vendors": "vendor",
     "vendor-reports": "vendor_report",
     "risk-assessments": "risk_assessment",
+    "deficiencies": "deficiency",
+    "compensating-controls": "compensating_control",
+    "posture-snapshots": "posture_snapshot",
+    "capability-tests": "capability_test",
     "risk-profiles": "risk_profile",
     "systems": "system",
     "capabilities": "capability",
@@ -174,7 +201,7 @@ class AuditMiddleware(BaseHTTPMiddleware):
                 return response
 
             entity_type = _extract_entity_type(path)
-            action = _METHOD_ACTION_MAP.get(method, "unknown")
+            action = _action_for(method, path)
             action_source = detect_action_source(request)
 
             # Get user ID from auth context

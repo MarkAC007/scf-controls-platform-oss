@@ -7,10 +7,16 @@ import {
   fetchFrameworkScopeSummary,
   previewFrameworkScopeChange,
   resetAllScope,
+  setFrameworkBasis,
+  type FrameworkBasisRequest,
   type FrameworkScopePreview,
   type FrameworkScopeSummaryItem,
+  type ObligationBasis,
+  type ObligationType,
 } from '../../data/apiClient'
+import ObligationBasisBadge, { basisLabel } from '../governance/ObligationBasisBadge'
 import { useIsOrgEditor } from '../../hooks/useHasOrgRole'
+import { useConfirm } from '../../contexts/ConfirmContext'
 import { useIsOrgAdmin } from '../../hooks/useIsOrgAdmin'
 import { FrameworkLogo } from '../FrameworkLogo'
 import { FRAMEWORK_GROUPS, OTHER_GROUP } from '../../data/frameworkGroups'
@@ -31,6 +37,13 @@ const FAMILY_LABELS: Record<string, string> = {
   industry: 'Industry Standards',
   other: 'Other',
 }
+
+const OBLIGATION_TYPES: { value: ObligationType; label: string }[] = [
+  { value: 'statutory', label: 'Statutory' },
+  { value: 'regulatory', label: 'Regulatory' },
+  { value: 'contractual', label: 'Contractual' },
+  { value: 'discretionary', label: 'Discretionary' },
+]
 
 /* Groups render in this order whatever order the API lists frameworks in —
    before, it was first-appearance, so the group holding the first selected
@@ -71,6 +84,7 @@ export default function FrameworkScopingPage({
   const queryClient = useQueryClient()
   const canEdit = useIsOrgEditor(organizationId)
   const isAdmin = useIsOrgAdmin(organizationId)
+  const confirm = useConfirm()
   const [search, setSearch] = useState('')
   const [selectionFilter, setSelectionFilter] = useState<SelectionFilter>('all')
   // Families the user has opened or closed; null means "not touched yet".
@@ -86,6 +100,9 @@ export default function FrameworkScopingPage({
   // its open tasks. Files are never deleted either way. Asked at unscope time, per design.
   const [orphanAction, setOrphanAction] = useState<'keep' | 'untrack'>('keep')
   const [busy, setBusy] = useState(false)
+  // PIG R2: the framework whose obligation basis is being edited, and the draft.
+  const [basisEdit, setBasisEdit] = useState<{ frameworkId: string } & FrameworkBasisRequest | null>(null)
+  const [basisError, setBasisError] = useState<string | null>(null)
 
   const summary = useQuery({
     queryKey: ['framework-scoping', organizationId],
@@ -177,8 +194,20 @@ export default function FrameworkScopingPage({
     }
   }
 
+  // PIG R2: removing a framework that carries an MCR obligation needs an admin
+  // and a reason. The server decides (an override to MCR can also trigger it);
+  // this only says so up front for a framework classified MCR.
+  const removingMcr = pending?.operation === 'remove' && (
+    pending.framework.basis === 'mcr'
+    || (preview?.basis_downgrades ?? []).some((row) => row.from_basis === 'mcr')
+  )
+
   const apply = async () => {
     if (!pending || !preview) return
+    if (removingMcr && !reason.trim()) {
+      toast.error('Removing a mandatory (MCR) framework needs a change rationale')
+      return
+    }
     setBusy(true)
     try {
       if (pending.operation === 'add') {
@@ -212,9 +241,36 @@ export default function FrameworkScopingPage({
     }
   }
 
+  const saveBasis = async () => {
+    if (!basisEdit) return
+    setBusy(true)
+    setBasisError(null)
+    try {
+      const { frameworkId, ...body } = basisEdit
+      await setFrameworkBasis(organizationId, frameworkId, {
+        ...body,
+        obligation_source: body.obligation_source?.trim() || null,
+      })
+      toast.success('Obligation basis saved')
+      setBasisEdit(null)
+      await refresh()
+    } catch (error) {
+      setBasisError(error instanceof Error ? error.message : 'Could not save the obligation basis')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const resetScope = async () => {
     if (!isAdmin) return
-    if (window.prompt('Type REMOVE ALL to clear frameworks and effective scope') !== 'REMOVE ALL') return
+    const typed = await confirm({
+      title: 'Reset all scope',
+      message: 'Type REMOVE ALL to clear frameworks and effective scope',
+      confirmLabel: 'Remove all',
+      destructive: true,
+      reason: { label: 'Confirmation text', mustEqual: 'REMOVE ALL', placeholder: 'REMOVE ALL' },
+    })
+    if (typed !== 'REMOVE ALL') return
     setBusy(true)
     try {
       const result = await resetAllScope(organizationId)
@@ -245,6 +301,14 @@ export default function FrameworkScopingPage({
         </div>
         <span>{summary.data?.selected_count ?? 0} selected</span>
       </header>
+      {summary.data?.basis_counts && (
+        <div className="basis-counts" aria-label="In-scope controls by obligation basis">
+          <span><ObligationBasisBadge basis="mcr" long /> {summary.data.basis_counts.mcr}</span>
+          <span><ObligationBasisBadge basis="dsr" long /> {summary.data.basis_counts.dsr}</span>
+          <span><ObligationBasisBadge basis={null} /> {summary.data.basis_counts.unclassified}</span>
+          <small>In-scope controls by obligation basis</small>
+        </div>
+      )}
 
       <section>
         <div className="framework-section-heading">
@@ -266,6 +330,10 @@ export default function FrameworkScopingPage({
                     <span className={framework.partial ? 'status-warning' : 'status-success'}>
                       {framework.partial ? 'Partial' : 'Covered'}
                     </span>
+                    <ObligationBasisBadge
+                      basis={framework.basis}
+                      title={framework.obligation_source ?? undefined}
+                    />
                   </div>
                   <div className="framework-coverage-meter">
                     <div style={{ width: `${framework.coverage_percentage}%` }} />
@@ -280,10 +348,82 @@ export default function FrameworkScopingPage({
                     {' · '}{framework.source ?? 'unknown source'}
                     {framework.selected_by ? ` · actor ${framework.selected_by.slice(0, 8)}` : ''}
                   </small>
+                  {(framework.obligation_type || framework.obligation_source) && (
+                    <small className="framework-obligation">
+                      {framework.obligation_type ? `${OBLIGATION_TYPES.find((t) => t.value === framework.obligation_type)?.label ?? framework.obligation_type} obligation` : ''}
+                      {framework.obligation_type && framework.obligation_source ? ' · ' : ''}
+                      {framework.obligation_source ?? ''}
+                    </small>
+                  )}
+                  {basisEdit?.frameworkId === framework.id && (
+                    <div className="gov-form" aria-label={`Obligation basis for ${framework.name}`}>
+                      <label>
+                        Basis
+                        <select
+                          className="form-control"
+                          value={basisEdit.basis ?? ''}
+                          onChange={(event) => setBasisEdit({ ...basisEdit, basis: (event.target.value || null) as ObligationBasis | null })}
+                        >
+                          <option value="">Unclassified</option>
+                          <option value="mcr">{basisLabel('mcr', true)}</option>
+                          <option value="dsr">{basisLabel('dsr', true)}</option>
+                        </select>
+                      </label>
+                      <label>
+                        Obligation type
+                        <select
+                          className="form-control"
+                          value={basisEdit.obligation_type ?? ''}
+                          onChange={(event) => setBasisEdit({ ...basisEdit, obligation_type: (event.target.value || null) as ObligationType | null })}
+                        >
+                          <option value="">Not recorded</option>
+                          {OBLIGATION_TYPES.map((type) => (
+                            <option key={type.value} value={type.value}>{type.label}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        Source (law, regulation or contract)
+                        <textarea
+                          className="form-control"
+                          rows={2}
+                          maxLength={2000}
+                          value={basisEdit.obligation_source ?? ''}
+                          onChange={(event) => setBasisEdit({ ...basisEdit, obligation_source: event.target.value })}
+                        />
+                      </label>
+                      {basisError && <div role="alert" className="gov-error">{basisError}</div>}
+                      <div className="gov-form-actions">
+                        <button type="button" className="btn-secondary btn-small" disabled={busy} onClick={() => setBasisEdit(null)}>
+                          Cancel
+                        </button>
+                        <button type="button" className="btn-primary btn-small" disabled={busy} onClick={() => void saveBasis()}>
+                          {busy ? 'Saving…' : 'Save basis'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   <div className="framework-card-actions">
                     <button type="button" className="btn-secondary btn-small" onClick={() => onReviewControls?.(framework.id)}>
                       Review controls
                     </button>
+                    {isAdmin && basisEdit?.frameworkId !== framework.id && (
+                      <button
+                        type="button"
+                        className="btn-secondary btn-small"
+                        onClick={() => {
+                          setBasisError(null)
+                          setBasisEdit({
+                            frameworkId: framework.id,
+                            basis: framework.basis ?? null,
+                            obligation_type: framework.obligation_type ?? null,
+                            obligation_source: framework.obligation_source ?? null,
+                          })
+                        }}
+                      >
+                        Set basis
+                      </button>
+                    )}
                     {canEdit && (
                       <button type="button" className="btn-danger btn-small" onClick={() => void openPreview(framework, 'remove')}>
                         Remove framework
@@ -488,16 +628,30 @@ export default function FrameworkScopingPage({
                   </label>
                 </fieldset>
               )}
+              {pending.operation === 'remove' && (preview.basis_downgrades?.length ?? 0) > 0 && (
+                <PreviewGroup
+                  title="Obligation basis weakened (to a lower basis, unclassified, or out of scope)"
+                  ids={(preview.basis_downgrades ?? []).map(
+                    (row) => `${row.scf_id} ${basisLabel(row.from_basis)}→${row.to_basis ? basisLabel(row.to_basis) : 'unclassified or out of scope'}`,
+                  )}
+                />
+              )}
+              {removingMcr && (
+                <p className="gov-note" role="note">
+                  This removal touches a mandatory (MCR) obligation. It needs an organisation admin
+                  {isAdmin ? '' : ' (you are not one, so the change will be refused)'} and a rationale, which is recorded.
+                </p>
+              )}
               <label>
-                Change rationale
-                <textarea value={reason} onChange={(event) => setReason(event.target.value)} rows={3} />
+                Change rationale{removingMcr ? ' (required)' : ''}
+                <textarea value={reason} onChange={(event) => setReason(event.target.value)} rows={3} maxLength={500} />
               </label>
               <div className="framework-preview-actions">
                 <button type="button" className="btn-secondary" onClick={() => setPending(null)}>Cancel</button>
                 <button
                   type="button"
                   className={pending.operation === 'remove' ? 'btn-danger' : 'btn-primary'}
-                  disabled={busy}
+                  disabled={busy || (removingMcr && !reason.trim())}
                   onClick={() => void apply()}
                 >
                   {busy ? 'Applying…' : 'Confirm exact change'}

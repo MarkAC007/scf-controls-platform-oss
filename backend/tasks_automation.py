@@ -17,8 +17,11 @@ from typing import Any, Dict
 from celery import shared_task
 
 from database import AsyncSessionLocal, engine
+from services.due_care import take_monthly_snapshots
 from services.notifications import (
+    check_and_notify_due_control_validations,
     check_and_notify_due_tasks,
+    check_and_notify_expired_risk_acceptances,
     check_and_notify_overdue_tasks,
 )
 from services.task_generator import generate_evidence_tasks
@@ -80,6 +83,39 @@ async def _run_overdue_notifications() -> Dict[str, Any]:
             "status": "completed",
             "notifications_created": int(notifications_created),
         }
+    finally:
+        await _dispose_async_engine()
+
+
+async def _run_risk_acceptance_expiry() -> Dict[str, Any]:
+    try:
+        async with AsyncSessionLocal() as db:
+            notifications_created = await check_and_notify_expired_risk_acceptances(db)
+        return {
+            "status": "completed",
+            "notifications_created": int(notifications_created),
+        }
+    finally:
+        await _dispose_async_engine()
+
+
+async def _run_control_validation_notices() -> Dict[str, Any]:
+    try:
+        async with AsyncSessionLocal() as db:
+            notifications_created = await check_and_notify_due_control_validations(db)
+        return {
+            "status": "completed",
+            "notifications_created": int(notifications_created),
+        }
+    finally:
+        await _dispose_async_engine()
+
+
+async def _run_posture_snapshots() -> Dict[str, Any]:
+    try:
+        async with AsyncSessionLocal() as db:
+            taken = await take_monthly_snapshots(db)
+        return {"status": "completed", "snapshots_taken": int(taken)}
     finally:
         await _dispose_async_engine()
 
@@ -192,4 +228,110 @@ def notify_overdue_tasks_task(self) -> Dict[str, Any]:
         return result
     except Exception as exc:
         logger.error("notify_overdue_tasks_task[%s] failed: %s", task_id, exc, exc_info=True)
+        raise
+
+
+# ---------------------------------------------------------------------------
+# Risk acceptance expiry (PIG R7)
+# ---------------------------------------------------------------------------
+@shared_task(
+    bind=True,
+    name=f"{TASK_PREFIX}.notify_expired_risk_acceptances_task",
+    time_limit=1800,
+    soft_time_limit=1500,
+)
+def notify_expired_risk_acceptances_task(self) -> Dict[str, Any]:
+    """Announce risk acceptances whose expiry has passed."""
+    task_id = self.request.id
+    if not _automation_enabled():
+        logger.info(
+            "notify_expired_risk_acceptances_task[%s] skipped: %s disabled",
+            task_id,
+            AUTOMATION_FLAG,
+        )
+        return _disabled_result("notify_expired_risk_acceptances_task")
+
+    logger.info("notify_expired_risk_acceptances_task[%s] starting", task_id)
+    try:
+        result = asyncio.run(_run_risk_acceptance_expiry())
+        logger.info(
+            "notify_expired_risk_acceptances_task[%s] completed notifications=%s",
+            task_id,
+            result["notifications_created"],
+        )
+        return result
+    except Exception as exc:
+        logger.error(
+            "notify_expired_risk_acceptances_task[%s] failed: %s", task_id, exc, exc_info=True
+        )
+        raise
+
+
+# ---------------------------------------------------------------------------
+# Control validation due (PIG R10)
+# ---------------------------------------------------------------------------
+@shared_task(
+    bind=True,
+    name=f"{TASK_PREFIX}.notify_due_control_validations_task",
+    time_limit=1800,
+    soft_time_limit=1500,
+)
+def notify_due_control_validations_task(self) -> Dict[str, Any]:
+    """Announce controls whose next validation is due soon or has passed."""
+    task_id = self.request.id
+    if not _automation_enabled():
+        logger.info(
+            "notify_due_control_validations_task[%s] skipped: %s disabled",
+            task_id,
+            AUTOMATION_FLAG,
+        )
+        return _disabled_result("notify_due_control_validations_task")
+
+    logger.info("notify_due_control_validations_task[%s] starting", task_id)
+    try:
+        result = asyncio.run(_run_control_validation_notices())
+        logger.info(
+            "notify_due_control_validations_task[%s] completed notifications=%s",
+            task_id,
+            result["notifications_created"],
+        )
+        return result
+    except Exception as exc:
+        logger.error(
+            "notify_due_control_validations_task[%s] failed: %s", task_id, exc, exc_info=True
+        )
+        raise
+
+
+# ---------------------------------------------------------------------------
+# Monthly posture snapshot (PIG R10)
+# ---------------------------------------------------------------------------
+@shared_task(
+    bind=True,
+    name=f"{TASK_PREFIX}.take_posture_snapshots_task",
+    time_limit=1800,
+    soft_time_limit=1500,
+)
+def take_posture_snapshots_task(self) -> Dict[str, Any]:
+    """Take this month's posture snapshot for every organisation without one."""
+    task_id = self.request.id
+    if not _automation_enabled():
+        logger.info(
+            "take_posture_snapshots_task[%s] skipped: %s disabled",
+            task_id,
+            AUTOMATION_FLAG,
+        )
+        return _disabled_result("take_posture_snapshots_task")
+
+    logger.info("take_posture_snapshots_task[%s] starting", task_id)
+    try:
+        result = asyncio.run(_run_posture_snapshots())
+        logger.info(
+            "take_posture_snapshots_task[%s] completed snapshots=%s",
+            task_id,
+            result["snapshots_taken"],
+        )
+        return result
+    except Exception as exc:
+        logger.error("take_posture_snapshots_task[%s] failed: %s", task_id, exc, exc_info=True)
         raise

@@ -32,6 +32,7 @@ import {
 } from '../data/apiClient'
 import { TeamWarningBadges } from './TeamWarningBadge'
 import { ContractorBadge, withContractorSuffix } from './ContractorBadge'
+import { useConfirm } from '../contexts/ConfirmContext'
 import { useOrgMemberTypes } from '../hooks/useOrgMemberTypes'
 import type { TeamWarning } from './TeamWarningBadge'
 import type {
@@ -191,6 +192,7 @@ function memberWithRole(
 }
 
 export default function TeamManagement({ organizationId }: TeamManagementProps) {
+  const confirm = useConfirm()
   const [functions, setFunctions] = useState<OrgFunction[]>([])
   const [teams, setTeams] = useState<TeamDetail[]>([])
   const [orgUsers, setOrgUsers] = useState<UserSimple[]>([])
@@ -324,12 +326,16 @@ export default function TeamManagement({ organizationId }: TeamManagementProps) 
   }
 
   const handleArchive = async (team: TeamDetail) => {
-    if (!confirm(
-      `Archive "${team.name}"?\n\n` +
-      'The team is hidden from this list but nothing is deleted — its ' +
-      'members and history are kept, and you can restore it from "Show ' +
-      'archived teams".'
-    )) return
+    const ok = await confirm({
+      title: 'Archive team',
+      message:
+        `Archive "${team.name}"?\n\n` +
+        'The team is hidden from this list but nothing is deleted — its ' +
+        'members and history are kept, and you can restore it from "Show ' +
+        'archived teams".',
+      confirmLabel: 'Archive team',
+    })
+    if (!ok) return
     try {
       await archiveTeam(organizationId, team.id)
       toast.success(`Team "${team.name}" archived`)
@@ -410,7 +416,13 @@ export default function TeamManagement({ organizationId }: TeamManagementProps) 
 
   const handleRemoveMember = async (team: TeamDetail, member: TeamMember) => {
     const name = displayName(member.user, 'this person')
-    if (!confirm(`Remove ${name} from "${team.name}"?`)) return
+    const ok = await confirm({
+      title: 'Remove from team',
+      message: `Remove ${name} from "${team.name}"?`,
+      confirmLabel: 'Remove',
+      destructive: true,
+    })
+    if (!ok) return
     try {
       await removeTeamMember(organizationId, team.id, member.user_id)
       await refreshTeam(team.id)

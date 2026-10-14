@@ -1,20 +1,32 @@
 import React, { useState, useEffect } from 'react';
 import { apiClient } from '../data/apiClient';
 import { interactiveRowProps } from '../data/interactiveRow';
+import { navigateToDestination } from './AppLink';
 
 interface NotificationBellProps {
   onNavigateToEvidence?: (evidenceId: string) => void;
-  onNavigateToControl?: (controlId: string) => void;
+  /**
+   * For a control notification the server sent no key for: the SCF id of a
+   * scoped_controls row in the organisation on screen. null means the loaded
+   * data has no such row; undefined means it has not loaded.
+   */
+  resolveControlScfId?: (scopedControlId: string) => string | null | undefined;
   onNavigateToTask?: () => void;
   /** Catalog reconciliation notifications navigate to the catalog changelog */
   onNavigateToChangelog?: () => void;
+  /** Risk notifications (an acceptance that expired) open the risk's detail page, by risk code */
+  onNavigateToRisk?: (riskCode: string) => void;
+  /** The organisation on screen, so a risk is only opened in its own organisation */
+  currentOrgId?: string | null;
 }
 
 export const NotificationBell: React.FC<NotificationBellProps> = ({
   onNavigateToEvidence,
-  onNavigateToControl,
   onNavigateToTask,
-  onNavigateToChangelog
+  onNavigateToChangelog,
+  onNavigateToRisk,
+  resolveControlScfId,
+  currentOrgId
 }) => {
   const [unreadCount, setUnreadCount] = useState(0);
   const [notifications, setNotifications] = useState<any[]>([]);
@@ -65,11 +77,39 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
     }
 
     try {
-      // The server resolves the evidence key (E-HRS-16) for evidence and task
-      // references and returns it as reference_key. Before this existed the
-      // bell fetched /evidence-tasks to recover it, and when that row had no
-      // tasks the click did nothing at all — no navigation, no message.
-      if (notification.reference_key) {
+      if (notification.reference_type === 'control') {
+        // reference_key is the control's SCF id (AST-14), resolved by the
+        // server from the scoped_controls row. An SCF id exists in every
+        // organisation, so, as for a risk, it only opens in the one on screen.
+        const orgId = notification.organization_id || currentOrgId;
+        if (currentOrgId && orgId !== currentOrgId) {
+          setNavigationError(
+            `That control is in ${notification.organization_name || 'another organisation'}. Switch to it to open the control.`
+          );
+        } else {
+          const scfId = notification.reference_key
+            ?? (notification.reference_id ? resolveControlScfId?.(notification.reference_id) : undefined);
+          if (scfId) {
+            navigateToDestination({ kind: 'control', id: scfId });
+            setShowDropdown(false);
+          } else {
+            // No key: the library list, never ?item=<row id>. Only loaded
+            // scoping data without the row proves the control is gone; still
+            // loading, or a server that could not resolve, says nothing.
+            navigateToDestination({ kind: 'library' });
+            if (scfId === null) {
+              setNavigationError('That control no longer exists.');
+            } else {
+              setShowDropdown(false);
+            }
+          }
+        }
+
+      } else if (notification.reference_key) {
+        // The server resolves the evidence key (E-HRS-16) for evidence and task
+        // references and returns it as reference_key. Before this existed the
+        // bell fetched /evidence-tasks to recover it, and when that row had no
+        // tasks the click did nothing at all — no navigation, no message.
         onNavigateToEvidence?.(notification.reference_key);
         setShowDropdown(false);
 
@@ -91,15 +131,30 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
         onNavigateToTask?.();
         setShowDropdown(false);
 
-      } else if (notification.reference_type === 'control' && notification.reference_id) {
-        // Navigate to control scoping
-        onNavigateToControl?.(notification.reference_id);
-        setShowDropdown(false);
-
       } else if (notification.reference_type === 'catalog') {
         // Catalog reconciliation applied/rolled back — show what changed
         onNavigateToChangelog?.();
         setShowDropdown(false);
+
+      } else if (notification.reference_type === 'risk' && notification.reference_id) {
+        // reference_id is the risk_assessments row; the register opens a risk
+        // by its code. An SCF code (R-GV-1) exists in every organisation, so
+        // opening it on top of another organisation would show the wrong risk.
+        const orgId = notification.organization_id || currentOrgId;
+        if (currentOrgId && orgId !== currentOrgId) {
+          setNavigationError(
+            `That risk is in ${notification.organization_name || 'another organisation'}. Switch to it to open the risk.`
+          );
+        } else {
+          const risks = await apiClient.get(`/organizations/${orgId}/risk-assessments`);
+          const risk = (risks || []).find((r: any) => r.id === notification.reference_id);
+          if (risk) {
+            onNavigateToRisk?.(risk.risk_code);
+            setShowDropdown(false);
+          } else {
+            setNavigationError('That risk no longer exists.');
+          }
+        }
 
       } else {
         // engagement_query and any future reference_type land here. Previously

@@ -27,7 +27,7 @@ import { ModernCommentThread } from './ModernCommentThread'
 import RichText from './RichText'
 import { frequencyLabel } from '../data/frequencyVocabulary'
 import { useIsOrgAdmin } from '../hooks/useIsOrgAdmin'
-import { useModalDismiss } from '../hooks/useModalDismiss'
+import { keyEventBelongsToModal, useModalDismiss } from '../hooks/useModalDismiss'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -71,6 +71,8 @@ export interface TaskDetailPageProps {
 
 /** True when the keyboard event target should suppress pager shortcuts. */
 function isSuppressed(e: KeyboardEvent): boolean {
+  // A key pressed in an open dialog is the dialog's, not the pager's.
+  if (keyEventBelongsToModal(e)) return true
   const t = e.target
   if (!t || !(t instanceof Element)) return false
   const tag = (t as HTMLElement).tagName?.toLowerCase()

@@ -4,7 +4,11 @@ import { createSystem, updateSystem } from '../data/apiClient'
 import { SystemTemplatePicker } from './SystemTemplatePicker'
 import { VendorPicker } from './VendorPicker'
 import { useModalDismiss } from '../hooks/useModalDismiss'
-import type { System, SystemInput, SystemType, SystemStatus, SystemCatalogTemplate, VendorSimple } from '../types'
+import { SYSTEM_CRITICALITY_LABELS, DATA_CLASSIFICATION_LABELS } from '../types'
+import type {
+  System, SystemInput, SystemType, SystemStatus, SystemCatalogTemplate, VendorSimple,
+  SystemCriticality, DataClassification,
+} from '../types'
 
 interface AddSystemModalProps {
   organizationId?: string
@@ -39,6 +43,53 @@ const systemStatuses: { value: SystemStatus; label: string }[] = [
   { value: 'deprecated', label: 'Deprecated' },
 ]
 
+/**
+ * Boundary & recovery fields as held while editing. Selects and number inputs
+ * work in strings; boundaryPayload() turns a blank into null so a cleared
+ * value is cleared on the server rather than left as it was.
+ */
+interface BoundaryFormState {
+  in_scope: '' | 'true' | 'false'
+  criticality: '' | SystemCriticality
+  rto_hours: string
+  rpo_hours: string
+  data_classification: '' | DataClassification
+  hosting_location: string
+}
+
+const emptyBoundary: BoundaryFormState = {
+  in_scope: '',
+  criticality: '',
+  rto_hours: '',
+  rpo_hours: '',
+  data_classification: '',
+  hosting_location: '',
+}
+
+function boundaryFromSystem(system: System): BoundaryFormState {
+  return {
+    in_scope: system.in_scope == null ? '' : system.in_scope ? 'true' : 'false',
+    criticality: system.criticality ?? '',
+    rto_hours: system.rto_hours != null ? String(system.rto_hours) : '',
+    rpo_hours: system.rpo_hours != null ? String(system.rpo_hours) : '',
+    data_classification: system.data_classification ?? '',
+    hosting_location: system.hosting_location ?? '',
+  }
+}
+
+const hoursOrNull = (value: string): number | null => (value.trim() ? Number(value) : null)
+
+function boundaryPayload(boundary: BoundaryFormState) {
+  return {
+    in_scope: boundary.in_scope === '' ? null : boundary.in_scope === 'true',
+    criticality: boundary.criticality || null,
+    rto_hours: hoursOrNull(boundary.rto_hours),
+    rpo_hours: hoursOrNull(boundary.rpo_hours),
+    data_classification: boundary.data_classification || null,
+    hosting_location: boundary.hosting_location.trim() || null,
+  }
+}
+
 export const AddSystemModal: React.FC<AddSystemModalProps> = ({
   organizationId,
   editSystem,
@@ -70,6 +121,7 @@ export const AddSystemModal: React.FC<AddSystemModalProps> = ({
     connection_config: {},
     catalog_template_id: null,
   })
+  const [boundary, setBoundary] = useState<BoundaryFormState>(emptyBoundary)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -87,6 +139,7 @@ export const AddSystemModal: React.FC<AddSystemModalProps> = ({
         catalog_template_id: editSystem.catalog_template_id ?? null,
       })
       setLinkedVendor(editSystem.linked_vendor ?? null)
+      setBoundary(boundaryFromSystem(editSystem))
     }
   }, [editSystem])
 
@@ -99,6 +152,11 @@ export const AddSystemModal: React.FC<AddSystemModalProps> = ({
 
   const handleChange = (field: keyof SystemInput, value: string) => {
     setFormData(prev => ({ ...prev, [field]: value }))
+    setError(null)
+  }
+
+  const handleBoundaryChange = (field: keyof BoundaryFormState, value: string) => {
+    setBoundary(prev => ({ ...prev, [field]: value }))
     setError(null)
   }
 
@@ -141,6 +199,7 @@ export const AddSystemModal: React.FC<AddSystemModalProps> = ({
     const payload: SystemInput = {
       ...formData,
       vendor_id: linkedVendor?.id ?? null,
+      ...boundaryPayload(boundary),
     }
 
     try {
@@ -317,6 +376,104 @@ export const AddSystemModal: React.FC<AddSystemModalProps> = ({
                   </option>
                 ))}
               </select>
+            </div>
+
+            <div className="system-modal-section-divider">
+              <span>Boundary &amp; Recovery</span>
+            </div>
+
+            {/* Assessment boundary: null = nobody has decided yet */}
+            <div className="form-group">
+              <label htmlFor="in_scope">Assessment Boundary</label>
+              <select
+                id="in_scope"
+                value={boundary.in_scope}
+                onChange={(e) => handleBoundaryChange('in_scope', e.target.value)}
+                disabled={loading}
+              >
+                <option value="">Undecided</option>
+                <option value="true">In scope</option>
+                <option value="false">Out of scope</option>
+              </select>
+            </div>
+
+            <div className="form-row">
+              <div className="form-group">
+                <label htmlFor="criticality">Criticality</label>
+                <select
+                  id="criticality"
+                  value={boundary.criticality}
+                  onChange={(e) => handleBoundaryChange('criticality', e.target.value)}
+                  disabled={loading}
+                >
+                  <option value="">-- Select criticality --</option>
+                  {(Object.entries(SYSTEM_CRITICALITY_LABELS) as [SystemCriticality, string][]).map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="data_classification">Data Classification</label>
+                <select
+                  id="data_classification"
+                  value={boundary.data_classification}
+                  onChange={(e) => handleBoundaryChange('data_classification', e.target.value)}
+                  disabled={loading}
+                >
+                  <option value="">-- Select classification --</option>
+                  {(Object.entries(DATA_CLASSIFICATION_LABELS) as [DataClassification, string][]).map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="form-row">
+              <div className="form-group">
+                <label htmlFor="rto_hours">RTO (hours)</label>
+                <input
+                  id="rto_hours"
+                  type="number"
+                  min="0"
+                  step="any"
+                  value={boundary.rto_hours}
+                  onChange={(e) => handleBoundaryChange('rto_hours', e.target.value)}
+                  placeholder="e.g., 4"
+                  disabled={loading}
+                />
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="rpo_hours">RPO (hours)</label>
+                <input
+                  id="rpo_hours"
+                  type="number"
+                  min="0"
+                  step="any"
+                  value={boundary.rpo_hours}
+                  onChange={(e) => handleBoundaryChange('rpo_hours', e.target.value)}
+                  placeholder="e.g., 1"
+                  disabled={loading}
+                />
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label htmlFor="hosting_location">Hosting Location</label>
+              <input
+                id="hosting_location"
+                type="text"
+                maxLength={255}
+                value={boundary.hosting_location}
+                onChange={(e) => handleBoundaryChange('hosting_location', e.target.value)}
+                placeholder="e.g., AWS eu-west-2, on-premises data centre"
+                disabled={loading}
+              />
             </div>
 
             {error && (

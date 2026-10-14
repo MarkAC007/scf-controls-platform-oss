@@ -119,11 +119,14 @@ export function FilterCheckbox({
 
 export function FilterSelect({
   label,
+  ariaLabel,
   value,
   onChange,
   options,
 }: {
   label?: string
+  /** Accessible name when the visible caption is the group's, not this select's. */
+  ariaLabel?: string
   value: string
   onChange: (value: string) => void
   options: { value: string; label: string }[]
@@ -137,7 +140,7 @@ export function FilterSelect({
       <div className="explorer-filter-select-chrome">
         <select
           id={selectId}
-          aria-label={label ?? options[0]?.label}
+          aria-label={label ?? ariaLabel ?? options[0]?.label}
           className="explorer-filter-select"
           value={value}
           onChange={(e) => onChange(e.target.value)}

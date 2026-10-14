@@ -38,8 +38,13 @@ vi.mock('../../contexts/AuthContext', () => ({
 vi.mock('../../contexts/OrganizationContext', () => ({
   useOrganization: () => ({ currentOrg: { id: 'org-1', name: 'Acme' } }),
 }))
+// The bell's props are captured so the risk route's wiring can be checked.
+const bellProps = vi.hoisted(() => ({ current: {} as Record<string, unknown> }))
 vi.mock('../NotificationBell', () => ({
-  NotificationBell: () => <div data-testid="notification-bell" />,
+  NotificationBell: (props: Record<string, unknown>) => {
+    bellProps.current = props
+    return <div data-testid="notification-bell" />
+  },
 }))
 // RefreshControl reads DataRefreshContext, which this suite deliberately does
 // not mount — the utility bar's job here is composition, not refresh behaviour.
@@ -186,6 +191,8 @@ describe('TAB_TITLES', () => {
     | 'platform-catalog'
     | 'platform-tenants'
     | 'catalog-changelog'
+    | 'deficiencies'
+    | 'capability-tests'
   > = [
     'dashboard',
     'capability-posture',
@@ -207,6 +214,8 @@ describe('TAB_TITLES', () => {
     'platform-catalog',
     'platform-tenants',
     'catalog-changelog',
+    'deficiencies',
+    'capability-tests',
   ]
 
   it('has a non-empty string for every Tab member', () => {
@@ -215,6 +224,10 @@ describe('TAB_TITLES', () => {
         .toBeTruthy()
       expect(typeof TAB_TITLES[tab]).toBe('string')
     }
+  })
+
+  it('maps "capability-tests" to "Capability Tests", as the sidebar labels it', () => {
+    expect(TAB_TITLES['capability-tests']).toBe('Capability Tests')
   })
 
   it('maps "library" to "Control Library"', () => {
@@ -272,4 +285,19 @@ describe('Header utility bar: work scope visibility', () => {
     expect(screen.getByTestId('theme-menu')).toBeInTheDocument()
     expect(screen.getByTestId('notification-bell')).toBeInTheDocument()
   })
+})
+
+// PIG R7: a 'risk' notification opens the risk; the bell only routes it when
+// Header hands it App's handler and the current org to guard against.
+it('passes the risk route and the current organisation to the bell', () => {
+  const onNavigateToRisk = vi.fn()
+  renderHeader({ onNavigateToRisk })
+  expect(bellProps.current.onNavigateToRisk).toBe(onNavigateToRisk)
+  expect(bellProps.current.currentOrgId).toBe('org-1')
+})
+
+it('passes the control resolver to the bell', () => {
+  const resolveControlScfId = vi.fn()
+  renderHeader({ resolveControlScfId })
+  expect(bellProps.current.resolveControlScfId).toBe(resolveControlScfId)
 })

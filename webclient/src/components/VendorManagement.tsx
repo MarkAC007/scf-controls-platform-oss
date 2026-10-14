@@ -107,8 +107,10 @@ export default function VendorManagement({ organizationId, vendorItem = null, on
         />
       </div>
 
+      {/* Keyed on refreshKey so a successful edit refetches the open vendor */}
       {vendorItem && (
         <VendorDetailPage
+          key={refreshKey}
           organizationId={organizationId}
           vendorId={vendorItem}
           filteredVendors={filteredVendors}

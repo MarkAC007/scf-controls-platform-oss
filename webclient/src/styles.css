@@ -1895,7 +1895,7 @@ h3{
 }
 .artifact-groups, .framework-groups{
   display:grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr));
   gap:12px;
 }
 .artifact-group, .framework-group{
@@ -13919,12 +13919,13 @@ textarea.form-control{
    Control Scoping - Comments/Assignment Section
    ======================================== */
 
+/* The comment thread on a control's Notes & history tab sits in the same bench
+   card as the Implementation notes panel above it (#1154): the card chrome comes
+   from `.detail-section-container.surface-bench` and the strip from the thread's
+   own `header="strip"` (see the comment-thread block). This keeps only the gap
+   above it that the old grey card had. */
 .scoping-comments-section {
   margin-top: 2rem;
-  padding: 1rem;
-  background-color: var(--secondary);
-  border-radius: 8px;
-  border: 1px solid var(--border);
 }
 
 .scoping-save-hint {
@@ -22068,6 +22069,19 @@ textarea.form-control{
   font-size: 0.75rem;
 }
 
+/* The organisation's recorded size (Settings → Organisation Details). A dot
+   rather than a fill, so it still reads when another pill is selected. */
+.size-pill.org-size::after {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: var(--primary);
+  vertical-align: middle;
+}
+
 /* Shared hover popover for the roadmap chips and the sizing pills.
    Anchored to the block rather than the individual chip so it can never
    overflow the right viewport edge from the header's right column. */
@@ -22169,6 +22183,21 @@ textarea.form-control{
 
 .roadmap-duo-chip.next .roadmap-duo-lv {
   color: var(--primary);
+}
+
+/* PIG R5: with a target set, the second chip is the target, not the next level. */
+.roadmap-duo-chip.target {
+  border-color: var(--primary);
+  border-style: dashed;
+}
+
+.roadmap-duo-chip.target .roadmap-duo-lv {
+  color: var(--primary);
+}
+
+.roadmap-duo-hint.below-target {
+  color: var(--warning);
+  opacity: 1;
 }
 
 .roadmap-duo-nm {
@@ -24661,6 +24690,8 @@ button.assessment-queue-link:hover {
   margin-bottom: 6px;
 }
 .org-meta-field .appearance-hint { margin: 6px 0 0; }
+.org-meta-field-wide { grid-column: 1 / -1; }
+textarea.org-meta-input { resize: vertical; }
 .org-meta-input {
   width: 100%;
   padding: 8px 10px;
@@ -30639,6 +30670,80 @@ button.risk-list-header-cell:hover {
   font-weight: 500;
 }
 
+/* PIG R7 — risk acceptance: approval/expiry chip, decision panel, and the
+   supporting document on a custom risk's control link. .btn-small carries
+   flex:1, so these containers hold their buttons at content width. */
+.risk-acceptance-badge {
+  border-radius: 4px;
+  padding: 3px 10px;
+  font-size: 13px;
+  font-weight: 500;
+  display: inline-block;
+}
+
+.risk-acceptance-badge--approved {
+  background: var(--success-bg);
+  color: var(--success);
+}
+
+.risk-acceptance-badge--expiring,
+.risk-acceptance-badge--unapproved {
+  background: var(--warning-bg);
+  color: var(--warning);
+}
+
+.risk-acceptance-badge--expired {
+  background: var(--error-bg);
+  color: var(--destructive);
+}
+
+.risk-acceptance-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Two decision buttons beside the heading overflow a narrow card: let them drop below it. */
+.risk-acceptance-panel > .gov-panel-header {
+  flex-wrap: wrap;
+}
+
+.risk-acceptance-actions > .btn-small,
+.risk-acceptance-panel .gov-form-actions > .btn-small,
+.risk-link-document .btn-small,
+.risk-link-document-form .gov-form-actions > .btn-small {
+  flex: 0 0 auto;
+  justify-content: center;
+}
+
+.risk-acceptance-rationale {
+  white-space: pre-wrap;
+  margin: 8px 0;
+}
+
+.risk-link-document {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 2px 0 8px 12px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.risk-link-document-form {
+  margin: 2px 0 8px 12px;
+}
+
+.risk-link-document-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--muted);
+  margin-top: 8px;
+}
+
 .risk-detail-page-owner {
   display: flex;
   align-items: center;
@@ -30711,6 +30816,60 @@ button.risk-list-header-cell:hover {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+/* #1153: field layout for the risk detail page. These rules were scoped to
+   .risk-section, which b062bb23 dropped, so ee888a59 deleted them as dead.
+   Scoped to the page root because the Ownership & Notes record sits outside
+   .risk-detail-page-card-form. Border, background and radius stay with the
+   .surface-bench field affordance rule. */
+.risk-detail-page .field-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.risk-detail-page .field-group label {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+.risk-detail-page .field-group select,
+.risk-detail-page .field-group input,
+.risk-detail-page .field-group textarea {
+  font: inherit;
+  font-size: 0.875rem;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 12px;
+  color: var(--text);
+}
+
+.risk-detail-page .field-group textarea {
+  resize: vertical;
+  min-height: 80px;
+}
+
+.risk-detail-page .field-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.risk-detail-page .field-row .field-group {
+  flex: 1 1 140px;
+  min-width: 0;
+}
+
+/* Keep the iOS zoom-on-focus guard (max-width: 900px) that the rule above outranks. */
+@media (max-width: 900px) {
+  .risk-detail-page .field-group select,
+  .risk-detail-page .field-group input,
+  .risk-detail-page .field-group textarea {
+    font-size: 16px;
+  }
 }
 
 .risk-detail-page-score-badge {
@@ -31302,6 +31461,61 @@ button.risk-list-header-cell:hover {
 .system-detail-control-badge-more {
   font-size: 12px;
   color: var(--muted);
+}
+
+/* Boundary & recovery (PIG R4) */
+.system-detail-boundary-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.system-detail-boundary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px 24px;
+  margin: 0;
+}
+
+.system-detail-boundary-item dt {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.system-detail-boundary-item dd {
+  margin: 2px 0 0 0;
+  font-size: 14px;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+/* Add/Edit System modal: boundary & recovery section (mirrors the vendor
+   modal's section divider) */
+.system-modal .system-modal-section-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 24px 0 20px 0;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.system-modal .system-modal-section-divider::before,
+.system-modal .system-modal-section-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+@media (max-width: 600px) {
+  .system-modal .form-row {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
 }
 
 /* Evidence recipes */
@@ -35218,7 +35432,7 @@ button.risk-list-header-cell:hover {
 
 .framework-selected-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
   gap: 14px;
 }
 
@@ -36088,9 +36302,10 @@ button.risk-list-header-cell:hover {
 
 .journey-check {
   display: grid;
-  grid-template-columns: 18px 1fr auto;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
   align-items: baseline;
-  gap: 10px;
+  column-gap: 10px;
+  row-gap: 2px;
   font-size: 0.82rem;
   color: var(--text);
 }
@@ -36102,18 +36317,42 @@ button.risk-list-header-cell:hover {
 }
 
 .journey-check-met .journey-check-glyph { color: var(--success); }
-.journey-check-unmet .journey-check-label { color: var(--muted); }
 
 /* "We could not evaluate this" is deliberately not styled as a failure —
    unknown is not a no, and reading it as one would send someone chasing work
    that may already be done. */
 .journey-check-unknown .journey-check-glyph { color: var(--warning); }
 
-.journey-check-detail {
-  font-family: var(--font-mono);
+/* The state in words: colour stays on the glyph, so the text keeps the
+   body contrast on every stone background. */
+.journey-check-state {
   font-size: 0.72rem;
-  color: var(--muted);
+  font-weight: 600;
+  color: var(--text);
   white-space: nowrap;
+}
+
+/* The server's sentence about the check, under its label. It wraps: a
+   no-wrap column ran off a phone screen. */
+.journey-check-detail {
+  grid-column: 2 / -1;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: var(--muted);
+  overflow-wrap: break-word;
+}
+
+/* Spoken, not shown: separates a check's label, state and detail. */
+.journey-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .journey-attested {
@@ -36218,11 +36457,25 @@ button.risk-list-header-cell:hover {
 
 .journey-focus-item:last-child { border-bottom: none; padding-bottom: 0; }
 
+.journey-focus-label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 8px;
+  flex: 0 1 auto;
+  max-width: 55%;
+  min-width: 0;
+  overflow-wrap: break-word;
+}
+
 .journey-focus-detail {
-  font-family: var(--font-mono);
-  font-size: 0.72rem;
+  flex: 1 1 45%;
+  min-width: 0;
+  font-size: 0.75rem;
+  line-height: 1.5;
   color: var(--muted);
-  white-space: nowrap;
+  text-align: right;
+  overflow-wrap: break-word;
 }
 
 .journey-focus-link { margin-top: 16px; }
@@ -36262,6 +36515,8 @@ button.risk-list-header-cell:hover {
   .journey-stone-state,
   .journey-stone-pre { grid-column: 2; justify-self: start; }
   .journey-focus-item { flex-direction: column; gap: 2px; }
+  .journey-focus-label { max-width: none; }
+  .journey-focus-detail { flex-basis: auto; text-align: left; }
 }
 
 /* ============================================================================
@@ -37093,4 +37348,716 @@ span.rich-text p { display: inline; margin: 0; }
   .graph-canvas .graph-minimap { display: none; }
   .graph-canvas .graph-legend { max-width: calc(100% - 70px); }
   .graph-legend-hint { display: none; }
+}
+
+/* ── PIG governance (obligation basis and later control-governance panels) ── */
+.basis-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.basis-badge--mcr { background: var(--warning-bg); color: var(--warning); }
+.basis-badge--dsr { background: var(--info-bg); color: var(--info); }
+.basis-badge--none { background: var(--secondary); color: var(--muted); }
+.basis-badge--material { background: var(--purple-bg); color: var(--purple); }
+.basis-counts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  margin: 0 0 16px;
+  font-size: 0.875rem;
+  color: var(--text);
+}
+.basis-counts small { color: var(--muted); }
+.framework-obligation { color: var(--muted); }
+.gov-tab { display: flex; flex-direction: column; gap: 16px; }
+.gov-panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+  padding: 12px 16px;
+}
+.gov-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.gov-panel-header h3 { margin: 0; font-size: 0.9375rem; }
+.gov-panel-body { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.gov-muted { margin: 0; color: var(--muted); font-size: 0.8125rem; }
+.gov-form { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+.gov-form label { display: flex; flex-direction: column; gap: 4px; font-size: 0.8125rem; color: var(--text); }
+.gov-form-actions { display: flex; justify-content: flex-end; gap: 8px; }
+/* .btn-small carries flex:1 for button rows; here the buttons keep their own width. */
+.gov-panel-header > .btn-small,
+.gov-form-actions > .btn-small { flex: 0 0 auto; justify-content: center; }
+.gov-error {
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  background: var(--error-bg);
+  color: var(--destructive);
+  font-size: 0.8125rem;
+}
+.gov-note {
+  margin: 8px 0;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  background: var(--warning-bg);
+  color: var(--text);
+  font-size: 0.8125rem;
+}
+/* The basis badge and the Set basis button widen a selected framework card's
+   title and action rows; let both wrap rather than run past the card. */
+.framework-selected-card-title,
+.framework-selected-card .framework-card-actions {
+  flex-wrap: wrap;
+}
+.framework-selected-card .framework-card-actions { justify-content: flex-start; gap: 8px; }
+/* Settings → Maturity targets (PIG R5): one domain per row, label beside its select. */
+.maturity-targets-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr));
+  gap: 8px 24px;
+  margin: 16px 0;
+}
+.maturity-targets-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.8125rem;
+  color: var(--text);
+}
+.maturity-targets-domain { min-width: 0; overflow-wrap: anywhere; }
+.maturity-targets-row .form-control { flex: 0 0 150px; width: 150px; }
+@media (max-width: 480px) {
+  .maturity-targets-grid { grid-template-columns: 1fr; }
+}
+
+/* ── Deficiencies / POA&M (PIG R8) ───────────────────────────────────────
+   The page reuses the tasks explorer shell and stats strip; a control's
+   governance tab reuses .gov-panel. Rows wrap rather than scroll, so the list
+   reads at 390px without a horizontal bar. */
+.deficiency-stats { flex-wrap: wrap; row-gap: 12px; }
+.deficiency-page-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 28px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.deficiency-empty { margin: 24px 0; color: var(--muted); font-size: 0.875rem; }
+.deficiency-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.deficiency-row {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.deficiency-row-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.deficiency-row-title { font-weight: 600; font-size: 0.9375rem; color: var(--text); overflow-wrap: anywhere; margin-right: 4px; }
+.deficiency-row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-size: 0.8125rem;
+  color: var(--muted);
+}
+.deficiency-subject-id { font-family: var(--font-mono); font-size: 0.8125rem; }
+/* The global details/summary rules draw a card; inside a row it is a plain disclosure. */
+.deficiency-row-details { font-size: 0.8125rem; color: var(--text); border: 0; padding: 0; background: none; border-radius: 0; }
+.deficiency-row-details summary { margin: 0; padding: 0; font-weight: 500; color: var(--muted); width: fit-content; }
+.deficiency-row-details p { margin: 6px 0 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.deficiency-row-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+/* .btn-small carries flex:1 for button rows; these keep their own width. */
+.deficiency-row-actions > .btn-small,
+.deficiencies-page .explorer-toolbar-actions > .btn-small { flex: 0 0 auto; justify-content: center; }
+.deficiency-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+  background: var(--muted-bg);
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+.deficiency-chip--open { background: var(--info-bg); color: var(--priority-medium); border-color: transparent; }
+.deficiency-chip--in_progress { background: var(--warning-bg); color: var(--warning-ink); border-color: transparent; }
+.deficiency-chip--completed { background: var(--success-bg); color: var(--success-ink); border-color: transparent; }
+.deficiency-chip--critical { background: var(--priority-critical-bg); color: var(--priority-critical); border-color: transparent; }
+.deficiency-chip--high { background: var(--priority-high-bg); color: var(--warning-ink); border-color: transparent; }
+.deficiency-chip--medium { background: var(--priority-medium-bg); color: var(--priority-medium); border-color: transparent; }
+.deficiency-chip--low { background: var(--priority-low-bg); color: var(--priority-low); border-color: transparent; }
+.deficiency-chip--overdue { background: var(--error-bg); color: var(--destructive); border-color: var(--destructive); }
+.deficiency-panel .deficiency-list { margin-top: 8px; }
+.deficiency-panel > .gov-muted + .gov-muted { margin-top: 8px; }
+
+/* Raise / edit / complete forms */
+.deficiency-modal { max-width: 640px; max-height: calc(100dvh - 40px); overflow-y: auto; }
+.deficiency-form-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 16px; }
+.deficiency-form-label { display: block; font-weight: 600; font-size: 14px; margin-bottom: 6px; color: var(--text); }
+.deficiency-subject { margin: 0; font-size: 0.875rem; color: var(--text); overflow-wrap: anywhere; }
+.deficiency-field-hint { display: block; margin-top: 4px; font-size: 0.75rem; color: var(--muted); }
+.deficiency-field-hint--error { color: var(--destructive); }
+
+@media (max-width: 700px) {
+  .deficiency-stats { gap: 12px 24px; padding: 12px 16px; }
+  .deficiency-page-body { padding: 12px 16px 20px; }
+  .deficiency-form-row { grid-template-columns: minmax(0, 1fr); }
+  .deficiency-modal { width: calc(100% - 32px); }
+}
+
+/* Board view (#1155): a column per status. The board scrolls sideways inside
+   the page body, so at 390px the columns scroll and the page does not. The
+   Move to… menu opens in the card's own flow rather than floating: a floating
+   menu would be clipped by the board's overflow. :root tokens only. */
+.deficiency-view-toggle { flex: 0 0 auto; }
+.deficiency-board {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  padding-bottom: 8px;
+}
+.deficiency-column {
+  flex: 1 0 240px;
+  min-width: 240px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background: var(--muted-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  transition: border-color 0.15s, background-color 0.15s;
+}
+.deficiency-column--collapsed { flex: 0 0 180px; min-width: 180px; }
+.deficiency-column--drop {
+  border-color: var(--primary);
+  border-style: dashed;
+  background: color-mix(in srgb, var(--primary) 8%, var(--muted-bg));
+}
+.deficiency-column-head { display: flex; align-items: center; gap: 8px; min-height: 24px; }
+.deficiency-column-title { margin: 0; font-size: 0.8125rem; font-weight: 600; color: var(--text); }
+.deficiency-column-count {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+.deficiency-column-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.deficiency-column-toggle:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 4px; }
+.deficiency-column-caret { width: 1em; color: var(--muted); font-size: 0.75rem; }
+.deficiency-column-note { margin: 0; font-size: 0.8125rem; color: var(--muted); }
+.deficiency-column-cards { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.deficiency-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 10px 12px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+}
+.deficiency-card[draggable='true'] { cursor: grab; }
+.deficiency-card[draggable='true']:active { cursor: grabbing; }
+.deficiency-card--dragging { opacity: 0.5; }
+.deficiency-card[aria-busy='true'] { opacity: 0.7; }
+.deficiency-card-title { font-weight: 600; font-size: 0.875rem; color: var(--text); overflow-wrap: anywhere; }
+.deficiency-card-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.deficiency-card-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 0.75rem;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.deficiency-card-actions { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; }
+/* .btn-small carries flex:1 for button rows; these keep their own width. */
+.deficiency-card-actions > .btn-small,
+.deficiency-move > .btn-small { flex: 0 0 auto; justify-content: center; }
+.deficiency-move { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.deficiency-move-menu {
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+  min-width: 150px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+}
+.deficiency-move-item {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.8125rem;
+  text-align: left;
+  cursor: pointer;
+}
+.deficiency-move-item:hover { background: var(--surface-hover); }
+.deficiency-move-item:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; background: var(--surface-hover); }
+@media (max-width: 700px) {
+  .deficiency-column--collapsed { flex-basis: 160px; min-width: 160px; }
+}
+
+/* ── Compensating controls (PIG R9) ──────────────────────────────────────
+   A control's governance tab: rows and forms reuse the deficiency panel's;
+   the acceptance chip reuses the risk register's. */
+/* The record button beside the heading overflows a narrow card: let it drop below. */
+.compensating-panel > .gov-panel-header { flex-wrap: wrap; }
+.compensating-panel .deficiency-list { margin-top: 8px; }
+.compensating-panel > .gov-muted + .deficiency-list,
+.compensating-panel > .gov-muted + .gov-muted { margin-top: 8px; }
+.compensating-text {
+  margin: 0;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px 12px;
+  font-size: 0.875rem;
+}
+.compensating-text dt { font-weight: 600; color: var(--muted); font-size: 0.8125rem; }
+.compensating-text dd { margin: 0; color: var(--text); overflow-wrap: anywhere; white-space: pre-wrap; }
+.compensating-chip--full { background: var(--success-bg); color: var(--success-ink); border-color: transparent; }
+.compensating-chip--partial { background: var(--warning-bg); color: var(--warning-ink); border-color: transparent; }
+/* Minimal is a rating, not an alarm: blue, with the text-safe ink (--priority-medium fails AA here). */
+.compensating-chip--minimal { background: var(--info-bg); color: var(--primary-ink); border-color: transparent; }
+.compensating-required { color: var(--muted); font-weight: 400; }
+.compensating-ref { font-family: var(--font-mono); color: var(--muted); }
+@media (max-width: 480px) {
+  .compensating-text { grid-template-columns: minmax(0, 1fr); }
+  .compensating-text dd + dt { margin-top: 4px; }
+}
+
+/* ── Due care (PIG R10) ──────────────────────────────────────────────────
+   A control's validation on its governance tab reuses the deficiency chip and
+   the compensating panel's term list; the posture snapshots sit in a
+   dashboard card. :root tokens only. */
+.validation-panel > .gov-panel-header { flex-wrap: wrap; }
+.validation-state { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-bottom: 10px; }
+.validation-chip--current { background: var(--success-bg); color: var(--success-ink); border-color: transparent; }
+.validation-chip--due_soon { background: var(--warning-bg); color: var(--warning-ink); border-color: transparent; }
+.validation-chip--overdue { background: var(--error-bg); color: var(--destructive); border-color: var(--destructive); }
+
+/* .btn-small carries flex:1 for button rows; this one keeps its own width and drops below a narrow title. */
+.posture-history-header { flex-wrap: wrap; align-items: center; }
+.posture-history-header > .btn-small { flex: 0 0 auto; justify-content: center; }
+.posture-latest { display: flex; flex-direction: column; gap: 8px; }
+.posture-status-list { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 2px 14px; }
+/* Six numeric columns: the table scrolls inside the card at phone width, never the page. */
+.posture-table-wrap { overflow-x: auto; max-width: 100%; }
+.posture-table { width: 100%; border-collapse: collapse; font-size: 0.8125rem; font-variant-numeric: tabular-nums; }
+.posture-table th,
+.posture-table td { padding: 6px 8px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--border); color: var(--text); }
+.posture-table th { font-weight: 600; color: var(--text-secondary); }
+.posture-table th:first-child,
+.posture-table td:first-child { text-align: left; }
+.posture-report-note { margin-top: 4px; }
+.posture-latest-month { color: var(--text); font-weight: 600; }
+
+/* ── Capability tests (PIG R11) ──────────────────────────────────────────
+   The page reuses the deficiencies page's shell, rows and chips, and a
+   test's findings are a deficiency list. :root tokens only; --danger is the
+   text-safe red (--destructive fails AA on white). */
+/* .btn-small carries flex:1 for button rows; these keep their own width. */
+.capability-tests-page .explorer-toolbar-actions > .btn-small,
+.capability-finding > .btn-small,
+.capability-findings-section > .btn-small { flex: 0 0 auto; justify-content: center; }
+.capability-result--passed { background: var(--success-bg); color: var(--success-ink); border-color: transparent; }
+.capability-result--passed_with_findings { background: var(--warning-bg); color: var(--warning-ink); border-color: transparent; }
+.capability-result--failed { background: var(--danger-bg); color: var(--danger); border-color: var(--danger); }
+.capability-test-detail { display: flex; flex-direction: column; gap: 8px; padding-top: 4px; border-top: 1px solid var(--border); }
+.capability-test-findings-heading { margin: 4px 0 0; font-size: 0.8125rem; font-weight: 600; color: var(--text); }
+
+/* Record form: each finding is a fieldset with its own remove button. */
+.capability-findings-section { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; margin-bottom: 16px; }
+.capability-findings-section > .deficiency-form-label { margin: 0; }
+.capability-findings-section > .deficiency-field-hint { margin: 0; }
+.capability-finding {
+  align-self: stretch;
+  min-width: 0;
+  margin: 0;
+  padding: 10px 14px 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+.capability-finding > legend { padding: 0 4px; font-weight: 600; font-size: 0.875rem; color: var(--text); }
+.capability-finding > .form-group,
+.capability-finding > .deficiency-form-row { align-self: stretch; }
+.capability-finding > .btn-small { margin-bottom: 8px; }
+.capability-form-problems { margin: 0 0 12px; padding: 8px 12px 8px 28px; border-radius: var(--radius); background: var(--danger-bg); color: var(--danger); font-size: 0.8125rem; }
+
+/* ===========================================================================
+   Comment thread (ModernCommentThread) — bench tokens (#1154)
+   ---------------------------------------------------------------------------
+   One component on five surfaces: control Notes & history, task detail, the
+   tasks list, the evidence task list and evidence detail. Four of them print
+   their own label above it, so by default it has a plain h4 heading and sits
+   flush in its container. Inside a `.detail-section-container` card (Scoping)
+   it opts into the bench header strip with `header="strip"`. Its field uses the
+   same --field-* tokens the bench uses, so it reads the same inside a
+   `.surface-bench` card and outside one. No hard-coded colours: every value is
+   a theme token, so dark mode and custom palettes follow.
+   =========================================================================== */
+/* A size container, so the layout can tighten in narrow mounts (the tasks
+   list's comments side panel is 240px at its narrowest). */
+.comment-thread {
+  container: comment-thread / inline-size;
+}
+.comment-thread-heading {
+  margin: 0 0 12px;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.comment-thread .container-title {
+  margin: 0;
+}
+/* In a card, the strip squares its lower corners against the content and
+   rounds its upper corners to the card's: --card-radius for a plain card, the
+   bench's own 12px for a `.surface-bench` card. The content takes the card's
+   padding, as `.container-content` does for the notes panel. */
+.detail-section-container > .comment-thread > .container-header {
+  border-radius: var(--card-radius) var(--card-radius) 0 0;
+}
+.surface-bench > .comment-thread > .container-header {
+  border-radius: 12px 12px 0 0;
+}
+.detail-section-container > .comment-thread > .comment-thread-content {
+  padding: var(--card-padding);
+}
+.comment-thread-list {
+  margin-bottom: 16px;
+}
+.comment-thread-empty {
+  padding: 20px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--muted);
+  background: var(--secondary);
+  border-radius: 8px;
+}
+
+/* Entries */
+.comment-thread-entry--reply {
+  margin-left: 3rem;
+}
+.comment-thread-item {
+  display: flex;
+  gap: 12px;
+  padding: 12px 0;
+  margin-bottom: 4px;
+}
+.comment-thread-item--reply {
+  padding: 12px;
+  background: var(--secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.comment-thread-avatar {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 600;
+  /* --card inverts with the theme: white initials on the saturated light-mode
+     tones, dark initials on the lighter dark-mode tones. */
+  color: var(--card);
+}
+.comment-thread-avatar--sm {
+  width: 28px;
+  height: 28px;
+  font-size: 11px;
+}
+.comment-thread-avatar--blue { background: var(--avatar-blue); }
+.comment-thread-avatar--green { background: var(--avatar-green); }
+.comment-thread-avatar--orange { background: var(--avatar-orange); }
+.comment-thread-avatar--purple { background: var(--avatar-purple); }
+.comment-thread-avatar--teal { background: var(--avatar-teal); }
+.comment-thread-avatar--pink { background: var(--avatar-pink); }
+
+.comment-thread-main {
+  flex: 1;
+  min-width: 0;
+}
+.comment-thread-byline {
+  margin-bottom: 4px;
+}
+.comment-thread-author {
+  font-size: 14px;
+  color: var(--text);
+}
+.comment-thread-meta {
+  margin-left: 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.comment-thread-edited {
+  margin-left: 6px;
+  font-style: italic;
+}
+.comment-thread-body {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text);
+  margin-bottom: 6px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Reply / Edit / Delete: text actions, aligned to the body text. The state
+   and danger colours are scoped under `.comment-thread` so they outrank
+   `.btn-text` and `.btn-text:hover` by specificity, not by source order. */
+.comment-thread-actions {
+  display: flex;
+  gap: 4px;
+  margin-left: -8px;
+}
+.comment-thread .comment-thread-action.is-active,
+.comment-thread .comment-thread-action.is-active:hover {
+  color: var(--primary-ink);
+  font-weight: 600;
+}
+.comment-thread .comment-thread-action--danger,
+.comment-thread .comment-thread-action--danger:hover {
+  color: var(--danger);
+}
+
+/* Field: the bench field treatment, wherever the thread is mounted */
+.comment-thread-compose {
+  position: relative;
+}
+.comment-thread-input {
+  display: block;
+  width: 100%;
+  min-height: 96px;
+  padding: 10px 12px;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--field-bg);
+  border: 1px solid var(--field-border);
+  border-radius: 8px;
+  resize: vertical;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+.comment-thread-input--edit {
+  min-height: 80px;
+  margin-bottom: 8px;
+}
+.comment-thread-input:hover {
+  border-color: var(--field-border-hover);
+}
+.comment-thread-input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: var(--field-ring);
+}
+.comment-thread-input::placeholder {
+  color: var(--muted);
+}
+
+/* Mention autocomplete */
+.comment-thread-mentions {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  margin-bottom: 8px;
+  min-width: 250px;
+  max-height: 200px;
+  overflow-y: auto;
+  z-index: 1000;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-lg);
+}
+.comment-thread-mention-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  cursor: pointer;
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+}
+.comment-thread-mention-option:last-child {
+  border-bottom: none;
+}
+.comment-thread-mention-option:hover {
+  background: var(--secondary);
+}
+.comment-thread-mention-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.comment-thread-mention-email {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* Reply indicator */
+.comment-thread-replying {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  padding: 6px 12px;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--primary-bg);
+  border-radius: 6px;
+}
+
+/* Footer: tip on the left, the post button on the right */
+.comment-thread-footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+}
+.comment-thread-tip {
+  font-size: 12px;
+  color: var(--muted);
+}
+.comment-thread-edit-actions {
+  display: flex;
+  gap: 8px;
+}
+/* `.btn-small` grows to fill a flex row (flex: 1); here it sits beside a tip or
+   a sibling button and keeps its own width, like "Record test". */
+.comment-thread .btn-small {
+  flex: none;
+}
+
+/* Narrow mounts: smaller avatars, a shallower reply indent, and the byline
+   date under the name, so a 240px side panel still leaves room for the text. */
+@container comment-thread (max-width: 480px) {
+  .comment-thread-entry--reply {
+    margin-left: 1rem;
+  }
+  .comment-thread-item {
+    gap: 8px;
+  }
+  .comment-thread-item--reply {
+    padding: 8px;
+  }
+  .comment-thread-avatar {
+    width: 28px;
+    height: 28px;
+    font-size: 11px;
+  }
+  .comment-thread-meta {
+    display: block;
+    margin-left: 0;
+  }
+  .comment-thread-mentions {
+    min-width: 0;
+    right: 0;
+  }
+}
+/* ── ConfirmDialog (#1157) ───────────────────────────────────────────────── */
+/* The in-app replacement for the native confirm and prompt dialogs. It reuses
+   `.modal-overlay` / `.modal-content`; these rules add only what they lack.
+   The overlay sits above every other overlay (task modals are 2000) because a
+   confirmation is raised from inside drawers and modals, and below the
+   tooltips and loading screen. */
+.confirm-dialog-overlay { z-index: 2100; }
+
+.confirm-dialog {
+  max-width: 480px;
+  padding: 20px 24px;
+}
+
+.confirm-dialog-title {
+  margin: 0 0 8px;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* Messages are passed verbatim and some carry blank lines between sentences
+   (the team archive confirmation). pre-line keeps those, and still wraps. */
+.confirm-dialog-message {
+  margin: 0 0 16px;
+  white-space: pre-line;
+  line-height: 1.55;
+  color: var(--text);
+}
+
+.confirm-dialog-reason {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.confirm-dialog-reason label {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.confirm-dialog-reason input { width: 100%; }
+
+.confirm-dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
 }

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { apiClient } from '../data/apiClient';
+import { useConfirm } from '../contexts/ConfirmContext';
 
 interface Comment {
   id: string;
@@ -26,6 +27,7 @@ export const CommentThread: React.FC<CommentThreadProps> = ({
   const [comments, setComments] = useState<Comment[]>([]);
   const [newComment, setNewComment] = useState('');
   const [loading, setLoading] = useState(false);
+  const confirm = useConfirm();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editContent, setEditContent] = useState('');
 
@@ -86,7 +88,13 @@ export const CommentThread: React.FC<CommentThreadProps> = ({
   };
 
   const handleDelete = async (commentId: string) => {
-    if (!confirm('Are you sure you want to delete this comment?')) return;
+    const ok = await confirm({
+      title: 'Delete comment',
+      message: 'Are you sure you want to delete this comment?',
+      confirmLabel: 'Delete',
+      destructive: true,
+    });
+    if (!ok) return;
 
     setLoading(true);
     try {
@@ -200,7 +208,7 @@ export const CommentThread: React.FC<CommentThreadProps> = ({
                       Edit
                     </button>
                     <button
-                      onClick={() => handleDelete(comment.id)}
+                      onClick={() => void handleDelete(comment.id)}
                       style={{
                         background: 'none',
                         border: 'none',

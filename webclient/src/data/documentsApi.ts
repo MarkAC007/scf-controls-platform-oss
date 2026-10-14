@@ -476,6 +476,10 @@ export const LIFECYCLE_LABELS: Record<LifecycleStatus, string> = {
   published: 'Published',
 }
 
+/** Statuses that count as signed off — the only ones a control's procedure
+ *  link accepts (PIG R6). An edit sends either back to review. */
+export const SIGNED_OFF_STATUSES: readonly LifecycleStatus[] = ['approved', 'published']
+
 export const SECTION_STATUS_LABELS: Record<SectionStatus, string> = {
   unchanged: 'Unchanged',
   updated: 'Updated',

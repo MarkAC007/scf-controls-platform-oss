@@ -6,13 +6,13 @@ import logging
 from datetime import date, datetime
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, text, func, or_, literal
+from sqlalchemy import select, and_, text, func, or_, literal, false
 from sqlalchemy.orm import aliased
-from typing import List, Optional, Literal
+from typing import List, Optional, Literal, Tuple
 from uuid import UUID
 
 from database import get_db
-from models import ScopedControl, Organization, OrganizationFrameworkSelection, assessment_is_stale
+from models import GeneratedDocument, ImplementationStatus, ScopedControl, Organization, OrganizationFrameworkSelection, assessment_is_stale
 from catalog_models import SCFCatalogControl
 from schemas import (
     ScopedControlResponse,
@@ -32,10 +32,47 @@ from schemas import (
     FrameworkScopeSummaryResponse,
     FrameworkScopePreviewRequest,
     FrameworkScopePreviewResponse,
+    FrameworkBasisRequest,
+    FrameworkScopeSummaryItem,
+    ControlBasisOverrideRequest,
+    ControlMaterialityRequest,
+    ControlProcedureDocumentRequest,
+    ControlTargetMaturityRequest,
 )
 from auth import require_org_role, OrgMembership
-from services.audit_service import log_entity_changes, get_request_id, detect_action_source, SCOPED_CONTROL_TRACKED_FIELDS
+from services.audit_service import (
+    FRAMEWORK_SELECTION_TRACKED_FIELDS,
+    SCOPED_CONTROL_TRACKED_FIELDS,
+    detect_action_source,
+    get_request_id,
+    log_entity_changes,
+)
+from services.obligation_basis import (
+    effective_basis_expr,
+    is_mcr,
+    mcr_exclusion_message,
+    set_control_basis_override,
+    set_selection_basis,
+    unscope_touches_mcr,
+)
 from services.notifications import create_control_ready_for_review_notifications
+from services.deficiencies import on_control_status
+from services.materiality import (
+    MATERIAL_WEIGHTING,
+    is_material,
+    material_exclusion_message,
+    material_not_applicable_message,
+    resolve_material,
+    set_material_override,
+    set_procedure_document,
+    unscope_touches_material,
+)
+from services.target_maturity import (
+    SETTINGS_KEY as MATURITY_TARGETS_KEY,
+    resolve_target,
+    set_control_target_override,
+    stored_domain_targets,
+)
 from services.scoping_service import (
     bulk_scope_frameworks,
     bulk_unscope_frameworks,
@@ -55,6 +92,77 @@ def _tracked_values(control: ScopedControl) -> dict:
 
 
 ASSESSMENT_FIELDS = ("implementation_status", "maturity_level")
+
+
+def _requested_selected(fields: dict) -> Optional[bool]:
+    """``selected`` as this write would leave it, or None when the write omits it.
+
+    An explicit null deselects: the row stores NULL and every reader treats it
+    as out of scope, so it must face the same MCR guard as ``false``.
+    """
+    return bool(fields["selected"]) if "selected" in fields else None
+
+
+async def _mcr_deselect_refusal(
+    db: AsyncSession,
+    org_id: UUID,
+    scf_id: str,
+    was_selected: Optional[bool],
+    will_select: Optional[bool],
+) -> Optional[str]:
+    """Why this write may not take the control out of scope, or None (PIG R2).
+
+    An MCR control leaves scope only through the scope-override endpoint, which
+    records a reason and an approving admin. Every other write path that would
+    deselect it, or record it as out of scope for the first time
+    (``was_selected`` None), is refused. Writes that leave ``selected`` alone
+    (``will_select`` None) or that touch a control already out of scope are not
+    exclusions and pass.
+    """
+    if will_select is not False or was_selected is False:
+        return None
+    if await is_mcr(db, org_id, scf_id):
+        return mcr_exclusion_message(scf_id)
+    return None
+
+
+async def _exclusion_refusal(
+    db: AsyncSession,
+    org_id: UUID,
+    scf_id: str,
+    was_selected: Optional[bool],
+    will_select: Optional[bool],
+    *,
+    was_status: Optional[str] = None,
+    will_status: Optional[str] = None,
+    is_admin: bool = False,
+) -> Optional[Tuple[int, str]]:
+    """``(status_code, detail)`` when this write may not proceed, or None.
+
+    The MCR guard (PIG R2) first, then materiality (PIG R6):
+
+    * A material control leaves scope only through the scope-override
+      endpoint, where an admin approves the exclusion with a reason. Every
+      other path that would deselect it is refused with 409, as for MCR.
+    * Marking a material control ``not_applicable`` needs an organisation
+      admin (403 otherwise). The admin's write is the approval, and the audit
+      log records them against the status change.
+    """
+    refusal = await _mcr_deselect_refusal(db, org_id, scf_id, was_selected, will_select)
+    if refusal:
+        return 409, refusal
+    deselects = will_select is False and was_selected is not False
+    to_not_applicable = (
+        will_status == ImplementationStatus.NOT_APPLICABLE.value
+        and was_status != ImplementationStatus.NOT_APPLICABLE.value
+    )
+    if not deselects and not (to_not_applicable and not is_admin):
+        return None
+    if not await is_material(db, org_id, scf_id):
+        return None
+    if deselects:
+        return 409, material_exclusion_message(scf_id)
+    return 403, material_not_applicable_message(scf_id)
 
 
 def _stamp_rescope_and_assessment(control: ScopedControl, old_values: dict, update_data: dict) -> None:
@@ -194,6 +302,9 @@ async def list_scoped_controls_paginated(
     my_teams: bool = Query(False, description="Filter to controls assigned to any team the caller belongs to. Intersects with team_id rather than overriding it."),
     function_id: Optional[UUID] = Query(None, description="Filter to controls assigned to any team aligned to this function"),
     accountable_owner_type: Optional[str] = Query(None, description="Filter to items whose accountable team's primary owner has this member_type: internal or external_contractor"),
+    basis: Optional[Literal["mcr", "dsr", "unclassified"]] = Query(None, description="Filter by obligation basis: mcr, dsr, or unclassified (no classified framework and no override)"),
+    material: Optional[bool] = Query(None, description="Filter by materiality: true for material controls (catalogue weighting 10 or an override), false for the rest"),
+    sort: Literal["scf_id", "weighting"] = Query("scf_id", description="Order by scf_id (default), or by weighting: material controls first, then catalogue weighting highest first, then scf_id"),
     limit: int = Query(50, ge=1, le=200, description="Max results per page"),
     offset: int = Query(0, ge=0, description="Pagination offset"),
 ):
@@ -210,6 +321,39 @@ async def list_scoped_controls_paginated(
     - all (or None): All catalog controls with their scoping status
     """
     # Organization existence verified by require_org_role
+
+    # Obligation basis (PIG R2): the per-control override, else the strongest
+    # basis among the org's active classified selections that map the control.
+    basis_expr = effective_basis_expr(
+        SCFCatalogControl.scf_id, org_id, ScopedControl.basis_override
+    )
+
+    # Target maturity (PIG R5): the organisation's domain targets ride along
+    # as one scalar-subquery column rather than a second round trip; each
+    # scoped row then resolves its own target from its override or its domain.
+    # Only the targets key is selected, not the whole settings document, since
+    # the value repeats on every row of the page.
+    org_settings_col = (
+        select(Organization.settings[MATURITY_TARGETS_KEY])
+        .where(Organization.id == org_id)
+        .scalar_subquery()
+    )
+
+    # Materiality (PIG R6): the override, else the catalogue weighting.
+    material_col = func.coalesce(
+        ScopedControl.material_override,
+        SCFCatalogControl.control_weighting >= MATERIAL_WEIGHTING,
+        false(),
+    )
+    # The linked procedure's lifecycle status now, scoped to this org.
+    procedure_status_col = (
+        select(GeneratedDocument.lifecycle_status)
+        .where(
+            GeneratedDocument.id == ScopedControl.procedure_document_id,
+            GeneratedDocument.organization_id == org_id,
+        )
+        .scalar_subquery()
+    )
 
     # Build the base query with LEFT JOIN
     # We need catalog controls with optional scoping data
@@ -230,6 +374,16 @@ async def list_scoped_controls_paginated(
             ScopedControl.scope_override_set_at,
             ScopedControl.scope_restored_at,
             ScopedControl.assessment_recorded_at,
+            basis_expr.label("obligation_basis"),
+            ScopedControl.basis_override,
+            ScopedControl.basis_override_reason,
+            ScopedControl.target_maturity_override,
+            ScopedControl.target_maturity_reason,
+            org_settings_col.label("org_settings"),
+            ScopedControl.material_override,
+            ScopedControl.material_reason,
+            ScopedControl.procedure_document_id,
+            procedure_status_col.label("procedure_document_status"),
         )
         .outerjoin(
             ScopedControl,
@@ -260,6 +414,14 @@ async def list_scoped_controls_paginated(
             )
         )
     # "all" or None = no scope filter
+
+    if material is not None:
+        query = query.where(material_col.is_(material))
+
+    if basis == "unclassified":
+        query = query.where(basis_expr.is_(None))
+    elif basis is not None:
+        query = query.where(basis_expr == basis)
 
     # Apply domain filter
     if domain:
@@ -357,13 +519,26 @@ async def list_scoped_controls_paginated(
     total = await db.scalar(select(func.count()).select_from(count_subquery))
 
     # Apply ordering and pagination
-    query = query.order_by(SCFCatalogControl.scf_id).offset(offset).limit(limit)
+    if sort == "weighting":
+        # PIG R6: material controls first, then the heaviest, so scoping work
+        # starts with them.
+        query = query.order_by(
+            material_col.desc(),
+            SCFCatalogControl.control_weighting.desc().nulls_last(),
+            SCFCatalogControl.scf_id,
+        )
+    else:
+        query = query.order_by(SCFCatalogControl.scf_id)
+    query = query.offset(offset).limit(limit)
 
     result = await db.execute(query)
     rows = result.all()
 
     # Build response with enriched control data
     controls = []
+    domain_targets = stored_domain_targets(
+        {MATURITY_TARGETS_KEY: rows[0][18]} if rows and len(rows[0]) > 18 else None
+    )
     for row in rows:
         catalog = row[0]  # SCFCatalogControl
         selected = row[1]  # ScopedControl.selected or None
@@ -378,6 +553,28 @@ async def list_scoped_controls_paginated(
         scope_override_set_at = row[10] if len(row) > 10 else None
         scope_restored_at = row[11] if len(row) > 11 else None
         assessment_recorded_at = row[12] if len(row) > 12 else None
+        obligation_basis = row[13] if len(row) > 13 else None
+        basis_override = row[14] if len(row) > 14 else None
+        basis_override_reason = row[15] if len(row) > 15 else None
+        target_override = row[16] if len(row) > 16 else None
+        target_reason = row[17] if len(row) > 17 else None
+        material_override = row[19] if len(row) > 19 else None
+        material_reason = row[20] if len(row) > 20 else None
+        procedure_document_id = row[21] if len(row) > 21 else None
+        procedure_document_status = row[22] if len(row) > 22 else None
+        # A property of the control, so it reads the same scoped or not: a
+        # control with no scope record follows its catalogue weighting.
+        is_material_row, material_source = resolve_material(
+            material_override, catalog.control_weighting
+        )
+        # A target belongs to a control with a scope record; a catalogue row
+        # the org never scoped has none, whatever its domain's target is. A
+        # descoped row keeps its target so it is there if the control comes
+        # back, but the gates and the report count selected controls only.
+        target, target_source = (
+            resolve_target(catalog.scf_id, target_override, domain_targets)
+            if selected is not None else (None, None)
+        )
 
         controls.append({
             "scf_id": catalog.scf_id,
@@ -405,9 +602,22 @@ async def list_scoped_controls_paginated(
             "scope_override": scope_override,
             "scope_override_reason": scope_override_reason,
             "scope_override_set_at": scope_override_set_at,
+            "obligation_basis": obligation_basis,
+            "basis_source": (
+                "override" if basis_override else ("framework" if obligation_basis else None)
+            ),
+            "basis_override_reason": basis_override_reason,
             # The org's own maturity setting — the scoping list renders this
             # column, so omitting it left the UI hardcoding an em dash.
             "maturity_level": maturity_level,
+            "target_maturity": target,
+            "target_source": target_source,
+            "target_maturity_reason": target_reason if target_source == "control" else None,
+            "material": is_material_row,
+            "material_source": material_source,
+            "material_reason": material_reason if material_source == "control" else None,
+            "procedure_document_id": procedure_document_id,
+            "procedure_document_status": procedure_document_status if procedure_document_id else None,
             # Re-scope staleness (same rule as ScopedControl.assessment_stale)
             "scope_restored_at": scope_restored_at,
             "assessment_recorded_at": assessment_recorded_at,
@@ -571,9 +781,24 @@ async def create_or_update_scoped_control(
 
     user_id = UUID(membership.user.db_id)
 
+    refusal = await _exclusion_refusal(
+        db,
+        org_id,
+        control_data.scf_id,
+        bool(existing_control.selected) if existing_control else None,
+        _requested_selected(control_dict) if existing_control else bool(control_dict.get("selected")),
+        was_status=existing_control.implementation_status if existing_control else None,
+        will_status=control_dict.get("implementation_status"),
+        is_admin=membership.is_admin,
+    )
+    if refusal:
+        raise HTTPException(status_code=refusal[0], detail=refusal[1])
+
     if existing_control:
         # Capture old values for audit trail
         old_values = _tracked_values(existing_control)
+        was_status = existing_control.implementation_status
+        was_selected = bool(existing_control.selected)
 
         # Update existing control
         for key, value in control_dict.items():
@@ -598,6 +823,11 @@ async def create_or_update_scoped_control(
             scf_id=control_data.scf_id, tracked_fields=SCOPED_CONTROL_TRACKED_FIELDS,
             action_source=detect_action_source(request),
             request_id=get_request_id(request),
+        )
+        # PIG R8: a control going at risk raises a deficiency.
+        await on_control_status(
+            db, existing_control, was_status, user_id,
+            detect_action_source(request), get_request_id(request), was_selected,
         )
 
         await db.commit()
@@ -630,6 +860,10 @@ async def create_or_update_scoped_control(
             scf_id=control_data.scf_id, tracked_fields=SCOPED_CONTROL_TRACKED_FIELDS,
             action_source=detect_action_source(request),
             request_id=get_request_id(request),
+        )
+        await on_control_status(
+            db, new_control, None, user_id,
+            detect_action_source(request), get_request_id(request),
         )
 
         await db.commit()
@@ -671,9 +905,19 @@ async def update_scoped_control(
 
     # Capture old values for audit trail
     old_values = _tracked_values(control)
+    was_status = control.implementation_status
+    was_selected = bool(control.selected)
 
     # Update only provided fields (flatten pptdf_applicability)
     update_data = flatten_pptdf(control_update.model_dump(exclude_unset=True))
+    refusal = await _exclusion_refusal(
+        db, org_id, scf_id, bool(control.selected), _requested_selected(update_data),
+        was_status=control.implementation_status,
+        will_status=update_data.get("implementation_status"),
+        is_admin=membership.is_admin,
+    )
+    if refusal:
+        raise HTTPException(status_code=refusal[0], detail=refusal[1])
     for key, value in update_data.items():
         setattr(control, key, value)
     control.updated_by_user_id = user_id
@@ -702,6 +946,11 @@ async def update_scoped_control(
         scf_id=scf_id, tracked_fields=SCOPED_CONTROL_TRACKED_FIELDS,
         action_source=detect_action_source(request),
         request_id=get_request_id(request),
+    )
+    # PIG R8: a control going at risk raises a deficiency.
+    await on_control_status(
+        db, control, was_status, user_id,
+        detect_action_source(request), get_request_id(request), was_selected,
     )
 
     await db.commit()
@@ -748,6 +997,10 @@ async def delete_scoped_control(
         raise HTTPException(status_code=404, detail="Scoped control not found")
 
     user_id = UUID(membership.user.db_id)
+
+    refusal = await _exclusion_refusal(db, org_id, scf_id, bool(control.selected), False)
+    if refusal:
+        raise HTTPException(status_code=refusal[0], detail=refusal[1])
 
     # Log deletion before removing
     old_values = _tracked_values(control)
@@ -832,10 +1085,16 @@ async def put_scope_override(
             override.reason,
             user_id,
             commit=False,
+            # The approver of an MCR exclusion is the authenticated admin
+            # making it, never an id taken from the request body.
+            approver_user_id=user_id if membership.is_admin else None,
         )
     except ValueError as exc:
         status = 404 if "catalog" in str(exc).lower() else 400
         raise HTTPException(status_code=status, detail=str(exc)) from exc
+    except PermissionError as exc:
+        # An MCR exclusion attempted by a non-admin.
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
 
     await db.flush()
     new_values = _tracked_values(control)
@@ -856,6 +1115,282 @@ async def put_scope_override(
     await db.commit()
     await db.refresh(control)
     return control
+
+
+@router.put(
+    "/organizations/{org_id}/framework-scoping/{framework_id}/basis",
+    response_model=FrameworkScopeSummaryItem,
+)
+async def put_framework_basis(
+    org_id: UUID,
+    framework_id: str,
+    body: FrameworkBasisRequest,
+    request: Request,
+    membership: OrgMembership = Depends(require_org_role("admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Record the obligation basis of a scoped framework (PIG R2).
+
+    Admin only. Reclassifying a framework from MCR to DSR changes which
+    exclusions need an approver, so it is the same tier as that approval.
+    The body replaces all three fields; send nulls to clear them.
+    """
+    try:
+        selection, old_values = await set_selection_basis(
+            db,
+            org_id,
+            framework_id,
+            body.basis,
+            body.obligation_type,
+            body.obligation_source,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    await db.flush()
+    await log_entity_changes(
+        db=db,
+        organization_id=org_id,
+        entity_type="organization_framework_selection",
+        entity_id=selection.id,
+        action="update",
+        changed_by_user_id=_member_user_id(membership),
+        old_values=old_values,
+        new_values={f: getattr(selection, f) for f in FRAMEWORK_SELECTION_TRACKED_FIELDS},
+        tracked_fields=FRAMEWORK_SELECTION_TRACKED_FIELDS,
+        action_source=detect_action_source(request),
+        request_id=get_request_id(request),
+    )
+    summary = await framework_scope_summary(db, org_id)
+    item = next((i for i in summary["frameworks"] if i["id"] == framework_id), None)
+    if item is None:
+        # Scoped but no longer mapped by any active catalogue control: refuse
+        # before committing, so a 404 never leaves a write behind.
+        raise HTTPException(status_code=404, detail=f"Framework '{framework_id}' is not in the catalogue")
+    await db.commit()
+    return item
+
+
+@router.put(
+    "/organizations/{org_id}/scoped-controls/{scf_id}/basis-override",
+    response_model=ScopedControlResponse,
+)
+async def put_control_basis_override(
+    org_id: UUID,
+    scf_id: str,
+    body: ControlBasisOverrideRequest,
+    request: Request,
+    membership: OrgMembership = Depends(require_org_role("admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Override one control's derived obligation basis, with a reason (PIG R2).
+
+    Admin only, for the same reason as the framework basis: overriding MCR to
+    DSR would otherwise route around the exclusion approval. ``basis: null``
+    clears the override and the control derives its basis again.
+    """
+    existing = (await db.execute(
+        select(ScopedControl).where(
+            and_(ScopedControl.organization_id == org_id, ScopedControl.scf_id == scf_id)
+        )
+    )).scalar_one_or_none()
+    old_values = _tracked_values(existing) if existing else {}
+    user_id = _member_user_id(membership)
+    try:
+        control = await set_control_basis_override(
+            db, org_id, scf_id, body.basis, body.reason, user_id
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    await db.flush()
+    await log_entity_changes(
+        db=db,
+        organization_id=org_id,
+        entity_type="scoped_control",
+        entity_id=control.id,
+        action="update",
+        changed_by_user_id=user_id,
+        old_values=old_values,
+        new_values=_tracked_values(control),
+        scf_id=scf_id,
+        tracked_fields=SCOPED_CONTROL_TRACKED_FIELDS,
+        action_source=detect_action_source(request),
+        request_id=get_request_id(request),
+    )
+    await db.commit()
+    await db.refresh(control)
+    return control
+
+
+@router.put(
+    "/organizations/{org_id}/scoped-controls/{scf_id}/target-maturity",
+    response_model=ScopedControlResponse,
+)
+async def put_control_target_maturity(
+    org_id: UUID,
+    scf_id: str,
+    body: ControlTargetMaturityRequest,
+    request: Request,
+    membership: OrgMembership = Depends(require_org_role("admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Override one control's inherited target maturity, with a reason (PIG R5).
+
+    Admin only, like the domain targets it departs from: lowering one control's
+    target is how a ``controls_at_target`` gate would otherwise be met without
+    the control improving. ``level: null`` clears the override and the control
+    inherits its domain's target again.
+    """
+    existing = (await db.execute(
+        select(ScopedControl).where(
+            and_(ScopedControl.organization_id == org_id, ScopedControl.scf_id == scf_id)
+        )
+    )).scalar_one_or_none()
+    old_values = _tracked_values(existing) if existing else {}
+    user_id = _member_user_id(membership)
+    try:
+        control = await set_control_target_override(
+            db, org_id, scf_id, body.level, body.reason, user_id
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    await db.flush()
+    await log_entity_changes(
+        db=db,
+        organization_id=org_id,
+        entity_type="scoped_control",
+        entity_id=control.id,
+        action="update",
+        changed_by_user_id=user_id,
+        old_values=old_values,
+        new_values=_tracked_values(control),
+        scf_id=scf_id,
+        tracked_fields=SCOPED_CONTROL_TRACKED_FIELDS,
+        action_source=detect_action_source(request),
+        request_id=get_request_id(request),
+    )
+    await db.commit()
+    await db.refresh(control)
+    return control
+
+
+async def _audited_control_write(
+    db: AsyncSession,
+    org_id: UUID,
+    scf_id: str,
+    request: Request,
+    user_id: Optional[UUID],
+    write,
+) -> ScopedControl:
+    """Run one per-control write and audit what it changed.
+
+    ``write`` is a coroutine function taking no arguments and returning the
+    control; LookupError reads as 404, ValueError as 400, PermissionError as 403.
+    """
+    existing = (await db.execute(
+        select(ScopedControl).where(
+            and_(ScopedControl.organization_id == org_id, ScopedControl.scf_id == scf_id)
+        )
+    )).scalar_one_or_none()
+    old_values = _tracked_values(existing) if existing else {}
+    try:
+        control = await write()
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    await db.flush()
+    await log_entity_changes(
+        db=db,
+        organization_id=org_id,
+        entity_type="scoped_control",
+        entity_id=control.id,
+        action="update",
+        changed_by_user_id=user_id,
+        old_values=old_values,
+        new_values=_tracked_values(control),
+        scf_id=scf_id,
+        tracked_fields=SCOPED_CONTROL_TRACKED_FIELDS,
+        action_source=detect_action_source(request),
+        request_id=get_request_id(request),
+    )
+    await db.commit()
+    await db.refresh(control)
+    return control
+
+
+@router.put(
+    "/organizations/{org_id}/scoped-controls/{scf_id}/materiality",
+    response_model=ScopedControlResponse,
+)
+async def put_control_materiality(
+    org_id: UUID,
+    scf_id: str,
+    body: ControlMaterialityRequest,
+    request: Request,
+    membership: OrgMembership = Depends(require_org_role("admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Override whether one control is material, with a reason (PIG R6).
+
+    Admin only, and the admin is recorded as the approver: deciding a control
+    is not material is what lets it be excluded or marked not applicable
+    without one. ``material: null`` returns the control to its catalogue
+    default (material at weighting 10); when that makes the control not
+    material, it needs a reason too.
+    """
+    user_id = _member_user_id(membership)
+
+    async def write():
+        if user_id is None:
+            raise PermissionError(
+                "Changing whether a control is material is recorded against an "
+                "approving admin; use an admin's own credentials"
+            )
+        return await set_material_override(
+            db, org_id, scf_id, body.material, body.reason, user_id
+        )
+
+    return await _audited_control_write(db, org_id, scf_id, request, user_id, write)
+
+
+@router.put(
+    "/organizations/{org_id}/scoped-controls/{scf_id}/procedure-document",
+    response_model=ScopedControlResponse,
+)
+async def put_control_procedure_document(
+    org_id: UUID,
+    scf_id: str,
+    body: ControlProcedureDocumentRequest,
+    request: Request,
+    membership: OrgMembership = Depends(require_org_role("editor")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Link the approved procedure document for one control (PIG R6, step 2d).
+
+    Editors and above, since control owners hold that role. The document must
+    be one of this organisation's procedures and approved when linked.
+    ``document_id: null`` unlinks it.
+    """
+    user_id = _member_user_id(membership)
+
+    async def write():
+        return await set_procedure_document(db, org_id, scf_id, body.document_id, user_id)
+
+    return await _audited_control_write(db, org_id, scf_id, request, user_id, write)
+
+
+def _member_user_id(membership: OrgMembership) -> Optional[UUID]:
+    """The acting user's id, or None for a platform key with no user row."""
+    db_id = getattr(getattr(membership, "user", None), "db_id", None)
+    return UUID(db_id) if db_id else None
+
+
 @router.post(
     "/organizations/{org_id}/scoped-controls/bulk-scope-framework",
     response_model=BulkScopeFrameworkResponse,
@@ -932,7 +1467,36 @@ async def bulk_unscope_by_framework(
     Tracked evidence whose only in-scope requirers leave scope is reported in
     ``orphaned_evidence``; pass ``orphan_evidence_action="untrack"`` to switch
     it off and close its open tasks in the same transaction.
+
+    Removing a framework that carries an MCR obligation (an active MCR
+    selection, or an in-scope control overridden to MCR that it maps) needs an
+    admin and a removal reason (PIG R2), the same bar as excluding one control.
+    So does removing one that would take a material control out of scope (PIG R6).
     """
+    if await unscope_touches_mcr(db, org_id, request.frameworks):
+        if not membership.is_admin:
+            raise HTTPException(
+                status_code=403,
+                detail="Removing a framework that carries an MCR obligation needs an organisation admin",
+            )
+        if not (request.removal_reason or "").strip():
+            raise HTTPException(
+                status_code=400,
+                detail="Removing a framework that carries an MCR obligation needs a removal_reason",
+            )
+    if await unscope_touches_material(db, org_id, request.frameworks):
+        # PIG R6: the same bar for a framework whose removal would take a
+        # material control out of scope.
+        if not membership.is_admin:
+            raise HTTPException(
+                status_code=403,
+                detail="Removing this framework would take a material control out of scope, which needs an organisation admin",
+            )
+        if not (request.removal_reason or "").strip():
+            raise HTTPException(
+                status_code=400,
+                detail="Removing this framework would take a material control out of scope, which needs a removal_reason",
+            )
     result = await bulk_unscope_frameworks(
         db=db,
         org_id=org_id,
@@ -999,6 +1563,7 @@ async def reset_all_scope(
             scope_override_reason=None,
             scope_override_set_at=None,
             scope_override_set_by=None,
+            scope_override_approved_by=None,
             updated_by_user_id=UUID(membership.user.db_id),
         )
     )
@@ -1062,9 +1627,27 @@ async def batch_update_scoped_controls(
             )
             existing = result.scalar_one_or_none()
 
+            op_fields = op.model_dump(exclude={'scf_id'}, exclude_unset=True)
+            refusal = await _exclusion_refusal(
+                db,
+                org_id,
+                op.scf_id,
+                bool(existing.selected) if existing else None,
+                _requested_selected(op_fields) if existing else bool(op_fields.get("selected", True)),
+                was_status=existing.implementation_status if existing else None,
+                will_status=op_fields.get("implementation_status"),
+                is_admin=membership.is_admin,
+            )
+            if refusal:
+                failed_count += 1
+                errors.append(f"{op.scf_id}: {refusal[1]}")
+                continue
+
             if existing:
                 # Capture old values for audit
                 old_values = _tracked_values(existing)
+                was_status = existing.implementation_status
+                was_selected = bool(existing.selected)
 
                 # Apply updates from operation — all provided fields
                 update_fields = op.model_dump(exclude={'scf_id'}, exclude_unset=True)
@@ -1089,6 +1672,10 @@ async def batch_update_scoped_controls(
                     scf_id=op.scf_id, tracked_fields=SCOPED_CONTROL_TRACKED_FIELDS,
                     action_source=detect_action_source(http_request),
                     request_id=get_request_id(http_request),
+                )
+                await on_control_status(
+                    db, existing, was_status, user_id,
+                    detect_action_source(http_request), get_request_id(http_request), was_selected,
                 )
 
                 result_controls.append(existing)
@@ -1125,6 +1712,10 @@ async def batch_update_scoped_controls(
                     scf_id=op.scf_id, tracked_fields=SCOPED_CONTROL_TRACKED_FIELDS,
                     action_source=detect_action_source(http_request),
                     request_id=get_request_id(http_request),
+                )
+                await on_control_status(
+                    db, new_control, None, user_id,
+                    detect_action_source(http_request), get_request_id(http_request),
                 )
 
                 result_controls.append(new_control)

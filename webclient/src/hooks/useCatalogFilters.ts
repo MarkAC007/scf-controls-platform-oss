@@ -27,6 +27,19 @@ export function useDomainIdentifiers(): Map<string, string> {
 }
 
 /**
+ * The catalog's active SCF domains, in catalog order, as the full query result
+ * so a caller can tell a failed read from an empty one. Shares the
+ * `catalog-domains` key with `useCatalogFilters`, so it costs no extra request.
+ */
+export function useCatalogDomains() {
+  return useQuery({
+    queryKey: ['catalog-domains'],
+    queryFn: fetchCatalogDomains,
+    staleTime: Infinity,
+  })
+}
+
+/**
  * Hook to fetch catalog filter options (domains and NIST CSF functions).
  * Uses React Query with infinite stale time since domains don't change.
  */

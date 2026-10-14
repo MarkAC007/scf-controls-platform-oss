@@ -134,6 +134,9 @@ describe('no other screen was quietly made URL-aware', () => {
   // AppLink is the one writer for cross-links (2026-09-25 cross-link QA): screens name
   // a destination object and AppLink alone turns it into a URL, so the list
   // grows by one file rather than by every screen that links out.
+  // #1155 added DeficienciesPage: it owns `view` (List or Board) on the
+  // deficiencies tab, as EvidenceWorkspace owns `view` on the evidence tab,
+  // and replaces it in place; App still owns `tab`.
   it('only the intended components import the URL module', () => {
     const importers = PRODUCTION.filter(([, source]) => /from '.*data\/appUrl'/.test(source))
       .map(([key]) => underSrc(key))
@@ -144,6 +147,7 @@ describe('no other screen was quietly made URL-aware', () => {
       'components/EvidenceReview.tsx',
       'components/EvidenceWorkspace.tsx',
       'components/Header.tsx',
+      'components/deficiencies/DeficienciesPage.tsx',
       'components/library/UnifiedLibraryList.tsx',
       'components/library/UnifiedLibraryPage.tsx',
     ])

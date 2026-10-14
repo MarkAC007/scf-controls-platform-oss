@@ -56,6 +56,7 @@ from models import (
     ScopedControl,
 )
 from services.notifications import create_composite_insufficient_notifications_sync
+from services.deficiencies import on_composite_insufficient_sync
 from services.frequency_vocabulary import STALENESS_DAYS, staleness_days
 
 # Previously a hand-maintained copy of validation_service.STALENESS_THRESHOLDS,
@@ -312,6 +313,23 @@ def _required_artifact_types_for_control(
     if row is None:
         return []
     return list(row) if isinstance(row, list) else []
+
+
+def _raise_composite_deficiency(session: Session, organization_id: UUID, scf_id: str) -> None:
+    """PIG R8: an insufficient composite raises a deficiency on its control.
+
+    After the composite has committed, in its own commit: a failure here is
+    logged and rolled back, never allowed to undo the recompute.
+    """
+    try:
+        on_composite_insufficient_sync(session, organization_id, scf_id)
+        session.commit()
+    except Exception:  # noqa: BLE001 — the composite stands without it
+        logger.exception(
+            "Could not raise a deficiency for insufficient composite org=%s scf=%s",
+            organization_id, scf_id,
+        )
+        session.rollback()
 
 
 def _evidence_ids_for_control(
@@ -740,6 +758,7 @@ def recompute_control_composite_task(
         elapsed_ms = int((time.monotonic() - started_at) * 1000)
 
         if payload["composite_status"] == "insufficient" and prior_status != "insufficient":
+            _raise_composite_deficiency(session, org_uuid, scf_id)
             create_composite_insufficient_notifications_sync(session, org_uuid, scf_id)
 
         # Structured per-compute log line (§7) — JSON for easy grep.

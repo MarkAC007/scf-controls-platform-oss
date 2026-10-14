@@ -18,6 +18,8 @@ import {
   evidenceItemSearch,
   navigateToSearch,
   toSearchString,
+  withCapabilityTestItem,
+  withLibraryMode,
   withRiskItem,
   withSystemItem,
   withTaskItem,
@@ -28,7 +30,9 @@ import {
 export type AppDestination =
   /** `mode` defaults to in-scope; pass full-library for a control outside scope. */
   | { kind: 'control'; id: string; mode?: LibraryMode }
-  | { kind: 'evidence' | 'risk' | 'vendor' | 'system' | 'task'; id: string }
+  | { kind: 'evidence' | 'risk' | 'vendor' | 'system' | 'task' | 'capability-test'; id: string }
+  /** The library list, with no control selected. */
+  | { kind: 'library'; mode?: LibraryMode }
 
 /** The destination's query string, built on top of the current one. */
 export function destinationSearch(search: string, to: AppDestination): string {
@@ -45,7 +49,20 @@ export function destinationSearch(search: string, to: AppDestination): string {
       return withSystemItem(search, to.id)
     case 'task':
       return withTaskItem(search, to.id)
+    case 'capability-test':
+      return withCapabilityTestItem(search, to.id)
+    case 'library':
+      return withLibraryMode(search, to.mode ?? 'in-scope')
   }
+}
+
+/**
+ * Go to a destination in place, as a plain click on its link would. For rows
+ * that cannot be anchors, such as a notification in the bell, so they still
+ * name an object rather than write the address bar themselves.
+ */
+export function navigateToDestination(to: AppDestination): void {
+  navigateToSearch(destinationSearch(currentSearch(), to))
 }
 
 interface AppLinkProps {
@@ -78,7 +95,7 @@ export default function AppLink({ to, children, onNavigate, ...rest }: AppLinkPr
     e.stopPropagation()
     // Built at click time, so parameters written since render are kept.
     if (onNavigate) onNavigate()
-    else navigateToSearch(destinationSearch(currentSearch(), to))
+    else navigateToDestination(to)
   }
 
   return (

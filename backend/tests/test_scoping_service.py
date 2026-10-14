@@ -418,8 +418,10 @@ class TestStructuredScopePrecedence:
 
     async def test_exclusion_requires_and_persists_a_rationale(self):
         control = ScopedControl(organization_id=ORG_ID, scf_id="ctl-one", selected=True)
+        # Weighted below 10, so not material (PIG R6): no approver needed.
         catalog = SimpleNamespace(
-            scf_id="ctl-one", framework_mappings={"iso_27001_2022": ["A.1"]}
+            scf_id="ctl-one", framework_mappings={"iso_27001_2022": ["A.1"]},
+            control_weighting=5,
         )
         db = _FakeAsyncSession([[control], [catalog]])
         with pytest.raises(ValueError, match="rationale"):
@@ -427,7 +429,7 @@ class TestStructuredScopePrecedence:
                 db, ORG_ID, "ctl-one", "exclude", "  ", USER_ID, commit=False
             )
 
-        db = _FakeAsyncSession([[control], [catalog]])
+        db = _FakeAsyncSession([[control], [catalog], []])
         updated = await set_individual_scope_override(
             db, ORG_ID, "ctl-one", "exclude", "Compensating control", USER_ID,
             commit=False,
@@ -458,7 +460,7 @@ class TestFrameworkScopeViews:
             ),
         ]
         db = _FakeAsyncSession([
-            catalog, scoped, [("fw",), ("other",)],
+            catalog, scoped, [("fw", None), ("other", None)],
             [("leave", []), ("shared", []), ("included", [])],  # in-scope evidence_requests: none
         ])
         preview = await preview_framework_change(db, ORG_ID, ["fw"], "remove")
@@ -493,7 +495,7 @@ class TestFrameworkScopeViews:
             ),
             ScopedControl(organization_id=ORG_ID, scf_id="orphan", selected=True),
         ]
-        db = _FakeAsyncSession([catalog, scoped, [("other",)]])
+        db = _FakeAsyncSession([catalog, scoped, [("other", None)]])
         preview = await preview_framework_change(db, ORG_ID, ["fw"], "add")
 
         assert preview["new_controls"] == ["brand-new"]
@@ -678,8 +680,8 @@ class TestRescopeStamp:
 
     async def test_exclude_never_stamps(self):
         control = ScopedControl(organization_id=ORG_ID, scf_id="ctl-one", selected=True)
-        catalog = SimpleNamespace(scf_id="ctl-one", framework_mappings={"fw": ["1"]})
-        db = _FakeAsyncSession([[control], [catalog]])
+        catalog = SimpleNamespace(scf_id="ctl-one", framework_mappings={"fw": ["1"]}, control_weighting=5)
+        db = _FakeAsyncSession([[control], [catalog], []])
         updated = await set_individual_scope_override(
             db, ORG_ID, "ctl-one", "exclude", "reason", USER_ID, commit=False
         )
@@ -815,7 +817,7 @@ class TestPreviewOrphanEvidence:
             ScopedControl(organization_id=ORG_ID, scf_id="stay", selected=True),
         ]
         db = _FakeAsyncSession([
-            catalog, scoped, [("fw",), ("other",)],
+            catalog, scoped, [("fw", None), ("other", None)],
             [("leave", ["E-SOLO", "E-SHARED"]), ("stay", ["E-SHARED"])],
             [(uuid4(), "E-SOLO")],
             [2],
