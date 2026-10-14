@@ -14,7 +14,9 @@ from sqlalchemy import select, and_
 
 from database import get_db
 from auth import require_org_viewer, OrgMembership
+from catalog_models import SCFCatalogControl
 from models import CLOSED_TASK_STATUSES, EvidenceCollectionTask, ScopedControl, EvidenceTracking
+from services.materiality import material_expr
 from services.responsibility import my_item_filter, my_task_filter
 from services.team_assignments import (
     CONTROL_ASSIGNMENT_SPEC,
@@ -49,6 +51,11 @@ class BlockingControlItem(BaseModel):
     scf_id: str
     implementation_status: str
     days_stale: int
+    #: Catalogue weighting (0 to 10); None when the catalogue no longer holds
+    #: the control. The list is ordered material first, then by this (PIG R6).
+    weighting: Optional[int] = None
+    #: Whether the control is material: its override, else weighting 10.
+    material: bool = False
 
 
 class StaleCollectionItem(BaseModel):
@@ -187,11 +194,22 @@ async def get_work_queue(
     # ------------------------------------------------------------------
     # 2. Blocking controls (not_started or at_risk)
     # ------------------------------------------------------------------
+    # Material controls first, then the heaviest catalogue weighting (PIG R6),
+    # so the 20 shown are the ones that matter most; a control made material
+    # by override comes ahead of heavier ones that are not. The stalest first
+    # within that.
+    weighting_col = (
+        select(SCFCatalogControl.control_weighting)
+        .where(SCFCatalogControl.scf_id == ScopedControl.scf_id)
+        .scalar_subquery()
+    )
     blocking_query = (
         select(
             ScopedControl.scf_id,
             ScopedControl.implementation_status,
             ScopedControl.updated_at,
+            weighting_col.label("weighting"),
+            material_expr().label("material"),
         )
         .where(
             and_(
@@ -200,7 +218,12 @@ async def get_work_queue(
                 ScopedControl.implementation_status.in_(["not_started", "at_risk"]),
             )
         )
-        .order_by(ScopedControl.updated_at.asc())
+        .order_by(
+            material_expr().desc(),
+            weighting_col.desc().nulls_last(),
+            ScopedControl.updated_at.asc(),
+            ScopedControl.scf_id,
+        )
         .limit(20)
     )
     if caller_id is not None:
@@ -223,6 +246,8 @@ async def get_work_queue(
             scf_id=row.scf_id,
             implementation_status=row.implementation_status,
             days_stale=(today - row.updated_at.date()).days if row.updated_at else 0,
+            weighting=row.weighting,
+            material=bool(row.material),
         )
         for row in blocking_rows
     ]

@@ -68,6 +68,7 @@ from services.review_workflow import (
     transition_error,
 )
 from services.notifications import create_evidence_rejected_notifications
+from services.deficiencies import on_evidence_rejected
 
 from api.storage_gate import storage_not_configured
 from services.storage_config import StorageNotConfigured
@@ -766,6 +767,12 @@ async def review_evidence_file(
         action_source=detect_action_source(request),
         request_id=get_request_id(request),
     )
+    if body.review_status == "rejected":
+        # PIG R8: a rejection raises a deficiency on each control it supports.
+        await on_evidence_rejected(
+            db, org_id, evidence_id, UUID(membership.user.db_id),
+            detect_action_source(request), get_request_id(request),
+        )
 
     await db.commit()
     await db.refresh(evidence_file, attribute_names=["uploaded_by", "reviewed_by"])

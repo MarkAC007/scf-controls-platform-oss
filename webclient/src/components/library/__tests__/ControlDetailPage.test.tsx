@@ -18,7 +18,16 @@ import { describe, expect, it, vi, afterEach } from 'vitest'
 
 // Mock subcomponents that make external calls
 vi.mock('../../scoping/ScopingDetailPage', () => ({
-  default: () => <div data-testid="implementation-record-form" />,
+  default: ({ orgBusinessSize, orgMaturityTargets }: {
+    orgBusinessSize?: string | null
+    orgMaturityTargets?: Record<string, string> | null
+  }) => (
+    <div
+      data-testid="implementation-record-form"
+      data-org-size={orgBusinessSize ?? ''}
+      data-targets={JSON.stringify(orgMaturityTargets ?? null)}
+    />
+  ),
 }))
 vi.mock('../../AssessmentObjectivesList', () => ({
   default: ({ scfId }: { scfId: string }) => (
@@ -558,6 +567,18 @@ describe('ControlDetailPage — split layout', () => {
     // The catalog detail stays visible on the left at the same time
     expect(screen.getByText('Assigned Security Responsibilities')).toBeInTheDocument()
     expect(panel).not.toHaveTextContent('Assigned Security Responsibilities')
+  })
+
+  it("hands the organisation's business size to the implementation record", () => {
+    window.localStorage.clear()
+    render(<ControlDetailPage {...inScopeProps()} orgBusinessSize="enterprise" />)
+    expect(screen.getByTestId('implementation-record-form').dataset.orgSize).toBe('enterprise')
+  })
+
+  it("hands the organisation's domain targets to the implementation record", () => {
+    window.localStorage.clear()
+    render(<ControlDetailPage {...inScopeProps()} orgMaturityTargets={{ GOV: 'L2' }} />)
+    expect(screen.getByTestId('implementation-record-form').dataset.targets).toBe('{"GOV":"L2"}')
   })
 
   it('no longer offers the implementation record as a tab', () => {

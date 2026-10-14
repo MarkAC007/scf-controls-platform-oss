@@ -211,6 +211,9 @@ celery_app.conf.update(
         "tasks_automation.generate_evidence_tasks_task": {"queue": "default"},
         "tasks_automation.notify_due_tasks_task": {"queue": "default"},
         "tasks_automation.notify_overdue_tasks_task": {"queue": "default"},
+        "tasks_automation.notify_expired_risk_acceptances_task": {"queue": "default"},
+        "tasks_automation.notify_due_control_validations_task": {"queue": "default"},
+        "tasks_automation.take_posture_snapshots_task": {"queue": "default"},
         # Document generation routes to default for the same reason as the
         # automation tasks above: a dedicated queue only works if every worker
         # launch command remembers to subscribe to it. A queue that works with
@@ -280,6 +283,23 @@ celery_app.conf.update(
                 "task-overdue-notifications-daily": {
                     "task": "tasks_automation.notify_overdue_tasks_task",
                     "schedule": crontab(hour=7, minute=15),
+                },
+                # PIG R7: an expired risk acceptance is announced once, after
+                # the task notifiers so the sweeps do not contend.
+                "risk-acceptance-expiry-daily": {
+                    "task": "tasks_automation.notify_expired_risk_acceptances_task",
+                    "schedule": crontab(hour=7, minute=30),
+                },
+                # PIG R10: a control coming due for validation is announced
+                # once per cycle; the month's posture snapshot is taken on
+                # the first, before the working day.
+                "control-validation-due-daily": {
+                    "task": "tasks_automation.notify_due_control_validations_task",
+                    "schedule": crontab(hour=7, minute=45),
+                },
+                "posture-snapshot-monthly": {
+                    "task": "tasks_automation.take_posture_snapshots_task",
+                    "schedule": crontab(day_of_month=1, hour=2, minute=0),
                 },
             }
             if _flag_enabled("TASK_AUTOMATION_ENABLED", "true")

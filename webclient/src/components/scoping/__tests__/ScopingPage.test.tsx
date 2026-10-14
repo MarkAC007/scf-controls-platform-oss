@@ -81,14 +81,20 @@ vi.mock('../ScopingDetailPage', () => ({
     onBack,
     onFieldChange,
     onToggleScope,
+    orgBusinessSize,
+    orgMaturityTargets,
   }: {
     control: { scf_id: string }
     onBack: () => void
     onFieldChange: (field: string, value: unknown) => void
     onToggleScope: (id: string) => void
+    orgBusinessSize?: string | null
+    orgMaturityTargets?: Record<string, string> | null
   }) => (
     <div data-testid="scoping-detail">
       <span data-testid="detail-id">{control.scf_id}</span>
+      <span data-testid="detail-org-size">{orgBusinessSize ?? 'none'}</span>
+      <span data-testid="detail-targets">{JSON.stringify(orgMaturityTargets ?? null)}</span>
       <button onClick={onBack}>back</button>
       <button onClick={() => onFieldChange('implementation_status', 'implemented')}>
         change-field
@@ -228,6 +234,10 @@ vi.mock('../../../hooks/useIsOrgAdmin', () => ({
   useIsOrgAdmin: () => true,
 }))
 
+vi.mock('../../../hooks/useOrganizationSettings', () => ({
+  useOrganizationSettings: () => ({ data: { business_size: 'small', maturity_targets: { GOV: 'L3' } } }),
+}))
+
 vi.mock('../../../hooks/useDebounce', () => ({
   useDebounce: (v: string) => v,
 }))
@@ -349,6 +359,22 @@ describe('ScopingPage', () => {
         expect(screen.getByTestId('scoping-detail')).toBeInTheDocument()
       })
       expect(screen.queryByTestId('scoping-list')).not.toBeInTheDocument()
+    })
+
+    it("passes the organisation's business size to the detail view", async () => {
+      renderPage({})
+      fireEvent.click(screen.getByText('open-control'))
+      await waitFor(() => {
+        expect(screen.getByTestId('detail-org-size')).toHaveTextContent('small')
+      })
+    })
+
+    it("passes the organisation's domain targets to the detail view", async () => {
+      renderPage({})
+      fireEvent.click(screen.getByText('open-control'))
+      await waitFor(() => {
+        expect(screen.getByTestId('detail-targets')).toHaveTextContent('{"GOV":"L3"}')
+      })
     })
 
     it('detail view shows the selected control id', async () => {

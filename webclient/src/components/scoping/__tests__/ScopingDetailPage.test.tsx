@@ -33,11 +33,24 @@ vi.mock('../../RiskThreatContext', () => ({
 }))
 
 vi.mock('../../MaturityRoadmap', () => ({
-  default: () => <div data-testid="maturity-roadmap" />,
+  default: ({ target, targetSource, targetReason }: {
+    target?: string | null
+    targetSource?: string | null
+    targetReason?: string | null
+  }) => (
+    <div
+      data-testid="maturity-roadmap"
+      data-target={target ?? ''}
+      data-target-source={targetSource ?? ''}
+      data-target-reason={targetReason ?? ''}
+    />
+  ),
 }))
 
 vi.mock('../../BusinessSizeGuidance', () => ({
-  default: () => <div data-testid="business-size-guidance" />,
+  default: ({ orgSize }: { orgSize?: string | null }) => (
+    <div data-testid="business-size-guidance" data-org-size={orgSize ?? ''} />
+  ),
 }))
 
 vi.mock('../../DeprecatedBadge', () => ({
@@ -51,16 +64,19 @@ vi.mock('../../ModernCommentThread', () => ({
     commentableType,
     commentableId,
     organizationId,
+    header,
   }: {
     commentableType: string
     commentableId: string
     organizationId: string
+    header?: string
   }) => (
     <div
       data-testid="modern-comment-thread"
       data-type={commentableType}
       data-id={commentableId}
       data-org={organizationId}
+      data-header={header}
     />
   ),
 }))
@@ -74,6 +90,14 @@ vi.mock('../../AuditLogPanel', () => ({
 vi.mock('../../OwningTeams', () => ({
   default: ({ assignableType, assignableId }: { assignableType: string; assignableId: string }) => (
     <div data-testid="owning-teams" data-type={assignableType} data-id={assignableId} />
+  ),
+}))
+
+vi.mock('../../governance/GovernanceTab', () => ({
+  default: ({ scfId, onChange }: { scfId: string; onChange?: () => void }) => (
+    <button type="button" data-testid="governance-tab" data-scf-id={scfId} onClick={() => onChange?.()}>
+      governance saved
+    </button>
   ),
 }))
 
@@ -222,6 +246,68 @@ describe('ScopingDetailPage', () => {
     it('renders BusinessSizeGuidance', () => {
       render(<ScopingDetailPage {...makeProps()} />)
       expect(screen.getByTestId('business-size-guidance')).toBeInTheDocument()
+    })
+
+    it("hands the organisation's business size to the sizing guidance", () => {
+      render(<ScopingDetailPage {...makeProps({ orgBusinessSize: 'large' })} />)
+      expect(screen.getByTestId('business-size-guidance').dataset.orgSize).toBe('large')
+    })
+
+    it("hands the control's domain target to the roadmap", () => {
+      render(<ScopingDetailPage {...makeProps({ orgMaturityTargets: { gov: 'L3', RSK: 'L1' } })} />)
+      const roadmap = screen.getByTestId('maturity-roadmap')
+      expect(roadmap.dataset.target).toBe('L3')
+      expect(roadmap.dataset.targetSource).toBe('domain')
+    })
+
+    it("prefers the control's own target override, with its reason", () => {
+      render(<ScopingDetailPage {...makeProps({
+        orgMaturityTargets: { GOV: 'L3' },
+        scopingEntry: {
+          ...SCOPING_ENTRY,
+          target_maturity_override: 'L5',
+          target_maturity_reason: 'Crown jewel',
+        } as ScopingDetailPageProps['scopingEntry'],
+      })} />)
+      const roadmap = screen.getByTestId('maturity-roadmap')
+      expect(roadmap.dataset.target).toBe('L5')
+      expect(roadmap.dataset.targetSource).toBe('control')
+      expect(roadmap.dataset.targetReason).toBe('Crown jewel')
+    })
+
+    it('passes no target to a control with no scope record, as the server resolves it', () => {
+      render(<ScopingDetailPage {...makeProps({
+        orgMaturityTargets: { GOV: 'L3' },
+        // The placeholder ScopingPage builds for an unscoped control: no database id.
+        scopingEntry: { scf_id: 'GOV-01', selected: false } as ScopingDetailPageProps['scopingEntry'],
+      })} />)
+      const roadmap = screen.getByTestId('maturity-roadmap')
+      expect(roadmap.dataset.target).toBe('')
+      expect(roadmap.dataset.targetSource).toBe('')
+    })
+
+    it("prefers the server's resolved target over the organisation settings", () => {
+      render(<ScopingDetailPage {...makeProps({
+        // Settings stale or unread: the header must still match the GOVERNANCE tab.
+        orgMaturityTargets: null,
+        serverTarget: { level: 'L3', source: 'domain' },
+      })} />)
+      const roadmap = screen.getByTestId('maturity-roadmap')
+      expect(roadmap.dataset.target).toBe('L3')
+      expect(roadmap.dataset.targetSource).toBe('domain')
+    })
+
+    it('tells the container when the GOVERNANCE tab saves, so the roadmap target reloads', () => {
+      const onGovernanceChange = vi.fn()
+      render(<ScopingDetailPage {...makeProps({ onGovernanceChange })} />)
+      clickTab('GOVERNANCE')
+      fireEvent.click(screen.getByTestId('governance-tab'))
+      expect(onGovernanceChange).toHaveBeenCalledTimes(1)
+    })
+
+    it('passes no target when neither the control nor its domain has one', () => {
+      render(<ScopingDetailPage {...makeProps({ orgMaturityTargets: { RSK: 'L2' } })} />)
+      expect(screen.getByTestId('maturity-roadmap').dataset.target).toBe('')
     })
 
     it('renders framework count widget', () => {
@@ -584,6 +670,10 @@ describe('ScopingDetailPage', () => {
       expect(thread).toHaveAttribute('data-type', 'control')
       expect(thread).toHaveAttribute('data-id', 'db-id-123')
       expect(thread).toHaveAttribute('data-org', 'org-1')
+      // #1154: the thread sits in the same bench card as the notes panel above
+      // it, and opts into the bench header strip that card uses
+      expect(thread.closest('.detail-section-container.surface-bench')).not.toBeNull()
+      expect(thread).toHaveAttribute('data-header', 'strip')
     })
 
     it('shows save hint when scopingEntry has no id', () => {

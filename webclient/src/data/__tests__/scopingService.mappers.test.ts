@@ -140,3 +140,21 @@ describe('exportScopedControls — normalizeEvidenceTracking', () => {
     expect(parsed.evidence_tracking[EVIDENCE_KEY].maturity_level).toBe('L2')
   })
 })
+
+// PIG R5: the Library detail reads a control's own target from this mapper, so
+// dropping the override here would show the domain target in its place.
+describe('loadScopedControls — scoped control target maturity', () => {
+  it("carries the control's target override and its reason through", async () => {
+    vi.mocked(api.getScopedControls).mockResolvedValue([
+      { ...SCOPED_ROW, target_maturity_override: 'L4', target_maturity_reason: 'Crown jewel' },
+    ] as never)
+    const data = await loadScopedControls()
+    expect(data?.scoped_controls[0].target_maturity_override).toBe('L4')
+    expect(data?.scoped_controls[0].target_maturity_reason).toBe('Crown jewel')
+  })
+
+  it('reads a control with no override as inheriting', async () => {
+    const data = await loadScopedControls()
+    expect(data?.scoped_controls[0].target_maturity_override).toBeNull()
+  })
+})

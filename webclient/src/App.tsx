@@ -19,6 +19,8 @@ import {
 import type { EnrichedControl, ScopedControlsFile, CollectionInterfacesFile, ERLFile, FrameworkNameMap, EvidenceTemplatesFile } from './types'
 import LibraryPage from './components/library/UnifiedLibraryPage'
 import ScopingPage from './components/scoping/FrameworkScopingPage'
+import DeficienciesPage from './components/deficiencies/DeficienciesPage'
+import CapabilityTestsPage from './components/capability-tests/CapabilityTestsPage'
 import EvidenceWorkspace from './components/EvidenceWorkspace'
 import Dashboard from './components/Dashboard'
 import MappingMatrix from './components/MappingMatrix'
@@ -44,6 +46,7 @@ import IntegrationsSettings from './components/IntegrationsSettings'
 import EvidenceStorageSettings from './components/EvidenceStorageSettings'
 import AssessmentEngineSettings from './components/AssessmentEngineSettings'
 import TaskAutomationSettings from './components/TaskAutomationSettings'
+import MaturityTargetsSettings from './components/MaturityTargetsSettings'
 import EvidenceStorageMigrationPanel from './components/EvidenceStorageMigrationPanel'
 import AuditLogPage from './components/AuditLogPage'
 import EngagementsPage from './components/EngagementsPage'
@@ -55,6 +58,7 @@ import CatalogChangelogPage from './components/CatalogChangelogPage'
 import CatalogVersionCard from './components/CatalogVersionCard'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import { ThemeProvider } from './contexts/ThemeContext'
+import { ConfirmProvider } from './contexts/ConfirmContext'
 import { OrganizationProvider, useOrganization } from './contexts/OrganizationContext'
 import { RiskProfileProvider } from './contexts/RiskProfileContext'
 import { DataRefreshProvider, useDataRefresh } from './contexts/DataRefreshContext'
@@ -85,8 +89,12 @@ import {
 import InviteAcceptance, { PENDING_INVITE_KEY } from './components/InviteAcceptance'
 import OrgSwitcher from './components/OrgSwitcher'
 import type { ClientSummary, ConsultantInvite } from './types'
+import { useFocusTestFromUrl } from './hooks/useCapabilityTests'
+import { scfIdForScopedControl } from './utils/scopedControlRef'
 
-type Tab = 'dashboard' | 'journey' | 'capability-posture' | 'library' | 'scoping' | 'evidence' | 'mapping-matrix' | 'tasks' | 'systems' | 'users' | 'consultant-portal' | 'risk-register' | 'vendors' | 'settings' | 'webhooks' | 'audit-log' | 'engagements' | 'documents' | 'platform-catalog' | 'platform-tenants' | 'catalog-changelog'
+const readCapabilityTestItem = (search: string) => readAppLocation(search).capabilityTestItem
+
+type Tab = 'dashboard' | 'journey' | 'capability-posture' | 'library' | 'scoping' | 'evidence' | 'mapping-matrix' | 'tasks' | 'systems' | 'users' | 'consultant-portal' | 'risk-register' | 'vendors' | 'settings' | 'webhooks' | 'audit-log' | 'engagements' | 'documents' | 'platform-catalog' | 'platform-tenants' | 'catalog-changelog' | 'deficiencies' | 'capability-tests'
 
 /**
  * Screen selection lives in `activeTab`; `data/appUrl.ts` owns the vocabulary
@@ -337,6 +345,14 @@ function AppContent() {
     setTaskItem(id)
   }, [])
 
+  // Handler for opening a risk from a notification (PIG R7: an acceptance
+  // that expired). Arriving at a risk is somewhere the user can go Back from.
+  const handleNavigateToRisk = (riskCode: string) => {
+    pushSearch(withRiskItem(window.location.search, riskCode))
+    setRiskItem(riskCode)
+    setActiveTab('risk-register')
+  }
+
   // Handler for navigating to a specific control from the dashboard work
   // queue, a risk assessment, or a notification.
   const handleNavigateToControl = (scfId: string) => {
@@ -345,6 +361,9 @@ function AppContent() {
     setLibraryItem(scfId)
     setActiveTab('library')
   }
+
+  // The bell resolves a control notification only in the organisation on screen.
+  const resolveControlScfId = (scopedControlId: string) => scfIdForScopedControl(scopingData, scopedControlId)
 
   // Handler for invite acceptance completion
   const handleInviteComplete = () => {
@@ -549,6 +568,9 @@ function AppContent() {
     }
     tabUrlNormalised.current = true
   }, [activeTab])
+
+  // Capability tests tab: the ?test= param, a test to open, named by a finding's link.
+  const capabilityTestItem = useFocusTestFromUrl(activeTab, readCapabilityTestItem)
 
   // Browser Back and Forward. This acts when the URL names a synced tab, or
   // when we are leaving one for the dashboard, and otherwise leaves `activeTab`
@@ -771,7 +793,8 @@ function AppContent() {
         activeTab={activeTab}
         onTabChange={setActiveTab}
         onNavigateToEvidence={handleNavigateToEvidence}
-        onNavigateToControl={handleNavigateToControl}
+        onNavigateToRisk={handleNavigateToRisk}
+        resolveControlScfId={resolveControlScfId}
         isConsultant={isConsultant === true}
         clientOrgIds={clientOrgIds}
         onOrgSwitch={(org) => {
@@ -789,6 +812,7 @@ function AppContent() {
               onScopingDataChange={setScopingData}
               onNavigateToEvidence={handleNavigateToEvidence}
               onNavigateToControl={handleNavigateToControl}
+              onNavigateToDocuments={() => setActiveTab('documents')}
               onNavigateToScoping={() => {
                 pushSearch(withLibraryMode(window.location.search, 'full-library'))
                 setLibraryMode('full-library')
@@ -835,6 +859,15 @@ function AppContent() {
               onChanged={() => {
                 queryClient.invalidateQueries({ queryKey: ['scoping-data'] })
               }}
+            />
+          )}
+          {activeTab === 'deficiencies' && scopingData && (
+            <DeficienciesPage organizationId={scopingData.organizationId!} />
+          )}
+          {activeTab === 'capability-tests' && scopingData && (
+            <CapabilityTestsPage
+              organizationId={scopingData.organizationId!}
+              focusTestId={capabilityTestItem}
             />
           )}
           {activeTab === 'evidence' && scopingData && (
@@ -961,6 +994,7 @@ function AppContent() {
                   { id: 'settings-catalog-version', label: 'CATALOG VERSION' },
                   { id: 'settings-branding', label: 'ORGANISATION BRANDING' },
                   { id: 'settings-risk', label: 'RISK & GOVERNANCE' },
+                  { id: 'settings-maturity-targets', label: 'MATURITY TARGETS' },
                   { id: 'settings-docgen', label: 'DOCUMENT GENERATION' },
                   { id: 'settings-assessment-engine', label: 'AI ASSESSMENT ENGINE' },
                   { id: 'settings-task-automation', label: 'TASK AUTOMATION' },
@@ -985,6 +1019,13 @@ function AppContent() {
                 </div>
                 <div id="settings-risk">
                   <RiskProfileSettings
+                    organizationId={scopingData.organizationId!}
+                  />
+                </div>
+                {/* Target maturity per SCF domain (PIG R5). Readable by any
+                    member; the Save behind it is admin-only. */}
+                <div id="settings-maturity-targets">
+                  <MaturityTargetsSettings
                     organizationId={scopingData.organizationId!}
                   />
                 </div>
@@ -1117,6 +1158,9 @@ function AppContent() {
 export default function App() {
   return (
     <ThemeProvider>
+      {/* Outermost after the theme: any screen, signed in or not, can ask
+          for a confirmation, and the dialog renders above all of them (#1157). */}
+      <ConfirmProvider>
       <AuthProvider>
         <OrganizationProvider>
           {/* Inside OrganizationProvider: the change cursor it polls is
@@ -1157,6 +1201,7 @@ export default function App() {
           </DataRefreshProvider>
         </OrganizationProvider>
       </AuthProvider>
+      </ConfirmProvider>
     </ThemeProvider>
   )
 }

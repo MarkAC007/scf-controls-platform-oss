@@ -15,6 +15,7 @@ import {
   revokeOrgApiKey,
 } from '../data/apiClient'
 import type { OrgApiKey, OrgApiKeyCreated, OrgApiKeyRole } from '../data/apiClient'
+import { useConfirm } from '../contexts/ConfirmContext'
 import { useModalDismiss } from '../hooks/useModalDismiss'
 import { useHasOrgRole } from '../hooks/useHasOrgRole'
 
@@ -32,6 +33,7 @@ const ROLE_HELP: Record<OrgApiKeyRole, string> = {
 }
 
 export default function ApiKeyManagement({ organizationId }: ApiKeyManagementProps) {
+  const confirm = useConfirm()
   const [keys, setKeys] = useState<OrgApiKey[]>([])
   const [loading, setLoading] = useState(true)
   const [showCreateModal, setShowCreateModal] = useState(false)
@@ -94,7 +96,13 @@ export default function ApiKeyManagement({ organizationId }: ApiKeyManagementPro
   }
 
   const handleRevoke = async (keyId: string, keyName: string) => {
-    if (!confirm(`Revoke API key "${keyName}"? This cannot be undone.`)) return
+    const ok = await confirm({
+      title: 'Revoke API key',
+      message: `Revoke API key "${keyName}"? This cannot be undone.`,
+      confirmLabel: 'Revoke key',
+      destructive: true,
+    })
+    if (!ok) return
     try {
       await revokeOrgApiKey(organizationId, keyId)
       toast.success('API key revoked')
@@ -198,7 +206,7 @@ export default function ApiKeyManagement({ organizationId }: ApiKeyManagementPro
                     {k.is_active && (
                       <button
                         className="btn btn-danger btn-sm"
-                        onClick={() => handleRevoke(k.id, k.name)}
+                        onClick={() => void handleRevoke(k.id, k.name)}
                       >
                         Revoke
                       </button>

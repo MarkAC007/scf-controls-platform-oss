@@ -9,6 +9,9 @@
  *   1. Breadcrumb "‹ Systems Registry / <name>" + "k of N systems" pager
  *   2. Header: accent-bar + name + type chip + status chip + vendor + owner + description
  *   3. LINKED CONTROLS badges (evidence_id chips from capabilities)
+ *   3a. BOUNDARY & RECOVERY (PIG R4): assessment boundary, criticality, RTO,
+ *      RPO, data classification, hosting location — always shown, so a gap
+ *      reads as "Undecided" / "Not recorded" rather than disappearing.
  *   4. EVIDENCE RECIPES section (recipe generation status + regenerate action)
  *      Deviation: no per-evidence-item recipe cards available client-side via
  *      existing hooks — only recipe generation status. Section shows generation
@@ -23,6 +26,7 @@
  */
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import RichText from './RichText'
+import { SYSTEM_CRITICALITY_LABELS, DATA_CLASSIFICATION_LABELS } from '../types'
 import type { System, SystemEvidenceCapability, RecipeGenerationStatus } from '../types'
 import {
   getSystem,
@@ -32,11 +36,14 @@ import {
   getRecipeGenerationStatus,
   type EvidenceTracking as ApiEvidenceTracking,
 } from '../data/apiClient'
+import { keyEventBelongsToModal } from '../hooks/useModalDismiss'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 /** True when the keyboard event target should suppress pager shortcuts. */
 function isSuppressed(e: KeyboardEvent): boolean {
+  // A key pressed in an open dialog is the dialog's, not the pager's.
+  if (keyEventBelongsToModal(e)) return true
   const t = e.target
   if (!t || !(t instanceof Element)) return false
   const tag = (t as HTMLElement).tagName?.toLowerCase()
@@ -70,6 +77,18 @@ const STATUS_LABELS: Record<string, string> = {
   active: 'Active',
   inactive: 'Inactive',
   deprecated: 'Deprecated',
+}
+
+const NOT_RECORDED = 'Not recorded'
+
+function boundaryLabel(inScope: boolean | null | undefined): string {
+  if (inScope == null) return 'Undecided'
+  return inScope ? 'In scope' : 'Out of scope'
+}
+
+function hoursLabel(hours: number | null | undefined): string {
+  if (hours == null) return NOT_RECORDED
+  return `${hours} ${hours === 1 ? 'hour' : 'hours'}`
 }
 
 // ─── Props ────────────────────────────────────────────────────────────────────
@@ -337,6 +356,41 @@ export default function SystemDetailPage({
               </div>
             </div>
           )}
+        </div>
+
+        {/* ── Boundary & recovery (PIG R4) ──────────────────────────────── */}
+        <div className="system-detail-boundary-section">
+          <span className="system-detail-section-label">BOUNDARY &amp; RECOVERY</span>
+          <dl className="system-detail-boundary-grid">
+            <div className="system-detail-boundary-item">
+              <dt>Assessment boundary</dt>
+              <dd>{boundaryLabel(system.in_scope)}</dd>
+            </div>
+            <div className="system-detail-boundary-item">
+              <dt>Criticality</dt>
+              <dd>{system.criticality ? SYSTEM_CRITICALITY_LABELS[system.criticality] : NOT_RECORDED}</dd>
+            </div>
+            <div className="system-detail-boundary-item">
+              <dt>RTO</dt>
+              <dd>{hoursLabel(system.rto_hours)}</dd>
+            </div>
+            <div className="system-detail-boundary-item">
+              <dt>RPO</dt>
+              <dd>{hoursLabel(system.rpo_hours)}</dd>
+            </div>
+            <div className="system-detail-boundary-item">
+              <dt>Data classification</dt>
+              <dd>
+                {system.data_classification
+                  ? DATA_CLASSIFICATION_LABELS[system.data_classification]
+                  : NOT_RECORDED}
+              </dd>
+            </div>
+            <div className="system-detail-boundary-item">
+              <dt>Hosting location</dt>
+              <dd>{system.hosting_location || NOT_RECORDED}</dd>
+            </div>
+          </dl>
         </div>
 
         {/* ── Evidence recipes ──────────────────────────────────────────── */}

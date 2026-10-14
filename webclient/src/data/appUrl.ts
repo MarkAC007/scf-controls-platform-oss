@@ -37,6 +37,8 @@ export const SYNCED_TABS = [
   'library',
   'mapping-matrix',
   'scoping',
+  'deficiencies',
+  'capability-tests',
   // Risk & Third Party
   'risk-register',
   'vendors',
@@ -67,6 +69,9 @@ export type EvidenceView = (typeof EVIDENCE_VIEWS)[number]
 export const LIBRARY_MODES = ['in-scope', 'full-library'] as const
 export type LibraryMode = (typeof LIBRARY_MODES)[number]
 export const DEFAULT_LIBRARY_MODE: LibraryMode = 'in-scope'
+/** The deficiencies page's two presentations of one record (#1155). */
+export const DEFICIENCY_VIEWS = ['list', 'board'] as const
+export type DeficiencyView = (typeof DEFICIENCY_VIEWS)[number]
 
 /** Where the app lands when the URL names nothing it recognises. */
 export const DEFAULT_TAB = 'dashboard'
@@ -104,6 +109,8 @@ export const TAB_TITLES = {
   'library':            'Control Library',
   'mapping-matrix':     'Framework Mappings',
   'scoping':            'Framework Scoping',
+  'deficiencies':       'Deficiencies (POA&M)',
+  'capability-tests':   'Capability Tests',
   'risk-register':      'Risk Register',
   'vendors':            'Vendor Inventory',
   'evidence':           'Evidence',
@@ -130,6 +137,12 @@ export const PARAM_RISK_ITEM = 'risk'
 export const PARAM_VENDOR_ITEM = 'vendor'
 export const PARAM_SYSTEM_ITEM = 'system'
 export const PARAM_TASK_ITEM = 'task'
+export const PARAM_CAPABILITY_TEST_ITEM = 'test'
+/**
+ * The same literal as `PARAM_EVIDENCE_VIEW`, on purpose: each is read only on
+ * its own tab and leaves with it (`TAB_OWNED_PARAMS`), so they never meet.
+ */
+export const PARAM_DEFICIENCY_VIEW = 'view'
 
 /**
  * Parameters that belong to a tab and must leave with it.
@@ -149,6 +162,8 @@ export const TAB_OWNED_PARAMS: Partial<Record<SyncedTab, readonly string[]>> = {
   vendors: [PARAM_VENDOR_ITEM],
   systems: [PARAM_SYSTEM_ITEM],
   tasks: [PARAM_TASK_ITEM],
+  'capability-tests': [PARAM_CAPABILITY_TEST_ITEM],
+  deficiencies: [PARAM_DEFICIENCY_VIEW],
 }
 
 export interface AppLocation {
@@ -170,6 +185,13 @@ export interface AppLocation {
   systemItem: string | null
   /** The task to deep-link, or null. Only meaningful when tab is tasks. */
   taskItem: string | null
+  /** The capability test to open, or null. Only meaningful when tab is capability-tests. */
+  capabilityTestItem: string | null
+  /**
+   * List or Board, when the URL names one on the deficiencies tab; null
+   * otherwise, so the page can fall back to the viewer's remembered choice.
+   */
+  deficiencyView: DeficiencyView | null
 }
 
 function params(search: string): URLSearchParams {
@@ -212,8 +234,24 @@ export function readAppLocation(search: string): AppLocation {
   const vendorItem = tab === 'vendors' ? (p.get(PARAM_VENDOR_ITEM)?.trim() || null) : null
   const systemItem = tab === 'systems' ? (p.get(PARAM_SYSTEM_ITEM)?.trim() || null) : null
   const taskItem = tab === 'tasks' ? (p.get(PARAM_TASK_ITEM)?.trim() || null) : null
+  const capabilityTestItem =
+    tab === 'capability-tests' ? (p.get(PARAM_CAPABILITY_TEST_ITEM)?.trim() || null) : null
+  const requestedDeficiencyView = tab === 'deficiencies' ? p.get(PARAM_DEFICIENCY_VIEW) : null
+  const deficiencyView = DEFICIENCY_VIEWS.find(v => v === requestedDeficiencyView) ?? null
 
-  return { tab, evidenceView, evidenceItem, libraryItem, libraryMode, riskItem, vendorItem, systemItem, taskItem }
+  return {
+    tab,
+    evidenceView,
+    evidenceItem,
+    libraryItem,
+    libraryMode,
+    riskItem,
+    vendorItem,
+    systemItem,
+    taskItem,
+    capabilityTestItem,
+    deficiencyView,
+  }
 }
 
 /**
@@ -386,6 +424,32 @@ export function withTaskItem(search: string, itemId: string | null): string {
   const p = params(withTab(search, 'tasks'))
   if (itemId) p.set(PARAM_TASK_ITEM, itemId)
   else p.delete(PARAM_TASK_ITEM)
+  return p.toString()
+}
+
+/**
+ * The search string with the capability test to open named, or cleared.
+ *
+ * Sets `test` while ensuring `tab=capability-tests`. When `itemId` is null the
+ * `test` param is removed, leaving the list as it was.
+ */
+export function withCapabilityTestItem(search: string, itemId: string | null): string {
+  const p = params(withTab(search, 'capability-tests'))
+  if (itemId) p.set(PARAM_CAPABILITY_TEST_ITEM, itemId)
+  else p.delete(PARAM_CAPABILITY_TEST_ITEM)
+  return p.toString()
+}
+
+/**
+ * The search string with the deficiencies view named.
+ *
+ * Ensures `tab=deficiencies` first, which takes any other tab's own `view`
+ * (the evidence workspace's) off with it.
+ */
+export function withDeficiencyView(search: string, view: DeficiencyView): string {
+  const onDeficiencies = readAppLocation(search).tab === 'deficiencies'
+  const p = params(onDeficiencies ? search : withTab(search, 'deficiencies'))
+  p.set(PARAM_DEFICIENCY_VIEW, view)
   return p.toString()
 }
 

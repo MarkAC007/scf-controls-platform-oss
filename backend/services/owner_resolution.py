@@ -303,11 +303,15 @@ EVENTS: dict = {
         # --- directed: the caller already named the humans -----------------
         NotificationEvent("assignment", ROUTE_DIRECTED),
         NotificationEvent("mention", ROUTE_DIRECTED),
+        # The approver and the risk owner, named by the caller (PIG R7).
+        NotificationEvent("risk_acceptance_expired", ROUTE_DIRECTED),
         # --- ownership: the chain answers "whose is this?" ------------------
         NotificationEvent("task_due", ROUTE_OWNERSHIP),
         NotificationEvent("task_overdue", ROUTE_OWNERSHIP, escalates=True),
         NotificationEvent("evidence_rejected", ROUTE_OWNERSHIP, escalates=True),
         NotificationEvent("composite_insufficient", ROUTE_OWNERSHIP, escalates=True),
+        # A control coming due for validation goes to whoever owns it (PIG R10).
+        NotificationEvent("control_validation_due", ROUTE_OWNERSHIP),
         # --- org admin: the admins are the audience, not the fallback ------
         NotificationEvent("control_ready_for_review", ROUTE_ORG_ADMIN),
         NotificationEvent("engagement_query_raised", ROUTE_ORG_ADMIN),

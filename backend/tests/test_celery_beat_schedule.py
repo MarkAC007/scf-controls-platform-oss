@@ -35,6 +35,22 @@ AUTOMATION_TASKS = {
         "hour": 7,
         "minute": 15,
     },
+    "risk-acceptance-expiry-daily": {
+        "task": "tasks_automation.notify_expired_risk_acceptances_task",
+        "hour": 7,
+        "minute": 30,
+    },
+    "control-validation-due-daily": {
+        "task": "tasks_automation.notify_due_control_validations_task",
+        "hour": 7,
+        "minute": 45,
+    },
+    "posture-snapshot-monthly": {
+        "task": "tasks_automation.take_posture_snapshots_task",
+        "hour": 2,
+        "minute": 0,
+        "day_of_month": 1,
+    },
 }
 
 
@@ -57,6 +73,11 @@ def test_automation_beat_entries_present_with_expected_tasks_and_crontabs() -> N
         entry = beat_schedule[entry_name]
         assert entry["task"] == expected["task"]
         _assert_crontab(entry["schedule"], expected["hour"], expected["minute"])
+        if "day_of_month" in expected:
+            assert entry["schedule"].day_of_month == {expected["day_of_month"]}
+        else:
+            # A daily job must stay daily: a stray day_of_month would make it monthly.
+            assert entry["schedule"].day_of_month == set(range(1, 32))
 
 
 def test_nightly_window_refresh_present_by_default() -> None:
@@ -121,6 +142,15 @@ def test_flag_enabled_truthy_and_other_values(
         (tasks_automation.generate_evidence_tasks_task, "generate_evidence_tasks_task"),
         (tasks_automation.notify_due_tasks_task, "notify_due_tasks_task"),
         (tasks_automation.notify_overdue_tasks_task, "notify_overdue_tasks_task"),
+        (
+            tasks_automation.notify_expired_risk_acceptances_task,
+            "notify_expired_risk_acceptances_task",
+        ),
+        (
+            tasks_automation.notify_due_control_validations_task,
+            "notify_due_control_validations_task",
+        ),
+        (tasks_automation.take_posture_snapshots_task, "take_posture_snapshots_task"),
     ],
 )
 def test_automation_tasks_noop_when_runtime_flag_disabled(

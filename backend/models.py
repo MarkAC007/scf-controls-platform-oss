@@ -439,6 +439,32 @@ class ScopedControl(Base):
             "scope_override <> 'exclude' OR length(btrim(scope_override_reason)) > 0",
             name='ck_scoped_controls_exclusion_reason',
         ),
+        CheckConstraint(
+            "basis_override IS NULL OR basis_override IN ('mcr', 'dsr')",
+            name='ck_scoped_controls_basis_override',
+        ),
+        CheckConstraint(
+            "basis_override IS NULL OR (basis_override_reason IS NOT NULL "
+            "AND length(btrim(basis_override_reason)) > 0)",
+            name='ck_scoped_controls_basis_override_reason',
+        ),
+        CheckConstraint(
+            "target_maturity_override IS NULL OR target_maturity_override IN "
+            "('L0', 'L1', 'L2', 'L3', 'L4', 'L5')",
+            name='ck_scoped_controls_target_maturity',
+        ),
+        CheckConstraint(
+            "target_maturity_override IS NULL OR (target_maturity_reason IS NOT NULL "
+            "AND length(btrim(target_maturity_reason)) > 0)",
+            name='ck_scoped_controls_target_maturity_reason',
+        ),
+        CheckConstraint(
+            "material_override IS NULL OR (material_reason IS NOT NULL "
+            "AND length(btrim(material_reason)) > 0)",
+            name='ck_scoped_controls_material_reason',
+        ),
+        # A document delete sets the link NULL; this keeps that lookup cheap.
+        Index('ix_scoped_controls_procedure_document_id', 'procedure_document_id'),
         Index('ix_scoped_controls_org_scope_override', 'organization_id', 'scope_override'),
         # Redundant against the primary key as a uniqueness statement, and not
         # redundant at all as a foreign-key target: it is what lets
@@ -461,6 +487,37 @@ class ScopedControl(Base):
     scope_override_reason = Column(Text, nullable=True)
     scope_override_set_at = Column(DateTime(timezone=False), nullable=True)
     scope_override_set_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    # Admin who approved excluding a control whose obligation basis is MCR (PIG R2).
+    scope_override_approved_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    # Per-control obligation basis that replaces the one derived from framework
+    # selections. Always carries a reason. See services/obligation_basis.py.
+    basis_override = Column(String(10), nullable=True)  # mcr | dsr | NULL (derive)
+    basis_override_reason = Column(Text, nullable=True)
+    basis_override_set_at = Column(DateTime(timezone=False), nullable=True)
+    basis_override_set_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    # Per-control target maturity (PIG R5) that replaces the target the
+    # control inherits from its domain in Organization.settings
+    # ``maturity_targets``. Always carries a reason. See
+    # services/target_maturity.py.
+    target_maturity_override = Column(String(2), nullable=True)  # L0..L5 | NULL (inherit)
+    target_maturity_reason = Column(Text, nullable=True)
+    target_maturity_set_at = Column(DateTime(timezone=False), nullable=True)
+    target_maturity_set_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    # Materiality (PIG R6). A control is material by default when its catalogue
+    # weighting is 10; this override replaces that default for one control and
+    # always carries a reason. See services/materiality.py.
+    material_override = Column(Boolean, nullable=True)  # true | false | NULL (weighting)
+    material_reason = Column(Text, nullable=True)
+    material_set_at = Column(DateTime(timezone=False), nullable=True)
+    material_set_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    # The approved procedure document describing how this control is operated
+    # (PIG R6, playbook step 2d).
+    procedure_document_id = Column(UUID(as_uuid=True), ForeignKey("generated_documents.id", ondelete="SET NULL"), nullable=True)
+    # The control's last validation (PIG R10): with its validation cadence it
+    # gives the next validation date; see services/due_care.py.
+    last_validated_at = Column(DateTime(timezone=False), nullable=True)
+    last_validated_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    last_validation_note = Column(Text, nullable=True)
     implementation_status = Column(String(50))  # See ImplementationStatus enum for valid values
     # Re-scope staleness (scope-aware evidence work). Un-scoping keeps
     # implementation_status / maturity_level by design; when the control comes
@@ -837,9 +894,10 @@ class Notification(Base):
     # entity belongs to this org — creation paths derive it from the reference.
     organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
     # 'assignment', 'mention', 'task_due', 'task_overdue', 'evidence_rejected',
-    # 'control_ready_for_review', 'composite_insufficient', 'engagement_query_raised'
+    # 'control_ready_for_review', 'composite_insufficient', 'engagement_query_raised',
+    # 'risk_acceptance_expired', 'control_validation_due'
     type = Column(String(50), nullable=False)
-    reference_type = Column(String(50), nullable=False)  # 'control', 'evidence', 'comment', 'task', 'engagement_query'
+    reference_type = Column(String(50), nullable=False)  # 'control', 'evidence', 'comment', 'task', 'engagement_query', 'risk'
     reference_id = Column(UUID(as_uuid=True), nullable=False)
     message = Column(Text, nullable=False)
     is_read = Column(Boolean, default=False)
@@ -891,6 +949,15 @@ class System(Base):
         nullable=True,
     )
 
+    # PIG R4: the boundary and recovery record. NULL in_scope means nobody has
+    # decided yet — it is neither inside nor outside the boundary.
+    in_scope = Column(Boolean, nullable=True)
+    criticality = Column(String(20), nullable=True)  # low, medium, high, critical
+    rto_hours = Column(Float, nullable=True)
+    rpo_hours = Column(Float, nullable=True)
+    data_classification = Column(String(50), nullable=True)  # public, internal, confidential, restricted
+    hosting_location = Column(String(255), nullable=True)
+
     # Timestamps
     created_at = Column(DateTime(timezone=False), server_default=func.now())
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now())
@@ -898,6 +965,22 @@ class System(Base):
     # Audit user FKs
     created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
     updated_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+
+    __table_args__ = (
+        CheckConstraint(
+            "criticality IS NULL OR criticality IN ('low', 'medium', 'high', 'critical')",
+            name="ck_systems_criticality",
+        ),
+        CheckConstraint(
+            "data_classification IS NULL OR data_classification IN "
+            "('public', 'internal', 'confidential', 'restricted')",
+            name="ck_systems_data_classification",
+        ),
+        CheckConstraint(
+            "(rto_hours IS NULL OR rto_hours >= 0) AND (rpo_hours IS NULL OR rpo_hours >= 0)",
+            name="ck_systems_recovery_objectives",
+        ),
+    )
 
     # Relationships
     organization = relationship("Organization", back_populates="systems")
@@ -1363,6 +1446,10 @@ class EngagementControlScope(Base):
     __tablename__ = "engagement_control_scope"
     __table_args__ = (
         UniqueConstraint('engagement_id', 'scf_id', name='uq_engagement_scf_id'),
+        CheckConstraint(
+            "obligation_basis IS NULL OR obligation_basis IN ('mcr', 'dsr')",
+            name='ck_engagement_control_scope_obligation_basis',
+        ),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -1374,6 +1461,7 @@ class EngagementControlScope(Base):
     scope_status = Column(String(20), nullable=False, default=ScopeStatus.IN_SCOPE.value)  # See ScopeStatus enum
     out_of_scope_justification = Column(Text)  # Frozen copy from ScopedControl at materialisation (for excluded controls)
     source_frameworks = Column(ARRAY(String), nullable=False, default=[])  # Which engagement frameworks pulled this control in
+    obligation_basis = Column(String(10), nullable=True)  # mcr | dsr, frozen at materialisation (PIG R2)
     added_at = Column(DateTime(timezone=False), server_default=func.now())
 
     # Relationships
@@ -1664,6 +1752,14 @@ class RiskAssessment(Base):
     next_review_date = Column(Date, nullable=True)
     notes = Column(Text, nullable=True)
 
+    # Recorded acceptance (PIG R7). Set only by an admin through the acceptance
+    # endpoint; a treatment_status of 'accepted' without these is an
+    # acceptance nobody has answered for, and the journey gate counts it.
+    accepted_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    accepted_at = Column(DateTime(timezone=False), nullable=True)
+    acceptance_rationale = Column(Text, nullable=True)
+    acceptance_expires_on = Column(Date, nullable=True)
+
     # Audit timestamps
     created_at = Column(DateTime(timezone=False), server_default=func.now())
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now())
@@ -1675,6 +1771,15 @@ class RiskAssessment(Base):
     owner = relationship("User", foreign_keys=[owner_user_id])
     created_by = relationship("User", foreign_keys=[created_by_user_id])
     updated_by = relationship("User", foreign_keys=[updated_by_user_id])
+
+    __table_args__ = (
+        CheckConstraint(
+            "accepted_at IS NULL OR (acceptance_rationale IS NOT NULL "
+            "AND length(btrim(acceptance_rationale)) > 0 "
+            "AND acceptance_expires_on IS NOT NULL)",
+            name="ck_risk_assessments_acceptance_record",
+        ),
+    )
 
     def __repr__(self):
         return f"<RiskAssessment(org={self.organization_id}, risk_code={self.risk_code}, status={self.treatment_status})>"
@@ -1760,12 +1865,20 @@ class CustomRiskControlMapping(Base):
     organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
     risk_code = Column(String(20), nullable=False)
     scf_id = Column(String(50), nullable=False)
+    # The document that sets the standard this risk is an exception against
+    # (PIG R7). A custom risk with a document on its control link is a
+    # standards exception, accepted through the same path as any risk.
+    document_id = Column(UUID(as_uuid=True), ForeignKey("generated_documents.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now())
     created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
     # Relationships
     organization = relationship("Organization")
     created_by = relationship("User", foreign_keys=[created_by_user_id])
+
+    __table_args__ = (
+        Index("ix_custom_risk_control_mappings_document_id", "document_id"),
+    )
 
     def __repr__(self):
         return f"<CustomRiskControlMapping(org={self.organization_id}, risk={self.risk_code}, scf_id={self.scf_id})>"
@@ -1816,6 +1929,12 @@ class Vendor(Base):
     risk_scored_at = Column(DateTime(timezone=False))
     next_review_date = Column(Date)
     data_classification = Column(String(50))
+
+    # PIG R4: where the vendor holds our data, what flows down to them by
+    # contract, and who is responsible for what.
+    data_location = Column(String(255), nullable=True)
+    flow_down_requirements = Column(Text, nullable=True)
+    shared_responsibility_note = Column(Text, nullable=True)
 
     # Audit timestamps and user FKs
     created_at = Column(DateTime(timezone=False), server_default=func.now())
@@ -2136,11 +2255,32 @@ class VendorCIAControl(Base):
 # =============================================================================
 
 class VendorActionItem(Base):
-    """Auto-generated and manual action items from vendor assessments."""
+    """An organisation's action item: against a vendor, a control or a risk.
+
+    Vendor assessments raise items against a vendor. An item with no vendor
+    is a control deficiency (PIG R8, see ``services/deficiencies.py``): it is
+    raised against a scoped control or a risk, and completing it needs a
+    retest note.
+    """
     __tablename__ = "vendor_action_items"
+    __table_args__ = (
+        CheckConstraint(
+            "vendor_id IS NOT NULL OR status <> 'completed' "
+            "OR (retest_note IS NOT NULL AND length(btrim(retest_note)) > 0)",
+            name="ck_vendor_action_items_deficiency_retest",
+        ),
+        Index("ix_vendor_action_items_org_status", "organization_id", "status"),
+        Index("ix_vendor_action_items_scoped_control_id", "scoped_control_id"),
+        Index("ix_vendor_action_items_capability_test_id", "capability_test_id"),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    vendor_id = Column(UUID(as_uuid=True), ForeignKey("vendors.id", ondelete="CASCADE"), nullable=False)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    vendor_id = Column(UUID(as_uuid=True), ForeignKey("vendors.id", ondelete="CASCADE"), nullable=True)
+    scoped_control_id = Column(UUID(as_uuid=True), ForeignKey("scoped_controls.id", ondelete="SET NULL"), nullable=True)
+    # The control's SCF id, kept when the control is deleted (domain, gates).
+    scf_id = Column(String(50), nullable=True)
+    risk_code = Column(String(50), nullable=True)
     assessment_id = Column(UUID(as_uuid=True), ForeignKey("vendor_assessments.id", ondelete="SET NULL"), nullable=True)
     report_id = Column(UUID(as_uuid=True), ForeignKey("vendor_reports.id", ondelete="SET NULL"), nullable=True)
 
@@ -2155,6 +2295,18 @@ class VendorActionItem(Base):
     due_date = Column(Date)
     completed_date = Column(Date)
     auto_generated = Column(Boolean, default=False)
+    # What raised an automatic deficiency: control_at_risk,
+    # composite_insufficient or evidence_rejected (with the evidence id in
+    # source_ref). NULL for an item someone raised by hand.
+    source = Column(String(30), nullable=True)
+    source_ref = Column(String(100), nullable=True)
+    retest_note = Column(Text, nullable=True)
+    closed_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    # PIG R11: the capability test a deficiency was found in, and why it arose.
+    capability_test_id = Column(
+        UUID(as_uuid=True), ForeignKey("capability_tests.id", ondelete="SET NULL"), nullable=True
+    )
+    root_cause = Column(Text, nullable=True)
 
     created_at = Column(DateTime(timezone=False), server_default=func.now())
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now())
@@ -2164,17 +2316,39 @@ class VendorActionItem(Base):
     assessment = relationship("VendorAssessment")
     report = relationship("VendorReport")
     owner_user = relationship("User", foreign_keys=[owner_user_id])
+    closed_by = relationship("User", foreign_keys=[closed_by_user_id])
 
     def __repr__(self):
         return f"<VendorActionItem(vendor={self.vendor_id}, title={self.title}, status={self.status})>"
 
 
 class VendorCompensatingControl(Base):
-    """Documents compensating controls when vendors fail certification minimum bar."""
+    """A compensating control, for a vendor or for one of the organisation's controls.
+
+    Vendor ones document compensation when a vendor fails the certification
+    minimum bar. One with no vendor is an organisation compensating control
+    (PIG R9, see ``services/compensating_controls.py``): it is recorded
+    against a scoped control, and on a material control it needs an accepted
+    risk (``risk_code``) with an approval in force.
+    """
     __tablename__ = "vendor_compensating_controls"
+    __table_args__ = (
+        CheckConstraint(
+            "vendor_id IS NOT NULL OR scf_id IS NOT NULL",
+            name="ck_vendor_compensating_controls_subject",
+        ),
+        Index("ix_vendor_compensating_controls_org_scf", "organization_id", "scf_id"),
+        Index("ix_vendor_compensating_controls_scoped_control_id", "scoped_control_id"),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    vendor_id = Column(UUID(as_uuid=True), ForeignKey("vendors.id", ondelete="CASCADE"), nullable=False)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    vendor_id = Column(UUID(as_uuid=True), ForeignKey("vendors.id", ondelete="CASCADE"), nullable=True)
+    scoped_control_id = Column(UUID(as_uuid=True), ForeignKey("scoped_controls.id", ondelete="SET NULL"), nullable=True)
+    # The control's SCF id, kept when the control is deleted.
+    scf_id = Column(String(50), nullable=True)
+    # The accepted risk that justifies compensating rather than meeting the control.
+    risk_code = Column(String(50), nullable=True)
     assessment_id = Column(UUID(as_uuid=True), ForeignKey("vendor_assessments.id", ondelete="SET NULL"), nullable=True)
 
     gap_description = Column(Text, nullable=False)
@@ -2191,6 +2365,74 @@ class VendorCompensatingControl(Base):
 
     def __repr__(self):
         return f"<VendorCompensatingControl(vendor={self.vendor_id}, effectiveness={self.effectiveness_rating})>"
+
+
+class PostureSnapshot(Base):
+    """One organisation's control posture, taken once a month (PIG R10).
+
+    ``period`` is the first day of the month the snapshot was taken in, and
+    an organisation has at most one per month. ``counts`` holds in-scope
+    controls by implementation status, obligation basis and materiality, and
+    open deficiencies; see ``services/due_care.py``. A snapshot is a record:
+    nothing updates it once taken.
+    """
+    __tablename__ = "posture_snapshots"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "period", name="uq_posture_snapshots_org_period"),
+        CheckConstraint("trigger IN ('scheduled', 'manual')", name="ck_posture_snapshots_trigger"),
+        CheckConstraint("EXTRACT(DAY FROM period) = 1", name="ck_posture_snapshots_period_month"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    period = Column(Date, nullable=False)
+    taken_at = Column(DateTime(timezone=False), nullable=False, server_default=func.now())
+    trigger = Column(String(16), nullable=False)
+    taken_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    counts = Column(JSONB, nullable=False)
+
+    def __repr__(self):
+        return f"<PostureSnapshot(org={self.organization_id}, period={self.period})>"
+
+
+class CapabilityTest(Base):
+    """A test of the organisation's capability (PIG R11).
+
+    An incident response exercise, a continuity test, or another test of
+    whether the organisation can do what its controls say: when it was run,
+    the scenario, the result and the outcome. Its findings are deficiencies
+    (``VendorActionItem.capability_test_id``); see
+    ``services/capability_tests.py``. A test is a record: it is corrected,
+    never deleted.
+    """
+    __tablename__ = "capability_tests"
+    __table_args__ = (
+        CheckConstraint(
+            "test_type IN ('incident_response', 'continuity', 'other')", name="ck_capability_tests_type"
+        ),
+        CheckConstraint(
+            "result IN ('passed', 'passed_with_findings', 'failed')", name="ck_capability_tests_result"
+        ),
+        CheckConstraint(
+            "length(btrim(scenario)) > 0 AND length(btrim(outcome)) > 0", name="ck_capability_tests_written"
+        ),
+        Index("ix_capability_tests_org_tested_on", "organization_id", "tested_on"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    test_type = Column(String(30), nullable=False)
+    title = Column(String(255), nullable=False)
+    tested_on = Column(Date, nullable=False)
+    scenario = Column(Text, nullable=False)
+    result = Column(String(30), nullable=False)
+    outcome = Column(Text, nullable=False)
+    recorded_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=False), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=False), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    def __repr__(self):
+        return f"<CapabilityTest(org={self.organization_id}, type={self.test_type}, on={self.tested_on})>"
 
 
 # =============================================================================
@@ -3337,6 +3579,12 @@ class OrganizationFrameworkSelection(Base):
     __tablename__ = "organization_framework_selections"
     __table_args__ = (
         CheckConstraint("source IN ('bulk_scope', 'backfill', 'reconciliation')", name='ck_org_framework_selections_source'),
+        CheckConstraint("basis IS NULL OR basis IN ('mcr', 'dsr')", name='ck_org_framework_selections_basis'),
+        CheckConstraint(
+            "obligation_type IS NULL OR obligation_type IN "
+            "('statutory', 'regulatory', 'contractual', 'discretionary')",
+            name='ck_org_framework_selections_obligation_type',
+        ),
         UniqueConstraint('organization_id', 'framework_id', name='uq_org_framework_selections_org_framework'),
     )
 
@@ -3347,6 +3595,11 @@ class OrganizationFrameworkSelection(Base):
     selected_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     source = Column(String(20), nullable=False)  # bulk_scope | backfill | reconciliation
     active = Column(Boolean, nullable=False, default=True)
+    # Obligation basis (PIG R2): why this framework is in scope. NULL means
+    # nobody has said, and is reported as unclassified rather than guessed.
+    basis = Column(String(10), nullable=True)  # mcr | dsr
+    obligation_type = Column(String(20), nullable=True)  # statutory | regulatory | contractual | discretionary
+    obligation_source = Column(Text, nullable=True)
 
     organization = relationship("Organization")
     selected_by_user = relationship("User", foreign_keys=[selected_by])

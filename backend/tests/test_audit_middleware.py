@@ -24,6 +24,7 @@ from middleware.audit_middleware import (
     _extract_org_id,
     _should_skip,
     _METHOD_ACTION_MAP,
+    _action_for,
 )
 from services.audit_service import detect_action_source
 
@@ -156,6 +157,13 @@ class TestMethodActionMap:
 
     def test_delete_deletes(self):
         assert _METHOD_ACTION_MAP["DELETE"] == "delete"
+
+    def test_withdrawing_an_acceptance_is_an_update_of_the_risk(self):
+        org = "/api/organizations/11111111-1111-1111-1111-111111111111"
+        assert _action_for("DELETE", f"{org}/risk-assessments/R-ORG-1/acceptance") == "update"
+        assert _action_for("PUT", f"{org}/risk-assessments/R-ORG-1/acceptance") == "update"
+        assert _action_for("DELETE", f"{org}/risk-assessments/R-ORG-1") == "delete"
+        assert _action_for("DELETE", f"{org}/risk-assessments/R-ORG-1/acceptance/extra") == "delete"
 
 
 # ---------------------------------------------------------------------------

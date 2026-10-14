@@ -30,6 +30,7 @@ import type {
 import { getRiskLevel } from '../types'
 import {
   getRiskAssessments,
+  getRiskAssessment,
   createOrUpdateRiskAssessment,
   updateRiskAssessment,
   getOrgMembers,
@@ -39,6 +40,7 @@ import {
 } from '../data/apiClient'
 import { useRiskProfile } from '../contexts/RiskProfileContext'
 import { useModalDismiss } from '../hooks/useModalDismiss'
+import { saveOutcome } from './RiskAcceptancePanel'
 import riskCodesData from '../data/risk_codes.json'
 
 interface RiskDashboardProps {
@@ -275,17 +277,45 @@ export default function RiskDashboard({ organizationId, onNavigateToControl, ris
   // Handle save from detail page
   const handleDetailSave = async (riskCode: string, updates: RiskAssessmentUpdate) => {
     try {
+      const before = assessments.find(a => a.risk_code === riskCode)
       const updated = await updateRiskAssessment(riskCode, updates, organizationId)
       setAssessments(prev => prev.map(a =>
         a.risk_code === riskCode ? updated : a
       ))
-      toast.success('Risk assessment saved')
+      // PIG R7: the server may keep the status or withdraw an approval, so
+      // the toast says what happened rather than what was asked.
+      const outcome = saveOutcome(before, updates, updated)
+      if (outcome.ok) toast.success(outcome.message)
+      else toast.error(outcome.message)
     } catch (err: any) {
       console.error('Failed to save risk:', err)
       toast.error(err.message || 'Failed to save risk')
       throw err
     }
   }
+
+  // The server's record for one risk replaces the loaded one (PIG R7: an
+  // acceptance decision, or a link change that withdrew an approval).
+  const replaceAssessment = useCallback((updated: RiskAssessment) => {
+    setAssessments(prev => prev.map(a => a.risk_code === updated.risk_code ? updated : a))
+  }, [])
+
+  const refreshAssessment = useCallback(async (riskCode: string): Promise<RiskAssessment | null> => {
+    try {
+      const fresh = await getRiskAssessment(riskCode, organizationId)
+      replaceAssessment(fresh)
+      return fresh
+    } catch (err) {
+      console.error('Failed to refresh risk %s:', riskCode, err)
+      return null
+    }
+  }, [organizationId, replaceAssessment])
+
+  // Opening a risk re-reads it: the register may have loaded before its
+  // acceptance was decided elsewhere or lapsed (a notification lands here).
+  useEffect(() => {
+    if (riskItem) void refreshAssessment(riskItem)
+  }, [riskItem, refreshAssessment])
 
   // Get selected assessment (from riskItem prop)
   const selectedAssessment = assessments.find(a => a.risk_code === riskItem) || null
@@ -351,6 +381,8 @@ export default function RiskDashboard({ organizationId, onNavigateToControl, ris
           users={users}
           onNavigateToControl={onNavigateToControl}
           onDeleteCustomRisk={handleDeleteCustomRisk}
+          onAssessmentChange={replaceAssessment}
+          onRefreshAssessment={refreshAssessment}
         />
 
         {/* Create Custom Risk Modal */}

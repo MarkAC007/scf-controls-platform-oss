@@ -75,6 +75,10 @@ from api import (
     teams,
     team_assignments,
     integrations,
+    deficiencies,
+    compensating_controls,
+    due_care,
+    capability_tests,
 )
 
 # Configure logging
@@ -455,6 +459,10 @@ app.include_router(control_composites.router, prefix="/api")  # Control assessme
 app.include_router(audit_engagements.router, prefix="/api")  # Audit Engagement Workspaces (Issue #370 Phase D)
 app.include_router(trust_portal.router, prefix="/api")  # Public trust portal (unauthenticated)
 app.include_router(journey.router, prefix="/api")  # Organisational journey — staged path with practitioner attestation
+app.include_router(deficiencies.router, prefix="/api")  # Control deficiency record, POA&M (PIG R8)
+app.include_router(compensating_controls.router, prefix="/api")  # Organisation compensating controls (PIG R9)
+app.include_router(due_care.router, prefix="/api")  # Control validation and posture snapshots (PIG R10)
+app.include_router(capability_tests.router, prefix="/api")  # Capability test records (PIG R11)
 # OIDC login / callback endpoints. The router self-prefixes /api/auth, so it is
 # included WITHOUT an extra prefix here (a "/api" prefix would double to /api/api/auth).
 app.include_router(oidc_auth.router)

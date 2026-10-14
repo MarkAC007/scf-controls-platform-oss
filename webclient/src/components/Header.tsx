@@ -5,7 +5,7 @@ import UserProfileDropdown from './UserProfileDropdown'
 import ThemeMenu from './ThemeMenu'
 import OrgSwitcher from './OrgSwitcher'
 import WorkScopeControl from './WorkScopeControl'
-import { Organization } from '../contexts/OrganizationContext'
+import { Organization, useOrganization } from '../contexts/OrganizationContext'
 import { useAuth } from '../contexts/AuthContext'
 import { Tab, TAB_TITLES } from '../data/appUrl'
 
@@ -24,7 +24,9 @@ interface HeaderProps {
   activeTab: Tab
   onTabChange: (tab: Tab) => void
   onNavigateToEvidence?: (evidenceId: string) => void
-  onNavigateToControl?: (controlId: string) => void
+  onNavigateToRisk?: (riskCode: string) => void
+  /** Maps a scoped_controls row id to its SCF id, for a control notification the server sent no key for */
+  resolveControlScfId?: (scopedControlId: string) => string | null | undefined
   isConsultant?: boolean
   clientOrgIds?: string[]
   onOrgSwitch?: (org: Organization) => void
@@ -37,7 +39,8 @@ export default function Header({
   activeTab,
   onTabChange,
   onNavigateToEvidence,
-  onNavigateToControl,
+  onNavigateToRisk,
+  resolveControlScfId,
   isConsultant,
   clientOrgIds,
   onOrgSwitch,
@@ -45,6 +48,7 @@ export default function Header({
   mobileNavOpen = false
 }: HeaderProps) {
   const { user } = useAuth()
+  const { currentOrg } = useOrganization()
   const headerRef = useRef<HTMLDivElement>(null)
 
   // The utility bar wraps on phones and at browser zoom. Keep the content
@@ -125,15 +129,11 @@ export default function Header({
             <RefreshControl />
             <NotificationBell
               onNavigateToEvidence={onNavigateToEvidence}
-              onNavigateToControl={(controlId) => {
-                if (onNavigateToControl) {
-                  onNavigateToControl(controlId)
-                } else {
-                  onTabChange('scoping')
-                }
-              }}
               onNavigateToTask={() => onTabChange('tasks')}
               onNavigateToChangelog={() => onTabChange('catalog-changelog')}
+              onNavigateToRisk={onNavigateToRisk}
+              resolveControlScfId={resolveControlScfId}
+              currentOrgId={currentOrg?.id ?? null}
             />
             <UserProfileDropdown
               onNavigateToUsers={() => onTabChange('users')}

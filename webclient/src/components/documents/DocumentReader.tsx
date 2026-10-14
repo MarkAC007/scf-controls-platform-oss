@@ -46,6 +46,7 @@ import OutlineCount from './OutlineCount'
 import SectionDecision from './SectionDecision'
 import SectionDiff from './SectionDiff'
 import { useResolveSection } from './useResolveSection'
+import { keyEventBelongsToModal } from '../../hooks/useModalDismiss'
 
 export interface DocumentReaderProps {
   organizationId: string
@@ -119,6 +120,8 @@ const ALWAYS_FLAGGED = new Set(['conflict', 'pending_retirement'])
 
 /** True when the keyboard event target should suppress pager shortcuts. */
 function isSuppressed(e: KeyboardEvent): boolean {
+  // A key pressed in an open dialog is the dialog's, not the pager's.
+  if (keyEventBelongsToModal(e)) return true
   const t = e.target
   if (!t || !(t instanceof Element)) return false
   const tag = (t as HTMLElement).tagName?.toLowerCase()

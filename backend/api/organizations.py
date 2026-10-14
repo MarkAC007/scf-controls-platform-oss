@@ -21,7 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Request, File, Up
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
-from typing import List
+from typing import List, get_args
 from uuid import UUID
 
 from database import get_db
@@ -29,6 +29,7 @@ from models import Organization, OrganizationMember
 from schemas import (
     OrganizationResponse, OrganizationCreate, SuccessResponse, OrganizationSettingsResponse,
     OrganizationSettingsUpdate, OrganizationLogoResponse, OrganizationDeleteRequest, OrganizationDeleteResponse,
+    BusinessSize,
 )
 from auth import (
     require_auth,
@@ -41,6 +42,11 @@ from services.subscription import get_user_subscription, can_create_organisation
 from services.audit_service import log_entity_changes, detect_action_source, get_request_id, ORGANIZATION_TRACKED_FIELDS
 from services.jev_assessment import ENGINE_SETTING_KEY, resolve_engine
 from services.task_generator import AUTO_TASK_GENERATION_SETTING_KEY, resolve_auto_task_generation
+from services.target_maturity import (
+    SETTINGS_KEY as MATURITY_TARGETS_KEY,
+    stored_domain_targets,
+    validate_domain_targets,
+)
 from services.organization_deletion import (
     OrganizationDeleteConflict,
     OrganizationNameMismatch,
@@ -324,6 +330,22 @@ async def _run_organization_delete(db, organization, body, user, request):
         raise HTTPException(status_code=409, detail=str(exc))
 
 
+def _business_size(settings: dict):
+    """The recorded business size, or None if the stored value is not one we know.
+
+    The settings JSON predates this field and is written by more than one path;
+    a stray value must read as "not recorded", not fail the whole settings GET.
+    """
+    value = settings.get("business_size")
+    return value if value in get_args(BusinessSize) else None
+
+
+def _mission_statement(settings: dict):
+    """The recorded mission statement, or None if what is stored is not text."""
+    value = settings.get("mission_statement")
+    return value if isinstance(value, str) else None
+
+
 @router.get("/{org_id}/settings", response_model=OrganizationSettingsResponse)
 async def get_organization_settings(
     org_id: UUID,
@@ -351,6 +373,9 @@ async def get_organization_settings(
         industry=settings.get("industry"),
         evidence_assessment_engine=resolve_engine(settings),
         auto_task_generation_enabled=resolve_auto_task_generation(settings),
+        business_size=_business_size(settings),
+        mission_statement=_mission_statement(settings),
+        maturity_targets=stored_domain_targets(settings),
     )
 
 
@@ -388,6 +413,20 @@ async def update_organization_settings(
         current_settings["trust_portal_description"] = update["trust_portal_description"]
     if "industry" in update:
         current_settings["industry"] = update["industry"]
+    if "business_size" in update:
+        current_settings["business_size"] = update["business_size"]
+    if "mission_statement" in update:
+        current_settings["mission_statement"] = update["mission_statement"]
+    if update.get("maturity_targets") is not None:
+        # A target under a code the catalogue does not hold would apply to no
+        # control while reading as configured, so it is refused, not stored.
+        cleaned, unknown = await validate_domain_targets(db, update["maturity_targets"])
+        if unknown:
+            raise HTTPException(
+                status_code=422,
+                detail="Not SCF domain codes in this catalogue: " + ", ".join(unknown),
+            )
+        current_settings[MATURITY_TARGETS_KEY] = cleaned
     if update.get("evidence_assessment_engine") is not None:
         current_settings[ENGINE_SETTING_KEY] = update["evidence_assessment_engine"]
     if update.get("auto_task_generation_enabled") is not None:
@@ -427,6 +466,9 @@ async def update_organization_settings(
         industry=current_settings.get("industry"),
         evidence_assessment_engine=resolve_engine(current_settings),
         auto_task_generation_enabled=resolve_auto_task_generation(current_settings),
+        business_size=_business_size(current_settings),
+        mission_statement=_mission_statement(current_settings),
+        maturity_targets=stored_domain_targets(current_settings),
     )
 
 

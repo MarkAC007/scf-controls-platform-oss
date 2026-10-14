@@ -1531,6 +1531,45 @@ def _execute_control_action(
             successor.updated_at = now
             successor.scope_restored_at = now
         # An already-selected successor keeps its own state untouched.
+        if getattr(scoped, "basis_override", None) and getattr(
+            successor, "basis_override", None
+        ) is None:
+            # The obligation follows the requirement, not the retired id: an
+            # MCR override must not vanish with the predecessor (PIG R2).
+            successor.basis_override = scoped.basis_override
+            successor.basis_override_reason = (
+                f"Carried from {action.key}: {scoped.basis_override_reason}"
+            )
+            successor.basis_override_set_at = scoped.basis_override_set_at
+            successor.basis_override_set_by = scoped.basis_override_set_by
+        if getattr(scoped, "target_maturity_override", None) and getattr(
+            successor, "target_maturity_override", None
+        ) is None:
+            # A control's own target is a decision about the requirement, so it
+            # follows the requirement to its successor as the basis does (PIG R5).
+            successor.target_maturity_override = scoped.target_maturity_override
+            successor.target_maturity_reason = (
+                f"Carried from {action.key}: {scoped.target_maturity_reason}"
+            )
+            successor.target_maturity_set_at = scoped.target_maturity_set_at
+            successor.target_maturity_set_by = scoped.target_maturity_set_by
+        if getattr(scoped, "material_override", None) is not None and getattr(
+            successor, "material_override", None
+        ) is None:
+            # Materiality decided for the requirement follows it too, either
+            # way: dropping a "material" override here would let the successor
+            # be excluded with no approver (PIG R6).
+            successor.material_override = scoped.material_override
+            successor.material_reason = (
+                f"Carried from {action.key}: {scoped.material_reason}"
+            )
+            successor.material_set_at = scoped.material_set_at
+            successor.material_set_by = scoped.material_set_by
+        if getattr(scoped, "procedure_document_id", None) and getattr(
+            successor, "procedure_document_id", None
+        ) is None:
+            # The procedure that operates the requirement still does (step 2d).
+            successor.procedure_document_id = scoped.procedure_document_id
         scoped.selected = False
         scoped.out_of_scope_justification = action.justification or (
             f"Retired in catalog {to_version}; migrated to {successor_id}"

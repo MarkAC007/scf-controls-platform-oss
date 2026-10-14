@@ -68,6 +68,8 @@ export async function loadScopedControls(): Promise<ScopedControlsFile | null> {
         owner: (control.owner ?? undefined) as ScopedControl['owner'],
         assigned_to: control.assigned_to ?? undefined,
         maturity_level: (control.maturity_level ?? undefined) as ScopedControl['maturity_level'],
+        target_maturity_override: control.target_maturity_override ?? null,
+        target_maturity_reason: control.target_maturity_reason ?? null,
         target_date: control.target_date ?? undefined,
         completion_date: control.completion_date ?? undefined,
         implementation_notes: control.implementation_notes ?? undefined,

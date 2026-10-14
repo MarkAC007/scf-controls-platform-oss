@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import type { Vendor, VendorInput, VendorStatus, VendorCriticality, DataClassification } from '../types'
-import { VENDOR_STATUS_LABELS, VENDOR_CRITICALITY_LABELS } from '../types'
+import { VENDOR_STATUS_LABELS, VENDOR_CRITICALITY_LABELS, DATA_CLASSIFICATION_LABELS } from '../types'
 import { createVendor, updateVendor } from '../data/apiClient'
 import { useModalDismiss } from '../hooks/useModalDismiss'
 
@@ -9,13 +9,6 @@ interface VendorModalProps {
   editVendor?: Vendor | null
   onClose: () => void
   onSuccess: () => void
-}
-
-const DATA_CLASSIFICATION_LABELS: Record<DataClassification, string> = {
-  public: 'Public',
-  internal: 'Internal',
-  confidential: 'Confidential',
-  restricted: 'Restricted',
 }
 
 /**
@@ -48,6 +41,9 @@ export const VendorModal: React.FC<VendorModalProps> = ({
     contract_end_date: '',
     contract_value: '',
     data_classification: null,
+    data_location: '',
+    flow_down_requirements: '',
+    shared_responsibility_note: '',
   })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -69,6 +65,9 @@ export const VendorModal: React.FC<VendorModalProps> = ({
         contract_end_date: editVendor.contract_end_date || '',
         contract_value: editVendor.contract_value != null ? String(editVendor.contract_value) : '',
         data_classification: editVendor.data_classification || null,
+        data_location: editVendor.data_location || '',
+        flow_down_requirements: editVendor.flow_down_requirements || '',
+        shared_responsibility_note: editVendor.shared_responsibility_note || '',
       })
     }
   }, [editVendor])
@@ -104,6 +103,9 @@ export const VendorModal: React.FC<VendorModalProps> = ({
       contract_end_date: formData.contract_end_date || null,
       contract_value: formData.contract_value?.trim() ? parseFloat(formData.contract_value.trim()) : null,
       data_classification: formData.data_classification || null,
+      data_location: formData.data_location?.trim() || null,
+      flow_down_requirements: formData.flow_down_requirements?.trim() || null,
+      shared_responsibility_note: formData.shared_responsibility_note?.trim() || null,
     }
 
     try {
@@ -338,6 +340,51 @@ export const VendorModal: React.FC<VendorModalProps> = ({
                 value={formData.contract_value || ''}
                 onChange={(e) => handleChange('contract_value', e.target.value)}
                 placeholder="e.g., 50000"
+                disabled={loading}
+              />
+            </div>
+
+            {/* Section divider - Data Location & Responsibilities */}
+            <div className="form-section-divider">
+              <span>Data Location &amp; Responsibilities</span>
+            </div>
+
+            {/* Data Location */}
+            <div className="form-group">
+              <label htmlFor="vendor-data-location">Data Location</label>
+              <input
+                id="vendor-data-location"
+                type="text"
+                maxLength={255}
+                value={formData.data_location || ''}
+                onChange={(e) => handleChange('data_location', e.target.value)}
+                placeholder="e.g., EU (Frankfurt), UK South"
+                disabled={loading}
+              />
+            </div>
+
+            {/* Flow-down Requirements */}
+            <div className="form-group">
+              <label htmlFor="vendor-flow-down">Flow-down Requirements</label>
+              <textarea
+                id="vendor-flow-down"
+                value={formData.flow_down_requirements || ''}
+                onChange={(e) => handleChange('flow_down_requirements', e.target.value)}
+                placeholder="Requirements passed down to the vendor by contract..."
+                rows={3}
+                disabled={loading}
+              />
+            </div>
+
+            {/* Shared Responsibility */}
+            <div className="form-group">
+              <label htmlFor="vendor-shared-responsibility">Shared Responsibility</label>
+              <textarea
+                id="vendor-shared-responsibility"
+                value={formData.shared_responsibility_note || ''}
+                onChange={(e) => handleChange('shared_responsibility_note', e.target.value)}
+                placeholder="Who is responsible for what between you and the vendor..."
+                rows={3}
                 disabled={loading}
               />
             </div>

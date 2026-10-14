@@ -5,6 +5,7 @@ import { useDashboardStats } from '../hooks/useDashboardStats'
 import { MaturityDistributionWidget } from './maturity'
 import { FrequencyHealthTile } from './dashboard/FrequencyHealthTile'
 import WorkQueuePanel from './dashboard/WorkQueuePanel'
+import PostureHistoryPanel from './dashboard/PostureHistoryPanel'
 
 // M4 (#574) — gate the Frequency Health tile mount on the build-time flag.
 import { PER_WINDOW_REVIEW_ENABLED } from '../data/featureFlags'
@@ -16,9 +17,10 @@ interface DashboardProps {
   onNavigateToScoping?: (framework?: string) => void
   onNavigateToEvidence?: (evidenceId: string) => void
   onNavigateToControl?: (scfId: string) => void
+  onNavigateToDocuments?: () => void
 }
 
-export default function Dashboard({ controls, scopingData, onNavigateToScoping, onNavigateToEvidence, onNavigateToControl }: DashboardProps) {
+export default function Dashboard({ controls, scopingData, onNavigateToScoping, onNavigateToEvidence, onNavigateToControl, onNavigateToDocuments }: DashboardProps) {
   const stats = useDashboardStats(controls, scopingData)
 
   // Evidence gaps
@@ -331,6 +333,17 @@ export default function Dashboard({ controls, scopingData, onNavigateToScoping, 
           )}
         </div>
       </div>
+
+      {/*
+        The fourth question, for whoever oversees the programme: what moved
+        since last month. The monthly posture snapshots (PIG R10) are the record.
+      */}
+      {scopingData.organizationId && (
+        <section className="dashboard-section" aria-labelledby="dashboard-change">
+          <h2 id="dashboard-change" className="dashboard-section-title">How it has changed</h2>
+          <PostureHistoryPanel organizationId={scopingData.organizationId} onOpenDocuments={onNavigateToDocuments} />
+        </section>
+      )}
     </div>
   )
 }

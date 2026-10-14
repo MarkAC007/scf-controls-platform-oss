@@ -528,3 +528,43 @@ describe('VendorManagement — URL behavior', () => {
     expect(true).toBe(true)
   })
 })
+
+// ── PIG data location & responsibilities (issue #1124) ───────────────────────
+
+describe('VendorDetailPage — data location & responsibilities', () => {
+  function fieldValue(label: string): string | null {
+    const term = screen.getByText(label, { selector: 'span' })
+    return term.nextElementSibling?.textContent ?? null
+  }
+
+  it('renders the three new fields with their labels', async () => {
+    mockGetVendor.mockResolvedValue({
+      ...baseVendor,
+      data_location: 'EU (Frankfurt)',
+      flow_down_requirements: 'Breach notice within 24 hours\nAnnual pen test',
+      shared_responsibility_note: 'They run the IdP; we own user lifecycle',
+    } as Vendor)
+    await act(async () => {
+      render(<VendorDetailPage {...defaultProps} />)
+    })
+    expect(screen.getByRole('heading', { name: 'Data Location & Responsibilities' })).toBeInTheDocument()
+    expect(fieldValue('Data Location')).toBe('EU (Frankfurt)')
+    expect(fieldValue('Flow-down Requirements')).toBe('Breach notice within 24 hours\nAnnual pen test')
+    expect(fieldValue('Shared Responsibility')).toBe('They run the IdP; we own user lifecycle')
+  })
+
+  it('shows "-" for each field that is not recorded', async () => {
+    mockGetVendor.mockResolvedValue({
+      ...baseVendor,
+      data_location: null,
+      flow_down_requirements: null,
+      shared_responsibility_note: null,
+    } as Vendor)
+    await act(async () => {
+      render(<VendorDetailPage {...defaultProps} />)
+    })
+    expect(fieldValue('Data Location')).toBe('-')
+    expect(fieldValue('Flow-down Requirements')).toBe('-')
+    expect(fieldValue('Shared Responsibility')).toBe('-')
+  })
+})

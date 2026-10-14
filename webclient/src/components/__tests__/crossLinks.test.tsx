@@ -17,7 +17,7 @@ vi.mock('../../data/apiClient', () => ({
   getRiskAssessments: vi.fn(),
 }))
 
-import AppLink, { destinationSearch } from '../AppLink'
+import AppLink, { destinationSearch, navigateToDestination } from '../AppLink'
 import DeprecatedBadge from '../DeprecatedBadge'
 import RiskThreatContext from '../RiskThreatContext'
 import { auditEntityDestination } from '../AuditLogPage'
@@ -68,6 +68,20 @@ describe('AppLink', () => {
     fireEvent.click(link, { ctrlKey: true })
     fireEvent.click(link, { button: 1 })
     expect(window.location.search).toBe('')
+  })
+
+  it('opens the library list with no control selected', () => {
+    expect(destinationSearch(`tab=library&mode=full-library&item=${CONTROL}`, { kind: 'library' }))
+      .toBe('tab=library&mode=in-scope')
+  })
+
+  it('navigates in place without a link, for rows that are not anchors', () => {
+    const onPop = vi.fn()
+    window.addEventListener('popstate', onPop)
+    navigateToDestination({ kind: 'control', id: CONTROL })
+    window.removeEventListener('popstate', onPop)
+    expect(window.location.search).toBe(`?tab=library&mode=in-scope&item=${CONTROL}`)
+    expect(onPop).toHaveBeenCalledTimes(1)
   })
 
   it('keeps unrelated session parameters', () => {

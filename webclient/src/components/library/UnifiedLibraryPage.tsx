@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
+import { useOrganizationSettings } from '../../hooks/useOrganizationSettings'
 import { toast } from 'react-hot-toast'
 import type {
   EnrichedControl,
@@ -19,7 +20,7 @@ import type {
 } from '../../types'
 import type { LibraryMode } from '../../data/appUrl'
 import type { UnifiedLibraryFilters } from './UnifiedLibraryList'
-import UnifiedLibraryList from './UnifiedLibraryList'
+import UnifiedLibraryList, { materialityParams } from './UnifiedLibraryList'
 import ControlDetailPage from './ControlDetailPage'
 import ScopingBulkBar from '../scoping/ScopingBulkBar'
 import {
@@ -37,6 +38,7 @@ import {
   flattenScopedControlPages,
   useScopedControlsQuery,
 } from '../../hooks/useScopedControlsQuery'
+import { useConfirm } from '../../contexts/ConfirmContext'
 import { useDebounce } from '../../hooks/useDebounce'
 import { useIsOrgEditor } from '../../hooks/useHasOrgRole'
 import { useIsOrgAdmin } from '../../hooks/useIsOrgAdmin'
@@ -51,6 +53,9 @@ const DEFAULT_FILTERS: UnifiedLibraryFilters = {
   weight: 'all',
   framework: 'all',
   scope: 'all',
+  basis: 'all',
+  material: 'all',
+  sort: 'scf_id',
 }
 
 interface Props {
@@ -84,8 +89,11 @@ export default function UnifiedLibraryPage({
 }: Props): JSX.Element {
   const queryClient = useQueryClient()
   const orgId = organizationId ?? scopingData?.organizationId ?? ''
+  const { data: orgSettings } = useOrganizationSettings(orgId || undefined)
   const canEdit = useIsOrgEditor(orgId)
-  const canManageTeams = useIsOrgAdmin(orgId)
+  const isAdmin = useIsOrgAdmin(orgId)
+  const confirm = useConfirm()
+  const canManageTeams = isAdmin
   const [filtersByMode, setFiltersByMode] = useState<Record<LibraryMode, UnifiedLibraryFilters>>({
     'in-scope': { ...DEFAULT_FILTERS },
     'full-library': { ...DEFAULT_FILTERS },
@@ -123,6 +131,9 @@ export default function UnifiedLibraryPage({
       control_weighting: filters.weight !== 'all' ? Number(filters.weight) : undefined,
       framework: filters.framework !== 'all' ? filters.framework : undefined,
       scope_status: mode === 'in-scope' ? 'in_scope' : filters.scope,
+      basis: filters.basis !== 'all' ? filters.basis : undefined,
+      // The list's own query must match this one, or prev/next walk a different order.
+      ...materialityParams(filters),
     },
     orgId,
   )
@@ -188,8 +199,26 @@ export default function UnifiedLibraryPage({
     if (!canEdit) return
     let reason: string | undefined
     if (selected) {
-      reason = window.prompt('Why should this control be removed from scope?')?.trim()
-      if (!reason) return
+      // PIG R2: an MCR control leaves scope only with an admin's approval and a
+      // reason. Say so before asking, but always send the request: the server
+      // decides, and its refusal is shown below. The client's role and basis
+      // can be stale or still loading.
+      const listed = detailControls.find((control) => control.scf_id === scfId)
+        ?? listedControls.find((control) => control.scf_id === scfId)
+      const mandatory = listed?.obligation_basis === 'mcr'
+      const answer = await confirm({
+        title: 'Remove from scope',
+        message: mandatory
+          ? isAdmin
+            ? `${scfId} is a mandatory (MCR) control. Excluding it records you as the approving admin. Why should it be removed from scope?`
+            : `${scfId} is a mandatory (MCR) control. Only an organisation admin can exclude it, so this may be refused. Why should it be removed from scope?`
+          : 'Why should this control be removed from scope?',
+        confirmLabel: 'Remove from scope',
+        destructive: true,
+        reason: { label: 'Reason', required: true },
+      })
+      if (answer === null) return
+      reason = answer
     }
     try {
       await setControlScopeOverride(
@@ -204,7 +233,7 @@ export default function UnifiedLibraryPage({
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not update scope')
     }
-  }, [canEdit, orgId, onItemChange, refresh])
+  }, [canEdit, confirm, detailControls, isAdmin, listedControls, orgId, onItemChange, refresh])
 
   const updateImplementationField = useCallback((field: string, value: unknown) => {
     if (!item || !scopingData || !canEdit) return
@@ -410,6 +439,14 @@ export default function UnifiedLibraryPage({
           canManageTeams={canManageTeams}
           accountableTeamLabel={ownerByControlId[item] || null}
           scopeAction={scopeAction}
+          orgBusinessSize={orgSettings?.business_size ?? null}
+          orgMaturityTargets={orgSettings?.maturity_targets ?? null}
+          serverTarget={activeListed
+            ? { level: activeListed.target_maturity ?? null, source: activeListed.target_source ?? null }
+            : undefined}
+          onGovernanceChange={() => {
+            refresh().catch((err) => console.error('Failed to reload after a governance change:', err))
+          }}
         />
       </>
     )

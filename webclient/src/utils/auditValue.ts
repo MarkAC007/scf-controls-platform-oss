@@ -66,3 +66,8 @@ export function formatAuditDate(value: string): string {
     ? value
     : parsed.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
 }
+
+/** The day the server dated a UTC timestamp, whatever the reader's zone: the calendar its due dates are counted in. */
+export function formatServerDay(value: string): string {
+  return formatAuditDate(value.slice(0, 10))
+}

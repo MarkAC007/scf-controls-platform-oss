@@ -284,12 +284,13 @@ def _persist_completed(
             session.execute(
                 text("""
                     INSERT INTO vendor_action_items (
-                        id, vendor_id, assessment_id, title, description, priority,
+                        id, organization_id, vendor_id, assessment_id, title, description, priority,
                         status, category, owner_name, due_date, auto_generated
-                    ) VALUES (
-                        gen_random_uuid(), :vendor_id, :assessment_id, :title, :description, :priority,
-                        'open', 'dpsia_mandatory', :owner_name, :due_date, true
                     )
+                    SELECT
+                        gen_random_uuid(), v.organization_id, v.id, :assessment_id, :title, :description, :priority,
+                        'open', 'dpsia_mandatory', :owner_name, :due_date, true
+                    FROM vendors AS v WHERE v.id = :vendor_id
                 """),
                 {
                     "vendor_id": vendor_id,

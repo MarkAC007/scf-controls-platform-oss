@@ -43,6 +43,9 @@ export interface BusinessSizeGuidance {
   enterprise?: string    // >1000 staff (Class 9)
 }
 
+/** An organisation's recorded business size — one of the guidance keys. */
+export type BusinessSizeKey = keyof BusinessSizeGuidance
+
 /**
  * SCRM Focus tiers for supply chain risk management
  */
@@ -359,6 +362,9 @@ export interface ScopedControl {
   owner?: string
   assigned_to?: string
   maturity_level?: MaturityLevel
+  /** PIG R5: this control's own target, replacing its domain's; null inherits. */
+  target_maturity_override?: MaturityLevel | null
+  target_maturity_reason?: string | null
   target_date?: string
   completion_date?: string
   implementation_notes?: string
@@ -442,6 +448,15 @@ export interface VendorSimple {
   status?: string | null
 }
 
+export type SystemCriticality = 'low' | 'medium' | 'high' | 'critical'
+
+export const SYSTEM_CRITICALITY_LABELS: Record<SystemCriticality, string> = {
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+  critical: 'Critical',
+}
+
 export interface System {
   id: SystemId
   organization_id: string
@@ -457,6 +472,14 @@ export interface System {
   // remains the legacy free-text label for display back-compat.
   vendor_id?: string | null
   linked_vendor?: VendorSimple | null
+  // PIG R4: boundary and recovery record. null means not recorded; for
+  // in_scope, null means nobody has decided yet.
+  in_scope?: boolean | null
+  criticality?: SystemCriticality | null
+  rto_hours?: number | null
+  rpo_hours?: number | null
+  data_classification?: DataClassification | null
+  hosting_location?: string | null
   created_at: string
   updated_at: string
   created_by_user_id?: string
@@ -475,6 +498,12 @@ export interface SystemInput {
   connection_config?: Record<string, any>
   catalog_template_id?: number | null
   vendor_id?: string | null
+  in_scope?: boolean | null
+  criticality?: SystemCriticality | null
+  rto_hours?: number | null
+  rpo_hours?: number | null
+  data_classification?: DataClassification | null
+  hosting_location?: string | null
 }
 
 export interface SystemUpdate {
@@ -487,6 +516,12 @@ export interface SystemUpdate {
   connection_config?: Record<string, any>
   catalog_template_id?: number | null
   vendor_id?: string | null
+  in_scope?: boolean | null
+  criticality?: SystemCriticality | null
+  rto_hours?: number | null
+  rpo_hours?: number | null
+  data_classification?: DataClassification | null
+  hosting_location?: string | null
 }
 
 // ============================================================================
@@ -913,6 +948,28 @@ export interface RiskAssessment {
   updated_at: string
   created_by_user_id?: string | null
   updated_by_user_id?: string | null
+
+  // Recorded acceptance (PIG R7). Set only through the acceptance endpoint,
+  // which records the approving admin. acceptance_state is null unless the
+  // risk is accepted.
+  accepted_by?: string | null
+  accepted_at?: string | null
+  acceptance_rationale?: string | null
+  acceptance_expires_on?: string | null
+  acceptance_state?: AcceptanceState | null
+}
+
+/**
+ * Server's verdict on an accepted risk: an approval in force, one whose expiry
+ * has passed, or an acceptance no admin has approved.
+ */
+export type AcceptanceState = 'approved' | 'expired' | 'unapproved'
+
+/** PUT …/risk-assessments/{code}/acceptance. The approver is the caller. */
+export interface RiskAcceptanceRequest {
+  rationale: string
+  /** YYYY-MM-DD, after today. */
+  expires_on: string
 }
 
 /**
@@ -1173,6 +1230,13 @@ export type VendorCertificationStatusType = 'valid' | 'expired' | 'revoked' | 'p
  */
 export type DataClassification = 'public' | 'internal' | 'confidential' | 'restricted'
 
+export const DATA_CLASSIFICATION_LABELS: Record<DataClassification, string> = {
+  public: 'Public',
+  internal: 'Internal',
+  confidential: 'Confidential',
+  restricted: 'Restricted',
+}
+
 /**
  * Vendor record from database
  */
@@ -1194,6 +1258,9 @@ export interface Vendor {
   risk_score?: number | null
   risk_level?: string | null
   data_classification?: DataClassification | null
+  data_location?: string | null
+  flow_down_requirements?: string | null
+  shared_responsibility_note?: string | null
   created_at: string
   updated_at: string
   created_by_user_id?: string | null
@@ -1227,6 +1294,9 @@ export interface VendorInput {
   risk_score?: number | null
   risk_level?: string | null
   data_classification?: DataClassification | null
+  data_location?: string | null
+  flow_down_requirements?: string | null
+  shared_responsibility_note?: string | null
 }
 
 /**
@@ -1248,6 +1318,9 @@ export interface VendorUpdate {
   risk_score?: number | null
   risk_level?: string | null
   data_classification?: DataClassification | null
+  data_location?: string | null
+  flow_down_requirements?: string | null
+  shared_responsibility_note?: string | null
 }
 
 /**
@@ -1520,6 +1593,87 @@ export const ACTION_STATUS_COLORS: Record<ActionItemStatus, string> = {
 }
 
 // ---------------------------------------------------------------------------
+// Control deficiencies (PIG R8): the organisation's action items with no vendor
+// ---------------------------------------------------------------------------
+
+/** What raised a deficiency automatically; null when a person raised it. */
+export type DeficiencySource =
+  | 'control_at_risk'
+  | 'composite_insufficient'
+  | 'evidence_rejected'
+  | 'capability_test'
+
+export interface Deficiency {
+  id: string
+  organization_id: string
+  title: string
+  description?: string | null
+  priority: ActionItemPriority
+  status: ActionItemStatus
+  owner_name?: string | null
+  owner_user_id?: string | null
+  due_date?: string | null
+  completed_date?: string | null
+  scoped_control_id?: string | null
+  /** The control's SCF id, kept if the control is deleted. */
+  scf_id?: string | null
+  domain?: string | null
+  risk_code?: string | null
+  auto_generated: boolean
+  source?: DeficiencySource | null
+  source_ref?: string | null
+  retest_note?: string | null
+  closed_by_user_id?: string | null
+  capability_test_id?: string | null
+  root_cause?: string | null
+  created_at: string
+  updated_at: string
+}
+
+/** Raise a deficiency against a control, a risk, or both (at least one). */
+export interface DeficiencyCreate {
+  title: string
+  description?: string
+  priority: ActionItemPriority
+  owner_user_id?: string
+  due_date?: string
+  scf_id?: string
+  risk_code?: string
+  root_cause?: string
+}
+
+/** What a deficiency is raised against does not change. Null clears a field. */
+export interface DeficiencyUpdate {
+  title?: string
+  description?: string | null
+  priority?: ActionItemPriority
+  status?: ActionItemStatus
+  owner_user_id?: string | null
+  due_date?: string | null
+  /** Required to complete; ignored when reopening. */
+  retest_note?: string
+  root_cause?: string | null
+}
+
+export interface DeficiencyFilters {
+  status?: ActionItemStatus
+  /** Open and in progress only. */
+  open_only?: boolean
+  scf_id?: string
+  domain?: string
+  risk_code?: string
+}
+
+export interface DeficiencySummary {
+  open_total: number
+  material_open_total: number
+  /** Open deficiencies with no control: raised against a risk alone, or a capability test finding with none. */
+  unlinked_open: number
+  by_control: { scf_id: string; open_count: number; material: boolean }[]
+  by_domain: { domain: string; open_count: number }[]
+}
+
+// ---------------------------------------------------------------------------
 // Vendor Compensating Controls
 // ---------------------------------------------------------------------------
 
@@ -1548,6 +1702,181 @@ export const EFFECTIVENESS_COLORS: Record<EffectivenessRating, string> = {
   full: '#22c55e',
   partial: '#eab308',
   minimal: '#ef4444'
+}
+
+// ---------------------------------------------------------------------------
+// Organisation compensating controls (PIG R9)
+// ---------------------------------------------------------------------------
+
+/**
+ * A compensating control with no vendor, recorded against one of the
+ * organisation's controls. material, risk_acceptance_state and justified are
+ * where it stands now, not when it was recorded: an acceptance that lapsed or
+ * was withdrawn, or a control that became material since, shows here.
+ */
+export interface CompensatingControl {
+  id: string
+  organization_id: string
+  /** Null once the control's scope record is deleted. */
+  scoped_control_id: string | null
+  scf_id: string
+  domain?: string | null
+  gap_description: string
+  compensating_control: string
+  effectiveness_rating: EffectivenessRating
+  risk_reduction_notes?: string | null
+  risk_code?: string | null
+  /** The risk's acceptance while it is still linked to the control; null when not accepted, unlinked or absent. */
+  risk_acceptance_state?: AcceptanceState | null
+  material: boolean
+  /** False when the control is material and risk_code is not accepted with an approval in force. */
+  justified: boolean
+  created_at: string
+  updated_at: string
+}
+
+/** POST …/compensating-controls. On a material control risk_code is required. */
+export interface CompensatingControlCreate {
+  scf_id: string
+  gap_description: string
+  compensating_control: string
+  effectiveness_rating?: EffectivenessRating
+  risk_reduction_notes?: string | null
+  risk_code?: string | null
+}
+
+/** PATCH …/compensating-controls/{id}. The control never changes; null risk_code clears it. */
+export type CompensatingControlUpdate = Partial<Omit<CompensatingControlCreate, 'scf_id'>>
+
+export interface CompensatingControlFilters {
+  scf_id?: string
+  domain?: string
+  risk_code?: string
+}
+
+// ============================================================================
+// Due care (PIG R10): control validation and posture snapshots
+// ============================================================================
+
+/** Where a control's validation stands; `never` and `unknown_cadence` do not count as validated. */
+export type ValidationState = 'current' | 'due_soon' | 'overdue' | 'never' | 'unknown_cadence'
+
+/** One in-scope control's validation: the last one, and when the next is due. */
+export interface ControlValidation {
+  scoped_control_id: string
+  scf_id: string
+  /** The control's own cadence, else the catalogue's. */
+  validation_cadence: string | null
+  /** UTC with its offset (+00:00). Its first ten characters are the day the server dated it. */
+  last_validated_at: string | null
+  last_validated_by: string | null
+  last_validation_note: string | null
+  /** YYYY-MM-DD; null when never validated or the cadence is unknown. */
+  next_validation_due: string | null
+  validation_state: ValidationState
+}
+
+export interface ControlValidationList {
+  /** Every in-scope control the domain and scf_id filters select, before the state filter. */
+  counts: Record<ValidationState, number>
+  controls: ControlValidation[]
+}
+
+export interface ControlValidationFilters {
+  state?: ValidationState
+  domain?: string
+  scf_id?: string
+}
+
+/** What a posture snapshot counts: in-scope controls, and open deficiencies. */
+export interface PostureCounts {
+  in_scope: number
+  /** In-scope controls by implementation status; a status with none is absent. */
+  status: Record<string, number>
+  basis: { mcr: number; dsr: number; none: number }
+  materiality: { material: number; not_material: number }
+  deficiencies: { open: number; material_open: number; overdue: number; without_due_date: number }
+}
+
+/** One month's posture, taken once and never changed. */
+export interface PostureSnapshot {
+  id: string
+  organization_id: string
+  /** The month, YYYY-MM: the form GET /posture-snapshots/{period} takes. */
+  period: string
+  taken_at: string
+  trigger: 'scheduled' | 'manual'
+  taken_by_user_id: string | null
+  counts: PostureCounts
+}
+
+// ---------------------------------------------------------------------------
+// Capability tests (PIG R11): exercises of what the controls say the
+// organisation can do. Each finding is a deficiency linked to its test.
+// ---------------------------------------------------------------------------
+
+export type CapabilityTestType = 'incident_response' | 'continuity' | 'other'
+
+/** passed: nothing found. The other two need at least one finding. */
+export type CapabilityTestResult = 'passed' | 'passed_with_findings' | 'failed'
+
+export interface CapabilityTest {
+  id: string
+  organization_id: string
+  test_type: CapabilityTestType
+  title: string
+  /** The day it was run, YYYY-MM-DD; never in the future. */
+  tested_on: string
+  scenario: string
+  result: CapabilityTestResult
+  outcome: string
+  recorded_by_user_id?: string | null
+  /** Findings recorded, cancelled ones excluded. */
+  finding_count: number
+  open_finding_count: number
+  /** The findings, as deficiencies: in a single test's response only. */
+  findings?: Deficiency[] | null
+  created_at: string
+  updated_at: string
+}
+
+/** A finding as recorded with a test, or added to one; it becomes a deficiency. */
+export interface CapabilityTestFinding {
+  title: string
+  description?: string
+  priority: ActionItemPriority
+  owner_user_id?: string
+  due_date?: string
+  /** A control in scope, if the finding is against one. */
+  scf_id?: string
+  /** A risk the organisation has assessed. */
+  risk_code?: string
+  root_cause?: string
+}
+
+export interface CapabilityTestCreate {
+  test_type: CapabilityTestType
+  title: string
+  tested_on: string
+  scenario: string
+  result: CapabilityTestResult
+  outcome: string
+  findings: CapabilityTestFinding[]
+}
+
+/** A correction: the fields sent change, and any findings sent are added. None can be cleared. */
+export interface CapabilityTestUpdate {
+  test_type?: CapabilityTestType
+  title?: string
+  tested_on?: string
+  scenario?: string
+  result?: CapabilityTestResult
+  outcome?: string
+  findings?: CapabilityTestFinding[]
+}
+
+export interface CapabilityTestFilters {
+  test_type?: CapabilityTestType
 }
 
 // ============================================================================

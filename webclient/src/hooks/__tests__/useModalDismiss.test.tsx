@@ -9,7 +9,7 @@
 import { renderHook } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { useModalDismiss } from '../useModalDismiss'
+import { keyEventBelongsToModal, useModalDismiss } from '../useModalDismiss'
 
 function pressKey(key: string): void {
   document.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
@@ -155,5 +155,42 @@ describe('useModalDismiss', () => {
     expect(document.body.style.overflow).toBe('')
     pressKey('Escape')
     expect(onClose).not.toHaveBeenCalled()
+  })
+})
+
+describe('keyEventBelongsToModal', () => {
+  const keyFrom = (target: EventTarget) => {
+    let seen: KeyboardEvent | null = null
+    const grab = (event: KeyboardEvent) => { seen = event }
+    window.addEventListener('keydown', grab)
+    target.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
+    window.removeEventListener('keydown', grab)
+    return seen as unknown as KeyboardEvent
+  }
+
+  it('is false for a key on the page with no modal open', () => {
+    expect(keyEventBelongsToModal(keyFrom(document.body))).toBe(false)
+  })
+
+  it('is true for a key from inside an aria-modal or dialog element', () => {
+    for (const attrs of [{ 'aria-modal': 'true' }, { role: 'dialog' }, { role: 'alertdialog' }]) {
+      const modal = document.createElement('div')
+      for (const [k, v] of Object.entries(attrs)) modal.setAttribute(k, v)
+      const button = document.createElement('button')
+      modal.appendChild(button)
+      document.body.appendChild(modal)
+      try {
+        expect(keyEventBelongsToModal(keyFrom(button))).toBe(true)
+      } finally {
+        modal.remove()
+      }
+    }
+  })
+
+  it('is true for any key while a modal is registered, even with focus on body', () => {
+    const { unmount } = renderHook(() => useModalDismiss(true, vi.fn()))
+    expect(keyEventBelongsToModal(keyFrom(document.body))).toBe(true)
+    unmount()
+    expect(keyEventBelongsToModal(keyFrom(document.body))).toBe(false)
   })
 })

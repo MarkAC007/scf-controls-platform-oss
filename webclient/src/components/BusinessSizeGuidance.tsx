@@ -1,8 +1,10 @@
-import { useState } from 'react'
-import type { BusinessSizeGuidance as BusinessSizeGuidanceType } from '../types'
+import { useEffect, useState } from 'react'
+import type { BusinessSizeGuidance as BusinessSizeGuidanceType, BusinessSizeKey } from '../types'
 
 interface Props {
   guidance?: BusinessSizeGuidanceType
+  /** The organisation's recorded size. Its pill is selected and marked. */
+  orgSize?: BusinessSizeKey | null
 }
 
 const SIZES = [
@@ -15,8 +17,13 @@ const SIZES = [
 
 type SizeKey = typeof SIZES[number]['key']
 
-export default function BusinessSizeGuidance({ guidance }: Props) {
-  const [selectedSize, setSelectedSize] = useState<SizeKey>('medium')
+export default function BusinessSizeGuidance({ guidance, orgSize }: Props) {
+  const [selectedSize, setSelectedSize] = useState<SizeKey>(orgSize ?? 'medium')
+  // Settings arrive after first render; follow them until the user picks a pill.
+  const [userPicked, setUserPicked] = useState(false)
+  useEffect(() => {
+    if (orgSize && !userPicked) setSelectedSize(orgSize)
+  }, [orgSize, userPicked])
   const [hoveredSize, setHoveredSize] = useState<SizeKey | null>(null)
 
   if (!guidance) {
@@ -38,6 +45,7 @@ export default function BusinessSizeGuidance({ guidance }: Props) {
       <div className="size-pills">
         {SIZES.map(size => {
           const hasGuidance = !!guidance[size.key as keyof BusinessSizeGuidanceType]
+          const isOrgSize = orgSize === size.key
           return (
             <div
               key={size.key}
@@ -46,9 +54,13 @@ export default function BusinessSizeGuidance({ guidance }: Props) {
               onMouseLeave={() => setHoveredSize(null)}
             >
               <button
-                className={`size-pill ${selectedSize === size.key ? 'active' : ''} ${!hasGuidance ? 'empty' : ''}`}
-                onClick={() => setSelectedSize(size.key)}
-                title={size.title}
+                className={`size-pill ${selectedSize === size.key ? 'active' : ''} ${!hasGuidance ? 'empty' : ''} ${isOrgSize ? 'org-size' : ''}`}
+                onClick={() => {
+                  setUserPicked(true)
+                  setSelectedSize(size.key)
+                }}
+                title={isOrgSize ? `${size.title} — your organisation` : size.title}
+                aria-label={isOrgSize ? `${size.label} (your organisation)` : undefined}
               >
                 {size.label}
               </button>

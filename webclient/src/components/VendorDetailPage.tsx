@@ -15,6 +15,7 @@
  *   8. Assessment History (from Review tab)
  *   9. Next Review (from Review tab)
  *  10. Vendor Details card (from Overview tab — parity)
+ *  10a. Data Location & Responsibilities card (PIG R4)
  *  11. Contact card (from Overview tab — parity)
  *  12. Contract card (from Overview tab — parity)
  *  13. Certifications table (from Overview tab — parity)
@@ -57,6 +58,7 @@ import VendorAssessmentReport from './VendorAssessmentReport'
 import VendorActionItemsPanel from './VendorActionItemsPanel'
 import VendorCompensatingControlsPanel from './VendorCompensatingControlsPanel'
 import AddSystemModal from './AddSystemModal'
+import { keyEventBelongsToModal } from '../hooks/useModalDismiss'
 
 const POLL_INTERVAL_MS = 3000
 
@@ -64,6 +66,8 @@ const POLL_INTERVAL_MS = 3000
 
 /** True when the keyboard event target should suppress pager shortcuts. */
 function isSuppressed(e: KeyboardEvent): boolean {
+  // A key pressed in an open dialog is the dialog's, not the pager's.
+  if (keyEventBelongsToModal(e)) return true
   const t = e.target
   if (!t || !(t instanceof Element)) return false
   const tag = (t as HTMLElement).tagName?.toLowerCase()
@@ -149,6 +153,12 @@ const fieldValue: React.CSSProperties = {
   margin: '0.25rem 0 0 0',
   fontSize: '0.875rem',
   color: 'var(--text)',
+}
+
+/** Free-text notes keep the line breaks the user typed. */
+const longTextValue: React.CSSProperties = {
+  ...fieldValue,
+  whiteSpace: 'pre-wrap',
 }
 
 const thStyle: React.CSSProperties = {
@@ -1069,6 +1079,27 @@ export default function VendorDetailPage({
                 ? vendor.data_classification.charAt(0).toUpperCase() + vendor.data_classification.slice(1)
                 : '-'}
             </p>
+          </div>
+        </div>
+      </section>
+
+      {/* ================================================================
+          Data Location & Responsibilities (PIG R4)
+          ================================================================ */}
+      <section style={cardStyle}>
+        <h3 style={sectionHeading}>Data Location &amp; Responsibilities</h3>
+        <div style={gridStyle}>
+          <div>
+            <span style={fieldLabel}>Data Location</span>
+            <p style={fieldValue}>{vendor.data_location || '-'}</p>
+          </div>
+          <div>
+            <span style={fieldLabel}>Flow-down Requirements</span>
+            <p style={longTextValue}>{vendor.flow_down_requirements || '-'}</p>
+          </div>
+          <div>
+            <span style={fieldLabel}>Shared Responsibility</span>
+            <p style={longTextValue}>{vendor.shared_responsibility_note || '-'}</p>
           </div>
         </div>
       </section>

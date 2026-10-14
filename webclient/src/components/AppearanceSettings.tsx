@@ -13,6 +13,17 @@ import {
   fetchOrganizationSettings,
   updateOrganizationSettings,
 } from '../data/apiClient'
+import type { BusinessSizeKey } from '../types'
+
+// Keys match the catalogue's right-sizing guidance, so the recorded size marks
+// the matching row on every control.
+const BUSINESS_SIZE_OPTIONS: { value: BusinessSizeKey; label: string }[] = [
+  { value: 'micro_small', label: 'Micro (fewer than 10 staff)' },
+  { value: 'small', label: 'Small (10–49 staff)' },
+  { value: 'medium', label: 'Medium (50–249 staff)' },
+  { value: 'large', label: 'Large (250–999 staff)' },
+  { value: 'enterprise', label: 'Enterprise (1,000+ staff)' },
+]
 
 interface AppearanceSettingsProps {
   organizationId: string
@@ -33,23 +44,36 @@ export default function AppearanceSettings({ organizationId }: AppearanceSetting
   // state, so the Save button can stay disabled until something actually changed.
   const [orgName, setOrgName] = useState('')
   const [industry, setIndustry] = useState('')
-  const [savedMeta, setSavedMeta] = useState({ name: '', industry: '' })
+  const [businessSize, setBusinessSize] = useState('')
+  const [mission, setMission] = useState('')
+  const [savedMeta, setSavedMeta] = useState({ name: '', industry: '', businessSize: '', mission: '' })
   const [isLoadingMeta, setIsLoadingMeta] = useState(true)
+  // A failed load leaves the fields blank; saving then would wipe what is stored.
+  const [metaLoadFailed, setMetaLoadFailed] = useState(false)
   const [isSavingMeta, setIsSavingMeta] = useState(false)
 
   useEffect(() => {
     let cancelled = false
     setIsLoadingMeta(true)
+    setMetaLoadFailed(false)
     fetchOrganizationSettings(organizationId)
       .then((s) => {
         if (cancelled) return
-        const next = { name: s.name ?? '', industry: s.industry ?? '' }
+        const next = {
+          name: s.name ?? '',
+          industry: s.industry ?? '',
+          businessSize: s.business_size ?? '',
+          mission: s.mission_statement ?? '',
+        }
         setOrgName(next.name)
         setIndustry(next.industry)
+        setBusinessSize(next.businessSize)
+        setMission(next.mission)
         setSavedMeta(next)
       })
       .catch((err) => {
         if (!cancelled) {
+          setMetaLoadFailed(true)
           toast.error(err instanceof Error ? err.message : 'Failed to load organisation details')
         }
       })
@@ -61,7 +85,11 @@ export default function AppearanceSettings({ organizationId }: AppearanceSetting
     }
   }, [organizationId])
 
-  const metaChanged = orgName !== savedMeta.name || industry !== savedMeta.industry
+  const metaChanged =
+    orgName !== savedMeta.name ||
+    industry !== savedMeta.industry ||
+    businessSize !== savedMeta.businessSize ||
+    mission !== savedMeta.mission
 
   const handleMetaSave = async () => {
     const trimmedName = orgName.trim()
@@ -71,16 +99,31 @@ export default function AppearanceSettings({ organizationId }: AppearanceSetting
     }
     setIsSavingMeta(true)
     try {
-      const saved = await updateOrganizationSettings(organizationId, {
-        name: trimmedName,
-        // Empty input clears the field rather than storing an empty string —
-        // doc-gen treats null as "omit the Industry line" (see tier1._header).
-        industry: industry.trim() || null,
-      })
-      const next = { name: saved.name ?? '', industry: saved.industry ?? '' }
+      // Only what changed is sent, so a field someone else saved meanwhile
+      // is not overwritten with this form's stale copy of it.
+      const changes: Parameters<typeof updateOrganizationSettings>[1] = {}
+      if (orgName !== savedMeta.name) changes.name = trimmedName
+      // Empty input clears the field rather than storing an empty string —
+      // doc-gen treats null as "omit the Industry line" (see tier1._header).
+      if (industry !== savedMeta.industry) changes.industry = industry.trim() || null
+      if (businessSize !== savedMeta.businessSize) {
+        changes.business_size = (businessSize || null) as BusinessSizeKey | null
+      }
+      if (mission !== savedMeta.mission) changes.mission_statement = mission.trim() || null
+      const saved = await updateOrganizationSettings(organizationId, changes)
+      const next = {
+        name: saved.name ?? '',
+        industry: saved.industry ?? '',
+        businessSize: saved.business_size ?? '',
+        mission: saved.mission_statement ?? '',
+      }
       setOrgName(next.name)
       setIndustry(next.industry)
+      setBusinessSize(next.businessSize)
+      setMission(next.mission)
       setSavedMeta(next)
+      // Scoping reads business size from the cached settings.
+      await queryClient.invalidateQueries({ queryKey: ['organization-settings'] })
       // The org name shows in the app header and org switcher, so refresh those.
       await queryClient.invalidateQueries({ queryKey: ['organization'] })
       toast.success('Organisation details saved')
@@ -168,11 +211,42 @@ export default function AppearanceSettings({ organizationId }: AppearanceSetting
             />
             <span className="appearance-hint">Omitted from documents when blank.</span>
           </div>
+          <div className="org-meta-field">
+            <label htmlFor="org-meta-business-size">Business Size</label>
+            <select
+              id="org-meta-business-size"
+              className="org-meta-input"
+              value={businessSize}
+              disabled={isLoadingMeta || isSavingMeta}
+              onChange={(e) => setBusinessSize(e.target.value)}
+            >
+              <option value="">Not recorded</option>
+              {BUSINESS_SIZE_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+            <span className="appearance-hint">Marks the matching row of each control&apos;s right-sizing guidance.</span>
+          </div>
+          <div className="org-meta-field org-meta-field-wide">
+            <label htmlFor="org-meta-mission">Mission Statement</label>
+            <textarea
+              id="org-meta-mission"
+              className="org-meta-input"
+              value={mission}
+              disabled={isLoadingMeta || isSavingMeta}
+              maxLength={4000}
+              rows={3}
+              placeholder={isLoadingMeta ? 'Loading…' : 'What the organisation exists to do'}
+              onChange={(e) => setMission(e.target.value)}
+            />
+          </div>
         </div>
         <div className="appearance-actions">
           <button
             className="btn btn-primary"
-            disabled={isLoadingMeta || isSavingMeta || !metaChanged}
+            disabled={isLoadingMeta || isSavingMeta || metaLoadFailed || !metaChanged}
             onClick={handleMetaSave}
           >
             {isSavingMeta ? 'Saving…' : 'Save Organisation Details'}

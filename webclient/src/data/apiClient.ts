@@ -302,6 +302,12 @@ export interface OrganizationSettingsResponse {
   evidence_assessment_engine?: 'llm' | 'jev_shadow' | 'jev'
   /** Whether collection tasks are minted automatically. Absent means true. */
   auto_task_generation_enabled?: boolean
+  /** Organisation profile (PIG R4). Business size picks the matching row of
+   *  each control's right-sizing guidance; null means not recorded. */
+  business_size?: import('../types').BusinessSizeKey | null
+  mission_statement?: string | null
+  /** PIG R5: target maturity per SCF domain code; controls inherit their domain's. */
+  maturity_targets?: Record<string, import('../types').MaturityLevel>
 }
 
 export async function fetchOrganizationSettings(
@@ -559,6 +565,8 @@ export interface ScopedControl {
   owner?: string | null
   assigned_to?: string | null
   maturity_level?: string | null
+  target_maturity_override?: import('../types').MaturityLevel | null
+  target_maturity_reason?: string | null
   target_date?: string | null
   completion_date?: string | null
   implementation_notes?: string | null
@@ -829,7 +837,15 @@ export interface FrameworkScopeSummaryItem {
   source?: string | null
   selected_at?: string | null
   selected_by?: string | null
+  /** PIG R2: why the framework is in scope; null when unclassified. */
+  basis?: ObligationBasis | null
+  obligation_type?: ObligationType | null
+  obligation_source?: string | null
 }
+
+/** PIG R2: a mandatory (MCR) or discretionary (DSR) obligation. */
+export type ObligationBasis = 'mcr' | 'dsr'
+export type ObligationType = 'statutory' | 'regulatory' | 'contractual' | 'discretionary'
 
 export interface FrameworkStatusCounts {
   implemented: number
@@ -841,6 +857,8 @@ export interface FrameworkStatusCounts {
 export interface FrameworkScopeSummaryResponse {
   total: number
   selected_count: number
+  /** In-scope controls by obligation basis; absent from older backends. */
+  basis_counts?: { mcr: number; dsr: number; unclassified: number }
   frameworks: FrameworkScopeSummaryItem[]
 }
 
@@ -857,6 +875,81 @@ export interface FrameworkScopePreview {
   /** Remove only: tracked evidence left with no in-scope control requiring it. */
   orphaned_evidence: string[]
   open_tasks_affected: number
+  /** Remove only: in-scope controls whose basis weakens; to_basis null = unclassified or leaving scope. */
+  basis_downgrades?: { scf_id: string; from_basis: ObligationBasis | null; to_basis: ObligationBasis | null }[]
+}
+
+export interface FrameworkBasisRequest {
+  basis: ObligationBasis | null
+  obligation_type: ObligationType | null
+  obligation_source: string | null
+}
+
+/** PIG R2: record why a scoped framework is in scope. Admin only; replaces all three fields. */
+export async function setFrameworkBasis(
+  orgId: string,
+  frameworkId: string,
+  body: FrameworkBasisRequest,
+): Promise<FrameworkScopeSummaryItem> {
+  return apiFetch<FrameworkScopeSummaryItem>(
+    `/organizations/${orgId}/framework-scoping/${encodeURIComponent(frameworkId)}/basis`,
+    { method: 'PUT', body: JSON.stringify(body) },
+  )
+}
+
+/** PIG R2: override one control's derived basis with a reason; ``basis: null`` clears it. Admin only. */
+export async function setControlBasisOverride(
+  orgId: string,
+  scfId: string,
+  basis: ObligationBasis | null,
+  reason: string | null,
+): Promise<ScopedControl> {
+  return apiFetch<ScopedControl>(
+    `/organizations/${orgId}/scoped-controls/${encodeURIComponent(scfId)}/basis-override`,
+    { method: 'PUT', body: JSON.stringify({ basis, reason }) },
+  )
+}
+
+/** PIG R5: set one control's target maturity, replacing its domain's; a level
+ *  needs a reason, and `level: null` clears the override so it inherits again. */
+export async function setControlTargetMaturity(
+  orgId: string,
+  scfId: string,
+  level: import('../types').MaturityLevel | null,
+  reason: string | null,
+): Promise<ScopedControl> {
+  return apiFetch<ScopedControl>(
+    `/organizations/${orgId}/scoped-controls/${encodeURIComponent(scfId)}/target-maturity`,
+    { method: 'PUT', body: JSON.stringify({ level, reason }) },
+  )
+}
+
+/** PIG R6: override whether one control is material, with a reason (admin
+ *  only). `material: null` returns it to its catalogue weighting; when that
+ *  makes it not material the reason is still required. */
+export async function setControlMateriality(
+  orgId: string,
+  scfId: string,
+  material: boolean | null,
+  reason: string | null,
+): Promise<ScopedControl> {
+  return apiFetch<ScopedControl>(
+    `/organizations/${orgId}/scoped-controls/${encodeURIComponent(scfId)}/materiality`,
+    { method: 'PUT', body: JSON.stringify({ material, reason }) },
+  )
+}
+
+/** PIG R6: link one control's approved or published procedure document
+ *  (editor and above); `documentId: null` unlinks it. */
+export async function setControlProcedureDocument(
+  orgId: string,
+  scfId: string,
+  documentId: string | null,
+): Promise<ScopedControl> {
+  return apiFetch<ScopedControl>(
+    `/organizations/${orgId}/scoped-controls/${encodeURIComponent(scfId)}/procedure-document`,
+    { method: 'PUT', body: JSON.stringify({ document_id: documentId }) },
+  )
 }
 
 export async function fetchFrameworkScopeSummary(
@@ -923,6 +1016,30 @@ export interface ScopedControlWithCatalog {
   scope_override?: 'include' | 'exclude' | null
   scope_override_reason?: string | null
   scope_override_set_at?: string | null
+  /** PIG R2: effective obligation basis; null when unclassified. */
+  obligation_basis?: ObligationBasis | null
+  /** Whether a per-control override or a classified framework decided the basis. */
+  basis_source?: 'override' | 'framework' | null
+  basis_override_reason?: string | null
+  /** PIG R5: the effective target — this control's override, else its domain's;
+   *  null when neither has one, and always null on a control with no scope record. */
+  target_maturity?: import('../types').MaturityLevel | null
+  /** Whether the control's own override or its domain's target set it. */
+  target_source?: 'control' | 'domain' | null
+  /** The override's reason; null unless `target_source` is 'control'. */
+  target_maturity_reason?: string | null
+  /** PIG R6: whether the control is material — its override, else catalogue
+   *  weighting 10. Resolved for every row, scoped or not. */
+  material?: boolean
+  /** Whether the control's own override or its catalogue weighting decided it. */
+  material_source?: 'control' | 'weighting' | null
+  /** The override's reason; null unless `material_source` is 'control'. */
+  material_reason?: string | null
+  /** The signed-off procedure linked to this control (playbook step 2d). */
+  procedure_document_id?: string | null
+  /** That document's lifecycle status now; anything but approved or published
+   *  means it was edited after it was linked. */
+  procedure_document_status?: string | null
   control_name: string
   control_description: string
   control_question?: string | null
@@ -1022,6 +1139,12 @@ export interface ScopedControlsPageParams {
    * membership — so pass the member type straight through.
    */
   accountable_owner_type?: import('../types').MemberType
+  /** PIG R2: narrow to one obligation basis; ``unclassified`` means neither. */
+  basis?: ObligationBasis | 'unclassified'
+  /** PIG R6: true for material controls only, false for the rest. */
+  material?: boolean
+  /** PIG R6: ``weighting`` puts material controls first, then the heaviest. */
+  sort?: 'scf_id' | 'weighting'
 }
 
 export async function fetchScopedControlsPage(
@@ -1048,6 +1171,9 @@ export async function fetchScopedControlsPage(
   if (params.accountable_owner_type) {
     queryParams.set('accountable_owner_type', params.accountable_owner_type)
   }
+  if (params.basis) queryParams.set('basis', params.basis)
+  if (params.material !== undefined) queryParams.set('material', String(params.material))
+  if (params.sort) queryParams.set('sort', params.sort)
 
   const queryString = queryParams.toString()
   const endpoint = `/organizations/${orgId}/scoped-controls-paginated${queryString ? `?${queryString}` : ''}`
@@ -2065,6 +2191,7 @@ import type {
   CustomRiskDefinition,
   CustomRiskCreate,
   CustomRiskUpdate,
+  RiskAcceptanceRequest,
 } from '../types'
 
 /**
@@ -2166,6 +2293,37 @@ export async function deleteRiskAssessment(
   )
 }
 
+/**
+ * Accept a risk, or renew its acceptance (PIG R7). Requires org admin; the
+ * server records the caller as the approver, so no approver is sent.
+ */
+export async function acceptRisk(
+  riskCode: string,
+  body: RiskAcceptanceRequest,
+  orgId: string
+): Promise<RiskAssessment> {
+  return apiFetch<RiskAssessment>(
+    `/organizations/${orgId}/risk-assessments/${encodeURIComponent(riskCode)}/acceptance`,
+    {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }
+  )
+}
+
+/**
+ * Withdraw a risk's acceptance; the risk returns to 'analysed'. Requires org admin.
+ */
+export async function withdrawRiskAcceptance(
+  riskCode: string,
+  orgId: string
+): Promise<RiskAssessment> {
+  return apiFetch<RiskAssessment>(
+    `/organizations/${orgId}/risk-assessments/${encodeURIComponent(riskCode)}/acceptance`,
+    { method: 'DELETE' }
+  )
+}
+
 // =============================================================================
 // Custom Risk Definitions API
 // =============================================================================
@@ -2249,7 +2407,8 @@ export async function deleteCustomRisk(
 export async function addCustomRiskControl(
   riskCode: string,
   scfId: string,
-  orgId?: string
+  orgId?: string,
+  documentId?: string | null
 ): Promise<void> {
   if (!orgId) {
     const org = await getCurrentOrganization()
@@ -2259,7 +2418,48 @@ export async function addCustomRiskControl(
     `/organizations/${orgId}/custom-risks/${encodeURIComponent(riskCode)}/controls`,
     {
       method: 'POST',
-      body: JSON.stringify({ scf_id: scfId }),
+      // A link with a document records the custom risk as an exception
+      // against that standard (PIG R7).
+      body: JSON.stringify(documentId ? { scf_id: scfId, document_id: documentId } : { scf_id: scfId }),
+    }
+  )
+}
+
+/** One control link on a custom risk, with the standard's document if any. */
+export interface CustomRiskControlLink {
+  scf_id: string
+  document_id: string | null
+}
+
+/**
+ * The control links of a custom risk, each with its supporting document.
+ * Unlike controls-for-risk, this lists every link, scoped or not.
+ */
+export async function getCustomRiskControlLinks(
+  riskCode: string,
+  orgId: string
+): Promise<CustomRiskControlLink[]> {
+  const data = await apiFetch<{ links?: CustomRiskControlLink[] }>(
+    `/organizations/${orgId}/custom-risks/${encodeURIComponent(riskCode)}/controls`
+  )
+  return data.links ?? []
+}
+
+/**
+ * Set or clear (null) the supporting document on a custom risk's control
+ * link. The server requires document_id in the body, so it is always sent.
+ */
+export async function setCustomRiskControlDocument(
+  riskCode: string,
+  scfId: string,
+  documentId: string | null,
+  orgId: string
+): Promise<void> {
+  await apiFetch<{ success: boolean; message: string }>(
+    `/organizations/${orgId}/custom-risks/${encodeURIComponent(riskCode)}/controls/${encodeURIComponent(scfId)}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify({ document_id: documentId }),
     }
   )
 }
@@ -2679,6 +2879,215 @@ import type {
   VendorCompensatingControl,
   VendorCompensatingControlInput,
 } from '../types'
+
+// ============================================================================
+// Control deficiencies (PIG R8). Reading needs viewer; raising and updating
+// need editor. A deficiency is never deleted: one raised in error is cancelled.
+// ============================================================================
+
+import type { Deficiency, DeficiencyCreate, DeficiencyFilters, DeficiencySummary, DeficiencyUpdate } from '../types'
+
+export async function listDeficiencies(
+  orgId: string,
+  filters: DeficiencyFilters = {}
+): Promise<Deficiency[]> {
+  const params = new URLSearchParams()
+  if (filters.status) params.append('status', filters.status)
+  if (filters.open_only) params.append('open_only', 'true')
+  if (filters.scf_id) params.append('scf_id', filters.scf_id)
+  if (filters.domain) params.append('domain', filters.domain)
+  if (filters.risk_code) params.append('risk_code', filters.risk_code)
+  const query = params.toString()
+  return apiFetch(`/organizations/${orgId}/deficiencies${query ? `?${query}` : ''}`)
+}
+
+export async function getDeficiencySummary(
+  orgId: string
+): Promise<DeficiencySummary> {
+  return apiFetch(`/organizations/${orgId}/deficiencies/summary`)
+}
+
+export async function createDeficiency(
+  orgId: string,
+  body: DeficiencyCreate
+): Promise<Deficiency> {
+  return apiFetch(`/organizations/${orgId}/deficiencies`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function updateDeficiency(
+  orgId: string,
+  deficiencyId: string,
+  body: DeficiencyUpdate
+): Promise<Deficiency> {
+  return apiFetch(`/organizations/${orgId}/deficiencies/${deficiencyId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  })
+}
+
+// ============================================================================
+// Organisation compensating controls (PIG R9). Reading needs viewer;
+// recording, updating and deleting need editor. A delete is final: only the
+// audit log keeps what the record said.
+// ============================================================================
+
+import type {
+  CompensatingControl,
+  CompensatingControlCreate,
+  CompensatingControlFilters,
+  CompensatingControlUpdate,
+} from '../types'
+
+export async function listCompensatingControls(
+  orgId: string,
+  filters: CompensatingControlFilters = {}
+): Promise<CompensatingControl[]> {
+  const params = new URLSearchParams()
+  if (filters.scf_id) params.append('scf_id', filters.scf_id)
+  if (filters.domain) params.append('domain', filters.domain)
+  if (filters.risk_code) params.append('risk_code', filters.risk_code)
+  const query = params.toString()
+  return apiFetch(`/organizations/${orgId}/compensating-controls${query ? `?${query}` : ''}`)
+}
+
+export async function createCompensatingControl(
+  orgId: string,
+  body: CompensatingControlCreate
+): Promise<CompensatingControl> {
+  return apiFetch(`/organizations/${orgId}/compensating-controls`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function updateCompensatingControl(
+  orgId: string,
+  id: string,
+  body: CompensatingControlUpdate
+): Promise<CompensatingControl> {
+  return apiFetch(`/organizations/${orgId}/compensating-controls/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function deleteCompensatingControl(
+  orgId: string,
+  id: string
+): Promise<void> {
+  await apiFetch<{ success: boolean; message: string }>(
+    `/organizations/${orgId}/compensating-controls/${id}`,
+    { method: 'DELETE' }
+  )
+}
+
+// ============================================================================
+// Due care (PIG R10). Reading the validation schedule and the posture
+// snapshots needs viewer; recording a validation and taking a snapshot need
+// editor. Neither write can be undone: a validation replaces the control's
+// last one, and a month has one snapshot that is never replaced.
+// ============================================================================
+
+import type {
+  ControlValidation,
+  ControlValidationFilters,
+  ControlValidationList,
+  PostureSnapshot,
+} from '../types'
+
+export async function listControlValidations(
+  orgId: string,
+  filters: ControlValidationFilters = {}
+): Promise<ControlValidationList> {
+  const params = new URLSearchParams()
+  if (filters.state) params.append('state', filters.state)
+  if (filters.domain) params.append('domain', filters.domain)
+  if (filters.scf_id) params.append('scf_id', filters.scf_id)
+  const query = params.toString()
+  return apiFetch(`/organizations/${orgId}/control-validations${query ? `?${query}` : ''}`)
+}
+
+export async function recordControlValidation(
+  orgId: string,
+  scfId: string,
+  note: string
+): Promise<ControlValidation> {
+  return apiFetch(`/organizations/${orgId}/scoped-controls/${encodeURIComponent(scfId)}/validation`, {
+    method: 'POST',
+    body: JSON.stringify({ note }),
+  })
+}
+
+export async function listPostureSnapshots(orgId: string, limit = 24): Promise<PostureSnapshot[]> {
+  return apiFetch(`/organizations/${orgId}/posture-snapshots?limit=${limit}`)
+}
+
+export async function createPostureSnapshot(orgId: string): Promise<PostureSnapshot> {
+  return apiFetch(`/organizations/${orgId}/posture-snapshots`, { method: 'POST' })
+}
+
+// ============================================================================
+// Capability tests (PIG R11). Reading needs viewer; recording, correcting and
+// adding a finding need editor. A test is never deleted, and each finding is
+// recorded as a deficiency: one found in error is cancelled there.
+// ============================================================================
+
+import type {
+  CapabilityTest,
+  CapabilityTestCreate,
+  CapabilityTestFilters,
+  CapabilityTestFinding,
+  CapabilityTestUpdate,
+} from '../types'
+
+export async function listCapabilityTests(
+  orgId: string,
+  filters: CapabilityTestFilters = {}
+): Promise<CapabilityTest[]> {
+  const params = new URLSearchParams()
+  if (filters.test_type) params.append('test_type', filters.test_type)
+  const query = params.toString()
+  return apiFetch(`/organizations/${orgId}/capability-tests${query ? `?${query}` : ''}`)
+}
+
+export async function getCapabilityTest(orgId: string, testId: string): Promise<CapabilityTest> {
+  return apiFetch(`/organizations/${orgId}/capability-tests/${testId}`)
+}
+
+export async function createCapabilityTest(
+  orgId: string,
+  body: CapabilityTestCreate
+): Promise<CapabilityTest> {
+  return apiFetch(`/organizations/${orgId}/capability-tests`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function updateCapabilityTest(
+  orgId: string,
+  testId: string,
+  body: CapabilityTestUpdate
+): Promise<CapabilityTest> {
+  return apiFetch(`/organizations/${orgId}/capability-tests/${testId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function addCapabilityTestFinding(
+  orgId: string,
+  testId: string,
+  body: CapabilityTestFinding
+): Promise<Deficiency> {
+  return apiFetch(`/organizations/${orgId}/capability-tests/${testId}/findings`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
 
 export async function getVendorActionItems(
   vendorId: string,

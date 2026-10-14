@@ -39,6 +39,21 @@ SCOPED_CONTROL_TRACKED_FIELDS: set = {
     'scope_override_reason',
     'scope_override_set_at',
     'scope_override_set_by',
+    # PIG R2: who approved an MCR exclusion, and the per-control basis override.
+    'scope_override_approved_by',
+    'basis_override',
+    'basis_override_reason',
+    # PIG R5: per-control target maturity override.
+    'target_maturity_override',
+    'target_maturity_reason',
+    # PIG R6: materiality override and the linked procedure document.
+    'material_override',
+    'material_reason',
+    'procedure_document_id',
+    # PIG R10: the control's last validation.
+    'last_validated_at',
+    'last_validated_by',
+    'last_validation_note',
     'implementation_status',
     'priority',
     'owner',
@@ -47,6 +62,13 @@ SCOPED_CONTROL_TRACKED_FIELDS: set = {
     'target_date',
     'completion_date',
     'implementation_notes',
+}
+
+#: Obligation basis of a framework selection (PIG R2).
+FRAMEWORK_SELECTION_TRACKED_FIELDS: set = {
+    'basis',
+    'obligation_type',
+    'obligation_source',
 }
 
 EVIDENCE_TRACKING_TRACKED_FIELDS: set = {
@@ -115,6 +137,10 @@ VENDOR_TRACKED_FIELDS: set = {
     'cia_confidentiality',
     'cia_integrity',
     'cia_availability',
+    # PIG R4: data location and the contractual split of responsibility.
+    'data_location',
+    'flow_down_requirements',
+    'shared_responsibility_note',
 }
 
 RISK_ASSESSMENT_TRACKED_FIELDS: set = {
@@ -128,6 +154,10 @@ RISK_ASSESSMENT_TRACKED_FIELDS: set = {
     'owner_user_id',
     'next_review_date',
     'notes',
+    'accepted_by',
+    'accepted_at',
+    'acceptance_rationale',
+    'acceptance_expires_on',
 }
 
 CUSTOM_RISK_TRACKED_FIELDS: set = {
@@ -140,6 +170,7 @@ CUSTOM_RISK_TRACKED_FIELDS: set = {
 CUSTOM_RISK_CONTROL_MAPPING_TRACKED_FIELDS: set = {
     'risk_code',
     'scf_id',
+    'document_id',
 }
 
 ORGANIZATION_TRACKED_FIELDS: set = {
@@ -165,6 +196,13 @@ SYSTEM_TRACKED_FIELDS: set = {
     'status',
     'owner_user_id',
     'catalog_template_id',
+    # PIG R4: the boundary and recovery record.
+    'in_scope',
+    'criticality',
+    'rto_hours',
+    'rpo_hours',
+    'data_classification',
+    'hosting_location',
 }
 
 SYSTEM_CAPABILITY_TRACKED_FIELDS: set = {

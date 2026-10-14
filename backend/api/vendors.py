@@ -950,6 +950,7 @@ async def create_action_item(
     await _get_vendor_or_404(org_id, vendor_id, db)
 
     item = VendorActionItem(
+        organization_id=org_id,
         vendor_id=vendor_id,
         **data.model_dump(),
     )
@@ -1106,6 +1107,7 @@ async def create_compensating_control(
     await _get_vendor_or_404(org_id, vendor_id, db)
 
     control = VendorCompensatingControl(
+        organization_id=org_id,
         vendor_id=vendor_id,
         **data.model_dump(),
     )

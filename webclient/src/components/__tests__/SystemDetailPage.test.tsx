@@ -339,3 +339,59 @@ describe('SystemDetailPage — keyboard shortcuts', () => {
     document.body.removeChild(input)
   })
 })
+
+// ── PIG boundary & recovery record (issue #1124) ─────────────────────────────
+
+describe('SystemDetailPage — boundary & recovery', () => {
+  function fieldValue(label: string): string | null {
+    const term = screen.getByText(label, { selector: 'dt' })
+    return term.nextElementSibling?.textContent ?? null
+  }
+
+  it('renders every recorded field with its human label', async () => {
+    mockGetSystem.mockResolvedValue({
+      ...SYSTEM_A,
+      in_scope: true,
+      criticality: 'critical',
+      rto_hours: 4,
+      rpo_hours: 1,
+      data_classification: 'confidential',
+      hosting_location: 'europe-west2',
+    })
+    await act(async () => { render(<SystemDetailPage {...makeProps()} />) })
+    expect(screen.getByText('BOUNDARY & RECOVERY')).toBeInTheDocument()
+    expect(fieldValue('Assessment boundary')).toBe('In scope')
+    expect(fieldValue('Criticality')).toBe('Critical')
+    expect(fieldValue('RTO')).toBe('4 hours')
+    expect(fieldValue('RPO')).toBe('1 hour')
+    expect(fieldValue('Data classification')).toBe('Confidential')
+    expect(fieldValue('Hosting location')).toBe('europe-west2')
+  })
+
+  it('shows "Out of scope" for in_scope=false and keeps a zero RTO', async () => {
+    mockGetSystem.mockResolvedValue({ ...SYSTEM_A, in_scope: false, rto_hours: 0, rpo_hours: 0.5 })
+    await act(async () => { render(<SystemDetailPage {...makeProps()} />) })
+    expect(fieldValue('Assessment boundary')).toBe('Out of scope')
+    expect(fieldValue('RTO')).toBe('0 hours')
+    expect(fieldValue('RPO')).toBe('0.5 hours')
+  })
+
+  it('shows "Undecided" and "Not recorded" when nothing is set', async () => {
+    mockGetSystem.mockResolvedValue({
+      ...SYSTEM_A,
+      in_scope: null,
+      criticality: null,
+      rto_hours: null,
+      rpo_hours: null,
+      data_classification: null,
+      hosting_location: null,
+    })
+    await act(async () => { render(<SystemDetailPage {...makeProps()} />) })
+    expect(fieldValue('Assessment boundary')).toBe('Undecided')
+    expect(fieldValue('Criticality')).toBe('Not recorded')
+    expect(fieldValue('RTO')).toBe('Not recorded')
+    expect(fieldValue('RPO')).toBe('Not recorded')
+    expect(fieldValue('Data classification')).toBe('Not recorded')
+    expect(fieldValue('Hosting location')).toBe('Not recorded')
+  })
+})

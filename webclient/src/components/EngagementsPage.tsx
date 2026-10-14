@@ -24,6 +24,7 @@ import {
   type EngagementQueryStatus,
 } from '../data/apiClient'
 import { fetchFrameworks, type FrameworkInfo } from '../data/catalogApi'
+import { useConfirm } from '../contexts/ConfirmContext'
 import { useModalDismiss } from '../hooks/useModalDismiss'
 import { useFocusTrap } from '../hooks/useFocusTrap'
 import DeprecatedBadge, { getCatalogLifecycle } from './DeprecatedBadge'
@@ -597,6 +598,7 @@ interface AuditorsDrawerProps {
 }
 
 function AuditorsDrawer({ organizationId, engagement, onClose }: AuditorsDrawerProps) {
+  const confirm = useConfirm()
   const [auditors, setAuditors] = useState<EngagementAuditor[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [userId, setUserId] = useState('')
@@ -622,7 +624,13 @@ function AuditorsDrawer({ organizationId, engagement, onClose }: AuditorsDrawerP
   }
 
   const handleRevoke = async (auditor: EngagementAuditor) => {
-    if (!window.confirm(`Revoke ${auditor.email ?? 'this auditor'}'s access?`)) return
+    const revoke = await confirm({
+      title: 'Revoke auditor access',
+      message: `Revoke ${auditor.email ?? 'this auditor'}'s access?`,
+      confirmLabel: 'Revoke access',
+      destructive: true,
+    })
+    if (!revoke) return
     setBusy(true); setError(null)
     try {
       await revokeEngagementAuditor(organizationId, engagement.id, auditor.id); load()
@@ -678,7 +686,7 @@ function AuditorsDrawer({ organizationId, engagement, onClose }: AuditorsDrawerP
                   <div style={{ flex: 1, minWidth: 0, fontSize: 13, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis' }}>{a.email ?? a.user_id}</div>
                   <span style={{ padding: '2px 10px', borderRadius: 10, fontSize: 11, fontWeight: 600, background: meta.bg, color: meta.color }}>{meta.label}</span>
                   {a.status === 'active' && (
-                    <button onClick={() => handleRevoke(a)} disabled={busy} style={{
+                    <button onClick={() => void handleRevoke(a)} disabled={busy} style={{
                       padding: '4px 12px', borderRadius: 6, border: '1px solid var(--border)',
                       background: 'var(--card)', color: 'var(--error, #ef4444)', fontSize: 12,
                       cursor: busy ? 'not-allowed' : 'pointer',
@@ -874,6 +882,7 @@ function QueriesDrawer({ organizationId, engagement, onClose }: QueriesDrawerPro
 // ---------------------------------------------------------------------------
 
 export default function EngagementsPage({ organizationId }: EngagementsPageProps) {
+  const confirm = useConfirm()
   const [engagements, setEngagements] = useState<AuditEngagement[]>([])
   const [frameworks, setFrameworks] = useState<FrameworkInfo[]>([])
   const [loading, setLoading] = useState(true)
@@ -915,7 +924,13 @@ export default function EngagementsPage({ organizationId }: EngagementsPageProps
   }, [engagements, searchQuery, nameById])
 
   const handleDelete = async (engagement: AuditEngagement) => {
-    if (!window.confirm(`Delete engagement “${engagement.name}”? This cannot be undone.`)) return
+    const remove = await confirm({
+      title: 'Delete engagement',
+      message: `Delete engagement “${engagement.name}”? This cannot be undone.`,
+      confirmLabel: 'Delete engagement',
+      destructive: true,
+    })
+    if (!remove) return
     setDeleting(engagement.id)
     try {
       await deleteEngagement(organizationId, engagement.id)
@@ -1015,7 +1030,7 @@ export default function EngagementsPage({ organizationId }: EngagementsPageProps
                   <button onClick={() => setAuditorsEngagement(eng)} style={actionBtn}>Auditors</button>
                   <button onClick={() => setQueriesEngagement(eng)} style={actionBtn}>Queries</button>
                   {eng.status === 'draft' && (
-                    <button onClick={() => handleDelete(eng)} disabled={deleting === eng.id} style={{
+                    <button onClick={() => void handleDelete(eng)} disabled={deleting === eng.id} style={{
                       ...actionBtn, color: 'var(--error, #ef4444)',
                       cursor: deleting === eng.id ? 'not-allowed' : 'pointer', opacity: deleting === eng.id ? 0.6 : 1,
                     }}>{deleting === eng.id ? 'Deleting…' : 'Delete'}</button>

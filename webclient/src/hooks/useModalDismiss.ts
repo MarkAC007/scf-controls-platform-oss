@@ -75,6 +75,24 @@ function unregister(entry: DismissRegistration): void {
   }
 }
 
+/** Elements that are, or belong to, a modal dialog. */
+const MODAL_SELECTOR = '[aria-modal="true"], [role="dialog"], [role="alertdialog"]'
+
+/**
+ * Whether a key event belongs to an open modal rather than the page behind it.
+ *
+ * Page-level shortcuts (the detail pages' ArrowLeft/ArrowRight/Escape pager,
+ * the R refresh) call this first and stand down: a key pressed inside a
+ * dialog — or anywhere while one is registered here — is the dialog's. The
+ * overlay used to swallow keys itself, which could not reach capture-phase
+ * listeners and hid every key from everything behind it (#1157).
+ */
+export function keyEventBelongsToModal(event: KeyboardEvent): boolean {
+  const target = event.target
+  if (target instanceof Element && target.closest(MODAL_SELECTOR)) return true
+  return stack.length > 0
+}
+
 export function useModalDismiss(active: boolean, onClose: () => void): void {
   // Callers declare `onClose` inline, so its identity changes on every render.
   // Held in a ref, the registration below can key on `active` alone instead of

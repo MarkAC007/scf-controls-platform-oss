@@ -55,6 +55,7 @@ from services.audit_service import (
 )
 from services.assurance_policy import get_assurance_policy
 from services.notifications import create_evidence_rejected_notifications
+from services.deficiencies import on_evidence_rejected
 from services.review_workflow import (
     SOD_REFUSAL_DETAIL,
     reviewer_is_sole_uploader,
@@ -579,6 +580,12 @@ async def review_window_assessment(
         action_source=detect_action_source(request),
         request_id=get_request_id(request),
     )
+    if body.review_status == "rejected":
+        # PIG R8: a rejection raises a deficiency on each control it supports.
+        await on_evidence_rejected(
+            db, org_id, ewa.evidence_id, UUID(membership.user.db_id),
+            detect_action_source(request), get_request_id(request),
+        )
 
     await db.commit()
     await db.refresh(ewa)

@@ -106,17 +106,19 @@ describe('Sidebar section structure', () => {
     expect(screen.getByText('PLATFORM')).toBeInTheDocument()
   })
 
-  it('renders all 20 nav items with mockup labels', () => {
+  it('renders all 22 nav items with mockup labels', () => {
     renderSidebar({ isPlatformAdmin: true, showConsultantPortal: true })
 
     // OVERVIEW (2)
     expect(screen.getByRole('button', { name: 'Dashboard' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Analytics' })).toBeInTheDocument()
 
-    // CONTROLS & FRAMEWORKS (3)
+    // CONTROLS & FRAMEWORKS (5)
     expect(screen.getByRole('button', { name: 'Control Library' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Framework Mappings' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Framework Scoping' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Deficiencies (POA&M)' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Capability Tests' })).toBeInTheDocument()
 
     // RISK & THIRD PARTY (2)
     expect(screen.getByRole('button', { name: 'Risk Register' })).toBeInTheDocument()
@@ -179,6 +181,22 @@ describe('Sidebar tab routing', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Analytics' }))
     expect(onTabChange).toHaveBeenCalledWith('capability-posture')
+  })
+
+  it('opens the Deficiencies (POA&M) page for any member (PIG R8)', () => {
+    const onTabChange = vi.fn()
+    renderSidebar({ onTabChange, isPlatformAdmin: false, showConsultantPortal: false })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Deficiencies (POA&M)' }))
+    expect(onTabChange).toHaveBeenCalledWith('deficiencies')
+  })
+
+  it('opens the Capability Tests page for any member (PIG R11)', () => {
+    const onTabChange = vi.fn()
+    renderSidebar({ onTabChange, isPlatformAdmin: false, showConsultantPortal: false })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Capability Tests' }))
+    expect(onTabChange).toHaveBeenCalledWith('capability-tests')
   })
 
   it('calls onMobileClose when a nav item is selected', () => {

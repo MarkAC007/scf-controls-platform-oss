@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { ConfirmProvider, confirmClosed, findConfirm } from '../../../__tests__/confirmDialog'
 import FrameworkScopingPage from '../FrameworkScopingPage'
 
 const role = vi.hoisted(() => ({ editor: false, admin: false }))
@@ -71,7 +72,9 @@ function renderPage(props: Partial<Parameters<typeof FrameworkScopingPage>[0]> =
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={client}>
-      <FrameworkScopingPage organizationId="org-one" {...props} />
+      <ConfirmProvider>
+        <FrameworkScopingPage organizationId="org-one" {...props} />
+      </ConfirmProvider>
     </QueryClientProvider>,
   )
 }
@@ -187,10 +190,29 @@ describe('FrameworkScopingPage roles and exact preview', () => {
   it('shows destructive reset only to admins', async () => {
     role.editor = true
     role.admin = true
-    vi.spyOn(window, 'prompt').mockReturnValue('REMOVE ALL')
     renderPage()
     fireEvent.click(await screen.findByRole('button', { name: 'Reset scope' }))
+    const open = await findConfirm()
+    expect(open.message).toBe('Type REMOVE ALL to clear frameworks and effective scope')
+    open.type('REMOVE ALL')
+    open.accept()
+    await confirmClosed()
     await waitFor(() => expect(api.reset).toHaveBeenCalledWith('org-one'))
+  })
+
+  it('resets nothing until REMOVE ALL is typed exactly', async () => {
+    role.editor = true
+    role.admin = true
+    renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: 'Reset scope' }))
+    const open = await findConfirm()
+    open.type('remove all')
+    expect(within(open.dialog).getByRole('button', { name: 'Remove all' })).toBeDisabled()
+    open.accept()
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument()
+    open.cancel()
+    await confirmClosed()
+    expect(api.reset).not.toHaveBeenCalled()
   })
 })
 

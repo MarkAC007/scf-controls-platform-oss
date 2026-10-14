@@ -11,7 +11,7 @@
  * Suppressed when focus is in input/textarea/select/contentEditable.
  */
 import { useMemo, useState, useEffect, useCallback, type JSX, type ReactNode } from 'react'
-import type { EnrichedControl, ScopedControl, ScopedControlsFile } from '../../types'
+import type { BusinessSizeKey, EnrichedControl, ScopedControl, ScopedControlsFile } from '../../types'
 import { getEvidenceTracking } from '../../data/scopingService'
 import { getEvidenceHealth, type EvidenceHealthResponse } from '../../data/apiClient'
 
@@ -23,11 +23,14 @@ import DeprecatedBadge, { getCatalogLifecycle } from '../DeprecatedBadge'
 import AppLink from '../AppLink'
 import TabRow from '../explorer/TabRow'
 import DetailSplitLayout from '../explorer/DetailSplitLayout'
+import type { ResolvedTarget } from '../../data/targetMaturity'
 
 import ScopingDetailPage, {
   type ScopingDetailControl,
   type ScopingEntry,
 } from '../scoping/ScopingDetailPage'
+import { keyEventBelongsToModal } from '../../hooks/useModalDismiss'
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface ControlDetailPageProps {
@@ -50,6 +53,14 @@ export interface ControlDetailPageProps {
   onImplementationFieldChange?: (field: string, value: unknown) => void
   onReloadTeamAssignments?: () => void
   canEditImplementation?: boolean
+  /** The organisation's recorded business size; marks its guidance row. */
+  orgBusinessSize?: BusinessSizeKey | null
+  /** The organisation's target maturity per domain code (PIG R5). */
+  orgMaturityTargets?: Record<string, string> | null
+  /** The target the server resolved for this control, when its row is loaded. */
+  serverTarget?: ResolvedTarget
+  /** Called after the GOVERNANCE tab saves a change the record shows. */
+  onGovernanceChange?: () => void
   canManageTeams?: boolean
   accountableTeamLabel?: string | null
   /** Scope action (add / remove / open record) shown in the breadcrumb bar. */
@@ -62,6 +73,8 @@ type DetailTab = 'details' | 'assessment' | 'mappings'
 
 /** True when the keyboard event target should suppress pager shortcuts. */
 function isSuppressed(e: KeyboardEvent): boolean {
+  // A key pressed in an open dialog is the dialog's, not the pager's.
+  if (keyEventBelongsToModal(e)) return true
   const t = e.target
   if (!t || !(t instanceof Element)) return false
   const tag = (t as HTMLElement).tagName?.toLowerCase()
@@ -110,6 +123,10 @@ export default function ControlDetailPage({
   onImplementationFieldChange = () => {},
   onReloadTeamAssignments = () => {},
   canEditImplementation = false,
+  orgBusinessSize = null,
+  orgMaturityTargets = null,
+  serverTarget,
+  onGovernanceChange,
   canManageTeams = false,
   accountableTeamLabel = null,
   scopeAction,
@@ -256,6 +273,10 @@ export default function ControlDetailPage({
           accountableTeamLabel={accountableTeamLabel}
           canManageTeams={canManageTeams && canEditImplementation}
           readOnly={!canEditImplementation}
+          orgBusinessSize={orgBusinessSize}
+          orgMaturityTargets={orgMaturityTargets}
+          serverTarget={serverTarget}
+          onGovernanceChange={onGovernanceChange}
         />
       </div>
     ) : null

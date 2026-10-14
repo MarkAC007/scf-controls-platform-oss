@@ -71,4 +71,42 @@ describe('BusinessSizeGuidance', () => {
     fireEvent.mouseEnter(wraps[4])
     expect(container.querySelector('.guidance-popover')).toBeNull()
   })
+  describe("the organisation's recorded size", () => {
+    it('selects and marks the pill for the recorded size', () => {
+      const { container } = render(<BusinessSizeGuidance guidance={guidance} orgSize="small" />)
+      const pill = screen.getByRole('button', { name: 'Small (your organisation)' })
+      expect(pill.className).toContain('active')
+      expect(pill.className).toContain('org-size')
+      expect(container.querySelectorAll('.org-size')).toHaveLength(1)
+      expect(screen.getByRole('button', { name: 'Medium' }).className).not.toContain('active')
+    })
+
+    it('follows the size when settings arrive after the first render', () => {
+      const { rerender } = render(<BusinessSizeGuidance guidance={guidance} />)
+      expect(screen.getByRole('button', { name: 'Medium' }).className).toContain('active')
+      rerender(<BusinessSizeGuidance guidance={guidance} orgSize="large" />)
+      expect(screen.getByRole('button', { name: 'Large (your organisation)' }).className).toContain('active')
+    })
+
+    it("keeps the user's own pick and still marks the organisation's size", () => {
+      render(<BusinessSizeGuidance guidance={guidance} orgSize="small" />)
+      fireEvent.click(screen.getByRole('button', { name: 'Large' }))
+      expect(screen.getByRole('button', { name: 'Large' }).className).toContain('active')
+      const org = screen.getByRole('button', { name: 'Small (your organisation)' })
+      expect(org.className).not.toContain('active')
+      expect(org.className).toContain('org-size')
+    })
+
+    it('a fresh mount for the next control starts from the organisation size again', () => {
+      const { rerender } = render(<BusinessSizeGuidance key="a" guidance={guidance} orgSize="small" />)
+      fireEvent.click(screen.getByRole('button', { name: 'Large' }))
+      rerender(<BusinessSizeGuidance key="b" guidance={guidance} orgSize="small" />)
+      expect(screen.getByRole('button', { name: 'Small (your organisation)' }).className).toContain('active')
+    })
+
+    it('marks nothing when no size is recorded', () => {
+      const { container } = render(<BusinessSizeGuidance guidance={guidance} orgSize={null} />)
+      expect(container.querySelector('.org-size')).toBeNull()
+    })
+  })
 })

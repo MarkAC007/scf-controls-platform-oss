@@ -84,8 +84,10 @@ export default function SystemsManagement({
       </div>
 
       {/* Detail page */}
+      {/* Keyed on refreshKey so a successful edit refetches the open system */}
       {systemItem && (
         <SystemDetailPage
+          key={refreshKey}
           organizationId={organizationId}
           systemId={systemItem}
           filteredSystems={filteredSystems}

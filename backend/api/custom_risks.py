@@ -16,15 +16,37 @@ from schemas import (
     CustomRiskDefinitionUpdate,
     CustomRiskDefinitionResponse,
     CustomRiskControlMappingCreate,
+    CustomRiskControlMappingUpdate,
     SuccessResponse,
 )
 from auth import require_org_role, OrgMembership
 from services.audit_service import (
     log_entity_changes, detect_action_source, get_request_id,
     CUSTOM_RISK_TRACKED_FIELDS, CUSTOM_RISK_CONTROL_MAPPING_TRACKED_FIELDS,
+    RISK_ASSESSMENT_TRACKED_FIELDS,
 )
+from services.risk_acceptance import links_changed, org_document
 
 router = APIRouter(tags=["custom-risks"])
+
+
+async def _withdraw_approval_on_link_change(
+    db: AsyncSession, org_id: UUID, risk_code: str, user_id, request: Request,
+) -> None:
+    """PIG R7: an accepted exception is approved for the controls and documents
+    it links, so changing them withdraws the approval (audited)."""
+    cleared = await links_changed(db, org_id, risk_code)
+    if cleared is None:
+        return
+    assessment, before = cleared
+    await log_entity_changes(
+        db=db, organization_id=org_id, entity_type='risk_assessment',
+        entity_id=assessment.id, action='update', changed_by_user_id=user_id,
+        old_values=before, new_values={f: getattr(assessment, f) for f in before},
+        tracked_fields=RISK_ASSESSMENT_TRACKED_FIELDS,
+        action_source=detect_action_source(request),
+        request_id=get_request_id(request),
+    )
 
 
 async def _next_risk_code(org_id: UUID, db: AsyncSession) -> str:
@@ -260,22 +282,27 @@ async def list_custom_risk_controls(
     db: AsyncSession = Depends(get_db)
 ):
     """List controls linked to a custom risk."""
-    # Get the scf_ids from mappings
+    # Get the scf_ids from mappings, with the standard's document when the
+    # link records an exception (PIG R7).
     result = await db.execute(
-        select(CustomRiskControlMapping.scf_id).where(
+        select(CustomRiskControlMapping.scf_id, CustomRiskControlMapping.document_id).where(
             and_(
                 CustomRiskControlMapping.organization_id == org_id,
                 CustomRiskControlMapping.risk_code == risk_code
             )
-        )
+        ).order_by(CustomRiskControlMapping.scf_id)
     )
-    scf_ids = [row[0] for row in result.all()]
+    link_rows = result.all()
+    scf_ids = [row[0] for row in link_rows]
+    documents = {row[0]: row[1] for row in link_rows}
+    links = [{"scf_id": scf_id, "document_id": documents[scf_id]} for scf_id in scf_ids]
 
     if not scf_ids:
         return {
             "risk_code": risk_code,
             "total_catalog_controls": 0,
             "catalog_control_ids": [],
+            "links": [],
             "scoped_controls": []
         }
 
@@ -319,12 +346,14 @@ async def list_custom_risk_controls(
             "catalog_status": cat.status if cat is not None else None,
             "retired_in_version": cat.retired_in_version if cat is not None else None,
             "superseded_by": cat.superseded_by if cat is not None else None,
+            "document_id": documents.get(sc.scf_id),
         })
 
     return {
         "risk_code": risk_code,
         "total_catalog_controls": len(scf_ids),
         "catalog_control_ids": scf_ids,
+        "links": links,
         "scoped_controls": scoped_response
     }
 
@@ -388,6 +417,12 @@ async def add_custom_risk_control(
             ),
         )
 
+    if data.document_id is not None:
+        try:
+            await org_document(db, org_id, data.document_id)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+
     current_user = membership.user
     user_id = UUID(current_user.db_id) if current_user and current_user.db_id else None
 
@@ -395,6 +430,7 @@ async def add_custom_risk_control(
         organization_id=org_id,
         risk_code=risk_code,
         scf_id=data.scf_id,
+        document_id=data.document_id,
         created_by_user_id=user_id,
     )
     db.add(mapping)
@@ -410,9 +446,71 @@ async def add_custom_risk_control(
         action_source=detect_action_source(request),
         request_id=get_request_id(request),
     )
+    await _withdraw_approval_on_link_change(db, org_id, risk_code, user_id, request)
 
     await db.commit()
     return SuccessResponse(message=f"Control '{data.scf_id}' linked to '{risk_code}'")
+
+
+@router.patch(
+    "/organizations/{org_id}/custom-risks/{risk_code}/controls/{scf_id}",
+    response_model=SuccessResponse
+)
+async def update_custom_risk_control(
+    org_id: UUID,
+    risk_code: str,
+    scf_id: str,
+    data: CustomRiskControlMappingUpdate,
+    request: Request,
+    membership: OrgMembership = Depends(require_org_role("editor")),
+    db: AsyncSession = Depends(get_db)
+):
+    """Set or clear the standard's document on a control link (PIG R7).
+
+    A link with a document records the custom risk as an exception against
+    that standard. The document must belong to this organisation.
+    ``document_id`` is required, ``null`` to clear, so an empty body cannot
+    clear it by accident.
+    """
+    if "document_id" not in data.model_fields_set:
+        raise HTTPException(
+            status_code=422,
+            detail="document_id is required; send null to clear the link's document",
+        )
+    mapping = (await db.execute(
+        select(CustomRiskControlMapping).where(
+            and_(
+                CustomRiskControlMapping.organization_id == org_id,
+                CustomRiskControlMapping.risk_code == risk_code,
+                CustomRiskControlMapping.scf_id == scf_id
+            )
+        )
+    )).scalar_one_or_none()
+    if not mapping:
+        raise HTTPException(status_code=404, detail=f"Mapping not found for '{risk_code}' -> '{scf_id}'")
+    if data.document_id is not None:
+        try:
+            await org_document(db, org_id, data.document_id)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+
+    user_id = UUID(membership.user.db_id) if membership.user and membership.user.db_id else None
+    old_values = {f: getattr(mapping, f) for f in CUSTOM_RISK_CONTROL_MAPPING_TRACKED_FIELDS}
+    mapping.document_id = data.document_id
+    new_values = {f: getattr(mapping, f) for f in CUSTOM_RISK_CONTROL_MAPPING_TRACKED_FIELDS}
+    await log_entity_changes(
+        db=db, organization_id=org_id, entity_type='custom_risk_control_mapping',
+        entity_id=mapping.id, action='update', changed_by_user_id=user_id,
+        old_values=old_values, new_values=new_values,
+        tracked_fields=CUSTOM_RISK_CONTROL_MAPPING_TRACKED_FIELDS,
+        action_source=detect_action_source(request),
+        request_id=get_request_id(request),
+    )
+    if old_values["document_id"] != mapping.document_id:
+        await _withdraw_approval_on_link_change(db, org_id, risk_code, user_id, request)
+    await db.commit()
+    which = "linked to its standard's document" if data.document_id else "no longer linked to a document"
+    return SuccessResponse(message=f"'{risk_code}' -> '{scf_id}' {which}")
 
 
 @router.delete(
@@ -456,5 +554,6 @@ async def remove_custom_risk_control(
     )
 
     await db.delete(mapping)
+    await _withdraw_approval_on_link_change(db, org_id, risk_code, user_id, request)
     await db.commit()
     return SuccessResponse(message=f"Control '{scf_id}' unlinked from '{risk_code}'")

@@ -7,7 +7,7 @@
  * click did nothing at all — no navigation, no message, dropdown closed.
  */
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { NotificationBell } from '../NotificationBell'
 import { apiClient } from '../../data/apiClient'
@@ -179,5 +179,170 @@ describe('NotificationBell target resolution', () => {
     expect(row).toHaveAttribute('tabindex', '0')
     fireEvent.keyDown(row, { key: 'Enter' })
     await waitFor(() => expect(onNavigateToEvidence).toHaveBeenCalledWith('E-KEY-01'))
+  })
+})
+
+describe('NotificationBell — risk notifications (PIG R7)', () => {
+  // The expiry notice stores the risk_assessments row id; the register opens a
+  // risk by its code, and an SCF code like R-GV-1 exists in every organisation.
+  const expiry = {
+    id: 'n-risk',
+    organization_id: 'org-1',
+    organization_name: 'Acme',
+    type: 'risk_acceptance_expired',
+    reference_type: 'risk',
+    reference_id: 'ra-0001',
+    reference_key: null,
+    message: 'The acceptance of risk R-GV-1 lapsed after 2026-10-12. Renew it with a new rationale and expiry, or withdraw it.',
+    is_read: false,
+    created_at: new Date().toISOString(),
+  }
+
+  function routeGets(risks: unknown[]) {
+    mockGet.mockImplementation(async (path: string) =>
+      path.startsWith('/notifications')
+        ? { unread_count: 1, notifications: [expiry] }
+        : risks,
+    )
+  }
+
+  it("opens the risk's detail page by its code, looked up in the notification's organisation", async () => {
+    routeGets([
+      { id: 'ra-0002', risk_code: 'R-GV-2' },
+      { id: 'ra-0001', risk_code: 'R-GV-1' },
+    ])
+    const onNavigateToRisk = vi.fn()
+    render(<NotificationBell currentOrgId="org-1" onNavigateToRisk={onNavigateToRisk} />)
+    await openAndClick(expiry.message)
+    await waitFor(() => expect(onNavigateToRisk).toHaveBeenCalledWith('R-GV-1'))
+    expect(mockGet).toHaveBeenCalledWith('/organizations/org-1/risk-assessments')
+    expect(screen.queryByText(expiry.message)).toBeNull()
+  })
+
+  it('does not open a same-code risk in the wrong organisation', async () => {
+    routeGets([{ id: 'ra-0001', risk_code: 'R-GV-1' }])
+    const onNavigateToRisk = vi.fn()
+    render(<NotificationBell currentOrgId="org-2" onNavigateToRisk={onNavigateToRisk} />)
+    await openAndClick(expiry.message)
+    expect(await screen.findByRole('alert')).toHaveTextContent('That risk is in Acme. Switch to it to open the risk.')
+    expect(onNavigateToRisk).not.toHaveBeenCalled()
+    expect(mockGet).not.toHaveBeenCalledWith('/organizations/org-1/risk-assessments')
+  })
+
+  it('says so when the risk no longer exists', async () => {
+    routeGets([{ id: 'ra-0002', risk_code: 'R-GV-2' }])
+    const onNavigateToRisk = vi.fn()
+    render(<NotificationBell currentOrgId="org-1" onNavigateToRisk={onNavigateToRisk} />)
+    await openAndClick(expiry.message)
+    expect(await screen.findByRole('alert')).toHaveTextContent('That risk no longer exists.')
+    expect(onNavigateToRisk).not.toHaveBeenCalled()
+  })
+})
+
+describe('NotificationBell — control notifications', () => {
+  // The server stores the scoped_controls row id and resolves the control's
+  // SCF id on read as reference_key. The bell opens the library through the
+  // address bar, so these assert the URL the user lands on, and App's popstate
+  // listener (the path Back takes) is what opens the control.
+  const controlNotification = (
+    type: string,
+    message: string,
+    referenceKey: string | null = 'AST-14',
+  ) => ({
+    id: `n-${type}`,
+    organization_id: 'org-1',
+    organization_name: 'Acme',
+    type,
+    reference_type: 'control',
+    reference_id: 'sc-0001',
+    reference_key: referenceKey,
+    message,
+    is_read: false,
+    created_at: new Date().toISOString(),
+  })
+  const DUE = 'Control AST-14 is due for validation by 2026-10-20'
+
+  beforeEach(() => window.history.replaceState(null, '', '/'))
+  afterEach(() => window.history.replaceState(null, '', '/'))
+
+  it.each([
+    ['control_validation_due', DUE],
+    ['control_ready_for_review', 'Sam marked control AST-14 as ready for review'],
+    ['composite_insufficient', 'Composite evidence assessment for control AST-14 is now insufficient'],
+  ])('opens a %s notification on its control, never on evidence', async (type, message) => {
+    const notification = controlNotification(type, message)
+    withNotifications([notification])
+    const onNavigateToEvidence = vi.fn()
+    const onPop = vi.fn()
+    window.addEventListener('popstate', onPop)
+    render(<NotificationBell currentOrgId="org-1" onNavigateToEvidence={onNavigateToEvidence} />)
+    await openAndClick(message)
+    await waitFor(() => expect(window.location.search).toBe('?tab=library&mode=in-scope&item=AST-14'))
+    window.removeEventListener('popstate', onPop)
+    expect(onPop).toHaveBeenCalledTimes(1)
+    expect(onNavigateToEvidence).not.toHaveBeenCalled()
+    expect(mockPatch).toHaveBeenCalledWith(`/notifications/${notification.id}/read`, {})
+    expect(screen.queryByText(message)).toBeNull()
+  })
+
+  it('prefers the server key over the loaded scoping data', async () => {
+    withNotifications([controlNotification('control_validation_due', DUE)])
+    const resolveControlScfId = vi.fn(() => 'GOV-01')
+    render(<NotificationBell currentOrgId="org-1" resolveControlScfId={resolveControlScfId} />)
+    await openAndClick(DUE)
+    await waitFor(() => expect(window.location.search).toBe('?tab=library&mode=in-scope&item=AST-14'))
+    expect(resolveControlScfId).not.toHaveBeenCalled()
+  })
+
+  it('resolves from the loaded scoping data when the server sent no key', async () => {
+    withNotifications([controlNotification('control_validation_due', DUE, null)])
+    const resolveControlScfId = vi.fn((id: string) => (id === 'sc-0001' ? 'AST-14' : null))
+    render(<NotificationBell currentOrgId="org-1" resolveControlScfId={resolveControlScfId} />)
+    await openAndClick(DUE)
+    await waitFor(() => expect(window.location.search).toBe('?tab=library&mode=in-scope&item=AST-14'))
+    expect(resolveControlScfId).toHaveBeenCalledWith('sc-0001')
+  })
+
+  it('does not open a control on top of another organisation', async () => {
+    withNotifications([controlNotification('control_validation_due', DUE)])
+    const resolveControlScfId = vi.fn(() => 'AST-14')
+    render(<NotificationBell currentOrgId="org-2" resolveControlScfId={resolveControlScfId} />)
+    await openAndClick(DUE)
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'That control is in Acme. Switch to it to open the control.',
+    )
+    expect(window.location.search).toBe('')
+    expect(resolveControlScfId).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['the scoping data has not loaded', () => undefined],
+    ['there is no resolver', undefined],
+  ])('opens the library list, with no notice, when %s', async (_case, resolveControlScfId) => {
+    withNotifications([controlNotification('control_validation_due', DUE, null)])
+    render(<NotificationBell currentOrgId="org-1" resolveControlScfId={resolveControlScfId} />)
+    await openAndClick(DUE)
+    await waitFor(() => expect(window.location.search).toBe('?tab=library&mode=in-scope'))
+    expect(mockPatch).toHaveBeenCalledWith('/notifications/n-control_validation_due/read', {})
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.queryByText(DUE)).toBeNull()
+  })
+
+  it('opens the library list and says so when the loaded data has no such control', async () => {
+    withNotifications([controlNotification('control_validation_due', DUE, null)])
+    render(<NotificationBell currentOrgId="org-1" resolveControlScfId={() => null} />)
+    await openAndClick(DUE)
+    expect(await screen.findByRole('alert')).toHaveTextContent('That control no longer exists.')
+    expect(window.location.search).toBe('?tab=library&mode=in-scope')
+  })
+
+  it('clears an open control on the fallback, and Back returns to it', async () => {
+    window.history.replaceState(null, '', '/?tab=library&mode=in-scope&item=GOV-01')
+    withNotifications([controlNotification('control_validation_due', DUE, null)])
+    render(<NotificationBell currentOrgId="org-1" resolveControlScfId={() => undefined} />)
+    await openAndClick(DUE)
+    await waitFor(() => expect(window.location.search).toBe('?tab=library&mode=in-scope'))
+    window.history.back()
+    await waitFor(() => expect(window.location.search).toBe('?tab=library&mode=in-scope&item=GOV-01'))
   })
 })

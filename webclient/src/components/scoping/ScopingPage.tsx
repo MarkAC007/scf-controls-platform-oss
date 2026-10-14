@@ -44,6 +44,7 @@ import {
 } from '../../hooks/useScopedControlsQuery'
 import { useTeamAssignments, accountableTeamLabel } from '../../hooks/useTeamAssignments'
 import { useIsOrgAdmin } from '../../hooks/useIsOrgAdmin'
+import { useOrganizationSettings } from '../../hooks/useOrganizationSettings'
 import { useDebounce } from '../../hooks/useDebounce'
 import type { BatchScopedControlOperation, BulkScopeFrameworkResponse, BulkUnscopeFrameworkResponse, ResetScopeResponse, ScopedControlWithCatalog } from '../../data/apiClient'
 import { listTeams, batchAssignTeamToItems, batchUpdateScopedControls } from '../../data/apiClient'
@@ -344,6 +345,7 @@ export default function ScopingPage({
   }, [rawControls, scopedDbIdByScfId, accountableTeamFor])
 
   const canManageTeams = useIsOrgAdmin(organizationId)
+  const { data: orgSettings } = useOrganizationSettings(organizationId)
 
   // ── Teams for bulk owner assignment ────────────────────────────────────────
   // The legacy settings-sourced owner label list is sunset: "owner" now means
@@ -649,6 +651,8 @@ export default function ScopingPage({
       implementation_status: sc.implementation_status as ScopingEntry['implementation_status'],
       priority: sc.priority as ScopingEntry['priority'],
       maturity_level: sc.maturity_level as ScopingEntry['maturity_level'],
+      target_maturity_override: sc.target_maturity_override ?? null,
+      target_maturity_reason: sc.target_maturity_reason ?? null,
       selection_reason: sc.selection_reason,
       owner: sc.owner,
       target_date: sc.target_date,
@@ -677,6 +681,8 @@ export default function ScopingPage({
           scopingData={scopingData}
           accountableTeamLabel={selectedId ? ownerByControlId[selectedId] || null : null}
           canManageTeams={canManageTeams}
+          orgBusinessSize={orgSettings?.business_size ?? null}
+          orgMaturityTargets={orgSettings?.maturity_targets ?? null}
         />
         {showFrameworkModal && (
           <ScopeByFrameworkModal

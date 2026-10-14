@@ -68,7 +68,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 from uuid import UUID
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Iterable, Optional, Sequence
 import logging
 
@@ -83,6 +83,7 @@ from models import (
     EvidenceCollectionTask,
     EvidenceTracking,
     OrganizationMember,
+    RiskAssessment,
     ScopedControl,
 )
 from services.notification_escalation import pending_escalation_threshold
@@ -168,9 +169,12 @@ async def _already_notified(
     *,
     notification_type: str,
     reference_id: UUID,
-    on_or_after: date,
+    on_or_after: date | datetime,
 ) -> bool:
     """The event-level dedup guard, keyed on ``type + reference_id + date``.
+
+    ``on_or_after`` may also be an instant, for an event that can recur
+    within a day (a risk acceptance renewed the day its expiry was announced).
 
     Deliberately **not** keyed on ``user_id``. The old per-user key was correct
     only while there was exactly one recipient; the moment a set is involved,
@@ -200,7 +204,7 @@ async def _emit(
     organization_id: UUID,
     message: str,
     recipient_ids: Iterable[UUID],
-    dedup_on: Optional[date] = None,
+    dedup_on: Optional[date | datetime] = None,
     email_subject: Optional[str] = None,
     email_body: Optional[str] = None,
 ) -> int:
@@ -810,6 +814,158 @@ async def check_and_notify_overdue_tasks(db: AsyncSession):
     except Exception as e:
         logger.error(f"Failed to check and notify overdue tasks: {e}")
         return 0
+
+
+def _risk_acceptance_expired_message(risk_code: str, expires_on: date) -> str:
+    return (
+        f"The acceptance of risk {risk_code} lapsed after {expires_on.isoformat()}. "
+        "Renew it with a new rationale and expiry, or withdraw it."
+    )
+
+
+async def check_and_notify_expired_risk_acceptances(
+    db: AsyncSession, today: Optional[date] = None,
+) -> int:
+    """Announce each risk acceptance whose expiry has passed (PIG R7).
+
+    Run daily. One announcement per acceptance: the event-level dedup key is
+    the acceptance's own ``accepted_at`` instant, so tomorrow's run stays
+    quiet and a renewal (which sets a new ``accepted_at``) is announced again
+    when it in turn expires, even one made the day the last notice went out.
+    The approver and the risk owner hear it while they are still members of
+    the organisation; with neither left, the organisation's admins do.
+    """
+    from services.risk_acceptance import ACCEPTED, expiry_recipients
+
+    today = today or date.today()
+    notifications_created = 0
+    try:
+        # Plain columns, not instances: _emit rolls back on a failure, which
+        # would expire loaded instances and stop the rest of the sweep.
+        rows = (await db.execute(
+            select(
+                RiskAssessment.id,
+                RiskAssessment.organization_id,
+                RiskAssessment.risk_code,
+                RiskAssessment.accepted_by,
+                RiskAssessment.owner_user_id,
+                RiskAssessment.accepted_at,
+                RiskAssessment.acceptance_expires_on,
+            ).where(
+                RiskAssessment.treatment_status == ACCEPTED,
+                RiskAssessment.accepted_at.isnot(None),
+                RiskAssessment.acceptance_expires_on < today,
+            )
+        )).all()
+        members_by_org: dict = {}
+        admins_by_org: dict = {}
+        for row in rows:
+            org_id = row.organization_id
+            if org_id not in members_by_org:
+                members_by_org[org_id] = set((await db.execute(
+                    select(OrganizationMember.user_id).where(
+                        OrganizationMember.organization_id == org_id,
+                    )
+                )).scalars().all())
+                admins_by_org[org_id] = await _get_org_admin_user_ids(db, org_id)
+            recipients = expiry_recipients(
+                row.accepted_by, row.owner_user_id,
+                members_by_org[org_id], admins_by_org[org_id],
+            )
+            message = _risk_acceptance_expired_message(
+                row.risk_code, row.acceptance_expires_on,
+            )
+            notifications_created += await _emit(
+                db,
+                notification_type='risk_acceptance_expired',
+                reference_type='risk',
+                reference_id=row.id,
+                organization_id=org_id,
+                message=message,
+                recipient_ids=recipients,
+                dedup_on=row.accepted_at,
+                email_subject=f"Risk acceptance for {row.risk_code} has lapsed",
+                email_body=message,
+            )
+        logger.info(f"Created {notifications_created} risk acceptance expiry notifications")
+        return notifications_created
+    except Exception as e:
+        logger.error(f"Failed to check and notify expired risk acceptances: {e}")
+        return notifications_created
+
+
+def _control_validation_due_message(scf_id: str, due: date, today: date) -> str:
+    if due < today:
+        return f"Control {scf_id} was due for validation on {due.isoformat()} and has not been validated since"
+    return f"Control {scf_id} is due for validation by {due.isoformat()}"
+
+
+async def check_and_notify_due_control_validations(
+    db: AsyncSession, today: Optional[date] = None,
+) -> int:
+    """Announce each in-scope control whose next validation is coming due (PIG R10).
+
+    Run daily. A validated control whose next validation date (its last
+    validation plus its cadence) is within ``NOTICE_DAYS`` or has passed is
+    announced once per validation cycle: the dedup key is the instant of the
+    last validation, so recording the next validation starts a new cycle.
+    Routed through the ownership chain: the control's owner and assignee,
+    then its team, then the admins. A control never validated has no date
+    and is not announced; the validation schedule and the journey check show
+    it instead.
+    """
+    from services.due_care import due_for_notice, effective_cadence_expr
+
+    today = today or date.today()
+    notifications_created = 0
+    try:
+        # Plain columns, not instances: _emit rolls back on a failure, which
+        # would expire loaded instances and stop the rest of the sweep.
+        rows = (await db.execute(
+            select(
+                ScopedControl.id,
+                ScopedControl.organization_id,
+                ScopedControl.scf_id,
+                ScopedControl.owner_user_id,
+                ScopedControl.assigned_user_id,
+                effective_cadence_expr().label("cadence"),
+                ScopedControl.last_validated_at,
+            ).where(
+                ScopedControl.selected.is_(True),
+                ScopedControl.last_validated_at.isnot(None),
+            )
+        )).all()
+        for row, due in due_for_notice(rows, today):
+            recipients = await resolve_recipients_for(
+                db,
+                Item(
+                    item_type='control',
+                    item_id=row.id,
+                    organization_id=row.organization_id,
+                    explicit_user_ids=(row.owner_user_id, row.assigned_user_id),
+                ),
+                'control_validation_due',
+            )
+            if not recipients:
+                continue
+            message = _control_validation_due_message(row.scf_id, due, today)
+            notifications_created += await _emit(
+                db,
+                notification_type='control_validation_due',
+                reference_type='control',
+                reference_id=row.id,
+                organization_id=row.organization_id,
+                message=message,
+                recipient_ids=recipients.user_ids,
+                dedup_on=row.last_validated_at,
+                email_subject=f"Control {row.scf_id} is due for validation",
+                email_body=message,
+            )
+        logger.info(f"Created {notifications_created} control validation due notifications")
+        return notifications_created
+    except Exception as e:
+        logger.error(f"Failed to check and notify control validations due: {e}")
+        return notifications_created
 
 
 async def create_evidence_rejected_notifications(

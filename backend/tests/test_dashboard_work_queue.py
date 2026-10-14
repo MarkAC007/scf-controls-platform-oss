@@ -48,6 +48,9 @@ def _blocking_row(days: int = 10) -> SimpleNamespace:
         scf_id="control_one",
         implementation_status="not_started",
         updated_at=datetime.now() - timedelta(days=days),
+        # PIG R6: the query selects the catalogue weighting and materiality.
+        weighting=10,
+        material=True,
     )
 
 
@@ -349,6 +352,8 @@ def test_badge_counts_the_distinct_union_not_the_sum_of_sections(client_factory)
             scf_id=f"GOV-{index:02d}",
             implementation_status="not_started",
             updated_at=datetime.now() - timedelta(days=30),
+            weighting=5,
+            material=False,
         )
         for index in range(20)
     ]
@@ -381,6 +386,8 @@ def test_disjoint_sections_render_each_item_once(client_factory):
             scf_id=f"GOV-{index:02d}",
             implementation_status="not_started",
             updated_at=datetime.now() - timedelta(days=30),
+            weighting=5,
+            material=False,
         )
         for index in range(20)
     ]

@@ -3,6 +3,7 @@ import { apiClient, updateOrgMember } from '../data/apiClient'
 import type { MemberType } from '../types'
 import InviteUserModal from './InviteUserModal'
 import { ContractorBadge } from './ContractorBadge'
+import { useConfirm } from '../contexts/ConfirmContext'
 import { useIsOrgAdmin } from '../hooks/useIsOrgAdmin'
 import ListToolbar from './explorer/ListToolbar'
 
@@ -87,6 +88,7 @@ const ROLE_PERMISSIONS = {
 }
 
 export default function UserManagement({ organizationId }: UserManagementProps) {
+  const confirm = useConfirm()
   const [members, setMembers] = useState<OrganizationMember[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -151,9 +153,13 @@ export default function UserManagement({ organizationId }: UserManagementProps) 
   }
 
   const handleRemoveMember = async (userId: string, userName: string) => {
-    if (!confirm(`Are you sure you want to remove ${userName} from the organization?`)) {
-      return
-    }
+    const ok = await confirm({
+      title: 'Remove member',
+      message: `Are you sure you want to remove ${userName} from the organization?`,
+      confirmLabel: 'Remove',
+      destructive: true,
+    })
+    if (!ok) return
 
     try {
       await apiClient.delete(`/organizations/${organizationId}/members/${userId}`)
@@ -435,7 +441,7 @@ export default function UserManagement({ organizationId }: UserManagementProps) 
                   <td className="actions-cell">
                     <button
                       className="btn-action btn-remove"
-                      onClick={() => handleRemoveMember(
+                      onClick={() => void handleRemoveMember(
                         member.user_id,
                         member.user?.display_name || member.user?.email || 'this user'
                       )}
