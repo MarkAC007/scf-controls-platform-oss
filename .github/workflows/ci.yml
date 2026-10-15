@@ -246,9 +246,14 @@ jobs:
       has_typescript: ${{ steps.check.outputs.has_typescript }}
       has_docker: ${{ steps.check.outputs.has_docker }}
       repo_lower: ${{ steps.check.outputs.repo_lower }}
+      version_bump_only: ${{ steps.bump.outputs.version_bump_only }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        # SHA-pinned for the same semgrep reason as the Version Consistency
+        # checkout; full history so the bump classifier below has a merge base.
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          fetch-depth: 0
 
       - name: Check stack components
         id: check
@@ -281,10 +286,91 @@ jobs:
           echo "repo_lower=${GITHUB_REPOSITORY,,}" >> $GITHUB_OUTPUT
           echo "Repository: ${GITHUB_REPOSITORY,,}"
 
+      # A version-bump PR (version-bump.yml) changes nothing but version strings
+      # and release notes, yet it paid ~15 min of pytest -> Docker Build on a tree
+      # that differs from an already-green main only by those strings — and paid
+      # it again on every "Update branch", because main protection is strict.
+      # When this step proves the diff is ONLY that, python/typescript/docker are
+      # skipped; a job skipped by its own `if:` reports "skipped", which satisfies
+      # a required check, whereas a workflow-level paths filter would leave the
+      # check missing and block the merge.
+      #
+      # The full suite still runs on the merge commit (push to main), and
+      # release-oss.yml refuses to publish a SHA whose CI is not green, so a
+      # skip here moves the verification later — it never removes it.
+      #
+      # The proof is CONTENT-based, never name-based: a branch name or PR title is
+      # free text anyone can set. Every rule must hold or the answer is false:
+      #   1. webclient/package.json's version changed (it IS a bump);
+      #   2. every changed path is in the six-file allowlist version-bump.yml writes;
+      #   3. each data file is unchanged apart from its version fields — compared
+      #      structurally for the JSON files, line-by-line for the rest.
+      # RELEASE_META.yml is allowed free-form: it is release-notes data, read only
+      # by the release scripts and gated by the Version Consistency job above.
+      #
+      # FAIL-CLOSED: continue-on-error so a crash here can never fail `detect`
+      # (a failed `detect` would SKIP the required jobs, which reads as a pass).
+      # A crash leaves the output unset, and only the literal 'true' skips anything.
+      - name: Classify version-bump-only PRs
+        id: bump
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -uo pipefail
+          verdict() { echo "version_bump_only=$1" >> "$GITHUB_OUTPUT"; echo "version_bump_only=$1 — $2"; exit 0; }
+
+          git fetch --no-tags -q origin "$BASE_REF" || verdict false "could not fetch ${BASE_REF}"
+          BASE="$(git merge-base "origin/${BASE_REF}" HEAD)" || verdict false "no merge base"
+          CHANGED="$(git diff --name-only "$BASE" HEAD)" || verdict false "diff failed"
+          [ -n "$CHANGED" ] || verdict false "empty diff"
+
+          # Rule 1 — the version actually moved.
+          OLD_V="$(git show "${BASE}:webclient/package.json" | jq -r '.version')" || verdict false "base package.json unreadable"
+          NEW_V="$(jq -r '.version' webclient/package.json)" || verdict false "head package.json unreadable"
+          [ "$OLD_V" != "$NEW_V" ] || verdict false "webclient/package.json version unchanged (${NEW_V})"
+
+          # Rule 2 — allowlist.
+          ALLOW='^(\.env\.example|RELEASE_META\.yml|docs-site/src/content/docs/admin-guide/configuration\.mdx|helm-charts/charts/scf-controls-platform/Chart\.yaml|webclient/package\.json|webclient/package-lock\.json)$'
+          OUTSIDE="$(printf '%s\n' "$CHANGED" | grep -Ev "$ALLOW" || true)"
+          [ -z "$OUTSIDE" ] || verdict false "touches files outside the bump allowlist: $(echo $OUTSIDE)"
+
+          # Rule 3a — JSON: identical once the version fields are removed. A real
+          # dependency change anywhere in the lockfile makes these differ.
+          json_same() { # <path> <jq-del-filter>
+            cmp -s <(git show "${BASE}:$1" | jq -S "$2") <(jq -S "$2" "$1")
+          }
+          json_same webclient/package.json 'del(.version)' \
+            || verdict false "webclient/package.json changed beyond .version"
+          json_same webclient/package-lock.json 'del(.version, .packages[""].version)' \
+            || verdict false "webclient/package-lock.json changed beyond its two root version fields"
+
+          # Rule 3b — line files: every changed line must match that file's
+          # version-line pattern. -U0 output; skip the ---/+++ headers.
+          # The diff is captured first so a git failure fails the rule instead of
+          # reaching grep as an empty (i.e. "clean") stream; the offending lines are
+          # then collected and tested for emptiness, never via `! ... | grep -q`,
+          # whose early exit can SIGPIPE upstream and invert under pipefail.
+          lines_ok() { # <path> <ERE every +/- line must match>
+            local d bad
+            d="$(git diff -U0 "$BASE" HEAD -- "$1")" || return 1
+            bad="$(printf '%s\n' "$d" | grep -E '^[-+]' | grep -Ev '^(---|\+\+\+) ' | sed 's/^[-+]//' | grep -Ev "$2")"
+            [ -z "$bad" ] || { echo "  unexpected change in $1: $(printf '%s' "$bad" | head -3)"; return 1; }
+          }
+          lines_ok .env.example '^PLATFORM_VERSION=[0-9]+\.[0-9]+\.[0-9]+$' \
+            || verdict false ".env.example changed beyond PLATFORM_VERSION"
+          lines_ok helm-charts/charts/scf-controls-platform/Chart.yaml '^(version: [0-9]+\.[0-9]+\.[0-9]+|appVersion: v[0-9]+\.[0-9]+\.[0-9]+)$' \
+            || verdict false "Chart.yaml changed beyond version/appVersion"
+          lines_ok docs-site/src/content/docs/admin-guide/configuration.mdx '^\| `PLATFORM_VERSION` \| `[0-9]+\.[0-9]+\.[0-9]+` \|' \
+            || verdict false "configuration.mdx changed beyond the PLATFORM_VERSION row"
+
+          verdict true "${OLD_V} -> ${NEW_V}, version strings and release notes only; heavy jobs will skip"
+
   python:
     name: Python Backend
     needs: detect
-    if: needs.detect.outputs.has_python == 'true'
+    if: needs.detect.outputs.has_python == 'true' && needs.detect.outputs.version_bump_only != 'true'
     runs-on: ubuntu-latest
     # A throwaway PostgreSQL for the backup/restore round-trip tests, which
     # exercise cascade + constraint behaviour a mocked session cannot express
@@ -376,7 +462,7 @@ jobs:
   typescript:
     name: TypeScript Frontend
     needs: detect
-    if: needs.detect.outputs.has_typescript == 'true'
+    if: needs.detect.outputs.has_typescript == 'true' && needs.detect.outputs.version_bump_only != 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -417,6 +503,7 @@ jobs:
     if: |
       always() &&
       needs.detect.outputs.has_docker == 'true' &&
+      needs.detect.outputs.version_bump_only != 'true' &&
       (needs.python.result == 'success' || needs.python.result == 'skipped') &&
       (needs.typescript.result == 'success' || needs.typescript.result == 'skipped')
     runs-on: ubuntu-latest
