@@ -310,7 +310,7 @@ def generate_documents_task(
     """
     from services.doc_gen.licence import LicenceError
     from services.doc_gen.pipeline import PipelineError, run_generation
-    from services.doc_gen.registry import GeneratorNotFound
+    from services.doc_gen.registry import GeneratorNotFound, get_generator
 
     if not acquire_lock(organization_id):
         logger.info("doc_gen already running for org=%s; refusing", organization_id)
@@ -345,11 +345,31 @@ def generate_documents_task(
     generated = skipped = failed = 0
     interrupted = False
     session = None
+    started_at = datetime.now(timezone.utc).isoformat()
+
+    # One entry per requested document, carried on every status write so the
+    # client can show the whole run -- what is done, what is running, what is
+    # still to come -- rather than one line about the current document.
+    items: List[Dict[str, Any]] = []
+    for request in requests:
+        name = request.get("generator")
+        try:
+            display_name = get_generator(name).display_name
+        except Exception:  # noqa: BLE001 -- an unknown name is refused below
+            display_name = name
+        items.append({
+            "generator": name, "display_name": display_name,
+            "domain_id": request.get("domain_id") or "", "state": "pending",
+        })
+
+    def counts() -> Dict[str, Any]:
+        return {"generated": generated, "skipped": skipped, "failed": failed,
+                "started_at": started_at, "items": items}
 
     try:
         _set_status(
             organization_id, "running",
-            total=len(requests), completed=0, stage="starting",
+            total=len(requests), completed=0, stage="starting", **counts(),
         )
         session = _get_sync_session()
 
@@ -361,11 +381,14 @@ def generate_documents_task(
             domain_id = request.get("domain_id")
             label = f"{generator_name}{f' ({domain_id})' if domain_id else ''}"
 
+            items[index]["state"] = "running"
+
             def progress(stage: str, message: str, _label=label, _i=index) -> None:
                 _set_status(
                     organization_id, "running",
-                    total=len(requests), completed=_i,
-                    stage=stage, message=f"{_label}: {message}",
+                    total=len(requests), completed=_i, current_index=_i,
+                    stage=stage, message=f"{_label}: {message}", detail=message,
+                    **counts(),
                 )
 
             try:
@@ -380,7 +403,14 @@ def generate_documents_task(
                     progress=progress,
                 )
                 session.commit()
-                results.append(result.to_dict())
+                outcome = result.to_dict()
+                results.append(outcome)
+                items[index].update({
+                    "state": result.action, "title": outcome.get("title"),
+                    "document_id": str(outcome["document_id"]) if outcome.get("document_id") else None,
+                    "conflict_count": outcome.get("conflict_count") or 0,
+                    "skip_reason": outcome.get("skip_reason"),
+                })
                 if result.action == "skipped":
                     skipped += 1
                 else:
@@ -402,6 +432,7 @@ def generate_documents_task(
                 # counted as failed: nothing about it was wrong, we ran out of
                 # time.
                 session.rollback()
+                items[index]["state"] = "pending"
                 interrupted = True
                 logger.warning(
                     "doc_gen soft time limit reached for org=%s after %d/%d "
@@ -417,6 +448,7 @@ def generate_documents_task(
                 failed += 1
                 logger.info("doc_gen refused %s for org=%s: %s",
                             label, organization_id, exc)
+                items[index].update({"state": "failed", "error": str(exc)})
                 results.append({
                     "generator": generator_name, "domain_id": domain_id or "",
                     "action": "failed", "error": str(exc),
@@ -425,6 +457,7 @@ def generate_documents_task(
                 session.rollback()
                 failed += 1
                 logger.exception("doc_gen failed %s for org=%s", label, organization_id)
+                items[index].update({"state": "failed", "error": f"Generation failed: {exc}"})
                 results.append({
                     "generator": generator_name, "domain_id": domain_id or "",
                     "action": "failed", "error": f"Generation failed: {exc}",
@@ -450,6 +483,9 @@ def generate_documents_task(
             status,
             total=len(requests),
             completed=len(results),
+            started_at=started_at,
+            finished_at=datetime.now(timezone.utc).isoformat(),
+            items=items,
             **summary,
         )
         return summary

@@ -15,8 +15,10 @@ import {
   type LifecycleStatus,
 } from '../../data/documentsApi'
 import DocumentEditor from './DocumentEditor'
+import DocumentMap from './DocumentMap'
 import DocumentReader from './DocumentReader'
 import GeneratePanel from './GeneratePanel'
+import GenerationRunCard from './GenerationRunCard'
 
 interface Props {
   organizationId: string
@@ -29,6 +31,33 @@ const TYPE_LABELS: Record<string, string> = {
   policy: 'Policies',
   procedure: 'Procedures',
   standard: 'Standards',
+  isms: 'ISMS Core (ISO/IEC 27001)',
+  register: 'Registers',
+  plan: 'Plans',
+  superseded: 'Superseded by a change of document structure',
+}
+
+/** Library order: the SoA and ISMS core first, superseded documents last. */
+const TYPE_ORDER = ['soa', 'isms', 'policy', 'standard', 'procedure', 'plan', 'register', 'report']
+const typeRank = (key: string) =>
+  key === SUPERSEDED ? 99 : TYPE_ORDER.indexOf(key) === -1 ? 50 : TYPE_ORDER.indexOf(key)
+
+/** Group key for documents from a document profile no longer in use. */
+const SUPERSEDED = 'superseded'
+
+/**
+ * The card's scope label. A domain document shows its domain code as before;
+ * a bundle shows how many domains it covers rather than an internal key like
+ * "G-TECHOPS", and a topic says it is one.
+ */
+function scopeLabel(d: DocumentSummary): string | null {
+  if (!d.domain_id) return null
+  if (d.scope_kind === 'bundle') {
+    const n = d.scope_domains?.length ?? 0
+    return n === 1 ? d.scope_domains![0] : `${n} domains`
+  }
+  if (d.scope_kind === 'topic') return 'Topic'
+  return d.domain_id
 }
 
 const STATUS_FILTERS: Array<{ value: string; label: string }> = [
@@ -76,6 +105,7 @@ export default function DocumentsPage({ organizationId, onOpenSettings }: Props)
   const [editSection, setEditSection] = useState<string | null>(null)
   const [showGenerate, setShowGenerate] = useState(false)
   const [statusFilter, setStatusFilter] = useState('')
+  const [view, setView] = useState<'library' | 'map'>('library')
 
   /**
    * Keep `?doc=…&mode=…` in step with what is open.
@@ -134,11 +164,15 @@ export default function DocumentsPage({ organizationId, onOpenSettings }: Props)
   const grouped = useMemo(() => {
     const out = new Map<string, DocumentSummary[]>()
     for (const d of documents) {
-      const list = out.get(d.document_type) ?? []
+      const key = d.superseded ? SUPERSEDED : d.document_type
+      const list = out.get(key) ?? []
       list.push(d)
-      out.set(d.document_type, list)
+      out.set(key, list)
     }
-    return [...out.entries()].sort((a, b) => a[0].localeCompare(b[0]))
+    // Superseded documents last: they are kept, not current.
+    return [...out.entries()].sort(
+      (a, b) => typeRank(a[0]) - typeRank(b[0]) || a[0].localeCompare(b[0])
+    )
   }, [documents])
 
   const totalConflicts = documents.reduce((sum, d) => sum + d.conflict_count, 0)
@@ -223,6 +257,10 @@ export default function DocumentsPage({ organizationId, onOpenSettings }: Props)
         </button>
       </div>
 
+      {/* Run status sits under the page header, outside the Generate panel,
+          so it stays visible while the panel is closed. */}
+      <GenerationRunCard organizationId={organizationId} onOpenDocument={setOpenDocument} />
+
       {settings && !settings.enabled && (
         <div className="doc-notice doc-notice-warning">
           <strong>Document generation is not enabled.</strong> An administrator
@@ -251,6 +289,43 @@ export default function DocumentsPage({ organizationId, onOpenSettings }: Props)
         </div>
       )}
 
+      {/* Library or the control-to-document map of the current structure. */}
+      <div className="docs-view-tabs" role="tablist" aria-label="Documents view">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={view === 'library'}
+          className={`docs-view-tab${view === 'library' ? ' is-active' : ''}`}
+          onClick={() => setView('library')}
+        >
+          Library
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={view === 'map'}
+          className={`docs-view-tab${view === 'map' ? ' is-active' : ''}`}
+          onClick={() => setView('map')}
+        >
+          Document map
+        </button>
+      </div>
+
+      {showGenerate && (
+        <GeneratePanel
+          organizationId={organizationId}
+          onClose={() => setShowGenerate(false)}
+        />
+      )}
+
+      {view === 'map' ? (
+        <DocumentMap
+          organizationId={organizationId}
+          onOpenDocument={setOpenDocument}
+          onOpenSettings={onOpenSettings}
+        />
+      ) : (
+      <>
       {/* Lifecycle status filter chips + document count */}
       <div className="docs-list-filter-bar">
         {STATUS_FILTERS.map((f) => (
@@ -269,13 +344,6 @@ export default function DocumentsPage({ organizationId, onOpenSettings }: Props)
           </span>
         )}
       </div>
-
-      {showGenerate && (
-        <GeneratePanel
-          organizationId={organizationId}
-          onClose={() => setShowGenerate(false)}
-        />
-      )}
 
       {isLoading ? (
         <p className="docs-list-loading">Loading documents…</p>
@@ -311,10 +379,10 @@ export default function DocumentsPage({ organizationId, onOpenSettings }: Props)
                   {/* Meta line in mono: v4 · GOV · 14 sections · SCF 2025.4 */}
                   <div className="docs-list-card-meta">
                     <span>v{d.generation_version}</span>
-                    {d.domain_id && (
+                    {scopeLabel(d) && (
                       <>
                         <span className="docs-list-card-meta-sep">·</span>
-                        <span>{d.domain_id}</span>
+                        <span title={d.scope_domains?.join(', ')}>{scopeLabel(d)}</span>
                       </>
                     )}
                     {/* Operative sections only — `section_count` excludes
@@ -335,6 +403,14 @@ export default function DocumentsPage({ organizationId, onOpenSettings }: Props)
                     )}
                   </div>
                   <div className="docs-list-card-flags">
+                    {d.superseded && (
+                      <span
+                        className="doc-section-badge status-superseded"
+                        title="Produced under a document structure your organisation no longer uses. It is kept and can still be read and exported."
+                      >
+                        Superseded
+                      </span>
+                    )}
                     {d.conflict_count > 0 && (
                       <span className="doc-section-badge status-conflict">
                         {d.conflict_count} section
@@ -376,6 +452,8 @@ export default function DocumentsPage({ organizationId, onOpenSettings }: Props)
             </div>
           </section>
         ))
+      )}
+      </>
       )}
     </div>
   )

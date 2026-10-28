@@ -3715,7 +3715,16 @@ class GeneratedDocument(Base):
 
     generator_name = Column(String(64), nullable=False)
     document_type = Column(String(32), nullable=False)
-    domain_id = Column(String(16), nullable=False, server_default="", default="")
+    # The document's scope key: an SCF domain identifier ("IAC"), a bundle or
+    # topic key ("B-ACCESS", "T-INCIDENT"; services/doc_gen/scopes.py), or ''
+    # for organisation-level documents.
+    domain_id = Column(String(64), nullable=False, server_default="", default="")
+    #: Domains the document covered when generated. Provenance: bundles.yaml
+    #: can change after the fact.
+    scope_domains = Column(JSONB, nullable=False, server_default="[]", default=list)
+    #: Bundled documents only: {domain: {"prompt_hash", "content", "model_id"}}
+    #: per chapter, so regeneration rewrites only chapters whose inputs moved.
+    chapter_cache = Column(JSONB, nullable=False, server_default="{}", default=dict)
     title = Column(String(500), nullable=False)
     filename = Column(String(255), nullable=False)
 
@@ -3901,6 +3910,8 @@ class DocGenSettings(Base):
 
     enabled = Column(Boolean, nullable=False, server_default="false", default=False)
     derivative_generators_enabled = Column(Boolean, nullable=False, server_default="false", default=False)
+    #: A profile name from services/doc_gen/templates/bundles.yaml.
+    document_profile = Column(String(32), nullable=False, server_default="granular", default="granular")
 
     licence_acknowledged_at = Column(DateTime(timezone=False), nullable=True)
     licence_acknowledged_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
@@ -4501,3 +4512,42 @@ class EvidenceStorageConfig(Base):
             f"<EvidenceStorageConfig(id={self.id}, scope={scope}, "
             f"provider={self.provider}, status={self.status})>"
         )
+
+
+class IsmsProfile(Base):
+    """The organisation's ISMS facts that no catalogue or register holds.
+
+    ISO/IEC 27001 clause documents -- the scope statement, context of the
+    organisation, interested parties, objectives, communication plan, audit
+    programme -- are written from facts only the organisation knows. A model
+    asked to write them without those facts invents them, and an auditor finds
+    the invention in the first interview. These registers are where the facts
+    live; the clause generators render them, and an empty register renders as a
+    visible "to be completed" marker rather than as plausible prose.
+
+    One row per organisation. Each register is a JSON list validated by the API
+    schemas (api/isms_profile.py); they hold tens of rows, are edited as a
+    whole, and every save is written to the audit log.
+    """
+    __tablename__ = "isms_profiles"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id = Column(
+        UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False, unique=True,
+    )
+    #: Clause 4.3: boundaries, locations, services, exclusions, interfaces.
+    scope = Column(JSONB, nullable=False, server_default="{}", default=dict)
+    #: Clause 4.1: internal and external issues.
+    context_issues = Column(JSONB, nullable=False, server_default="[]", default=list)
+    #: Clause 4.2: interested parties and their requirements.
+    interested_parties = Column(JSONB, nullable=False, server_default="[]", default=list)
+    #: Clause 6.2: information security objectives.
+    objectives = Column(JSONB, nullable=False, server_default="[]", default=list)
+    #: Clause 7.4: what, when, with whom, who and how.
+    communication_plan = Column(JSONB, nullable=False, server_default="[]", default=list)
+    #: Clause 9.2: the internal audit programme.
+    audit_programme = Column(JSONB, nullable=False, server_default="[]", default=list)
+    updated_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now())
+    updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now())

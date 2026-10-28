@@ -38,7 +38,7 @@ from models import (
     Organization,
 )
 from services.audit_service import create_audit_entry, detect_action_source
-from services.doc_gen import lifecycle
+from services.doc_gen import lifecycle, scopes
 from services.doc_gen.licence import (
     ACKNOWLEDGEMENT_TEXT,
     LICENCE_TEXT_VERSION,
@@ -84,8 +84,81 @@ class DomainOption(BaseModel):
     control_count: int
 
 
+class ScopeOption(BaseModel):
+    """One document a profiled generator can produce: a domain, bundle or topic."""
+
+    key: str
+    kind: str
+    title: str
+    domains: List[str]
+    control_count: int
+
+
+class GeneratorScopes(BaseModel):
+    #: domain | bundle | topic | none (see bundles.yaml)
+    mode: str
+    scopes: List[ScopeOption]
+
+
+class ScopesResponse(BaseModel):
+    profile: str
+    fold_standards: bool
+    generators: Dict[str, GeneratorScopes]
+
+
+class MapDomain(BaseModel):
+    identifier: str
+    name: str
+    control_count: int
+
+
+class MapControl(BaseModel):
+    scf_id: str
+    name: str
+    domain: str
+
+
+class MapScope(BaseModel):
+    key: str
+    kind: str
+    title: str
+    domains: List[str]
+    #: The in-scope controls this document covers, exactly. Topic procedures
+    #: take named control families, so a domain prefix is not enough to say.
+    controls: List[str]
+
+
+class MapGenerator(BaseModel):
+    display_name: str
+    mode: str
+    scopes: List[MapScope]
+
+
+class DocumentMapResponse(BaseModel):
+    """Which document each in-scope control lands in, under the current profile."""
+
+    profile: str
+    profile_display_name: str
+    fold_standards: bool
+    domains: List[MapDomain]
+    controls: List[MapControl]
+    generators: Dict[str, MapGenerator]
+
+
+class ProfileInfo(BaseModel):
+    name: str
+    display_name: str
+    description: str
+    recommended_for: str
+    generators: Dict[str, str]
+    fold_standards: bool
+    bundles: List[Dict[str, Any]]
+
+
 class GenerationRequestItem(BaseModel):
     generator: str
+    #: The scope key: a domain ("IAC"), bundle ("B-ACCESS") or topic
+    #: ("T-INCIDENT"), as listed by GET .../documents/scopes.
     domain_id: Optional[str] = None
 
 
@@ -123,6 +196,12 @@ class DocumentSummary(BaseModel):
     #: :mod:`services.doc_gen.staleness` for what is compared and what is not.
     is_stale: bool = False
     stale_reason: Optional[str] = None
+    #: domain | bundle | topic, or "" for an organisation-level document.
+    scope_kind: str = ""
+    scope_domains: List[str] = []
+    #: Produced under a document profile the organisation no longer uses.
+    #: Kept, readable and exportable, but not its current document.
+    superseded: bool = False
     updated_at: Optional[str] = None
 
 
@@ -196,12 +275,15 @@ class SettingsOut(BaseModel):
     daily_generation_limit: int
     platform_disabled: bool
     acknowledgement_text: str
+    document_profile: str = "granular"
+    profiles: List[ProfileInfo] = []
 
 
 class SettingsUpdate(BaseModel):
     enabled: Optional[bool] = None
     derivative_generators_enabled: Optional[bool] = None
     acknowledge_licence: bool = False
+    document_profile: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -269,12 +351,21 @@ async def _section_stats(db: AsyncSession, document_ids: List[UUID]) -> Dict[UUI
     }
 
 
+def _scope_kind(document: GeneratedDocument) -> str:
+    if not document.domain_id:
+        return ""
+    found = scopes.scope_for_stored_key(document.domain_id)
+    return found.kind if found else scopes.KIND_DOMAIN
+
+
 def _summary(
     document: GeneratedDocument,
     stats: Dict[str, int],
     staleness: Optional[Staleness] = None,
+    profile: Optional["scopes.Profile"] = None,
 ) -> DocumentSummary:
     staleness = staleness or NOT_STALE
+    kind = _scope_kind(document)
     return DocumentSummary(
         id=str(document.id),
         generator_name=document.generator_name,
@@ -292,8 +383,35 @@ def _summary(
         pending_retirement_count=stats.get("pending_retirement", 0),
         is_stale=staleness.is_stale,
         stale_reason=staleness.reason,
+        scope_kind=kind,
+        scope_domains=list(
+            getattr(document, "scope_domains", None)
+            or ([document.domain_id] if kind == "domain" else [])
+        ),
+        superseded=bool(
+            profile is not None
+            and not scopes.is_current(profile, document.generator_name, document.domain_id or "")
+        ),
         updated_at=document.updated_at.isoformat() if document.updated_at else None,
     )
+
+
+def _profile_of(settings: Optional[DocGenSettings]) -> "scopes.Profile":
+    return scopes.get_profile(settings.document_profile if settings else None)
+
+
+def _profile_infos() -> List[ProfileInfo]:
+    out = []
+    for name in scopes.profile_names():
+        p = scopes.get_profile(name)
+        out.append(ProfileInfo(
+            name=p.name, display_name=p.display_name, description=p.description,
+            recommended_for=p.recommended_for, generators=dict(p.generators),
+            fold_standards=p.fold_standards,
+            bundles=[{"key": b.key, "title": b.title, "domains": list(b.domains)}
+                     for b in p.bundles],
+        ))
+    return out
 
 
 async def _get_settings(db: AsyncSession, organization_id: UUID) -> Optional[DocGenSettings]:
@@ -361,6 +479,118 @@ async def list_generatable_domains(
     ]
 
 
+async def _scoped_controls(db: AsyncSession, organization_id):
+    """The organisation's selected controls with their domains, in catalog order.
+
+    Returns ``(rows, domains, pairs)``: rows of ``(scf_id, domain identifier,
+    domain name, control name)``, the distinct ``(identifier, name)`` domains
+    in order, and the ``(scf_id, identifier)`` pairs ``scopes`` works on.
+    """
+    from catalog_models import SCFCatalogControl, SCFCatalogDomain
+    from models import ScopedControl
+
+    rows = (await db.execute(
+        select(ScopedControl.scf_id, SCFCatalogDomain.identifier, SCFCatalogDomain.name,
+               SCFCatalogControl.control_name)
+        .select_from(ScopedControl)
+        .join(SCFCatalogControl, SCFCatalogControl.scf_id == ScopedControl.scf_id)
+        .join(SCFCatalogDomain, SCFCatalogDomain.name == SCFCatalogControl.scf_domain)
+        .where(ScopedControl.organization_id == organization_id)
+        .where(ScopedControl.selected.is_(True))
+        .order_by(SCFCatalogDomain.order, ScopedControl.scf_id)
+    )).all()
+    domains: List[tuple] = []
+    for _, ident, name, _ in rows:
+        if (ident, name) not in domains:
+            domains.append((ident, name))
+    pairs = [(scf_id, ident) for scf_id, ident, _, _ in rows]
+    return rows, domains, pairs
+
+
+@router.get("/organizations/{org_id}/documents/scopes", response_model=ScopesResponse)
+async def list_scopes(
+    org_id: UUID,
+    membership: OrgMembership = Depends(require_org_role("viewer")),
+    db: AsyncSession = Depends(get_db),
+):
+    """What each profiled generator can produce under the organisation's profile.
+
+    Only scopes with at least one in-scope control are listed, each with its
+    control count, so the generate panel never offers an empty document.
+    """
+    rows, domains, pairs = await _scoped_controls(db, membership.organization_id)
+
+    profile = _profile_of(await _get_settings(db, membership.organization_id))
+    generators: Dict[str, GeneratorScopes] = {}
+    for name in scopes.PROFILED_GENERATORS:
+        options = []
+        for scope in scopes.scopes_for(profile, name, domains, pairs):
+            count = sum(1 for scf_id, ident in pairs if scope.includes(scf_id, ident))
+            if count:
+                options.append(ScopeOption(
+                    key=scope.key, kind=scope.kind,
+                    title=scope.document_title or scope.title,
+                    domains=list(scope.domains), control_count=count,
+                ))
+        generators[name] = GeneratorScopes(
+            mode=profile.mode_for(name) or scopes.MODE_NONE, scopes=options,
+        )
+    return ScopesResponse(
+        profile=profile.name, fold_standards=profile.fold_standards,
+        generators=generators,
+    )
+
+
+@router.get("/organizations/{org_id}/documents/map", response_model=DocumentMapResponse)
+async def document_map(
+    org_id: UUID,
+    membership: OrgMembership = Depends(require_org_role("viewer")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Every in-scope control and the policy, standard and procedure it lands in.
+
+    Answers "which document is this control in?" under the organisation's
+    document profile. Read-only; the same computation as ``/documents/scopes``
+    with the membership spelled out per control.
+    """
+    rows, domains, pairs = await _scoped_controls(db, membership.organization_id)
+    profile = _profile_of(await _get_settings(db, membership.organization_id))
+
+    generators: Dict[str, MapGenerator] = {}
+    for name in scopes.PROFILED_GENERATORS:
+        options = []
+        for scope in scopes.scopes_for(profile, name, domains, pairs):
+            members = [scf_id for scf_id, ident in pairs if scope.includes(scf_id, ident)]
+            if members:
+                # The domains this document actually draws on: a bundle names
+                # every domain it could hold, most of which may be out of scope.
+                drawn = {ident for scf_id, ident in pairs if scope.includes(scf_id, ident)}
+                options.append(MapScope(
+                    key=scope.key, kind=scope.kind,
+                    title=scope.document_title or scope.title,
+                    domains=[i for i, _ in domains if i in drawn], controls=members,
+                ))
+        try:
+            display_name = get_generator(name).display_name
+        except GeneratorNotFound:
+            display_name = name.title()
+        generators[name] = MapGenerator(
+            display_name=display_name,
+            mode=profile.mode_for(name) or scopes.MODE_NONE, scopes=options,
+        )
+
+    counts: Dict[str, int] = {}
+    for _, ident in pairs:
+        counts[ident] = counts.get(ident, 0) + 1
+    return DocumentMapResponse(
+        profile=profile.name, profile_display_name=profile.display_name,
+        fold_standards=profile.fold_standards,
+        domains=[MapDomain(identifier=i, name=n, control_count=counts.get(i, 0)) for i, n in domains],
+        controls=[MapControl(scf_id=c, name=cn, domain=i) for c, i, _, cn in rows],
+        generators=generators,
+    )
+
+
 @router.get("/organizations/{org_id}/documents/settings", response_model=SettingsOut)
 async def get_settings(
     org_id: UUID,
@@ -381,6 +611,8 @@ async def get_settings(
         daily_generation_limit=settings.daily_generation_limit if settings else 25,
         platform_disabled=platform_kill_switch_engaged(),
         acknowledgement_text=ACKNOWLEDGEMENT_TEXT,
+        document_profile=_profile_of(settings).name,
+        profiles=_profile_infos(),
     )
 
 
@@ -416,6 +648,7 @@ async def update_settings(
         "enabled": settings.enabled,
         "derivative_generators_enabled": settings.derivative_generators_enabled,
         "licence_acknowledged": settings.licence_acknowledged_at is not None,
+        "document_profile": settings.document_profile,
     })
 
     now = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -454,6 +687,20 @@ async def update_settings(
             )
         settings.derivative_generators_enabled = payload.derivative_generators_enabled
 
+    if payload.document_profile is not None:
+        if payload.document_profile not in scopes.profile_names():
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Unknown document profile '{payload.document_profile}'. "
+                    f"Available: {', '.join(scopes.profile_names())}"
+                ),
+            )
+        # Switching profile deletes nothing. Documents produced under the old
+        # profile are reported as superseded and stay readable and exportable;
+        # purging them would destroy an organisation's approved ISMS.
+        settings.document_profile = payload.document_profile
+
     await create_audit_entry(
         db,
         organization_id=membership.organization_id,
@@ -468,6 +715,7 @@ async def update_settings(
             "derivative_generators_enabled": settings.derivative_generators_enabled,
             "licence_acknowledged": settings.licence_acknowledged_at is not None,
             "licence_text_version": settings.licence_text_version,
+            "document_profile": settings.document_profile,
         }),
         action_source=detect_action_source(request),
     )
@@ -499,6 +747,7 @@ async def generate(
     from services.doc_gen.licence import check_generation_allowed
 
     settings = await _get_settings(db, membership.organization_id)
+    profile = _profile_of(settings)
 
     for item in payload.requests:
         try:
@@ -508,7 +757,15 @@ async def generate(
         if spec.domain_scoped and not item.domain_id:
             raise HTTPException(
                 status_code=400,
-                detail=f"Generator '{spec.name}' requires a domain.",
+                detail=f"Generator '{spec.name}' requires a domain, bundle or topic.",
+            )
+        if profile.mode_for(spec.name) == scopes.MODE_NONE:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"The {profile.display_name} profile does not produce a separate "
+                    f"{spec.name}; its requirements are part of each policy."
+                ),
             )
         permission = check_generation_allowed(
             settings, tier=spec.tier, is_derivative=spec.is_derivative
@@ -572,8 +829,9 @@ async def list_documents(
     # see :mod:`services.doc_gen.staleness` for why that is affordable here and
     # why building a generation context per document would not be.
     stale = await assess_documents(db, membership.organization_id, documents)
+    profile = _profile_of(await _get_settings(db, membership.organization_id))
     return [
-        _summary(d, stats.get(d.id, {}), stale.get(d.id))
+        _summary(d, stats.get(d.id, {}), stale.get(d.id), profile)
         for d in documents
     ]
 
@@ -590,8 +848,9 @@ async def get_document(
     stale = (await assess_documents(db, membership.organization_id, [document])).get(
         document.id
     )
+    profile = _profile_of(await _get_settings(db, membership.organization_id))
     detail = DocumentDetail(
-        **_summary(document, stats, stale).model_dump(),
+        **_summary(document, stats, stale, profile).model_dump(),
         merged_content=_operative_markdown(document),
         sections=[
             SectionOut(

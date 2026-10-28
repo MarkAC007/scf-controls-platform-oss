@@ -50,6 +50,8 @@ webclient/public/data/frameworks.json
 webclient/public/data/assessment_objectives.json
 webclient/public/data/domains.json
 webclient/public/data/catalog_meta.json
+webclient/public/data/framework_registry.json
+webclient/public/data/publisher_changes.json
 # Operator-supplied SCF source workbook (input to the importer)
 catalog-source/*.xlsx
 # NOTE: curated, NON-SCF catalogue files are intentionally tracked and DO ship:

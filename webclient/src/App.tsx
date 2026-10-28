@@ -51,6 +51,7 @@ import EvidenceStorageMigrationPanel from './components/EvidenceStorageMigration
 import AuditLogPage from './components/AuditLogPage'
 import EngagementsPage from './components/EngagementsPage'
 import DocumentsPage from './components/documents/DocumentsPage'
+import IsmsProfilePage from './components/isms/IsmsProfilePage'
 import DocGenSettingsCard from './components/documents/DocGenSettingsCard'
 import CatalogUpgradePage from './components/platform/CatalogUpgradePage'
 import TenantReconciliationBoard from './components/platform/TenantReconciliationBoard'
@@ -94,7 +95,7 @@ import { scfIdForScopedControl } from './utils/scopedControlRef'
 
 const readCapabilityTestItem = (search: string) => readAppLocation(search).capabilityTestItem
 
-type Tab = 'dashboard' | 'journey' | 'capability-posture' | 'library' | 'scoping' | 'evidence' | 'mapping-matrix' | 'tasks' | 'systems' | 'users' | 'consultant-portal' | 'risk-register' | 'vendors' | 'settings' | 'webhooks' | 'audit-log' | 'engagements' | 'documents' | 'platform-catalog' | 'platform-tenants' | 'catalog-changelog' | 'deficiencies' | 'capability-tests'
+type Tab = 'dashboard' | 'journey' | 'capability-posture' | 'library' | 'scoping' | 'evidence' | 'mapping-matrix' | 'tasks' | 'systems' | 'users' | 'consultant-portal' | 'risk-register' | 'vendors' | 'settings' | 'webhooks' | 'audit-log' | 'engagements' | 'documents' | 'isms' | 'platform-catalog' | 'platform-tenants' | 'catalog-changelog' | 'deficiencies' | 'capability-tests'
 
 /**
  * Screen selection lives in `activeTab`; `data/appUrl.ts` owns the vocabulary
@@ -946,6 +947,9 @@ function AppContent() {
           )}
           {activeTab === 'engagements' && scopingData && (
             <EngagementsPage organizationId={scopingData.organizationId!} />
+          )}
+          {activeTab === 'isms' && scopingData && (
+            <IsmsProfilePage organizationId={scopingData.organizationId!} />
           )}
           {activeTab === 'documents' && scopingData && (
             <DocumentsPage

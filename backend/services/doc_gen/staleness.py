@@ -41,6 +41,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .fingerprint import compute_controls_hash
+from . import scopes
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +82,18 @@ class CurrentInputs:
     def controls_for(self, domain_id: str) -> List[Dict[str, Any]]:
         if not domain_id:
             return self.all_controls
-        return self.by_domain.get(domain_id, [])
+        # A bundle or topic key resolves to its domains (and, for a topic, its
+        # control families), measured whatever profile is current: the
+        # document is about the scope it was generated for.
+        scope = scopes.scope_for_stored_key(domain_id)
+        if scope is None:
+            return self.by_domain.get(domain_id, [])
+        return [
+            c
+            for d in scope.domains
+            for c in self.by_domain.get(d, [])
+            if scope.includes(c["scf_id"], d)
+        ]
 
     def hash_for(self, domain_id: str) -> str:
         """``compute_controls_hash`` for a domain's controls, computed once."""

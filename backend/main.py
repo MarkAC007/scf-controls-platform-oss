@@ -42,6 +42,7 @@ from api import (
     capabilities,
     catalog,
     documents,
+    isms_profile,
     tasks_api,
     consultant,
     risk_assessments,
@@ -424,6 +425,7 @@ app.include_router(catalog_admin.router, prefix="/api")  # OSS live SCF Excel up
 app.include_router(catalog_upgrade_admin.router, prefix="/api")  # Catalog upgrade platform admin (WP-C contract stubs)
 app.include_router(catalog_reconciliation.router, prefix="/api")  # Per-org catalog reconciliation (WP-C contract stubs)
 app.include_router(documents.router, prefix="/api")  # ISMS document generation (three-layer merge + lifecycle)
+app.include_router(isms_profile.router, prefix="/api")  # ISMS profile registers for ISO 27001 clause documents
 app.include_router(tasks_api.router, prefix="/api")  # Background tasks and cache management
 app.include_router(users.router)
 app.include_router(assignments.router)

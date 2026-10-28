@@ -301,3 +301,21 @@ describe('DocumentReader export buttons', () => {
     )
   })
 })
+
+describe('DocumentReader superseded document', () => {
+  afterEach(() => vi.resetAllMocks())
+
+  it('says at the top that a superseded document is no longer current', async () => {
+    vi.mocked(getDocument).mockResolvedValue({ ...documentFixture, superseded: true } as unknown as DocumentDetail)
+    renderReader()
+    expect(await screen.findByText('This document is no longer current.')).toBeInTheDocument()
+    expect(screen.getAllByText('Superseded').length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('shows no superseded banner on a current document', async () => {
+    vi.mocked(getDocument).mockResolvedValue(documentFixture as unknown as DocumentDetail)
+    renderReader()
+    await screen.findByRole('heading', { name: 'Information Security Policy' })
+    expect(screen.queryByText('This document is no longer current.')).toBeNull()
+  })
+})

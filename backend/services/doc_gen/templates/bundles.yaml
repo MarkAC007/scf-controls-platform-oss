@@ -1,0 +1,162 @@
+# Document profiles — how domain-scoped documents are grouped.
+#
+# A small organisation does not want 34 policies of two pages each. A profile
+# decides what one document covers:
+#
+#   granular      one document per SCF domain (the original behaviour)
+#   consolidated  13 topic bundles
+#   compact       6 groups, each a union of consolidated bundles
+#   essentials    one policy manual covering everything
+#
+# The levels nest — every group is a union of bundles, and every bundle a union
+# of domains — so a document at any level is assembled from domain chapters,
+# and the domain stays the unit of data, fingerprinting and human edits.
+#
+# services/doc_gen/scopes.py refuses to load this file unless every profile
+# covers all 34 domains exactly once. A domain missing from a profile would
+# silently drop its controls from that organisation's policies.
+#
+# Scope keys are stored in generated_documents.domain_id. Prefixes keep them
+# disjoint from the three-letter SCF domain identifiers:
+#   B-  consolidated bundle      G-  compact group
+#   M-  essentials manual        T-  topic (procedures)
+
+version: 1
+
+# What each domain-scoped generator produces under each profile.
+#   domain  one document per scoped SCF domain
+#   bundle  one document per bundle of the profile
+#   topic   one document per operational topic (procedures only)
+#   none    not produced; fold_standards puts the requirements in the policy
+profiles:
+  granular:
+    display_name: Granular
+    description: One policy, standard and procedure per SCF domain.
+    recommended_for: Large and enterprise organisations (250+ staff)
+    generators: {policy: domain, standard: domain, procedure: domain}
+    fold_standards: false
+  consolidated:
+    display_name: Consolidated
+    description: 13 topic policies and standards, with procedures by operational topic.
+    recommended_for: Medium organisations (50–249 staff)
+    generators: {policy: bundle, standard: bundle, procedure: topic}
+    fold_standards: false
+    bundles: consolidated
+  compact:
+    display_name: Compact
+    description: Six policies with their requirements built in, and procedures by operational topic.
+    recommended_for: Small organisations (10–49 staff)
+    generators: {policy: bundle, standard: none, procedure: topic}
+    fold_standards: true
+    bundles: compact
+  essentials:
+    display_name: Essentials
+    description: One information security policy manual, and procedures by operational topic.
+    recommended_for: Micro organisations (fewer than 10 staff)
+    generators: {policy: bundle, standard: none, procedure: topic}
+    fold_standards: true
+    bundles: essentials
+
+default_profile: granular
+
+bundle_sets:
+  consolidated:
+    - key: B-GRC
+      title: Governance, Risk & Compliance
+      domains: [GOV, RSK, CPL, PRM, IAO]
+    - key: B-PEOPLE
+      title: People Security & Awareness
+      domains: [HRS, SAT]
+    - key: B-PHYSICAL
+      title: Physical & Environmental Security
+      domains: [PES]
+    - key: B-ACCESS
+      title: Access Control
+      domains: [IAC]
+    - key: B-DATA
+      title: Data Protection, Privacy & Cryptography
+      domains: [DCH, PRI, CRY, QTS]
+    - key: B-ASSETS
+      title: Asset & Device Management
+      domains: [AST, END, MDM, EMB, MNT]
+    - key: B-OPS
+      title: IT Operations & Change
+      domains: [OPS, CHG, CFG, CAP]
+    - key: B-MONITOR
+      title: Monitoring, Threat & Vulnerability Management
+      domains: [MON, THR, VPM]
+    - key: B-NETWORK
+      title: Network, Cloud & Web Security
+      domains: [NET, CLD, WEB]
+    - key: B-DEV
+      title: Secure Development & Acquisition
+      domains: [SEA, TDA]
+    - key: B-SUPPLIER
+      title: Supplier & Third-Party Security
+      domains: [TPM]
+    - key: B-AI
+      title: AI Governance
+      domains: [AAT]
+    - key: B-RESILIENCE
+      title: Incident Response & Continuity
+      domains: [IRO, BCD]
+
+  # Groups are declared as unions of consolidated bundles so the nesting is
+  # enforced by construction, not by keeping two domain lists in step.
+  compact:
+    - key: G-GRC
+      title: Governance, Risk & Compliance
+      bundles: [B-GRC]
+    - key: G-PEOPLE
+      title: People & Physical Security
+      bundles: [B-PEOPLE, B-PHYSICAL]
+    - key: G-PROTECT
+      title: Access & Data Protection
+      bundles: [B-ACCESS, B-DATA]
+    - key: G-TECHOPS
+      title: Technology Operations
+      bundles: [B-ASSETS, B-OPS, B-MONITOR, B-NETWORK]
+    - key: G-DEV
+      title: Development, Suppliers & AI
+      bundles: [B-DEV, B-SUPPLIER, B-AI]
+    - key: G-RESILIENCE
+      title: Incident Response & Continuity
+      bundles: [B-RESILIENCE]
+
+  essentials:
+    - key: M-ISMS
+      title: Information Security
+      document_title: Information Security Policy Manual
+      bundles: [B-GRC, B-PEOPLE, B-PHYSICAL, B-ACCESS, B-DATA, B-ASSETS, B-OPS,
+                B-MONITOR, B-NETWORK, B-DEV, B-SUPPLIER, B-AI, B-RESILIENCE]
+
+# Operational topics for procedures in the bundled profiles. Auditors sample
+# procedures by activity, not by framework domain, so these follow activities.
+#
+# `domains` takes every scoped control in those domains. `controls` takes each
+# listed control and its enhancements ("IAC-04" also takes "IAC-04.2").
+topics:
+  - key: T-ACCESS
+    title: Joiners, Movers & Leavers
+    description: Granting, changing, reviewing and removing access as people join, move and leave.
+    controls: [HRS-08, HRS-11, HRS-12, IAC-04, IAC-08, IAC-09, IAC-10, IAC-12, IAC-22]
+  - key: T-INCIDENT
+    title: Incident Response
+    description: Detecting, classifying, handling, reporting and learning from security incidents.
+    domains: [IRO]
+  - key: T-BACKUP
+    title: Backup & Restore
+    description: Taking, protecting and testing backups, and restoring data and services.
+    controls: [BCD-04, BCD-18, BCD-23, BCD-24, BCD-26, BCD-30, BCD-31, BCD-32, BCD-33]
+  - key: T-CHANGE
+    title: Change Management
+    description: Requesting, assessing, approving, testing, implementing and reviewing changes.
+    domains: [CHG]
+  - key: T-VULN
+    title: Vulnerability & Patch Management
+    description: Scanning, ranking, remediating and patching vulnerabilities within agreed timescales.
+    domains: [VPM]
+  - key: T-SUPPLIER
+    title: Supplier Onboarding & Review
+    description: Assessing, contracting, monitoring and exiting third-party relationships.
+    domains: [TPM]

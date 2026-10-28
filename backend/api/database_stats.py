@@ -142,6 +142,7 @@ TENANT_SCOPED_EXCLUDED_TABLES: Dict[str, str] = {
     "organization_catalog_state": "catalog state; reseeded on startup",
     "system_catalog_templates": "mostly global catalog data reseeded from JSON; org rows hold regenerable AI recipes",
     "organization_framework_selections": "not yet represented in the export set",
+    "isms_profiles": "not yet represented in the export set; captured by scripts/backup.sh",
     # Cross-org / invitation state — not part of a single-tenant export.
     "consultant_client_relationships": "cross-tenant relationship; not portable",
     "consultant_invites": "invitation state; not portable",
