@@ -338,6 +338,48 @@ def _mock_content(spec: GeneratorSpec, bundle: DomainWithControls, doc_version: 
     return "\n".join(lines)
 
 
+def invoke_model(user_prompt: str, *, label: str) -> str:
+    """One model call with the Tier 2 system prompt; returns the text.
+
+    Shared by single-call documents and the chapters of bundled ones, so both
+    get the same timeout, the same soft-time-limit pass-through and the same
+    empty-output check.
+    """
+    model_id = resolve_model()
+    # `build_anthropic_client` imports the SDK lazily for us: it is needed in
+    # the worker, not on the API process, and only when a key is present.
+    client = build_anthropic_client(timeout=MODEL_CALL_TIMEOUT_SECONDS)
+    try:
+        response = client.messages.create(
+            model=model_id,
+            max_tokens=MAX_OUTPUT_TOKENS,
+            system=SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": user_prompt}],
+        )
+    except SoftTimeLimitExceeded:
+        # Not a generation failure — Celery interrupting the worker. It has to
+        # pass through untouched.
+        #
+        # This is where a batch actually spends its time: essentially all of a
+        # document's 46-81s is this one call, so a soft time limit is far more
+        # likely to be delivered here than anywhere else. Relabelling it as a
+        # GenerationError below would hide it from the batch task's soft-limit
+        # handler, which would then record it as one failed document and start
+        # the next one — burning the whole grace window and guaranteeing the
+        # uncatchable SIGKILL that handler exists to avoid.
+        raise
+    except Exception as exc:  # noqa: BLE001 — surfaced to the task's status key
+        logger.exception("doc_gen tier2 model call failed for %s", label)
+        raise GenerationError(f"Document generation failed: {exc}") from exc
+
+    text = "".join(
+        block.text for block in response.content if getattr(block, "type", "") == "text"
+    ).strip()
+    if not text:
+        raise GenerationError("The model returned no document content")
+    return text
+
+
 def generate_document(
     spec: GeneratorSpec,
     ctx: OrganisationContext,
@@ -374,37 +416,7 @@ def generate_document(
             mocked=True,
         )
 
-    # `build_anthropic_client` imports the SDK lazily for us: it is needed in
-    # the worker, not on the API process, and only when a key is present.
-    client = build_anthropic_client(timeout=MODEL_CALL_TIMEOUT_SECONDS)
-    try:
-        response = client.messages.create(
-            model=model_id,
-            max_tokens=MAX_OUTPUT_TOKENS,
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_prompt}],
-        )
-    except SoftTimeLimitExceeded:
-        # Not a generation failure — Celery interrupting the worker. It has to
-        # pass through untouched.
-        #
-        # This is where a batch actually spends its time: essentially all of a
-        # document's 46-81s is this one call, so a soft time limit is far more
-        # likely to be delivered here than anywhere else. Relabelling it as a
-        # GenerationError below would hide it from the batch task's soft-limit
-        # handler, which would then record it as one failed document and start
-        # the next one — burning the whole grace window and guaranteeing the
-        # uncatchable SIGKILL that handler exists to avoid.
-        raise
-    except Exception as exc:  # noqa: BLE001 — surfaced to the task's status key
-        logger.exception("doc_gen tier2 model call failed for generator=%s", spec.name)
-        raise GenerationError(f"Document generation failed: {exc}") from exc
-
-    text = "".join(
-        block.text for block in response.content if getattr(block, "type", "") == "text"
-    ).strip()
-    if not text:
-        raise GenerationError("The model returned no document content")
+    text = invoke_model(user_prompt, label=getattr(spec, "name", "tier2"))
 
     return GenerationOutput(
         content=text,

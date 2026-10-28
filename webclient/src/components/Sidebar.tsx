@@ -6,7 +6,7 @@ import { getCatalogStatusExtended } from '../data/catalogUpgradeApi'
 import { DEFAULT_APP_TITLE, getAppLogo } from '../branding'
 import { getConfig } from '../data/runtimeConfig'
 
-type Tab = 'dashboard' | 'journey' | 'capability-posture' | 'library' | 'scoping' | 'evidence' | 'mapping-matrix' | 'tasks' | 'systems' | 'users' | 'consultant-portal' | 'risk-register' | 'vendors' | 'settings' | 'webhooks' | 'audit-log' | 'engagements' | 'documents' | 'platform-catalog' | 'platform-tenants' | 'catalog-changelog' | 'deficiencies' | 'capability-tests'
+type Tab = 'dashboard' | 'journey' | 'capability-posture' | 'library' | 'scoping' | 'evidence' | 'mapping-matrix' | 'tasks' | 'systems' | 'users' | 'consultant-portal' | 'risk-register' | 'vendors' | 'settings' | 'webhooks' | 'audit-log' | 'engagements' | 'documents' | 'isms' | 'platform-catalog' | 'platform-tenants' | 'catalog-changelog' | 'deficiencies' | 'capability-tests'
 
 interface SidebarProps {
   activeTab: Tab
@@ -152,6 +152,13 @@ const Icons = {
       <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" />
     </svg>
   ),
+  isms: (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z" />
+      <path d="M9 10h6" />
+      <path d="M9 14h4" />
+    </svg>
+  ),
   documents: (
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M15 2H8a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7z" />
@@ -262,6 +269,7 @@ const navSections: NavSection[] = [
     label: 'DOCUMENTS',
     items: [
       { id: 'documents', label: 'Generated Documents', icon: Icons.documents },
+      { id: 'isms', label: 'ISMS Profile', icon: Icons.isms },
     ],
   },
   {

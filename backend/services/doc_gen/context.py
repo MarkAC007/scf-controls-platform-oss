@@ -133,6 +133,15 @@ class OrganisationContext:
     frameworks: List[Dict[str, Any]] = field(default_factory=list)
     #: Due-care governance figures (PIG R10); see services.due_care.governance_data.
     governance: Dict[str, Any] = field(default_factory=dict)
+    #: The ISMS profile registers (api/isms_profile.py), as stored. Empty when
+    #: the organisation has none or the generator did not ask for it.
+    isms_profile: Dict[str, Any] = field(default_factory=dict)
+    #: Control deficiencies (the POA&M), open and closed.
+    deficiencies: List[Dict[str, Any]] = field(default_factory=list)
+    #: Scoped frameworks with their obligation basis, for the legal register.
+    obligations: List[Dict[str, Any]] = field(default_factory=list)
+    #: The organisation's generated documents, for registers that list them.
+    documents: List[Dict[str, Any]] = field(default_factory=list)
 
     maturity_distribution: Dict[str, int] = field(default_factory=dict)
     status_distribution: Dict[str, int] = field(default_factory=dict)
@@ -203,6 +212,10 @@ def build_context(
     include_risks: bool = True,
     include_systems: bool = True,
     include_governance: bool = False,
+    include_isms: bool = False,
+    include_deficiencies: bool = False,
+    include_obligations: bool = False,
+    include_documents: bool = False,
 ) -> OrganisationContext:
     """Assemble an :class:`OrganisationContext` from the database.
 
@@ -220,6 +233,10 @@ def build_context(
         include_systems: Skip systems and vendors likewise.
         include_governance: Read the due-care governance figures, which only
             the Governance Oversight Report uses.
+        include_isms: Read the ISMS profile registers (ISO 27001 clause documents).
+        include_deficiencies: Read the deficiency register (POA&M).
+        include_obligations: Read scoped frameworks and their obligation basis.
+        include_documents: Read the list of generated documents.
 
     Returns:
         A populated context. Absent optional sections are empty lists, never
@@ -501,6 +518,19 @@ def build_context(
 
         governance = governance_data(session, organization_id)
 
+    isms_profile: Dict[str, Any] = {}
+    if include_isms:
+        isms_profile = _load_isms_profile(session, organization_id)
+    deficiencies: List[Dict[str, Any]] = []
+    if include_deficiencies:
+        deficiencies = _load_deficiencies(session, organization_id)
+    obligations: List[Dict[str, Any]] = []
+    if include_obligations:
+        obligations = _load_obligations(session, organization_id, catalog_version)
+    documents: List[Dict[str, Any]] = []
+    if include_documents:
+        documents = _load_documents(session, organization_id)
+
     ctx = OrganisationContext(
         organization_id=str(organization_id),
         name=org.name,
@@ -518,6 +548,10 @@ def build_context(
         vendors=vendors,
         risk_profile=risk_profile,
         governance=governance,
+        isms_profile=isms_profile,
+        deficiencies=deficiencies,
+        obligations=obligations,
+        documents=documents,
         maturity_distribution=_breakdown(c.maturity_level for c in controls),
         status_distribution=_breakdown(c.implementation_status for c in controls),
         total_scoped_controls=len(controls),
@@ -529,3 +563,126 @@ def build_context(
         organization_id, len(controls), len(domains), catalog_version,
     )
     return ctx
+
+
+# ---------------------------------------------------------------------------
+# Supporting sections for the ISO 27001 core pack
+# ---------------------------------------------------------------------------
+
+
+def _load_isms_profile(session: Session, organization_id: str) -> Dict[str, Any]:
+    from models import IsmsProfile
+
+    row = (
+        session.query(IsmsProfile)
+        .filter(IsmsProfile.organization_id == organization_id)
+        .one_or_none()
+    )
+    if row is None:
+        return {}
+    return {
+        "scope": row.scope or {},
+        "context_issues": row.context_issues or [],
+        "interested_parties": row.interested_parties or [],
+        "objectives": row.objectives or [],
+        "communication_plan": row.communication_plan or [],
+        "audit_programme": row.audit_programme or [],
+    }
+
+
+def _load_deficiencies(session: Session, organization_id: str) -> List[Dict[str, Any]]:
+    """Every deficiency, open and closed: a corrective-action register that
+    drops closed items cannot show that anything was ever corrected."""
+    from models import User, VendorActionItem
+    from services.deficiencies import is_deficiency
+    from user_display import user_label
+
+    rows = (
+        session.query(VendorActionItem)
+        .filter(VendorActionItem.organization_id == organization_id, is_deficiency())
+        .order_by(VendorActionItem.created_at, VendorActionItem.title)
+        .all()
+    )
+    owner_ids = {r.owner_user_id for r in rows if r.owner_user_id}
+    owners = {
+        u.id: user_label(u)
+        for u in session.query(User).filter(User.id.in_(owner_ids)).all()
+    } if owner_ids else {}
+    return [
+        {
+            "title": r.title,
+            "description": r.description,
+            "scf_id": r.scf_id,
+            "priority": r.priority,
+            "status": r.status,
+            "source": r.source or "manual",
+            "root_cause": r.root_cause,
+            "owner": owners.get(r.owner_user_id) or r.owner_name,
+            "raised": r.created_at.date().isoformat() if r.created_at else None,
+            "due_date": r.due_date.isoformat() if r.due_date else None,
+            "completed_date": r.completed_date.isoformat() if r.completed_date else None,
+        }
+        for r in rows
+    ]
+
+
+def _load_obligations(
+    session: Session, organization_id: str, catalog_version: Optional[str]
+) -> List[Dict[str, Any]]:
+    from catalog_models import CatalogFrameworkRegistry
+    from models import OrganizationFrameworkSelection
+
+    names: Dict[str, str] = {}
+    registry_row = None
+    if catalog_version:
+        registry_row = session.get(CatalogFrameworkRegistry, catalog_version)
+    if registry_row is None:
+        registry_row = (
+            session.query(CatalogFrameworkRegistry)
+            .order_by(CatalogFrameworkRegistry.catalog_version.desc())
+            .first()
+        )
+    if registry_row is not None:
+        for fid, meta in (registry_row.registry or {}).items():
+            if isinstance(meta, dict) and meta.get("name"):
+                names[fid] = meta["name"]
+
+    out = []
+    for sel in (
+        session.query(OrganizationFrameworkSelection)
+        .filter(
+            OrganizationFrameworkSelection.organization_id == organization_id,
+            OrganizationFrameworkSelection.active.is_(True),
+        )
+        .order_by(OrganizationFrameworkSelection.framework_id)
+        .all()
+    ):
+        out.append({
+            "framework_id": sel.framework_id,
+            "name": names.get(sel.framework_id) or sel.framework_id,
+            "basis": sel.basis,
+            "obligation_type": sel.obligation_type,
+            "obligation_source": sel.obligation_source,
+        })
+    return out
+
+
+def _load_documents(session: Session, organization_id: str) -> List[Dict[str, Any]]:
+    from models import GeneratedDocument
+
+    return [
+        {
+            "title": d.title,
+            "generator": d.generator_name,
+            "document_type": d.document_type,
+            "scope_key": d.domain_id or "",
+            "lifecycle_status": d.lifecycle_status,
+            "generation_version": d.generation_version,
+        }
+        for d in (
+            session.query(GeneratedDocument)
+            .filter(GeneratedDocument.organization_id == organization_id)
+            .order_by(GeneratedDocument.document_type, GeneratedDocument.title)
+            .all()
+        )
+    ]

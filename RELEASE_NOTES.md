@@ -1,12 +1,18 @@
-# v1.0.0
+# v1.0.1
 
-1.0.0 marks the platform's first stable release. The data model, REST API and Docker Compose deployment shape are now considered stable: future 1.x releases keep schema and API changes backward-compatible, and upgrades remain a single run of scripts/upgrade.sh. This release also closes the open Dependabot alerts in the web client and docs site and tightens the release pipeline so Release OSS only runs on a green CI. No migration steps are required beyond the standard upgrade.
+.
 
 ## Fixes and improvements
 
-- Skip heavy jobs on version-bump-only PRs; gate Release OSS on green CI (PR 1168)
-- Close 23 of 24 open Dependabot alerts in webclient and docs-site (PR 1166)
+- Document generation: document profiles, ISMS Profile and the ISO 27001 core pack (PR 1170)
+
+## Migrations
+
+- `docprof001` — Document profiles: bundled document scopes.
+- `ismsprof001` — ISMS profile: the organisation facts ISO 27001 clause documents need.
+
+`scripts/upgrade.sh` runs these after its backup. A plain `docker compose up -d` refuses to migrate an existing database until `SCF_MIGRATE_ACK` is set, so read `UPGRADING.md` before upgrading a deployment you cannot restore.
 
 ## Upgrading
 
-- Run `scripts/upgrade.sh v1.0.0` (read `UPGRADING.md` first).
+- Run `scripts/upgrade.sh v1.0.1` (read `UPGRADING.md` first).

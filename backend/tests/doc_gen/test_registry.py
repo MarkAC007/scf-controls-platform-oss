@@ -96,7 +96,12 @@ def test_every_tier_2_generator_loads_its_prompt():
         if spec.tier >= 2:
             template = spec.load_prompt_template()
             assert "{org_name}" in template, spec.name
-            assert "{control_sections}" in template, spec.name
+            if spec.domain_scoped:
+                assert "{control_sections}" in template, spec.name
+            else:
+                # Organisation-level (Tier 3): summarises the programme rather
+                # than one domain's controls.
+                assert "{domain_summaries}" in template, spec.name
 
 
 def test_tier_1_generator_has_no_prompt_template():

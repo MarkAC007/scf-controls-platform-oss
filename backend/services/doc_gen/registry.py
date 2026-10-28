@@ -44,6 +44,11 @@ class DataRequirements:
     #: The due-care governance figures (PIG R10): posture, validation,
     #: deficiencies, risk acceptance, suppliers and the snapshot a quarter ago.
     governance: bool = False
+    #: ISO 27001 core pack inputs; see context.build_context.
+    isms: bool = False
+    deficiencies: bool = False
+    obligations: bool = False
+    documents: bool = False
 
 
 @dataclass(frozen=True)
@@ -114,6 +119,10 @@ def _parse(entry: Dict[str, Any]) -> GeneratorSpec:
             risks=bool(requires.get("risks", False)),
             systems=bool(requires.get("systems", False)),
             governance=bool(requires.get("governance", False)),
+            isms=bool(requires.get("isms", False)),
+            deficiencies=bool(requires.get("deficiencies", False)),
+            obligations=bool(requires.get("obligations", False)),
+            documents=bool(requires.get("documents", False)),
         ),
     )
 

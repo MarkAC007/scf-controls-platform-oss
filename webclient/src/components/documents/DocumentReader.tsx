@@ -490,6 +490,20 @@ export default function DocumentReader({
       {/* ── Breadcrumb + pager bar ────────────────────────────────────── */}
       {breadcrumbBar}
 
+      {/* Said before anything else: a superseded document reads like a current
+          one, and an auditor or an approver must not mistake it for one. */}
+      {doc.superseded && (
+        <div className="doc-superseded-banner" role="status">
+          <span className="doc-section-badge status-superseded">Superseded</span>
+          <p>
+            <strong>This document is no longer current.</strong> It was produced
+            under a document structure your organisation no longer uses. It is
+            kept so you can read and export it, but it will not be regenerated.
+            The current documents for these controls are on the Document map.
+          </p>
+        </div>
+      )}
+
       {/* ── Masthead ─────────────────────────────────────────────────── */}
       {/* Compact on purpose. At 1280×800 the header, stepper and stacked
           notices used to take half the window and left the document itself in
@@ -501,7 +515,14 @@ export default function DocumentReader({
           <button type="button" className="btn-secondary" onClick={onBack}>
             ← All documents
           </button>
-          <h1 className="doc-reader-title">{doc.title}</h1>
+          <h1 className="doc-reader-title">
+            {doc.title}
+            {doc.superseded && (
+              <span className="doc-section-badge status-superseded doc-reader-title-badge">
+                Superseded
+              </span>
+            )}
+          </h1>
           <div className="doc-reader-actions">
             <button
               type="button"

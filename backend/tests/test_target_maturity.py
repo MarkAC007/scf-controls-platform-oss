@@ -266,9 +266,10 @@ def test_other_tier1_reports_keep_their_prompt_key_when_targets_are_set():
             _, _, key, _, _ = _render_tier1(spec, ctx)
         except Exception:  # a renderer that needs inputs this bare context lacks
             continue
-        # The governance report folds its own figures into its key (PIG R10);
-        # what this pins is that targets never reach any other report's key.
-        if spec.renderer == "tier1.render_governance_report":
+        # The governance report and the ISO core pack fold their own inputs into
+        # their key (PIG R10; iso_core.inputs_digest); what this pins is that
+        # targets never reach any other report's key.
+        if spec.renderer == "tier1.render_governance_report" or spec.renderer.startswith("iso_core."):
             assert key == _render_tier1(spec, _ctx([]))[2]
         else:
             assert key == f"tier1:{spec.name}"

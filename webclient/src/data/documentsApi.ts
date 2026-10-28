@@ -75,6 +75,65 @@ export interface DocumentSummary {
   is_stale?: boolean
   /** Why it is stale, in words fit to show a reader. Null when it is not. */
   stale_reason?: string | null
+  /** 'domain' | 'bundle' | 'topic', or '' for an organisation-level document. */
+  scope_kind?: ScopeKind | ''
+  /** Domains the document covered when it was generated. */
+  scope_domains?: string[]
+  /**
+   * Produced under a document profile the organisation no longer uses. Kept,
+   * readable and exportable, but no longer its current document.
+   */
+  superseded?: boolean
+}
+
+export type ScopeKind = 'domain' | 'bundle' | 'topic'
+export type ScopeMode = ScopeKind | 'none'
+
+/** One document a profiled generator can produce under the current profile. */
+export interface ScopeOption {
+  key: string
+  kind: ScopeKind
+  title: string
+  domains: string[]
+  control_count: number
+}
+
+export interface DocumentScopes {
+  profile: string
+  fold_standards: boolean
+  generators: Record<string, { mode: ScopeMode; scopes: ScopeOption[] }>
+}
+
+/** One document under the current profile and the in-scope controls it covers. */
+export interface MapScope {
+  key: string
+  kind: string
+  title: string
+  domains: string[]
+  controls: string[]
+}
+
+/**
+ * Where every in-scope control lands under the organisation's document
+ * profile — the answer to "which document is this control in?".
+ */
+export interface DocumentMap {
+  profile: string
+  profile_display_name: string
+  fold_standards: boolean
+  domains: { identifier: string; name: string; control_count: number }[]
+  controls: { scf_id: string; name: string; domain: string }[]
+  generators: Record<string, { display_name: string; mode: ScopeMode; scopes: MapScope[] }>
+}
+
+export interface DocumentProfile {
+  name: string
+  display_name: string
+  description: string
+  recommended_for: string
+  generators: Record<string, ScopeMode>
+  fold_standards: boolean
+  bundles: { key: string; title: string; domains: string[] }[]
 }
 
 export interface DocumentSection {
@@ -109,11 +168,26 @@ export interface DocGenSettings {
   daily_generation_limit: number
   platform_disabled: boolean
   acknowledgement_text: string
+  /** Optional: an older backend omits both and is treated as granular. */
+  document_profile?: string
+  profiles?: DocumentProfile[]
 }
 
 export interface GenerationRequestItem {
   generator: string
   domain_id?: string | null
+}
+
+export interface GenerationItem {
+  generator: string
+  display_name: string
+  domain_id: string
+  state: 'pending' | 'running' | 'created' | 'updated' | 'skipped' | 'failed'
+  title?: string
+  document_id?: string | null
+  conflict_count?: number
+  skip_reason?: string | null
+  error?: string
 }
 
 export interface GenerationStatus {
@@ -139,6 +213,16 @@ export interface GenerationStatus {
   failed?: number
   interrupted?: boolean
   error?: string
+  /** ISO timestamps of the run's start and, once terminal, its end. */
+  started_at?: string
+  finished_at?: string
+  updated_at?: string
+  /** Index into `items` of the document being written. */
+  current_index?: number
+  /** The current stage's message without the generator prefix. */
+  detail?: string
+  /** One entry per requested document, in run order. */
+  items?: GenerationItem[]
   results?: Array<{
     generator: string
     domain_id: string
@@ -243,6 +327,14 @@ export async function listGeneratableDomains(orgId: string): Promise<Generatable
   return docFetch(`/organizations/${orgId}/documents/domains`)
 }
 
+export async function listDocumentScopes(orgId: string): Promise<DocumentScopes> {
+  return docFetch(`/organizations/${orgId}/documents/scopes`)
+}
+
+export async function getDocumentMap(orgId: string): Promise<DocumentMap> {
+  return docFetch(`/organizations/${orgId}/documents/map`)
+}
+
 export async function getDocGenSettings(orgId: string): Promise<DocGenSettings> {
   return docFetch(`/organizations/${orgId}/documents/settings`)
 }
@@ -253,6 +345,7 @@ export async function updateDocGenSettings(
     enabled?: boolean
     derivative_generators_enabled?: boolean
     acknowledge_licence?: boolean
+    document_profile?: string
   }
 ): Promise<DocGenSettings> {
   return docFetch(`/organizations/${orgId}/documents/settings`, {
@@ -487,4 +580,107 @@ export const SECTION_STATUS_LABELS: Record<SectionStatus, string> = {
   conflict: 'Needs your decision',
   new: 'New',
   pending_retirement: 'Pending retirement',
+}
+
+// ─── ISMS profile ────────────────────────────────────────────────────────
+//
+// The organisation facts the ISO 27001 clause documents are written from. Each
+// register row carries a stable `id`; a row created in the browser has none
+// until it is saved, and the server assigns one.
+
+export interface IsmsExclusion { id?: string; item: string; justification: string }
+
+export interface IsmsScope {
+  organisation_description: string
+  boundaries: string
+  locations: string[]
+  services: string[]
+  interfaces: string
+  exclusions: IsmsExclusion[]
+}
+
+export interface IsmsContextIssue {
+  id?: string
+  kind: 'internal' | 'external'
+  category:
+    | 'political' | 'economic' | 'social' | 'technological' | 'legal'
+    | 'environmental' | 'organisational'
+  issue: string
+  effect: string
+  response: string
+  climate_related: boolean
+}
+
+export interface IsmsInterestedParty {
+  id?: string
+  party: string
+  kind: 'internal' | 'external'
+  requirements: string
+  addressed_through_isms: boolean
+  how_addressed: string
+}
+
+export interface IsmsObjective {
+  id?: string
+  objective: string
+  measure: string
+  target: string
+  owner: string
+  resources: string
+  due_date: string | null
+  evaluation: string
+  status: 'planned' | 'in_progress' | 'achieved' | 'missed'
+}
+
+export interface IsmsCommunication {
+  id?: string
+  what: string
+  when: string
+  audience: string
+  communicator: string
+  method: string
+}
+
+export interface IsmsAuditEntry {
+  id?: string
+  area: string
+  criteria: string
+  planned_period: string
+  auditor: string
+  status: 'planned' | 'in_progress' | 'completed' | 'cancelled'
+  findings: string
+}
+
+export interface IsmsProfile {
+  scope: IsmsScope
+  context_issues: IsmsContextIssue[]
+  interested_parties: IsmsInterestedParty[]
+  objectives: IsmsObjective[]
+  communication_plan: IsmsCommunication[]
+  audit_programme: IsmsAuditEntry[]
+  updated_at: string | null
+}
+
+export type IsmsSection = Exclude<keyof IsmsProfile, 'updated_at'>
+
+export async function getIsmsProfile(orgId: string): Promise<IsmsProfile> {
+  return docFetch(`/organizations/${orgId}/isms-profile`)
+}
+
+export async function updateIsmsSection<S extends IsmsSection>(
+  orgId: string,
+  section: S,
+  data: IsmsProfile[S]
+): Promise<IsmsProfile> {
+  return docFetch(`/organizations/${orgId}/isms-profile/${section}`, {
+    method: 'PUT',
+    body: JSON.stringify({ data }),
+  })
+}
+
+export async function getIsmsStarters(
+  orgId: string,
+  section: 'interested_parties' | 'communication_plan'
+): Promise<IsmsInterestedParty[] | IsmsCommunication[]> {
+  return docFetch(`/organizations/${orgId}/isms-profile/starters/${section}`)
 }

@@ -1,22 +1,50 @@
 /**
- * Generation panel — pick generators, pick domains, queue the run.
+ * Generation panel — pick generators, pick what they cover, queue the run.
+ *
+ * What a policy, standard or procedure covers depends on the organisation's
+ * document profile: one SCF domain, a bundle of domains, or an operational
+ * topic. The scopes endpoint lists, per generator, only the scopes with
+ * controls in scope. Generators that share a kind of scope share one picker,
+ * so under the granular profile you still choose domains once for all three.
  *
  * AI-augmented generators are shown even when the module is switched off,
  * disabled rather than hidden. Hiding them would leave an administrator
  * wondering why the platform cannot write a policy; showing them disabled
  * answers the question and points at the switch.
  */
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'react-hot-toast'
 import {
   generateDocuments,
   getDocGenSettings,
   getGenerationStatus,
-  listGeneratableDomains,
+  listDocumentScopes,
   listGenerators,
   type GenerationRequestItem,
+  type ScopeKind,
+  type ScopeOption,
 } from '../../data/documentsApi'
+
+const CORE_TYPES = ['isms', 'register', 'plan']
+
+const SCOPE_PICKERS: Record<ScopeKind, { heading: string; sub: string; empty: string }> = {
+  domain: {
+    heading: 'Domains',
+    sub: 'One document per selected domain. Only domains with controls in scope are listed.',
+    empty: 'No domains have controls in scope yet.',
+  },
+  bundle: {
+    heading: 'Policy areas',
+    sub: 'One document per selected area. Each area groups related SCF domains; only areas with controls in scope are listed.',
+    empty: 'No policy areas have controls in scope yet.',
+  },
+  topic: {
+    heading: 'Procedure topics',
+    sub: 'One procedure per selected operational topic. Only topics with controls in scope are listed.',
+    empty: 'No procedure topics have controls in scope yet.',
+  },
+}
 
 interface Props {
   organizationId: string
@@ -26,7 +54,7 @@ interface Props {
 export default function GeneratePanel({ organizationId, onClose }: Props) {
   const queryClient = useQueryClient()
   const [selected, setSelected] = useState<Set<string>>(new Set())
-  const [selectedDomains, setSelectedDomains] = useState<Set<string>>(new Set())
+  const [selectedScopes, setSelectedScopes] = useState<Set<string>>(new Set())
   const [force, setForce] = useState(false)
 
   const { data: generators = [] } = useQuery({
@@ -37,53 +65,21 @@ export default function GeneratePanel({ organizationId, onClose }: Props) {
     queryKey: ['docgen-settings', organizationId],
     queryFn: () => getDocGenSettings(organizationId),
   })
-  // Fetched here rather than passed in. The prop version was never supplied by
-  // any caller, so the domain picker was permanently empty and no Tier 2
-  // document could be started from the UI. The panel already owns its other
-  // reference data; this belongs with it.
-  const { data: domains = [] } = useQuery({
-    queryKey: ['docgen-domains', organizationId],
-    queryFn: () => listGeneratableDomains(organizationId),
+  // Fetched here rather than passed in, like the panel's other reference
+  // data. Keyed on the profile so switching structure refetches.
+  const { data: scopeData } = useQuery({
+    queryKey: ['docgen-scopes', organizationId, settings?.document_profile],
+    queryFn: () => listDocumentScopes(organizationId),
   })
 
-  // Poll while a run is in flight. The status key is per organisation, so this
-  // also shows a run someone else started.
+  // Shares the run card's query, which polls and shows progress on the page
+  // (GenerationRunCard). Read here only to stop a second run being queued.
   const { data: status } = useQuery({
     queryKey: ['docgen-status', organizationId],
     queryFn: () => getGenerationStatus(organizationId),
-    refetchInterval: (query) => {
-      const s = query.state.data?.status
-      return s === 'running' || s === 'queued' ? 1500 : false
-    },
   })
 
   const running = status?.status === 'running' || status?.status === 'queued'
-
-  // Every out-of-scope citation across the run, deduplicated. The backend
-  // reports these per generator; an administrator cares about the set, not
-  // about which of six documents happened to mention the same control.
-  const outOfScope = useMemo(
-    () =>
-      Array.from(
-        new Set((status?.results ?? []).flatMap((r) => r.out_of_scope_citations ?? [])),
-      ).sort(),
-    [status?.results],
-  )
-
-  // Refresh the library when a run finishes. Polling only tracks the run's own
-  // status key; without this the list behind the panel still reads "No documents
-  // yet" after a successful generation, because nothing invalidated it.
-  const wasRunning = useRef(false)
-  useEffect(() => {
-    if (running) {
-      wasRunning.current = true
-      return
-    }
-    if (wasRunning.current) {
-      wasRunning.current = false
-      queryClient.invalidateQueries({ queryKey: ['documents', organizationId] })
-    }
-  }, [running, organizationId, queryClient])
 
   const mutation = useMutation({
     mutationFn: (requests: GenerationRequestItem[]) =>
@@ -95,27 +91,48 @@ export default function GeneratePanel({ organizationId, onClose }: Props) {
     onError: (error: Error) => toast.error(error.message),
   })
 
-  const tier1 = generators.filter((g) => !g.is_derivative)
+  // The ISO/IEC 27001 core pack is listed apart from the reports: it is
+  // written from the ISMS Profile, and a user looking for "the scope
+  // statement" should not have to find it among control status reports.
+  const isCore = (g: { document_type: string }) => CORE_TYPES.includes(g.document_type)
+  const core = generators.filter((g) => !g.is_derivative && isCore(g))
+  const tier1 = generators.filter((g) => !g.is_derivative && !isCore(g))
   const tier2 = generators.filter((g) => g.is_derivative)
   const derivativeAllowed = Boolean(settings?.derivative_generators_enabled)
 
-  const needsDomain = useMemo(
-    () => generators.some((g) => selected.has(g.name) && g.domain_scoped),
-    [generators, selected]
-  )
+  const modeFor = (name: string) => scopeData?.generators[name]?.mode
+
+  // One picker per kind of scope the selected generators need, listing the
+  // union of their scopes in first-seen order.
+  const pickers = useMemo(() => {
+    const byKind = new Map<ScopeKind, ScopeOption[]>()
+    for (const g of generators) {
+      if (!selected.has(g.name) || !g.domain_scoped) continue
+      for (const scope of scopeData?.generators[g.name]?.scopes ?? []) {
+        const list = byKind.get(scope.kind) ?? []
+        if (!list.some((s) => s.key === scope.key)) list.push(scope)
+        byKind.set(scope.kind, list)
+      }
+      const mode = scopeData?.generators[g.name]?.mode
+      if (mode && mode !== 'none' && !byKind.has(mode)) byKind.set(mode, [])
+    }
+    return Array.from(byKind.entries())
+  }, [generators, selected, scopeData])
 
   const requests = useMemo<GenerationRequestItem[]>(() => {
     const out: GenerationRequestItem[] = []
     for (const g of generators) {
       if (!selected.has(g.name)) continue
       if (g.domain_scoped) {
-        for (const d of selectedDomains) out.push({ generator: g.name, domain_id: d })
+        for (const scope of scopeData?.generators[g.name]?.scopes ?? []) {
+          if (selectedScopes.has(scope.key)) out.push({ generator: g.name, domain_id: scope.key })
+        }
       } else {
         out.push({ generator: g.name })
       }
     }
     return out
-  }, [generators, selected, selectedDomains])
+  }, [generators, selected, selectedScopes, scopeData])
 
   function toggle(set: Set<string>, key: string, apply: (s: Set<string>) => void) {
     const next = new Set(set)
@@ -132,53 +149,6 @@ export default function GeneratePanel({ organizationId, onClose }: Props) {
         </button>
       </div>
 
-      {running && (
-        <div className="doc-progress">
-          <div className="doc-progress-bar">
-            <div
-              className="doc-progress-fill"
-              style={{
-                width: `${status?.total ? ((status.completed || 0) / status.total) * 100 : 15}%`,
-              }}
-            />
-          </div>
-          <p className="doc-progress-label">
-            {status?.message || 'Starting…'}
-            {status?.total ? ` (${status.completed || 0} of ${status.total})` : ''}
-          </p>
-        </div>
-      )}
-
-      {status?.status === 'completed' ||
-      status?.status === 'completed_with_errors' ||
-      status?.status === 'partial' ? (
-        <div className="doc-run-summary">
-          <strong>Last run:</strong> {status.generated || 0} generated,{' '}
-          {status.skipped || 0} unchanged
-          {status.failed ? `, ${status.failed} refused` : ''}
-          {status.status === 'partial' && (
-            <span className="doc-conflict-note">
-              {' '}— stopped at the time limit after {status.completed || 0} of{' '}
-              {status.total || 0}
-              {status.failed
-                ? '. The rest were not attempted; run it again to finish them.'
-                : '. Nothing failed; run it again to finish the rest.'}
-            </span>
-          )}
-          {status.results?.some((r) => r.conflict_count) && (
-            <span className="doc-conflict-note">
-              {' '}— some sections need your decision.
-            </span>
-          )}
-          {outOfScope.length > 0 && (
-            <span className="doc-scope-note">
-              {' '}— cites {outOfScope.length} control
-              {outOfScope.length === 1 ? '' : 's'} outside your scope:{' '}
-              {outOfScope.join(', ')}. Review before approving.
-            </span>
-          )}
-        </div>
-      ) : null}
 
       {/* ── Tier 1 ──────────────────────────────────────────────────────── */}
       <section className="doc-gen-group">
@@ -202,6 +172,32 @@ export default function GeneratePanel({ organizationId, onClose }: Props) {
         ))}
       </section>
 
+      {/* ── ISO/IEC 27001 core pack ──────────────────────────────────────── */}
+      {core.length > 0 && (
+        <section className="doc-gen-group">
+          <h3>ISO/IEC 27001 Core</h3>
+          <p className="doc-gen-group-sub">
+            Clause documents, registers and plans, written from your ISMS Profile and
+            registers. Anything not yet recorded is marked as to be completed. No
+            language model.
+          </p>
+          {core.map((g) => (
+            <label key={g.name} className="doc-gen-option">
+              <input
+                type="checkbox"
+                checked={selected.has(g.name)}
+                disabled={!settings?.enabled}
+                onChange={() => toggle(selected, g.name, setSelected)}
+              />
+              <span className="doc-gen-option-body">
+                <strong>{g.display_name}</strong>
+                <span>{g.description}</span>
+              </span>
+            </label>
+          ))}
+        </section>
+      )}
+
       {/* ── Tier 2 ──────────────────────────────────────────────────────── */}
       <section className="doc-gen-group">
         <h3>Policies and Procedures</h3>
@@ -211,55 +207,64 @@ export default function GeneratePanel({ organizationId, onClose }: Props) {
             it on in Org Settings.
           </p>
         )}
-        {tier2.map((g) => (
-          <label
-            key={g.name}
-            className={`doc-gen-option ${!derivativeAllowed ? 'is-locked' : ''}`}
-          >
-            <input
-              type="checkbox"
-              checked={selected.has(g.name)}
-              disabled={!derivativeAllowed}
-              onChange={() => toggle(selected, g.name, setSelected)}
-            />
-            <span className="doc-gen-option-body">
-              <strong>{g.display_name}</strong>
-              <span>{g.description}</span>
-            </span>
-          </label>
-        ))}
+        {tier2.map((g) => {
+          // A generator the profile folds into the policy (standards under
+          // Compact and Essentials) is shown disabled with the reason, rather
+          // than hidden, so nobody wonders where standards went.
+          const folded = modeFor(g.name) === 'none'
+          return (
+            <label
+              key={g.name}
+              className={`doc-gen-option ${!derivativeAllowed || folded ? 'is-locked' : ''}`}
+            >
+              <input
+                type="checkbox"
+                checked={selected.has(g.name) && !folded}
+                disabled={!derivativeAllowed || folded}
+                onChange={() => toggle(selected, g.name, setSelected)}
+              />
+              <span className="doc-gen-option-body">
+                <strong>{g.display_name}</strong>
+                <span>
+                  {folded
+                    ? 'Not a separate document in your document structure: each policy carries its own requirements.'
+                    : g.description}
+                </span>
+              </span>
+            </label>
+          )
+        })}
       </section>
 
-      {/* ── Domains ─────────────────────────────────────────────────────── */}
-      {needsDomain && (
-        <section className="doc-gen-group">
-          <h3>Domains</h3>
-          <p className="doc-gen-group-sub">
-            One document per selected domain. Only domains with controls in
-            scope are listed.
-          </p>
+      {/* ── Scopes ──────────────────────────────────────────────────────── */}
+      {pickers.map(([kind, options]) => (
+        <section key={kind} className="doc-gen-group">
+          <h3>{SCOPE_PICKERS[kind].heading}</h3>
+          <p className="doc-gen-group-sub">{SCOPE_PICKERS[kind].sub}</p>
           <div className="doc-domain-grid">
-            {domains.map((d) => (
-              <label key={d.identifier} className="doc-domain-chip">
+            {options.map((scope) => (
+              <label
+                key={scope.key}
+                className="doc-domain-chip"
+                title={kind === 'domain' ? undefined : scope.domains.join(', ')}
+              >
                 <input
                   type="checkbox"
-                  checked={selectedDomains.has(d.identifier)}
-                  onChange={() => toggle(selectedDomains, d.identifier, setSelectedDomains)}
+                  checked={selectedScopes.has(scope.key)}
+                  onChange={() => toggle(selectedScopes, scope.key, setSelectedScopes)}
                 />
                 <span>
-                  <strong>{d.identifier}</strong> {d.name}
-                  <em>{d.control_count}</em>
+                  {kind === 'domain' && <strong>{scope.key}</strong>} {scope.title}
+                  <em>{scope.control_count}</em>
                 </span>
               </label>
             ))}
           </div>
-          {domains.length === 0 && (
-            <p className="doc-gen-group-sub">
-              No domains have controls in scope yet.
-            </p>
+          {options.length === 0 && (
+            <p className="doc-gen-group-sub">{SCOPE_PICKERS[kind].empty}</p>
           )}
         </section>
-      )}
+      ))}
 
       <div className="doc-gen-footer">
         <label className="doc-force-check">

@@ -46,6 +46,7 @@ export const SYNCED_TABS = [
   'evidence',
   // Documents
   'documents',
+  'isms',
   // Operations
   'tasks',
   'systems',
@@ -115,6 +116,7 @@ export const TAB_TITLES = {
   'vendors':            'Vendor Inventory',
   'evidence':           'Evidence',
   'documents':          'Generated Documents',
+  'isms':               'ISMS Profile',
   'tasks':              'Task Management',
   'systems':            'Systems Registry',
   'users':              'User Management',

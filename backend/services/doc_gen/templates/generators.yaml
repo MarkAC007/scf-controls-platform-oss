@@ -124,9 +124,318 @@ generators:
       systems: false
       governance: true
 
+  # ── ISO/IEC 27001 core pack — deterministic, from organisation data ─────
+  # services/doc_gen/iso_core.py. None of these rewrites SCF text.
+
+  - name: isms-scope
+    display_name: ISMS Scope Statement
+    tier: 1
+    document_type: isms
+    is_derivative: false
+    domain_scoped: false
+    renderer: iso_core.render_isms_scope
+    filename: isms-scope-statement.md
+    description: >-
+      The boundaries and applicability of the ISMS (ISO/IEC 27001 clause 4.3),
+      from the ISMS Profile, Systems Registry, Vendor Inventory and scoped
+      frameworks.
+    requires:
+      controls: true
+      evidence: false
+      risks: false
+      systems: true
+      isms: true
+      obligations: true
+
+  - name: context-of-organisation
+    display_name: Context of the Organisation
+    tier: 1
+    document_type: isms
+    is_derivative: false
+    domain_scoped: false
+    renderer: iso_core.render_context_of_organisation
+    filename: context-of-the-organisation.md
+    description: >-
+      Internal and external issues, including climate change, and interested
+      parties with their requirements (clauses 4.1 and 4.2), from the ISMS
+      Profile.
+    requires:
+      controls: true
+      evidence: false
+      risks: false
+      systems: false
+      isms: true
+
+  - name: roles-responsibilities
+    display_name: Roles, Responsibilities and Authorities
+    tier: 1
+    document_type: isms
+    is_derivative: false
+    domain_scoped: false
+    renderer: iso_core.render_roles_responsibilities
+    filename: roles-responsibilities-authorities.md
+    description: >-
+      ISMS functions mapped to their current role holders, inferred from
+      control ownership (clause 5.3).
+    requires:
+      controls: true
+      evidence: false
+      risks: false
+      systems: false
+
+  - name: risk-methodology
+    display_name: Risk Assessment and Treatment Methodology
+    tier: 1
+    document_type: isms
+    is_derivative: false
+    domain_scoped: false
+    renderer: iso_core.render_risk_methodology
+    filename: risk-assessment-treatment-methodology.md
+    description: >-
+      How risks are scored, banded, accepted and treated, from the
+      organisation's own risk thresholds (clauses 6.1.2 and 6.1.3).
+    requires:
+      controls: true
+      evidence: false
+      risks: true
+      systems: false
+
+  - name: security-objectives
+    display_name: Information Security Objectives
+    tier: 1
+    document_type: isms
+    is_derivative: false
+    domain_scoped: false
+    renderer: iso_core.render_security_objectives
+    filename: information-security-objectives.md
+    description: >-
+      Measurable objectives with owners, resources, due dates and evaluation
+      (clause 6.2), from the ISMS Profile.
+    requires:
+      controls: true
+      evidence: false
+      risks: false
+      systems: false
+      isms: true
+
+  - name: communication-plan
+    display_name: Communication Plan
+    tier: 1
+    document_type: isms
+    is_derivative: false
+    domain_scoped: false
+    renderer: iso_core.render_communication_plan
+    filename: communication-plan.md
+    description: >-
+      What the ISMS communicates, when, to whom, by whom and how (clause 7.4),
+      from the ISMS Profile.
+    requires:
+      controls: true
+      evidence: false
+      risks: false
+      systems: false
+      isms: true
+
+  - name: document-control
+    display_name: Document and Record Control Procedure
+    tier: 1
+    document_type: isms
+    is_derivative: false
+    domain_scoped: false
+    renderer: iso_core.render_document_control
+    filename: document-record-control.md
+    description: >-
+      How documented information is created, approved, distributed and
+      retained (clause 7.5), with a register of the generated documents.
+    requires:
+      controls: true
+      evidence: false
+      risks: false
+      systems: false
+      documents: true
+
+  - name: risk-assessment-report
+    display_name: Risk Assessment Report
+    tier: 1
+    document_type: report
+    is_derivative: false
+    domain_scoped: false
+    renderer: iso_core.render_risk_assessment_report
+    filename: risk-assessment-report.md
+    description: >-
+      Results of the risk assessment: risks by inherent and residual level and
+      treatment status (clause 8.2).
+    requires:
+      controls: true
+      evidence: false
+      risks: true
+      systems: false
+
+  - name: internal-audit-programme
+    display_name: Internal Audit Programme
+    tier: 1
+    document_type: isms
+    is_derivative: false
+    domain_scoped: false
+    renderer: iso_core.render_internal_audit_programme
+    filename: internal-audit-programme.md
+    description: >-
+      Planned internal audits, their criteria and outcomes, and coverage of
+      clauses 4–10 and scoped domains (clause 9.2).
+    requires:
+      controls: true
+      evidence: false
+      risks: false
+      systems: false
+      isms: true
+
+  - name: management-review
+    display_name: Management Review
+    tier: 1
+    document_type: isms
+    is_derivative: false
+    domain_scoped: false
+    renderer: iso_core.render_management_review
+    filename: management-review.md
+    description: >-
+      A management review record with the clause 9.3 inputs prefilled from the
+      platform and space for decisions.
+    requires:
+      controls: true
+      evidence: false
+      risks: true
+      systems: false
+      isms: true
+      deficiencies: true
+
+  - name: nonconformity-register
+    display_name: Nonconformity and Corrective Action Register
+    tier: 1
+    document_type: register
+    is_derivative: false
+    domain_scoped: false
+    renderer: iso_core.render_nonconformity_register
+    filename: nonconformity-corrective-action-register.md
+    description: >-
+      Every deficiency with its source, root cause, owner, due date and
+      closure, and the corrective action procedure (clause 10.2).
+    requires:
+      controls: true
+      evidence: false
+      risks: false
+      systems: false
+      deficiencies: true
+
+  - name: isms-manual
+    display_name: ISMS Manual
+    tier: 1
+    document_type: isms
+    is_derivative: false
+    domain_scoped: false
+    renderer: iso_core.render_isms_manual
+    filename: isms-manual.md
+    description: >-
+      How the ISMS meets clauses 4 to 10 and where each is addressed, with the
+      ISMS Profile registers as appendices. Suits smaller organisations in
+      place of separate clause documents.
+    requires:
+      controls: true
+      evidence: false
+      risks: true
+      systems: false
+      isms: true
+      deficiencies: true
+      documents: true
+
+  - name: asset-inventory
+    display_name: Asset Inventory
+    tier: 1
+    document_type: register
+    is_derivative: false
+    domain_scoped: false
+    renderer: iso_core.render_asset_inventory
+    filename: asset-inventory.md
+    description: >-
+      Systems from the Systems Registry, grouped by type.
+    requires:
+      controls: true
+      evidence: false
+      risks: false
+      systems: true
+
+  - name: supplier-register
+    display_name: Supplier Register
+    tier: 1
+    document_type: register
+    is_derivative: false
+    domain_scoped: false
+    renderer: iso_core.render_supplier_register
+    filename: supplier-register.md
+    description: >-
+      Suppliers from the Vendor Inventory, ordered by criticality.
+    requires:
+      controls: true
+      evidence: false
+      risks: false
+      systems: true
+
+  - name: legal-register
+    display_name: Legal, Regulatory and Contractual Requirements Register
+    tier: 1
+    document_type: register
+    is_derivative: false
+    domain_scoped: false
+    renderer: iso_core.render_legal_register
+    filename: legal-regulatory-register.md
+    description: >-
+      Scoped frameworks with their obligation basis and source, and the
+      regulators recorded as interested parties.
+    requires:
+      controls: true
+      evidence: false
+      risks: false
+      systems: false
+      isms: true
+      obligations: true
+
+  - name: irp
+    display_name: Incident Response Plan
+    tier: 1
+    document_type: plan
+    is_derivative: false
+    domain_scoped: false
+    renderer: iso_core.render_irp
+    filename: incident-response-plan.md
+    description: >-
+      Severity levels, response team, phases and notifications, citing only
+      the incident response controls in scope.
+    requires:
+      controls: true
+      evidence: false
+      risks: false
+      systems: true
+      isms: true
+
+  - name: bcp
+    display_name: Business Continuity Plan
+    tier: 1
+    document_type: plan
+    is_derivative: false
+    domain_scoped: false
+    renderer: iso_core.render_bcp
+    filename: business-continuity-plan.md
+    description: >-
+      Recovery objectives per system, critical suppliers, invocation and
+      recovery steps, citing only the continuity controls in scope.
+    requires:
+      controls: true
+      evidence: false
+      risks: false
+      systems: true
+
   # ── Tier 2 — AI-augmented, derivative ────────────────────────────────────
   - name: policy
-    display_name: Domain Policy
+    display_name: Policy
     tier: 2
     document_type: policy
     is_derivative: true
@@ -135,8 +444,8 @@ generators:
     filename: "policy-{domain}.md"
     title: "{domain_name} Policy"
     description: >-
-      Formal security policy for one SCF domain, written from the domain
-      principle, control descriptions and assessment objectives.
+      Formal security policy for each domain or policy area, written from the
+      domain principles, control descriptions and assessment objectives.
     requires:
       controls: true
       evidence: false
@@ -144,7 +453,7 @@ generators:
       systems: false
 
   - name: procedure
-    display_name: Domain Procedure
+    display_name: Procedure
     tier: 2
     document_type: procedure
     is_derivative: true
@@ -153,8 +462,8 @@ generators:
     filename: "procedure-{domain}.md"
     title: "{domain_name} Procedure"
     description: >-
-      Step-by-step operational procedure implementing the domain policy, with
-      responsibilities, triggers and records.
+      Step-by-step operational procedure, per domain or per operational topic,
+      with responsibilities, triggers and records.
     requires:
       controls: true
       evidence: true
@@ -162,7 +471,7 @@ generators:
       systems: false
 
   - name: standard
-    display_name: Domain Standard
+    display_name: Standard
     tier: 2
     document_type: standard
     is_derivative: true
@@ -172,9 +481,30 @@ generators:
     title: "{domain_name} Standard"
     description: >-
       Technical standard specifying the mandatory configuration and control
-      parameters for one domain.
+      parameters for each domain or policy area.
     requires:
       controls: true
       evidence: false
       risks: false
       systems: false
+
+  # ── Tier 3 — organisation-level, AI-augmented, derivative ────────────────
+  - name: information-security-policy
+    display_name: Information Security Policy
+    tier: 3
+    document_type: isms
+    is_derivative: true
+    domain_scoped: false
+    prompt: information_security_policy.md
+    filename: information-security-policy.md
+    description: >-
+      The top-level policy approved by top management (clause 5.2), grounded in
+      the ISMS Profile's scope and objectives and listing the organisation's
+      policy set. Ported from scf-doc-gen.
+    requires:
+      controls: true
+      evidence: false
+      risks: true
+      systems: true
+      isms: true
+      obligations: true

@@ -30,11 +30,12 @@ from typing import Any, Callable, Dict, Iterable, List, Optional
 
 from sqlalchemy.orm import Session
 
-from . import lifecycle, tier2
-from .context import OrganisationContext, build_context
+from . import chaptered, lifecycle, scopes, tier2, tier3
+from .context import Domain, DomainWithControls, OrganisationContext, build_context
 from .fingerprint import compute_fingerprint, describe_change
 from .licence import assert_generation_allowed
 from .registry import GeneratorSpec, get_generator
+from .scopes import MODE_BUNDLE, MODE_DOMAIN, MODE_NONE, MODE_TOPIC
 from .section_parser import (
     extract_control_ids,
     parse_markdown_sections,
@@ -168,6 +169,32 @@ def _existing_document(session: Session, organization_id: str, generator_name: s
     )
 
 
+def _related_titles(
+    profile: scopes.Profile,
+    ctx: OrganisationContext,
+    generator_name: str,
+    scope_key: str,
+) -> List[str]:
+    """Titles of the organisation's other profiled documents.
+
+    Handed to a bundled document's frame so its Related Documents section
+    names documents this profile actually produces, rather than guessing at
+    a per-domain library the organisation does not have.
+    """
+    domains = [(d.domain.identifier, d.domain.name) for d in ctx.domains]
+    pairs = [(c.scf_id, c.domain_identifier) for c in ctx.all_controls]
+    titles: List[str] = []
+    for name in scopes.PROFILED_GENERATORS:
+        spec = get_generator(name)
+        for scope in scopes.scopes_for(profile, name, domains, pairs):
+            if name == generator_name and scope.key == scope_key:
+                continue
+            titles.append(chaptered.document_title(spec, scope)
+                          if scope.kind == scopes.KIND_BUNDLE
+                          else spec.resolve_title(scope.title))
+    return titles
+
+
 def _render_tier1(spec: GeneratorSpec, ctx: OrganisationContext) -> tuple:
     """Return (content, system_prompt, user_prompt, model_id, mocked).
 
@@ -194,6 +221,12 @@ def _render_tier1(spec: GeneratorSpec, ctx: OrganisationContext) -> tuple:
         from .tier1 import governance_inputs_digest
 
         user_prompt = f"{user_prompt}:governance:{governance_inputs_digest(ctx)}"
+    elif spec.renderer.startswith("iso_core."):
+        # The core pack reads registers the fingerprint leaves out (ISMS
+        # profile, risks, deficiencies, inventories); see iso_core.inputs_digest.
+        from .iso_core import inputs_digest
+
+        user_prompt = f"{user_prompt}:inputs:{inputs_digest(ctx, exclude_generator=spec.name)}"
     return content, f"tier1:{spec.renderer}", user_prompt, None, False
 
 
@@ -239,16 +272,28 @@ def run_generation(
 
     # --- 1. Gate, before touching any data ---------------------------------
     emit("checking", "Checking permissions")
+    settings = _settings_for(session, organization_id)
     assert_generation_allowed(
-        _settings_for(session, organization_id),
+        settings,
         tier=spec.tier,
         is_derivative=spec.is_derivative,
     )
 
+    # The organisation's document profile decides what a domain-scoped
+    # generator's document covers: a domain, a bundle of domains, or an
+    # operational topic (services/doc_gen/templates/bundles.yaml).
+    profile = scopes.get_profile(getattr(settings, "document_profile", None))
+    mode = (profile.mode_for(spec.name) or MODE_DOMAIN) if spec.domain_scoped else None
+    if mode == MODE_NONE:
+        raise PipelineError(
+            f"The {profile.display_name} profile does not produce a separate "
+            f"{spec.name}; its requirements are part of each policy."
+        )
+
     if spec.domain_scoped and not domain_id:
         raise PipelineError(
-            f"Generator '{spec.name}' produces one document per domain; "
-            "a domain must be specified."
+            f"Generator '{spec.name}' produces one document per {mode}; "
+            f"a {mode} must be specified."
         )
     # Non-domain generators store '' rather than NULL. Postgres treats NULLs as
     # distinct in a unique index, so a NULL here would silently permit an
@@ -260,18 +305,24 @@ def run_generation(
     ctx = build_context(
         session,
         organization_id,
-        domain_filter=stored_domain or None,
+        # A bundle or topic spans domains, so it reads the whole estate and
+        # selects from it below.
+        domain_filter=(stored_domain if mode == MODE_DOMAIN else None) or None,
         include_evidence=spec.requires.evidence,
         include_risks=spec.requires.risks,
         include_systems=spec.requires.systems,
         include_governance=spec.requires.governance,
+        include_isms=spec.requires.isms,
+        include_deficiencies=spec.requires.deficiencies,
+        include_obligations=spec.requires.obligations,
+        include_documents=spec.requires.documents,
     )
     if not ctx.all_controls:
         # Order matters: a domain-scoped run filters the context to one domain,
         # so an unknown or unscoped domain also produces an empty context. The
         # generic "scope some controls" message would be actively misleading
         # there, so the domain case is reported first.
-        if spec.domain_scoped:
+        if mode == MODE_DOMAIN:
             raise PipelineError(
                 f"Domain '{stored_domain}' has no controls in scope. Scope "
                 f"controls in that domain before generating its documents."
@@ -282,7 +333,51 @@ def run_generation(
         )
 
     bundle = None
-    if spec.domain_scoped:
+    scope: Optional[scopes.Scope] = None
+    #: Bundled documents only: one DomainWithControls per chapter, in order.
+    chapters: Optional[List[DomainWithControls]] = None
+    if mode in (MODE_BUNDLE, MODE_TOPIC):
+        domains = [(d.domain.identifier, d.domain.name) for d in ctx.domains]
+        scope = scopes.resolve_for_generation(profile, spec.name, stored_domain, domains)
+        if scope is None:
+            available = ", ".join(
+                s.key for s in scopes.scopes_for(
+                    profile, spec.name, domains,
+                    [(c.scf_id, c.domain_identifier) for c in ctx.all_controls],
+                )
+            )
+            raise PipelineError(
+                f"'{stored_domain}' is not a {mode} the {profile.display_name} profile "
+                f"produces {spec.name} documents for. Available: {available or 'none'}"
+            )
+        stored_domain = scope.key
+        if mode == MODE_BUNDLE:
+            chapters = [ctx.domain(d) for d in scope.domains if ctx.domain(d) is not None]
+        else:
+            selected = scope.select(ctx.all_controls)
+            if not selected:
+                raise PipelineError(
+                    f"No controls in scope for the {scope.title} topic. Scope its "
+                    "controls before generating its procedure."
+                )
+            # A topic is written by the single-call path, presented to the
+            # prompt as a domain whose principle is the topic's description.
+            bundle = DomainWithControls(
+                domain=Domain(
+                    identifier=scope.key,
+                    name=scope.title,
+                    principle=scope.description,
+                    principle_intent=(
+                        "Operational procedure drawing on: "
+                        + ", ".join(
+                            d.domain.name for d in ctx.domains
+                            if d.domain.identifier in scope.domains
+                        )
+                    ),
+                ),
+                controls=selected,
+            )
+    elif spec.domain_scoped:
         bundle = ctx.domain(stored_domain)
         if bundle is None:
             # The context keys domains by identifier, but a caller may have
@@ -305,12 +400,39 @@ def run_generation(
 
     existing = _existing_document(session, organization_id, spec.name, stored_domain)
     generation_version = existing.generation_version if existing else 0
+    if chapters is not None:
+        scope_controls = [c for ch in chapters for c in ch.controls]
+    else:
+        scope_controls = bundle.controls if bundle else ctx.all_controls
 
     # --- 3. Generate ---------------------------------------------------------
     emit("generating", f"Generating {spec.display_name}")
     if spec.tier == 1:
         content, system_prompt, user_prompt, model_id, mocked = _render_tier1(spec, ctx)
         title = spec.resolve_title()
+    elif chapters is not None:
+        related = _related_titles(profile, ctx, spec.name, stored_domain)
+        user_prompt = chaptered.fingerprint_prompt(
+            spec, ctx, scope, chapters, profile, related,
+            generation_version=generation_version,
+            existing_content=(existing.merged_content if existing else ""),
+        )
+        system_prompt = tier2.SYSTEM_PROMPT
+        title = chaptered.document_title(spec, scope)
+        content = model_id = None
+        mocked = False
+    elif not spec.domain_scoped:
+        # Tier 3: one organisation-level document written by a model.
+        policy_set = _related_titles(profile, ctx, spec.name, "")
+        user_prompt = tier3.build_prompt(
+            spec, ctx, policy_set,
+            generation_version=generation_version,
+            existing_content=(existing.merged_content if existing else ""),
+        )
+        system_prompt = tier2.SYSTEM_PROMPT
+        title = spec.resolve_title()
+        content = model_id = None
+        mocked = False
     else:
         # Build the prompt first so the fingerprint can be checked before the
         # model is called — the prompt is deterministic, the call is not.
@@ -325,7 +447,7 @@ def run_generation(
         mocked = False
 
     fingerprint = compute_fingerprint(
-        [c.to_fingerprint_dict() for c in (bundle.controls if bundle else ctx.all_controls)],
+        [c.to_fingerprint_dict() for c in scope_controls],
         system_prompt,
         user_prompt,
         catalog_version=ctx.catalog_version,
@@ -356,7 +478,32 @@ def run_generation(
         fingerprint.input_components,
     )
 
-    if spec.tier >= 2:
+    new_chapter_cache: Dict[str, Any] = {}
+    if spec.tier >= 2 and chapters is not None:
+        bundled = chaptered.generate_bundle(
+            spec, ctx, scope, chapters, profile, related,
+            generation_version=generation_version,
+            existing_content=(existing.merged_content if existing else ""),
+            change_note=_change_note(change_reasons),
+            # A forced regeneration rewrites every chapter; otherwise chapters
+            # whose prompt is unchanged are reused.
+            chapter_cache=(
+                None if force or existing is None
+                else (getattr(existing, "chapter_cache", None) or {})
+            ),
+            progress=progress,
+        )
+        content, model_id, mocked = bundled.content, bundled.model_id, bundled.mocked
+        new_chapter_cache = bundled.chapter_cache
+    elif spec.tier >= 2 and not spec.domain_scoped:
+        output = tier3.generate(
+            spec, ctx, policy_set,
+            generation_version=generation_version,
+            existing_content=(existing.merged_content if existing else ""),
+            change_note=_change_note(change_reasons),
+        )
+        content, model_id, mocked = output.content, output.model_id, output.mocked
+    elif spec.tier >= 2:
         output = tier2.generate_document(
             spec, ctx, bundle,
             generation_version=generation_version,
@@ -477,6 +624,11 @@ def run_generation(
             document.lifecycle_status = next_status
 
     document.title = title
+    document.scope_domains = (
+        list(scope.domains) if scope is not None
+        else ([stored_domain] if spec.domain_scoped else [])
+    )
+    document.chapter_cache = new_chapter_cache
     document.merged_content = merged_content
     document.input_fingerprint = fingerprint.input_fingerprint
     document.input_components = fingerprint.input_components.to_dict()
@@ -505,7 +657,7 @@ def run_generation(
         # answered it.
         change_summary=_version_change_summary(
             counts,
-            len(bundle.controls if bundle else ctx.all_controls),
+            len(scope_controls),
             existing is None,
         ),
     ))

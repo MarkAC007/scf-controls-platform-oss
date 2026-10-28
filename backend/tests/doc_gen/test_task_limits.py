@@ -289,9 +289,12 @@ def test_the_model_call_does_not_relabel_a_soft_limit_as_a_generation_error():
             def create(**_kwargs):
                 raise SoftTimeLimitExceeded()
 
-    source = inspect.getsource(tier2.generate_document)
+    # The call lives in invoke_model, which both single-call documents and the
+    # chapters of bundled documents go through.
+    assert "invoke_model(" in inspect.getsource(tier2.generate_document)
+    source = inspect.getsource(tier2.invoke_model)
     assert "except SoftTimeLimitExceeded:" in source, (
-        "tier2.generate_document must let the soft limit through before its "
+        "tier2.invoke_model must let the soft limit through before its "
         "broad handler wraps everything into GenerationError"
     )
     # The guard must come BEFORE the broad handler, or it never runs.
@@ -576,3 +579,35 @@ def test_the_model_call_timeout_is_smaller_than_the_task_soft_limit():
     import services.doc_gen.tier2 as tier2
 
     assert tier2.MODEL_CALL_TIMEOUT_SECONDS < tasks_doc_gen.DOCGEN_SOFT_TIME_LIMIT
+
+
+def test_status_carries_one_item_per_requested_document(harness):
+    """The run card lists the whole batch, so every status write must carry it.
+
+    While document i runs, the ones before it are done, it is ``running`` and
+    the rest are ``pending``. A refusal is recorded against its own item.
+    """
+    from services.doc_gen.pipeline import PipelineError
+
+    seen = []
+
+    def side_effect(i, kw):
+        seen.append([item["state"] for item in harness.statuses[-1]["items"]])
+        if i == 1:
+            return PipelineError("no controls in scope")
+        return _FakeResult("policy", kw["domain_id"])
+
+    harness.install(side_effect)
+    _run(3)
+
+    assert seen == [
+        ["running", "pending", "pending"],
+        ["created", "running", "pending"],
+        ["created", "failed", "running"],
+    ]
+    final = harness.statuses[-1]
+    assert [item["state"] for item in final["items"]] == ["created", "failed", "created"]
+    assert [item["domain_id"] for item in final["items"]] == ["D0", "D1", "D2"]
+    assert final["items"][1]["error"] == "no controls in scope"
+    assert final["started_at"] and final["finished_at"]
+    assert all(s.get("started_at") == final["started_at"] for s in harness.statuses)

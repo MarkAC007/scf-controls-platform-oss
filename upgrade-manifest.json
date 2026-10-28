@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "version": "1.0.0",
-  "released": "2026-10-15T09:28:21Z",
+  "version": "1.0.1",
+  "released": "2026-10-28T14:39:15Z",
   "min_upgradable_version": "0.0.0",
   "breaking": false,
   "required_stops": [],
-  "release_url": "https://github.com/MarkAC007/scf-controls-platform-oss/releases/tag/v1.0.0",
-  "summary": "1.0.0 marks the platform's first stable release. The data model, REST API and Docker Compose deployment shape are now considered stable: future 1.x releases keep schema and API changes backward-compatible, and upgrades remain a single run of scripts/upgrade.sh. This release also closes the open Dependabot alerts in the web client and docs site and tightens the release pipeline so Release OSS only runs on a green CI. No migration steps are required beyond the standard upgrade.",
+  "release_url": "https://github.com/MarkAC007/scf-controls-platform-oss/releases/tag/v1.0.1",
+  "summary": ".",
   "migration_range": [
     "20260119_000000_62bdef86f249_initial_schema",
     "20260120_075300_add_implementation_status_values",
@@ -110,7 +110,9 @@
     "20261013_190000_pig_deficiency_record",
     "20261013_210000_pig_org_compensating_controls",
     "20261013_230000_pig_due_care_pack",
-    "20261014_010000_pig_capability_tests"
+    "20261014_010000_pig_capability_tests",
+    "20261028_120000_doc_gen_profiles",
+    "20261028_140000_isms_profile"
   ],
   "env_added": [],
   "min_compose_action": "rebuild"

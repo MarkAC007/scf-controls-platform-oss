@@ -24,7 +24,7 @@ import GeneratePanel from '../GeneratePanel'
 import {
   getDocGenSettings,
   getGenerationStatus,
-  listGeneratableDomains,
+  listDocumentScopes,
   listGenerators,
 } from '../../../data/documentsApi'
 import type {
@@ -39,7 +39,7 @@ vi.mock('../../../data/documentsApi', async (importOriginal) => {
     ...actual,
     listGenerators: vi.fn(),
     getDocGenSettings: vi.fn(),
-    listGeneratableDomains: vi.fn(),
+    listDocumentScopes: vi.fn(),
     getGenerationStatus: vi.fn(),
   }
 })
@@ -74,7 +74,11 @@ function manyGenerators(): GeneratorInfo[] {
 beforeEach(() => {
   vi.clearAllMocks()
   vi.mocked(getDocGenSettings).mockResolvedValue(SETTINGS)
-  vi.mocked(listGeneratableDomains).mockResolvedValue([])
+  vi.mocked(listDocumentScopes).mockResolvedValue({
+    profile: 'granular',
+    fold_standards: false,
+    generators: {},
+  })
   vi.mocked(getGenerationStatus).mockResolvedValue(IDLE)
   vi.mocked(listGenerators).mockResolvedValue(manyGenerators())
 })
