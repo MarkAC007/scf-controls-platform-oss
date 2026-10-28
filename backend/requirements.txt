@@ -30,7 +30,7 @@ google-auth==2.27.0
 # Issue #699: generic OIDC RP layer (discovery, JWKS, id_token validation, PKCE)
 # 1.6.9 patches CVE-2026-27962 (JWK header injection), CVE-2025-59420 (crit
 # header authz bypass) and GHSA-pq5p-34cr-23v9 (JOSE DoS). See PR #700.
-Authlib==1.6.12
+Authlib==1.9.1
 # httpx 0.28 removed the `app=` kwarg on httpx.Client; fastapi>=0.115 (above)
 # is the matching TestClient. The backend suite passes under 0.28.x.
 httpx>=0.28,<1.0.0
@@ -61,7 +61,7 @@ azure-storage-blob>=12.19.0
 
 # Testing
 # 9.0.3 fixes GHSA-6w46-j5rx-g56g (vulnerable tmpdir handling)
-pytest==9.0.3
+pytest==9.2.0
 pytest-asyncio>=0.23.5
 
 # Config / registry files (M2 collector registry, #572)
