@@ -12,9 +12,19 @@ from pydantic import Field
 from uuid import UUID
 
 from database import get_db
-from models import CLOSED_TASK_STATUSES, EvidenceTracking, EvidenceCollectionTask, EvidenceFile, Organization, System
-from catalog_models import SCFCatalogEvidence
+from models import (
+    CLOSED_TASK_STATUSES,
+    EvidenceTracking,
+    EvidenceCollectionTask,
+    EvidenceFile,
+    Organization,
+    ScopedControl,
+    System,
+)
+from catalog_models import SCFCatalogControl, SCFCatalogEvidence
 from schemas import (
+    EvidenceRequiringControl,
+    EvidenceRequiringControlsResponse,
     EvidenceTrackingResponse,
     EvidenceTrackingCreate,
     EvidenceTrackingUpdate,
@@ -30,7 +40,7 @@ from services.audit_service import (
     EVIDENCE_TRACKING_TRACKED_FIELDS,
 )
 from services.task_generator import generate_task_for_tracking
-from services.scoping_service import effective_evidence_ids
+from services.scoping_service import effective_evidence_ids, in_scope_evidence_requests
 from services.team_assignments import (
     EVIDENCE_ASSIGNMENT_SPEC,
     accountable_owner_filter,
@@ -397,6 +407,88 @@ async def get_evidence_tracking(
     tracking.required_by_scope = evidence_id in await effective_evidence_ids(db, org_id)
 
     return tracking
+
+
+@router.get(
+    "/organizations/{org_id}/evidence/{evidence_id}/requiring-controls",
+    response_model=EvidenceRequiringControlsResponse,
+)
+async def get_evidence_requiring_controls(
+    org_id: UUID,
+    evidence_id: str,
+    membership: OrgMembership = Depends(require_org_role("viewer")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Which of the organisation's in-scope controls require this evidence.
+
+    The evidence detail page used to show the catalogue's ``control_mappings``
+    as "the controls this artifact is mapped to" next to a "required by"
+    count the browser computed from scoped controls, and the two disagreed
+    whenever only some of the mapped controls were in scope. This is the
+    per-evidence join the server never offered: the in-scope requirers are
+    the primary list, the catalogue mapping is returned alongside, labelled,
+    and the mapped controls that are *not* in scope are split out.
+
+    Membership follows ``in_scope_evidence_requests`` — a control counts when
+    its scoped row is ``selected``, whatever its implementation status — so
+    this view, the evidence-gaps view and the task generator agree. A
+    ``not_applicable`` or ``deferred`` control is listed with that status
+    rather than silently dropped. Works for untracked evidence too: the
+    requirement is a property of scope, not of the tracking row.
+    Requires: viewer role or higher.
+    """
+    evidence_id = evidence_id.upper()
+    catalog = (
+        await db.execute(
+            select(SCFCatalogEvidence).where(SCFCatalogEvidence.evidence_id == evidence_id)
+        )
+    ).scalar_one_or_none()
+    if catalog is None:
+        raise HTTPException(status_code=404, detail=f"Evidence {evidence_id} not found in catalog")
+
+    requiring_ids = sorted(
+        scf_id
+        for scf_id, requested in (await in_scope_evidence_requests(db, org_id)).items()
+        if evidence_id in requested
+    )
+
+    controls: List[EvidenceRequiringControl] = []
+    if requiring_ids:
+        rows = await db.execute(
+            select(ScopedControl, SCFCatalogControl.control_name)
+            .join(SCFCatalogControl, SCFCatalogControl.scf_id == ScopedControl.scf_id)
+            .where(
+                and_(
+                    ScopedControl.organization_id == org_id,
+                    ScopedControl.scf_id.in_(requiring_ids),
+                )
+            )
+            .order_by(ScopedControl.scf_id)
+        )
+        for scoped, control_name in rows.all():
+            controls.append(
+                EvidenceRequiringControl(
+                    scf_id=scoped.scf_id,
+                    control_name=control_name,
+                    implementation_status=scoped.implementation_status,
+                    maturity_level=scoped.maturity_level,
+                    scope_override=scoped.scope_override,
+                )
+            )
+
+    mappings = [str(m) for m in (catalog.control_mappings or []) if m]
+    requiring = set(requiring_ids)
+    return EvidenceRequiringControlsResponse(
+        evidence_id=catalog.evidence_id,
+        artifact_title=catalog.artifact_title,
+        artifact_description=catalog.artifact_description,
+        area_of_focus=catalog.area_of_focus,
+        catalog_status=catalog.status,
+        required_by_scope=bool(requiring_ids),
+        required_by_in_scope_controls=controls,
+        catalog_control_mappings=mappings,
+        catalog_mappings_not_in_scope=[m for m in mappings if m not in requiring],
+    )
 
 
 @router.post(

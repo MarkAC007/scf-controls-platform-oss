@@ -791,6 +791,57 @@ class EvidenceTrackingResponse(EvidenceTrackingBase):
     model_config = ConfigDict(from_attributes=True)
 
 
+class EvidenceRequiringControl(BaseModel):
+    """One in-scope control that requires an evidence item."""
+    scf_id: str
+    control_name: Optional[str] = None
+    implementation_status: Optional[str] = None
+    maturity_level: Optional[str] = None
+    scope_override: Optional[Literal["include", "exclude"]] = None
+
+
+EVIDENCE_SCOPE_RULE = (
+    "A control requires this evidence when the organisation's scoped-control "
+    "row for it is selected (in scope), whatever its implementation status: "
+    "not_applicable and deferred controls are listed with that status rather "
+    "than dropped. catalog_control_mappings is the SCF's global mapping and is "
+    "not scope."
+)
+
+
+class EvidenceRequiringControlsResponse(BaseModel):
+    """Which in-scope controls require one evidence item, next to the catalogue mapping.
+
+    The catalogue's ``control_mappings`` on an evidence row is the SCF's global
+    mapping and knows nothing about the organisation. The requirement comes
+    from ``services.scoping_service.in_scope_evidence_requests`` (the one
+    definition of "evidence this organisation must collect"), so this view,
+    the evidence-gaps view and the task generator cannot disagree. The
+    catalogue list is returned alongside, labelled, with the mapped controls
+    that are not in scope split out, so a reader sees the difference instead
+    of mistaking the global mapping for scope.
+    """
+    evidence_id: str
+    artifact_title: Optional[str] = None
+    artifact_description: Optional[str] = None
+    area_of_focus: Optional[str] = None
+    catalog_status: Optional[str] = None
+    scope_rule: str = Field(EVIDENCE_SCOPE_RULE, description="How membership of required_by_in_scope_controls is decided")
+    required_by_scope: bool = Field(..., description="True when at least one in-scope control requires this evidence")
+    required_by_in_scope_controls: List[EvidenceRequiringControl] = Field(
+        default_factory=list,
+        description="In-scope controls whose catalogue evidence_requests name this evidence, scf_id order",
+    )
+    catalog_control_mappings: List[str] = Field(
+        default_factory=list,
+        description="The SCF catalogue's global control_mappings for this evidence — not the organisation's scope",
+    )
+    catalog_mappings_not_in_scope: List[str] = Field(
+        default_factory=list,
+        description="catalog_control_mappings entries that no in-scope control turns into a requirement",
+    )
+
+
 # User Schemas
 class UserBase(BaseModel):
     email: str
