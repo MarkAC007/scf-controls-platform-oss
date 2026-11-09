@@ -1,11 +1,11 @@
-# v1.1.0
+# v1.2.0
 
 .
 
 ## What's new
 
-- Per-evidence requiring-controls endpoint — in-scope view next to the catalogue mapping
+- Tolerant journey file import and explicit re-issue over attested stages (PR 1174)
 
 ## Upgrading
 
-- Run `scripts/upgrade.sh v1.1.0` (read `UPGRADING.md` first).
+- Run `scripts/upgrade.sh v1.2.0` (read `UPGRADING.md` first).

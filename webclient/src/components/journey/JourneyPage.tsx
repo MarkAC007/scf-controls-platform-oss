@@ -4,7 +4,7 @@ import { readFileText, readJourneyArtefact } from './journeyArtefact'
 import { useHasOrgRole } from '../../hooks/useHasOrgRole'
 import { deriveJourneyCompletion } from './journeyCompletion'
 import { checkState } from './journeyCheck'
-import type { JourneyStage, JourneyStageState } from '../../data/apiClient'
+import type { JourneyStage, JourneyStageState, JourneyTemplateUpload } from '../../data/apiClient'
 
 interface Props {
   organizationId: string
@@ -41,6 +41,10 @@ export default function JourneyPage({ organizationId, onNavigateToTasks }: Props
   const [conditional, setConditional] = useState(false)
   const [targetDate, setTargetDate] = useState('')
   const [uploadError, setUploadError] = useState<string | null>(null)
+  // The last artefact sent, kept so a refused re-issue can be resent with
+  // `replace_attested` without asking for the file again.
+  const [lastTemplate, setLastTemplate] = useState<JourneyTemplateUpload | null>(null)
+  const [confirmingReplace, setConfirmingReplace] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
 
   const stages = data?.stages ?? []
@@ -93,9 +97,11 @@ export default function JourneyPage({ organizationId, onNavigateToTasks }: Props
    */
   const uploadArtefact = async (file: File | undefined) => {
     setUploadError(null)
+    setLastTemplate(null)
+    setConfirmingReplace(false)
     importJourney.reset()
     if (!file) return
-    let template
+    let template: JourneyTemplateUpload
     try {
       template = readJourneyArtefact(await readFileText(file))
     } catch (err) {
@@ -103,9 +109,31 @@ export default function JourneyPage({ organizationId, onNavigateToTasks }: Props
       if (fileInput.current) fileInput.current.value = ''
       return
     }
+    setLastTemplate(template)
     importJourney.mutate(
       { template, activate: !data?.activated },
       { onSettled: () => { if (fileInput.current) fileInput.current.value = '' } },
+    )
+  }
+
+  /*
+   * The 409 is the API refusing to erase a signature. A practitioner who has
+   * genuinely re-planned can say so explicitly: the same artefact goes up
+   * again with `replace_attested`, the dropped stages are deleted with their
+   * attestations, and the API writes each discarded attestation to the audit
+   * log. Only that refusal offers this, and only after a second, plainly
+   * worded confirm.
+   */
+  const importFailure = importJourney.error as (Error & { status?: number }) | null
+  const refusedForAttestedStages = importJourney.isError && !!lastTemplate && (
+    importFailure?.status === 409 || /already been attested/.test(importFailure?.message ?? '')
+  )
+  const reissueReplacingAttested = () => {
+    if (!lastTemplate) return
+    setConfirmingReplace(false)
+    importJourney.mutate(
+      { template: lastTemplate, activate: !data?.activated, replace_attested: true },
+      { onSuccess: () => setLastTemplate(null) },
     )
   }
 
@@ -161,7 +189,10 @@ export default function JourneyPage({ organizationId, onNavigateToTasks }: Props
           <button
             className="btn btn-primary"
             disabled={importJourney.isPending}
-            onClick={() => importJourney.mutate({ template_key: data.template_key ?? undefined, activate: true })}
+            onClick={() => {
+              setLastTemplate(null)
+              importJourney.mutate({ template_key: data.template_key ?? undefined, activate: true })
+            }}
           >
             {importJourney.isPending ? 'Starting…' : 'Start this journey'}
           </button>
@@ -184,6 +215,28 @@ export default function JourneyPage({ organizationId, onNavigateToTasks }: Props
               <p className="journey-import-error" role="alert">
                 Import failed: {uploadError ?? (importJourney.error as Error | null)?.message ?? 'unknown error'}
               </p>
+            )}
+            {refusedForAttestedStages && !importJourney.isPending && (
+              confirmingReplace ? (
+                <div className="journey-import-confirm">
+                  <p className="journey-import-error">
+                    Re-issuing anyway deletes the stages this file drops. The attestations on those
+                    stages are discarded, and each one is recorded in the audit log.
+                  </p>
+                  <div className="journey-import-actions">
+                    <button type="button" className="btn btn-danger btn-sm" onClick={reissueReplacingAttested}>
+                      Discard the attestations and re-issue
+                    </button>
+                    <button type="button" className="btn btn-secondary btn-sm" onClick={() => setConfirmingReplace(false)}>
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button type="button" className="btn btn-secondary btn-sm" onClick={() => setConfirmingReplace(true)}>
+                  Re-issue anyway and discard the attested stages
+                </button>
+              )
             )}
             {importJourney.isSuccess && importJourney.data?.template_key && (
               <p className="journey-import-ok" role="status">

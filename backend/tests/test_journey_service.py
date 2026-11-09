@@ -313,6 +313,142 @@ async def test_reissue_negates_old_ordinals_before_rewriting():
     assert db.flush.await_count >= 1
 
 
+@pytest.mark.asyncio
+async def test_reissue_refusal_text_is_unchanged_by_default():
+    """The default path is byte-for-byte what it was.
+
+    The API turns this into a 409 and the Engagement Desk matches on the
+    detail text, so the wording is a contract, not copy.
+    """
+    journey = _journey_with([
+        _stage("mobilise", 0, JourneyStageState.PASSED.value, attested=True),
+        _stage("spine", 1, JourneyStageState.PASSED_CONDITIONAL.value, attested=True),
+        _stage("determinants", 2),
+    ])
+    db = _db_returning(journey)
+
+    with pytest.raises(ValueError) as exc:
+        await journey_service.import_template(
+            db, uuid4(), {"stages": [{"key": "determinants", "title": "D"}]},
+            replace_attested=False,
+        )
+
+    assert str(exc.value) == (
+        "This revision drops stages that have already been attested: "
+        "mobilise, spine. Keep their keys in the template, or start a new journey."
+    )
+    db.delete.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_reissue_with_replace_attested_drops_a_signed_stage():
+    """An explicit re-issue may discard a signature, and only an explicit one.
+
+    The API records each discarded attestation in the audit log; the service's
+    job is only to stop refusing when it has been told to.
+    """
+    signed = _stage("mobilise", 0, JourneyStageState.PASSED.value, attested=True)
+    kept = _stage("determinants", 1)
+    db = _db_returning(_journey_with([signed, kept]))
+
+    await journey_service.import_template(
+        db, uuid4(), {"stages": [{"key": "determinants", "title": "D"}]},
+        replace_attested=True,
+    )
+
+    db.delete.assert_awaited_once_with(signed)
+
+
+@pytest.mark.asyncio
+async def test_replace_attested_leaves_a_kept_signature_alone():
+    """The flag widens what may be dropped; it never touches what is kept."""
+    signed_at = datetime(2026, 10, 1, 9, 30, tzinfo=timezone.utc)
+    kept = _stage("mobilise", 0, JourneyStageState.PASSED.value, attested=True)
+    kept.attested_at = signed_at
+    dropped = _stage("retired-wave", 1, JourneyStageState.PASSED_CONDITIONAL.value, attested=True)
+    db = _db_returning(_journey_with([kept, dropped]))
+
+    await journey_service.import_template(
+        db, uuid4(), {"stages": [{"key": "mobilise", "title": "M v2"}]},
+        activate=True, replace_attested=True,
+    )
+
+    assert kept.state == JourneyStageState.PASSED.value
+    assert kept.attested_at == signed_at
+    assert kept.title == "M v2"
+    db.delete.assert_awaited_once_with(dropped)
+
+
+# ---------------------------------------------------------------------------
+# The audit trail of a re-issue
+# ---------------------------------------------------------------------------
+
+
+def _audit_request():
+    from starlette.requests import Request
+    return Request({"type": "http", "method": "POST", "path": "/", "headers": [],
+                    "query_string": b"", "client": ("127.0.0.1", 0)})
+
+
+def _audit_db(current_stages):
+    db = MagicMock()
+    result = MagicMock()
+    result.scalars.return_value.all.return_value = current_stages
+    db.execute = AsyncMock(return_value=result)
+    return db
+
+
+def _prior_entry(stage_id, state, attested):
+    when = datetime(2026, 10, 1, tzinfo=timezone.utc) if attested else None
+    return (stage_id, {
+        "title": "T", "precondition_spec": [],
+        "state": state,
+        "attested_by_user_id": uuid4() if attested else None,
+        "attested_at": when,
+        "attestation_note": "Checked with the CISO" if attested else None,
+        "target_date": None,
+    })
+
+
+@pytest.mark.asyncio
+async def test_audit_records_the_attestation_a_reissue_discarded(monkeypatch):
+    """A discarded signature is written down field by field.
+
+    The delete row for a signed stage carries who signed, when, and what they
+    said, so the audit log still answers "who passed this" after the stage is
+    gone. An unsigned dropped stage is audited exactly as before.
+    """
+    from api import journey as journey_api
+
+    calls = []
+
+    async def fake_log(**kwargs):
+        calls.append(kwargs)
+        return []
+
+    monkeypatch.setattr(journey_api, "log_entity_changes", fake_log)
+    signed_id, unsigned_id = uuid4(), uuid4()
+    prior = {
+        "mobilise": _prior_entry(signed_id, JourneyStageState.PASSED.value, attested=True),
+        "retired": _prior_entry(unsigned_id, JourneyStageState.LOCKED.value, attested=False),
+    }
+    membership = MagicMock()
+    membership.user.db_id = str(uuid4())
+
+    discarded = await journey_api._audit_import(
+        _audit_db([]), uuid4(), uuid4(), prior, membership, _audit_request(),
+    )
+
+    assert discarded == ["mobilise"]
+    by_id = {c["entity_id"]: c for c in calls}
+    signed_row = by_id[signed_id]
+    assert signed_row["action"] == "delete"
+    assert {"state", "attested_by_user_id", "attested_at", "attestation_note",
+            "target_date", "title", "precondition_spec"} <= signed_row["tracked_fields"]
+    assert signed_row["old_values"]["attestation_note"] == "Checked with the CISO"
+    assert by_id[unsigned_id]["tracked_fields"] == set(journey_api.JOURNEY_TEMPLATE_TRACKED_FIELDS)
+
+
 # ---------------------------------------------------------------------------
 # Ownership is a team relationship (#1052)
 # ---------------------------------------------------------------------------

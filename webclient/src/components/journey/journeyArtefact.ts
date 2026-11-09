@@ -7,6 +7,12 @@ import type { JourneyTemplateUpload } from '../../data/apiClient'
  * deployment can evaluate) and answers 422 with a reason. This only catches
  * what would otherwise arrive as an opaque validation error: not JSON, not an
  * object, or no stages at all. Everything else is the server's call.
+ *
+ * Two shapes are accepted: the bare artefact, and a whole import request body
+ * (`{ template_key, activate, practitioner_name, template: {...} }`), which is
+ * what the Engagement Desk exported. A wrapper is unwrapped only when it has
+ * no `stages` of its own and its `template` carries a non-empty list; the
+ * inner template is then checked exactly as a bare one would be.
  */
 export function readJourneyArtefact(text: string): JourneyTemplateUpload {
   let parsed: unknown
@@ -17,6 +23,15 @@ export function readJourneyArtefact(text: string): JourneyTemplateUpload {
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new Error('the file must contain a journey object')
+  }
+  const wrapped = (parsed as { template?: unknown }).template
+  if (
+    !Array.isArray((parsed as { stages?: unknown }).stages)
+    && wrapped && typeof wrapped === 'object' && !Array.isArray(wrapped)
+    && Array.isArray((wrapped as { stages?: unknown }).stages)
+    && (wrapped as { stages: unknown[] }).stages.length > 0
+  ) {
+    parsed = wrapped
   }
   const stages = (parsed as { stages?: unknown }).stages
   if (!Array.isArray(stages) || stages.length === 0) {

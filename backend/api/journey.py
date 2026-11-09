@@ -59,6 +59,9 @@ JOURNEY_UNLOCK_TRACKED_FIELDS = ('state', 'started_at')
 # approved document, changes what "green" means, and that has to be on record.
 JOURNEY_TEMPLATE_TRACKED_FIELDS = ('title', 'precondition_spec')
 
+# A stage in one of these states carries a named person's signature.
+_SIGNED_STATES = (JourneyStageState.PASSED.value, JourneyStageState.PASSED_CONDITIONAL.value)
+
 #: `audit_log.scf_id` is sized for an SCF control id. A stage key is a template
 #: author's free text and may be longer, so it is carried as a readable label
 #: only when it fits whole — half a key names nothing, and the stage's real
@@ -112,6 +115,12 @@ class ImportRequest(BaseModel):
         description="An uploaded artefact. When present it wins over template_key, "
                     "and nothing is read from the deployment's own templates.",
     )
+    replace_attested: bool = Field(
+        default=False,
+        description="Allow this revision to drop stages that have already been attested. "
+                    "Their attestations are discarded and each one is written to the audit "
+                    "log. The default (false) keeps the 409 refusal.",
+    )
 
 
 class AttestRequest(BaseModel):
@@ -127,13 +136,18 @@ async def _audit_import(
     prior: Dict[str, Any],
     membership: OrgMembership,
     request: Request,
-) -> None:
+) -> List[str]:
     """Field-level audit rows for what an import wrote on each stage.
 
     The middleware's baseline row records that the import endpoint was called.
     These record what each stage's gate became: a new stage is a create, a
     kept stage whose title or gate moved is an update, and a stage the
     revision dropped is a delete.
+
+    A dropped stage that had been signed (only possible under
+    ``replace_attested``) also has its attestation written into the delete
+    row: who signed, when, the note and any target date. Returns the keys of
+    those discarded signed stages.
     """
     user_db_id = membership.user.db_id if membership.user else None
     changed_by = UUID(user_db_id) if user_db_id else None
@@ -159,18 +173,24 @@ async def _audit_import(
             action_source=source,
             request_id=request_id,
         )
+    discarded: List[str] = []
     for key, (stage_id, old_values) in prior.items():
         if key in seen:
             continue
+        tracked = set(JOURNEY_TEMPLATE_TRACKED_FIELDS)
+        if old_values.get('state') in _SIGNED_STATES:
+            tracked |= set(JOURNEY_STAGE_TRACKED_FIELDS)
+            discarded.append(key)
         await log_entity_changes(
             db=db, organization_id=org_id, entity_type='journey_stage',
             entity_id=stage_id, action='delete', changed_by_user_id=changed_by,
             old_values=old_values, new_values={},
-            tracked_fields=set(JOURNEY_TEMPLATE_TRACKED_FIELDS),
+            tracked_fields=tracked,
             scf_id=_stage_label(key),
             action_source=source,
             request_id=request_id,
         )
+    return discarded
 
 
 async def _practitioner(db: AsyncSession, org_id: UUID) -> Optional[Dict[str, Any]]:
@@ -362,7 +382,9 @@ async def import_journey(
 
     Re-issuing merges by stage key and preserves every attestation; a revision
     that drops an already-signed stage is refused with a 409 rather than
-    quietly rewriting the audit trail.
+    quietly rewriting the audit trail. ``replace_attested`` lifts that refusal
+    explicitly: the signed stages are deleted and each discarded attestation
+    is written to the audit log.
     """
     if payload.template is not None:
         template = payload.template.model_dump()
@@ -405,10 +427,12 @@ async def import_journey(
     practitioner = await _practitioner(db, org_id)
     name = payload.practitioner_name or (practitioner or {}).get("company_name")
 
-    # What each stage asked for before this import, so the audit trail can
-    # say what a revision changed and not only that one happened.
+    # What each stage asked for, and who had signed it, before this import, so
+    # the audit trail can say what a revision changed and not only that one
+    # happened — including any attestation a re-issue discards.
     prior = {
-        st.key: (st.id, {f: getattr(st, f) for f in JOURNEY_TEMPLATE_TRACKED_FIELDS})
+        st.key: (st.id, {f: getattr(st, f)
+                         for f in JOURNEY_TEMPLATE_TRACKED_FIELDS + JOURNEY_STAGE_TRACKED_FIELDS})
         for st in (await db.execute(
             select(JourneyStage)
             .join(OrgJourney, OrgJourney.id == JourneyStage.journey_id)
@@ -423,14 +447,21 @@ async def import_journey(
             template,
             practitioner_name=name,
             activate=payload.activate,
+            replace_attested=payload.replace_attested,
         )
     except ValueError as exc:
         # A revision that would erase a signature.
         await db.rollback()
         raise HTTPException(status_code=409, detail=str(exc))
 
-    await _audit_import(db, org_id, journey.id, prior, membership, request)
+    discarded = await _audit_import(db, org_id, journey.id, prior, membership, request)
     await db.commit()
+
+    if discarded:
+        logger.info(
+            "Journey re-issue for org %s discarded attested stages: %s",
+            org_id, ", ".join(sorted(discarded)),
+        )
 
     logger.info(
         "Journey imported for org %s from %s (activate=%s, stages=%d)",
