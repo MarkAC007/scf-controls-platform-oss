@@ -5127,6 +5127,8 @@ export interface JourneyImportBody {
   activate?: boolean
   practitioner_name?: string
   template?: JourneyTemplateUpload
+  /** Allow the revision to drop attested stages; their attestations are discarded and audited. */
+  replace_attested?: boolean
 }
 
 export async function importJourney(

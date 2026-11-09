@@ -1274,6 +1274,7 @@ async def import_template(
     practitioner_name: Optional[str] = None,
     practitioner_organization_id: Optional[UUID] = None,
     activate: bool = False,
+    replace_attested: bool = False,
 ) -> OrgJourney:
     """Create this organisation's journey from a template, or re-issue it.
 
@@ -1293,6 +1294,12 @@ async def import_template(
     passed under v1 and v1.1 rewrites what that stage asks for, the signature
     stands and the new wording sits beneath it — because the person signed a
     moment in time, not a paragraph.
+
+    A revision that drops a signed stage is refused unless the caller passes
+    ``replace_attested=True``. That is an explicit re-issue: the dropped
+    stages are deleted, signatures and all. The caller owns the record of
+    what was discarded; the API snapshots every stage before calling this and
+    writes each discarded attestation to the audit log.
     """
     existing = (
         await db.execute(
@@ -1335,14 +1342,14 @@ async def import_template(
 
         # Stages the revision dropped. A signed stage is never silently
         # discarded — removing it would rewrite history — so this refuses
-        # rather than guessing.
+        # rather than guessing, unless the caller asked for exactly that.
         dropped = [st for key, st in prior.items() if key not in keys]
         signed_and_dropped = [
             st.key for st in dropped
             if st.state in (JourneyStageState.PASSED.value,
                             JourneyStageState.PASSED_CONDITIONAL.value)
         ]
-        if signed_and_dropped:
+        if signed_and_dropped and not replace_attested:
             raise ValueError(
                 "This revision drops stages that have already been attested: "
                 + ", ".join(sorted(signed_and_dropped))

@@ -133,6 +133,60 @@ describe('a bad file', () => {
   })
 })
 
+describe('a re-issue refused because it drops attested stages', () => {
+  const refusal = Object.assign(
+    new Error('This revision drops stages that have already been attested: mobilise. Keep their keys in the template, or start a new journey.'),
+    { status: 409 },
+  )
+
+  it('offers to re-issue anyway, and sends replace_attested only after a confirm', async () => {
+    journey = response({ provisioned: true, activated: true })
+    const { rerender } = render(<JourneyPage organizationId="org-1" />)
+    pick(JSON.stringify(artefact))
+    await waitFor(() => expect(mutate).toHaveBeenCalledTimes(1))
+    expect(mutate.mock.calls[0][0].replace_attested).toBeUndefined()
+
+    Object.assign(importState, { isError: true, error: refusal })
+    rerender(<JourneyPage organizationId="org-1" />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Re-issue anyway and discard the attested stages' }))
+    expect(mutate).toHaveBeenCalledTimes(1)
+    expect(screen.getByText(/recorded in the audit log/)).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Discard the attestations and re-issue' }))
+    expect(mutate).toHaveBeenCalledTimes(2)
+    const [body] = mutate.mock.calls[1]
+    expect(body).toEqual({ template: artefact, activate: false, replace_attested: true })
+  })
+
+  it('can be backed out of without sending anything', async () => {
+    journey = response({ provisioned: true, activated: true })
+    const { rerender } = render(<JourneyPage organizationId="org-1" />)
+    pick(JSON.stringify(artefact))
+    await waitFor(() => expect(mutate).toHaveBeenCalledTimes(1))
+    Object.assign(importState, { isError: true, error: refusal })
+    rerender(<JourneyPage organizationId="org-1" />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Re-issue anyway and discard the attested stages' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('button', { name: 'Discard the attestations and re-issue' })).toBeNull()
+    expect(mutate).toHaveBeenCalledTimes(1)
+  })
+
+  it('is not offered for any other refusal', async () => {
+    journey = response({ provisioned: true, activated: true })
+    const { rerender } = render(<JourneyPage organizationId="org-1" />)
+    pick(JSON.stringify(artefact))
+    await waitFor(() => expect(mutate).toHaveBeenCalledTimes(1))
+    Object.assign(importState, {
+      isError: true,
+      error: Object.assign(new Error('This deployment cannot evaluate these check types: vibes_acceptable'), { status: 422 }),
+    })
+    rerender(<JourneyPage organizationId="org-1" />)
+    expect(screen.queryByRole('button', { name: 'Re-issue anyway and discard the attested stages' })).toBeNull()
+  })
+})
+
 describe('readJourneyArtefact', () => {
   it('rejects non-JSON', () => {
     expect(() => readJourneyArtefact('not json')).toThrow(/not valid JSON/)
@@ -145,5 +199,23 @@ describe('readJourneyArtefact', () => {
   })
   it('passes a well-formed artefact through untouched', () => {
     expect(readJourneyArtefact(JSON.stringify(artefact))).toEqual(artefact)
+  })
+  it('accepts a wrapped import request body and returns the template inside it', () => {
+    const wrapped = { template_key: 'cg-12-month', activate: true, practitioner_name: 'ComplianceGenie.io', template: artefact }
+    expect(readJourneyArtefact(JSON.stringify(wrapped))).toEqual(artefact)
+  })
+  it('still says there are no stages when the wrapped template has none', () => {
+    const wrapped = { template_key: 'cg-12-month', template: { name: 'empty', stages: [] } }
+    expect(() => readJourneyArtefact(JSON.stringify(wrapped))).toThrow('the file has no stages')
+  })
+  it('checks the stages of a wrapped template too', () => {
+    const wrapped = { template: { stages: [{ key: 'a' }] } }
+    expect(() => readJourneyArtefact(JSON.stringify(wrapped))).toThrow(/stage 1 needs a key and a title/)
+  })
+  it('accepts a wrapped body picked through the control and posts the inner template', async () => {
+    render(<JourneyPage organizationId="org-1" />)
+    pick(JSON.stringify({ template_key: 'cg-12-month', activate: true, template: artefact }))
+    await waitFor(() => expect(mutate).toHaveBeenCalledTimes(1))
+    expect(mutate.mock.calls[0][0].template).toEqual(artefact)
   })
 })

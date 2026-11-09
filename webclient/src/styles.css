@@ -36167,6 +36167,18 @@ button.risk-list-header-cell:hover {
   color: var(--text-muted);
 }
 
+.journey-import-confirm,
+.journey-import-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.journey-import-actions {
+  flex-direction: row;
+}
+
 .journey-unlit-note {
   background: var(--info-bg);
   border: 1px solid var(--border);
