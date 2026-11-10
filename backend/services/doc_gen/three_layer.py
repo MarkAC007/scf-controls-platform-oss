@@ -102,7 +102,10 @@ def describe_version_summary(summary: Optional[Dict[str, Any]]) -> str:
         parts = ["Initial generation"]
         if controls:
             parts.append(f"from {controls} controls")
-        return " ".join(parts) + "."
+        seeded = [str(k) for k in (summary.get("seeded_from") or [])]
+        if seeded:
+            parts.append("seeded from " + ", ".join(seeded))
+        return ", ".join([" ".join(parts[:2])] + parts[2:]) + "."
 
     counts = summary.get("counts") or {}
     bits: List[str] = []

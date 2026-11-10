@@ -12,6 +12,8 @@ Catalog Tables:
 - capability_theme_mappings: SCF control to capability theme mappings
 - catalog_framework_registries: per-version framework registry (names + focal
   document identifiers) — the transactional record the upgrade diff reads
+- scf_catalog_risks: the SCF Risk Catalog (R-XX-N codes with their titles)
+- scf_catalog_threats: the SCF Threat Catalog (NT-N / MT-N codes)
 """
 from sqlalchemy import CheckConstraint, Column, String, Boolean, Text, Integer, DateTime, ForeignKey, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -77,9 +79,15 @@ class SCFCatalogControl(Base):
     scrm_tier2_operational = Column(Boolean, default=False)
     scrm_tier3_tactical = Column(Boolean, default=False)
 
-    # Risk/Threat Mapping
+    # Risk/Threat Mapping. From SCF 2026.3 the workbook rates every control
+    # against every risk and threat (Unlikely / Possible / Likely); the codes
+    # arrays hold the Possible+Likely set and the ratings dicts keep which was
+    # which ({code: "likely"|"possible"}). NULL on rows seeded from a workbook
+    # that still carried the summary columns (2026.2 and earlier).
     risk_codes = Column(JSONB, default=[])
     threat_codes = Column(JSONB, default=[])
+    risk_ratings = Column(JSONB, nullable=True)
+    threat_ratings = Column(JSONB, nullable=True)
 
     # Required artifact types — extracted from control description + assessment
     # objectives via LLM. Consumed by windowed evidence assessment to decide
@@ -131,6 +139,61 @@ class SCFCatalogDomain(Base):
 
     def __repr__(self):
         return f"<SCFCatalogDomain(identifier={self.identifier}, name={self.name})>"
+
+
+class SCFCatalogRisk(Base):
+    """One entry of the SCF Risk Catalog sheet.
+
+    The code (R-AC-1, ...) is the natural key that control rows reference from
+    ``SCFCatalogControl.risk_codes``. ``old_code`` carries the publisher's own
+    renumbering column ('Old Risk #', 2026.3+) so a consumer can tell that a
+    register row written under the old code now means this one. Deprecations
+    are status flips, never deletes, like every other catalog table.
+    """
+    __tablename__ = "scf_catalog_risks"
+    __table_args__ = (
+        CheckConstraint("status IN ('active', 'deprecated')", name='ck_scf_catalog_risks_status'),
+    )
+
+    code = Column(String(20), primary_key=True)
+    grouping = Column(String(100), nullable=False)
+    old_code = Column(String(20), nullable=True)
+    title = Column(String(500), nullable=False)
+    description = Column(Text, nullable=True)
+    nist_csf_function = Column(String(20), nullable=True)
+
+    status = Column(String(16), nullable=False, default='active', server_default='active', index=True)
+    retired_in_version = Column(String(20), nullable=True)
+
+    catalog_version = Column(String(20), nullable=False)
+    created_at = Column(DateTime(timezone=False), server_default=func.now())
+    updated_at = Column(DateTime(timezone=False), server_default=func.now())
+
+    def __repr__(self):
+        return f"<SCFCatalogRisk(code={self.code}, title={self.title})>"
+
+
+class SCFCatalogThreat(Base):
+    """One entry of the SCF Threat Catalog sheet (NT-N natural, MT-N man-made)."""
+    __tablename__ = "scf_catalog_threats"
+    __table_args__ = (
+        CheckConstraint("status IN ('active', 'deprecated')", name='ck_scf_catalog_threats_status'),
+    )
+
+    code = Column(String(20), primary_key=True)
+    grouping = Column(String(100), nullable=False)
+    title = Column(String(500), nullable=False)
+    description = Column(Text, nullable=True)
+
+    status = Column(String(16), nullable=False, default='active', server_default='active', index=True)
+    retired_in_version = Column(String(20), nullable=True)
+
+    catalog_version = Column(String(20), nullable=False)
+    created_at = Column(DateTime(timezone=False), server_default=func.now())
+    updated_at = Column(DateTime(timezone=False), server_default=func.now())
+
+    def __repr__(self):
+        return f"<SCFCatalogThreat(code={self.code}, title={self.title})>"
 
 
 class SCFCatalogEvidence(Base):

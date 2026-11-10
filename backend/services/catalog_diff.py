@@ -70,6 +70,14 @@ from catalog_models import (
     SCFCatalogControl,
     SCFCatalogDomain,
     SCFCatalogEvidence,
+    SCFCatalogRisk,
+    SCFCatalogThreat,
+)
+from services.risk_catalog import (
+    RISK_COMPARED_FIELDS,
+    THREAT_COMPARED_FIELDS,
+    risk_to_columns,
+    threat_to_columns,
 )
 from services.framework_succession import (
     TIER_DECLARED,
@@ -229,6 +237,10 @@ class ExtractedCatalog:
     # (``extract_scf_data.extract_publisher_changes``). Empty for every earlier
     # release, which is a fact about the release and not a missing extraction.
     publisher_changes: Dict[str, Any] = field(default_factory=dict)
+    # The Risk / Threat Catalog sheets (risks.json / threats.json shape). Empty
+    # for a workbook without them or an extraction from before they were read.
+    risks: List[dict] = field(default_factory=list)
+    threats: List[dict] = field(default_factory=list)
     meta: dict = field(default_factory=dict)
 
 
@@ -266,6 +278,13 @@ def extract_workbook(workbook_path) -> ExtractedCatalog:
         if publisher_path.exists():
             with open(publisher_path) as f:
                 publisher_changes = json.load(f) or {}
+        risks, threats = [], []
+        if (tmp / "risks.json").exists():
+            with open(tmp / "risks.json") as f:
+                risks = (json.load(f) or {}).get("risks", [])
+        if (tmp / "threats.json").exists():
+            with open(tmp / "threats.json") as f:
+                threats = (json.load(f) or {}).get("threats", [])
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -278,6 +297,8 @@ def extract_workbook(workbook_path) -> ExtractedCatalog:
         framework_names=framework_names,
         framework_registry=framework_registry,
         publisher_changes=publisher_changes,
+        risks=risks,
+        threats=threats,
         meta=meta,
     )
 
@@ -317,6 +338,8 @@ CONTROL_COMPARED_FIELDS = (
     "scrm_tier3_tactical",
     "risk_codes",
     "threat_codes",
+    "risk_ratings",
+    "threat_ratings",
 )
 
 DOMAIN_COMPARED_FIELDS = ("order", "name", "principle", "principle_intent")
@@ -390,6 +413,8 @@ def control_to_columns(ctrl: dict) -> dict:
         "scrm_tier3_tactical": scrm.get("tier3_tactical", False),
         "risk_codes": risk_threat.get("risk_codes", []),
         "threat_codes": risk_threat.get("threat_codes", []),
+        "risk_ratings": risk_threat.get("risk_ratings"),
+        "threat_ratings": risk_threat.get("threat_ratings"),
     }
 
 
@@ -464,11 +489,25 @@ def _workbook_rows(extracted: ExtractedCatalog) -> Dict[CatalogEntityType, Dict[
         if key:
             objectives[key] = ao_to_columns(ao)
 
+    risks: Dict[str, dict] = {}
+    for risk in extracted.risks:
+        key = str(risk.get("code") or "").strip().upper()
+        if key:
+            risks[key] = risk_to_columns(risk)
+
+    threats: Dict[str, dict] = {}
+    for threat in extracted.threats:
+        key = str(threat.get("code") or "").strip().upper()
+        if key:
+            threats[key] = threat_to_columns(threat)
+
     return {
         CatalogEntityType.CONTROLS: controls,
         CatalogEntityType.DOMAINS: domains,
         CatalogEntityType.EVIDENCE: evidence,
         CatalogEntityType.ASSESSMENT_OBJECTIVES: objectives,
+        CatalogEntityType.RISKS: risks,
+        CatalogEntityType.THREATS: threats,
     }
 
 
@@ -494,6 +533,8 @@ class LiveCatalog:
     domains: Dict[str, LiveEntityRow] = field(default_factory=dict)
     evidence: Dict[str, LiveEntityRow] = field(default_factory=dict)
     assessment_objectives: Dict[str, LiveEntityRow] = field(default_factory=dict)
+    risks: Dict[str, LiveEntityRow] = field(default_factory=dict)
+    threats: Dict[str, LiveEntityRow] = field(default_factory=dict)
     # The framework REGISTRY the live catalogue currently offers, id -> row
     # whose ``name`` is the focal-document display name. Loaded from the
     # applied seeder artifact rather than a table (see ``load_live_frameworks``).
@@ -509,6 +550,8 @@ class LiveCatalog:
             CatalogEntityType.DOMAINS: self.domains,
             CatalogEntityType.EVIDENCE: self.evidence,
             CatalogEntityType.ASSESSMENT_OBJECTIVES: self.assessment_objectives,
+            CatalogEntityType.RISKS: self.risks,
+            CatalogEntityType.THREATS: self.threats,
         }
 
 
@@ -549,6 +592,14 @@ async def load_live_catalog(session: AsyncSession) -> LiveCatalog:
         live.assessment_objectives[row.ao_id] = _live_row(
             row, "ao_id", AO_COMPARED_FIELDS, None
         )
+
+    result = await session.execute(select(SCFCatalogRisk))
+    for row in result.scalars().all():
+        live.risks[row.code] = _live_row(row, "code", RISK_COMPARED_FIELDS, "title")
+
+    result = await session.execute(select(SCFCatalogThreat))
+    for row in result.scalars().all():
+        live.threats[row.code] = _live_row(row, "code", THREAT_COMPARED_FIELDS, "title")
 
     live.frameworks = derive_live_frameworks(
         live.controls, await load_live_framework_registry(session)
@@ -1550,16 +1601,27 @@ def compute_catalog_diff(
         CatalogEntityType.DOMAINS: DOMAIN_COMPARED_FIELDS,
         CatalogEntityType.EVIDENCE: EVIDENCE_COMPARED_FIELDS,
         CatalogEntityType.ASSESSMENT_OBJECTIVES: AO_COMPARED_FIELDS,
+        CatalogEntityType.RISKS: RISK_COMPARED_FIELDS,
+        CatalogEntityType.THREATS: THREAT_COMPARED_FIELDS,
     }
     name_field_by_entity = {
         CatalogEntityType.CONTROLS: "control_name",
         CatalogEntityType.DOMAINS: "name",
         CatalogEntityType.EVIDENCE: "artifact_title",
         CatalogEntityType.ASSESSMENT_OBJECTIVES: None,
+        CatalogEntityType.RISKS: "title",
+        CatalogEntityType.THREATS: "title",
     }
 
     entities: Dict[CatalogEntityType, EntityDiff] = {}
     for entity_type, compared in compared_by_entity.items():
+        if entity_type in (CatalogEntityType.RISKS, CatalogEntityType.THREATS) and not workbook[entity_type]:
+            # No Risk / Threat Catalog sheet in this workbook (a pre-2026.3
+            # release, or an extraction from before those files existed). That
+            # is "nothing to say", not "the publisher retired every risk": the
+            # live rows stay as they are, like capability themes below.
+            entities[entity_type] = EntityDiff()
+            continue
         entities[entity_type] = compute_entity_diff(
             workbook[entity_type],
             live_by_entity[entity_type],

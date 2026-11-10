@@ -198,7 +198,7 @@ async def _controls(db, n, heavy=None, with_risks=False, distinct_domains=False)
     """``n`` active catalogue controls; heavy=True material by weighting, False not."""
     # The catalogue's risk links may sit only on deprecated controls in a test
     # database; the record does not look at catalogue status, so those serve.
-    query = select(SCFCatalogControl.scf_id, SCFCatalogControl.risk_codes)
+    query = select(SCFCatalogControl.scf_id, SCFCatalogControl.risk_codes, SCFCatalogControl.risk_ratings)
     if not with_risks:
         query = query.where(SCFCatalogControl.status == "active")
     weight = SCFCatalogControl.control_weighting
@@ -208,7 +208,7 @@ async def _controls(db, n, heavy=None, with_risks=False, distinct_domains=False)
         query = query.where(weight.between(1, materiality.MATERIAL_WEIGHTING - 1))
     rows = (await db.execute(query.order_by(SCFCatalogControl.scf_id))).all()
     if with_risks:
-        rows = [r for r in rows if r.risk_codes]
+        rows = [r for r in rows if service.catalog_linked_codes(r.risk_codes, r.risk_ratings)]
     if distinct_domains:
         seen, picked = set(), []
         for r in rows:
@@ -222,9 +222,13 @@ async def _controls(db, n, heavy=None, with_risks=False, distinct_domains=False)
 
 
 async def _catalog_risks(db, scf_id):
-    return list(await db.scalar(
-        select(SCFCatalogControl.risk_codes).where(SCFCatalogControl.scf_id == scf_id)
-    ) or [])
+    """The catalogue codes the gate counts as linked (Likely-rated where rated)."""
+    row = (await db.execute(
+        select(SCFCatalogControl.risk_codes, SCFCatalogControl.risk_ratings).where(
+            SCFCatalogControl.scf_id == scf_id
+        )
+    )).first()
+    return sorted(service.catalog_linked_codes(row[0], row[1])) if row else []
 
 
 async def _scope(db, org, scf_id, **kwargs):

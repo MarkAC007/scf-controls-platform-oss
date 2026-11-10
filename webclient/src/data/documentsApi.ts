@@ -84,6 +84,40 @@ export interface DocumentSummary {
    * readable and exportable, but no longer its current document.
    */
   superseded?: boolean
+  /** For a superseded document: the structure that superseded it. */
+  superseded_under?: string | null
+  /** For a superseded document: the current documents that now cover it. */
+  superseded_by?: PreviewScope[]
+}
+
+export interface PreviewScope {
+  key: string
+  title: string
+}
+
+export interface PreviewProcedure extends PreviewScope {
+  document_id?: string | null
+  lifecycle_status?: string | null
+  /** Superseded entries: the target structure's procedures that take over. */
+  replaced_by: PreviewScope[]
+  /** Created entries: stored procedures whose text the first draft starts from. */
+  seeded_from: PreviewScope[]
+  /** Kept entries: superseded today, current again under the target. */
+  restored: boolean
+}
+
+/** What switching to another document structure does to stored documents. */
+export interface ProfilePreview {
+  current: PreviewScope
+  target: PreviewScope
+  procedures: {
+    superseded: PreviewProcedure[]
+    created: PreviewProcedure[]
+    kept: PreviewProcedure[]
+  }
+  counts: Record<string, { superseded: number; signed_off: number }>
+  superseded_total: number
+  signed_off_total: number
 }
 
 export type ScopeKind = 'domain' | 'bundle' | 'topic'
@@ -96,6 +130,8 @@ export interface ScopeOption {
   title: string
   domains: string[]
   control_count: number
+  /** A grouped procedure's member topic keys; empty or absent otherwise. */
+  topics?: string[]
 }
 
 export interface DocumentScopes {
@@ -134,6 +170,8 @@ export interface DocumentProfile {
   generators: Record<string, ScopeMode>
   fold_standards: boolean
   bundles: { key: string; title: string; domains: string[] }[]
+  /** The procedures the structure produces in topic mode. */
+  topics?: { key: string; title: string; topics: string[] }[]
 }
 
 export interface DocumentSection {
@@ -337,6 +375,12 @@ export async function getDocumentMap(orgId: string): Promise<DocumentMap> {
 
 export async function getDocGenSettings(orgId: string): Promise<DocGenSettings> {
   return docFetch(`/organizations/${orgId}/documents/settings`)
+}
+
+export async function getProfilePreview(orgId: string, profile: string): Promise<ProfilePreview> {
+  return docFetch(
+    `/organizations/${orgId}/documents/profile-preview?profile=${encodeURIComponent(profile)}`,
+  )
 }
 
 export async function updateDocGenSettings(

@@ -288,7 +288,7 @@ class TestConsumer9Risks:
         db.execute = AsyncMock(side_effect=[
             _result(scalar_one_or_none=SimpleNamespace()),   # risk exists
             _result(scalar_one_or_none=None),                # no duplicate
-            _result(first=("deprecated", "TESTCTL2")),       # catalog lifecycle
+            _result(first=("deprecated", "TESTCTL2", [])),   # catalog lifecycle + risk_codes
         ])
 
         with pytest.raises(HTTPException) as exc:

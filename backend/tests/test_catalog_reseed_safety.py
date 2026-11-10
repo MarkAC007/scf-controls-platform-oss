@@ -45,6 +45,8 @@ from catalog_models import (  # noqa: E402
     SCFCatalogControl,
     SCFCatalogDomain,
     SCFCatalogEvidence,
+    SCFCatalogRisk,
+    SCFCatalogThreat,
 )
 
 # Every table reseed_catalog clears, by its real SQL name, so a rename cannot
@@ -59,12 +61,16 @@ CLEARED_TABLES = {
         SCFCatalogEvidence,
         SCFCatalogControl,
         SCFCatalogDomain,
+        SCFCatalogRisk,
+        SCFCatalogThreat,
     )
 }
 
 # What a complete DATA_DIR looks like to the seeders: the six inputs plus the
 # metadata file the version resolver reads.
 COMPLETE_INPUTS = {
+    "risks.json": {"catalog_version": "t", "risks": [{"code": "R-XX-1", "title": "Invented"}]},
+    "threats.json": {"catalog_version": "t", "threats": [{"code": "NT-1", "title": "Invented"}]},
     "control_guidance.json": {"controls": []},
     "domains.json": [],
     "erl.json": {},
@@ -292,6 +298,24 @@ async def test_complete_inputs_still_delete_and_reseed(
         if sql.upper().startswith("DELETE FROM")
     }
     assert deleted == CLEARED_TABLES
+    assert seeded_calls == [tmp_path]
+
+
+@pytest.mark.asyncio
+async def test_reseed_keeps_the_risk_tables_when_their_optional_file_is_absent(
+    tmp_path, monkeypatch, fake_db, seeded_calls
+):
+    """risks.json / threats.json are optional, so they cannot block the reseed;
+    the per-table guard still holds: no file to reseed from, no delete."""
+    _write_inputs(tmp_path, omit=("risks.json", "threats.json"))
+    monkeypatch.setattr(catalog_seeder, "DATA_DIR", tmp_path)
+
+    result = await catalog_seeder.reseed_catalog(force=True)
+
+    assert result == {"controls": {"status": "seeded", "count": 3}}
+    kept = {SCFCatalogRisk.__table__.name, SCFCatalogThreat.__table__.name}
+    assert all(fake_db.rows[name] == 10 for name in kept), fake_db.rows
+    assert all(fake_db.rows[name] == 0 for name in CLEARED_TABLES - kept), fake_db.rows
     assert seeded_calls == [tmp_path]
 
 
@@ -535,3 +559,48 @@ def test_import_reports_an_invalid_workbook(tmp_path, monkeypatch, import_task):
     assert isinstance(outcome.result, RuntimeError)
     assert "not a valid SCF catalogue workbook" in str(outcome.result)
     assert catalog_seeder.DATA_DIR == data_dir
+
+
+# ---------------------------------------------------------------------------
+# SCF 2026.3 — the risk / threat catalog seeders tolerate a missing file
+# ---------------------------------------------------------------------------
+
+
+class _CountSession:
+    """A session whose only query is the seeder's COUNT(*), answering 0."""
+
+    def __init__(self):
+        self.added: list = []
+
+    async def execute(self, statement):
+        class _R:
+            def scalar(self_inner):
+                return 0
+        return _R()
+
+    def add_all(self, rows):
+        self.added.extend(rows)
+
+    async def commit(self):
+        pass
+
+
+@pytest.mark.asyncio
+async def test_risk_and_threat_seeders_skip_with_a_warning_when_the_file_is_absent(tmp_path, monkeypatch, caplog):
+    """ISC-12: an extraction from before the Risk Catalog sheet existed writes no
+    risks.json; the seeder must leave the table empty and say what fills it,
+    not fail the install."""
+    monkeypatch.setattr(catalog_seeder, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(catalog_seeder, "_resolve_catalog_version", lambda: "2026.3")
+    session = _CountSession()
+
+    with caplog.at_level("WARNING"):
+        risks = await catalog_seeder.seed_risks_if_empty(session)
+        threats = await catalog_seeder.seed_threats_if_empty(session)
+
+    assert risks["status"] == "skipped" and "risks.json" in risks["message"]
+    assert threats["status"] == "skipped" and "threats.json" in threats["message"]
+    assert session.added == []
+    assert "refresh-risk-catalog" in caplog.text
+    assert "risks.json" not in catalog_seeder.REQUIRED_RESEED_INPUTS
+    assert "threats.json" not in catalog_seeder.REQUIRED_RESEED_INPUTS

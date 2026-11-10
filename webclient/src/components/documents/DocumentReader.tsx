@@ -496,10 +496,24 @@ export default function DocumentReader({
         <div className="doc-superseded-banner" role="status">
           <span className="doc-section-badge status-superseded">Superseded</span>
           <p>
-            <strong>This document is no longer current.</strong> It was produced
-            under a document structure your organisation no longer uses. It is
-            kept so you can read and export it, but it will not be regenerated.
-            The current documents for these controls are on the Document map.
+            <strong>This document is no longer current.</strong>{' '}
+            {doc.superseded_under && doc.superseded_by?.length ? (
+              <>
+                Superseded under the {doc.superseded_under} shape; now covered by{' '}
+                {doc.superseded_by.map((s, i) => (
+                  <span key={s.key}>
+                    {i > 0 && (i === doc.superseded_by!.length - 1 ? ' and ' : ', ')}
+                    <strong className="doc-superseded-successor">{s.title}</strong>
+                  </span>
+                ))}
+                .
+              </>
+            ) : (
+              <>It was produced under a document structure your organisation no longer uses.</>
+            )}{' '}
+            It is kept so you can read and export it, but it will not be
+            regenerated. The current documents for these controls are on the
+            Document map.
           </p>
         </div>
       )}

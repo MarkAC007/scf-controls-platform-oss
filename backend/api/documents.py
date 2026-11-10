@@ -92,6 +92,8 @@ class ScopeOption(BaseModel):
     title: str
     domains: List[str]
     control_count: int
+    #: A grouped procedure's member topic keys; empty for anything else.
+    topics: List[str] = []
 
 
 class GeneratorScopes(BaseModel):
@@ -153,6 +155,49 @@ class ProfileInfo(BaseModel):
     generators: Dict[str, str]
     fold_standards: bool
     bundles: List[Dict[str, Any]]
+    #: The procedures the profile produces in topic mode; empty otherwise.
+    topics: List[Dict[str, Any]] = []
+
+
+class PreviewScope(BaseModel):
+    key: str
+    title: str
+
+
+class PreviewProcedure(BaseModel):
+    key: str
+    title: str
+    #: Set when the organisation has a stored document under this key.
+    document_id: Optional[str] = None
+    lifecycle_status: Optional[str] = None
+    #: Superseded entries: the target structure's procedures that take over.
+    replaced_by: List[PreviewScope] = []
+    #: Created entries: stored procedures whose text the first draft starts from.
+    seeded_from: List[PreviewScope] = []
+    #: Kept entries: superseded today, current again under the target.
+    restored: bool = False
+
+
+class PreviewProcedures(BaseModel):
+    superseded: List[PreviewProcedure] = []
+    created: List[PreviewProcedure] = []
+    kept: List[PreviewProcedure] = []
+
+
+class PreviewCount(BaseModel):
+    #: Current documents the switch would supersede, and how many of those
+    #: are approved or published.
+    superseded: int = 0
+    signed_off: int = 0
+
+
+class ProfilePreviewResponse(BaseModel):
+    current: PreviewScope
+    target: PreviewScope
+    procedures: PreviewProcedures
+    counts: Dict[str, PreviewCount]
+    superseded_total: int = 0
+    signed_off_total: int = 0
 
 
 class GenerationRequestItem(BaseModel):
@@ -202,6 +247,10 @@ class DocumentSummary(BaseModel):
     #: Produced under a document profile the organisation no longer uses.
     #: Kept, readable and exportable, but not its current document.
     superseded: bool = False
+    #: For a superseded document: the display name of the structure that
+    #: superseded it, and the current documents that now cover its controls.
+    superseded_under: Optional[str] = None
+    superseded_by: List[Dict[str, str]] = []
     updated_at: Optional[str] = None
 
 
@@ -366,6 +415,14 @@ def _summary(
 ) -> DocumentSummary:
     staleness = staleness or NOT_STALE
     kind = _scope_kind(document)
+    superseded = bool(
+        profile is not None
+        and not scopes.is_current(profile, document.generator_name, document.domain_id or "")
+    )
+    successors = (
+        scopes.covering(profile, document.generator_name, document.domain_id or "")
+        if superseded else []
+    )
     return DocumentSummary(
         id=str(document.id),
         generator_name=document.generator_name,
@@ -388,10 +445,11 @@ def _summary(
             getattr(document, "scope_domains", None)
             or ([document.domain_id] if kind == "domain" else [])
         ),
-        superseded=bool(
-            profile is not None
-            and not scopes.is_current(profile, document.generator_name, document.domain_id or "")
-        ),
+        superseded=superseded,
+        superseded_under=profile.display_name if superseded else None,
+        superseded_by=[
+            {"key": s.key, "title": s.document_title or s.title} for s in successors
+        ],
         updated_at=document.updated_at.isoformat() if document.updated_at else None,
     )
 
@@ -410,6 +468,8 @@ def _profile_infos() -> List[ProfileInfo]:
             fold_standards=p.fold_standards,
             bundles=[{"key": b.key, "title": b.title, "domains": list(b.domains)}
                      for b in p.bundles],
+            topics=[{"key": t.key, "title": t.title, "topics": [m.key for m in t.members]}
+                    for t in p.topics],
         ))
     return out
 
@@ -507,6 +567,116 @@ async def _scoped_controls(db: AsyncSession, organization_id):
     return rows, domains, pairs
 
 
+def build_profile_preview(
+    current: "scopes.Profile",
+    target: "scopes.Profile",
+    documents: List[Any],
+    domains: List[tuple],
+    pairs: List[tuple],
+) -> ProfilePreviewResponse:
+    """What switching from ``current`` to ``target`` does to stored documents.
+
+    Pure: ``documents`` need only ``id``, ``generator_name``, ``domain_id``,
+    ``title`` and ``lifecycle_status``. Nothing is written; the switch itself
+    stays a settings write and supersession stays a read-time flag.
+    """
+    def in_scope(profile, name):
+        return [
+            s for s in scopes.scopes_for(profile, name, domains, pairs)
+            if any(s.includes(scf_id, ident) for scf_id, ident in pairs)
+        ]
+
+    def label(scope) -> PreviewScope:
+        return PreviewScope(key=scope.key, title=scope.document_title or scope.title)
+
+    counts: Dict[str, PreviewCount] = {}
+    for name in scopes.PROFILED_GENERATORS:
+        count = PreviewCount()
+        for d in documents:
+            if d.generator_name != name:
+                continue
+            key = d.domain_id or ""
+            if scopes.is_current(current, name, key) and not scopes.is_current(target, name, key):
+                count.superseded += 1
+                if d.lifecycle_status in (lifecycle.STATUS_APPROVED, lifecycle.STATUS_PUBLISHED):
+                    count.signed_off += 1
+        counts[name] = count
+
+    name = "procedure"
+    target_scopes = in_scope(target, name)
+    target_keys = {s.key for s in target_scopes}
+    stored = {
+        (d.domain_id or "").upper(): d for d in documents if d.generator_name == name
+    }
+    out = PreviewProcedures()
+    for key, d in stored.items():
+        now = scopes.is_current(current, name, key)
+        then = scopes.is_current(target, name, key)
+        entry = PreviewProcedure(
+            key=key, title=d.title, document_id=str(d.id),
+            lifecycle_status=d.lifecycle_status,
+        )
+        if then:
+            entry.restored = not now
+            out.kept.append(entry)
+        elif now:
+            entry.replaced_by = [
+                label(s) for s in scopes.covering(target, name, key)
+                if s.key in target_keys
+            ]
+            out.superseded.append(entry)
+    for scope in target_scopes:
+        if scope.key in stored:
+            continue
+        out.created.append(PreviewProcedure(
+            key=scope.key, title=scope.document_title or scope.title,
+            seeded_from=[
+                PreviewScope(key=m.key, title=stored[m.key].title)
+                for m in scopes.descendants(scope) if m.key in stored
+            ],
+        ))
+    order = [s.key for s in target_scopes]
+    out.kept.sort(key=lambda e: order.index(e.key) if e.key in order else len(order))
+    out.superseded.sort(key=lambda e: e.title)
+    return ProfilePreviewResponse(
+        current=PreviewScope(key=current.name, title=current.display_name),
+        target=PreviewScope(key=target.name, title=target.display_name),
+        procedures=out,
+        counts=counts,
+        superseded_total=sum(c.superseded for c in counts.values()),
+        signed_off_total=sum(c.signed_off for c in counts.values()),
+    )
+
+
+@router.get(
+    "/organizations/{org_id}/documents/profile-preview",
+    response_model=ProfilePreviewResponse,
+)
+async def preview_profile_switch(
+    org_id: UUID,
+    profile: str = Query(..., description="The document structure to preview switching to"),
+    membership: OrgMembership = Depends(require_org_role("viewer")),
+    db: AsyncSession = Depends(get_db),
+):
+    """What a switch to ``profile`` would supersede, create and keep.
+
+    Read-only. The settings card shows this before the switch is confirmed.
+    """
+    if profile not in scopes.profile_names():
+        raise HTTPException(status_code=422, detail=f"Unknown document profile: {profile}")
+    _, domains, pairs = await _scoped_controls(db, membership.organization_id)
+    documents = (await db.execute(
+        select(GeneratedDocument).where(
+            GeneratedDocument.organization_id == membership.organization_id,
+            GeneratedDocument.generator_name.in_(scopes.PROFILED_GENERATORS),
+        )
+    )).scalars().all()
+    current = _profile_of(await _get_settings(db, membership.organization_id))
+    return build_profile_preview(
+        current, scopes.get_profile(profile), list(documents), domains, pairs,
+    )
+
+
 @router.get("/organizations/{org_id}/documents/scopes", response_model=ScopesResponse)
 async def list_scopes(
     org_id: UUID,
@@ -531,6 +701,7 @@ async def list_scopes(
                     key=scope.key, kind=scope.kind,
                     title=scope.document_title or scope.title,
                     domains=list(scope.domains), control_count=count,
+                    topics=[m.key for m in scope.members],
                 ))
         generators[name] = GeneratorScopes(
             mode=profile.mode_for(name) or scopes.MODE_NONE, scopes=options,

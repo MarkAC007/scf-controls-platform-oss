@@ -24,9 +24,10 @@ session lifecycle; this function owns the correctness.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, Iterable, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from sqlalchemy.orm import Session
 
@@ -41,7 +42,7 @@ from .section_parser import (
     parse_markdown_sections,
     to_section_rows,
 )
-from .three_layer import STATUS_CONFLICT, collect_human_edits, three_way_merge
+from .three_layer import STATUS_CONFLICT, collect_human_edits, strip_markers, three_way_merge
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +73,9 @@ class GenerationResult:
     #: the expected case; a non-empty list means the generated prose asserts a
     #: requirement this organisation has not scoped, which is an audit finding.
     out_of_scope_citations: List[str] = field(default_factory=list)
+    #: Keys of the superseded procedures whose text this document's first
+    #: generation started from. Empty for every other run.
+    seeded_from: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -88,6 +92,7 @@ class GenerationResult:
             "mocked": self.mocked,
             "generation_version": self.generation_version,
             "out_of_scope_citations": list(self.out_of_scope_citations),
+            "seeded_from": list(self.seeded_from),
         }
 
 
@@ -140,7 +145,8 @@ def _change_note(reasons: List[str]) -> str:
 
 
 def _version_change_summary(
-    counts: Dict[str, int], control_count: int, initial: bool
+    counts: Dict[str, int], control_count: int, initial: bool,
+    seeded_from: Sequence[str] = (),
 ) -> Dict[str, Any]:
     """What this generation did, in the shape ``DocumentVersion`` stores.
 
@@ -148,11 +154,14 @@ def _version_change_summary(
     one saying ``{"unchanged": 41, "conflict": 0}`` mean the same thing, and the
     second invites a renderer to write "0 conflicts" as though that were news.
     """
-    return {
+    summary: Dict[str, Any] = {
         "counts": {k: v for k, v in (counts or {}).items() if v},
         "control_count": control_count,
         "initial": initial,
     }
+    if seeded_from:
+        summary["seeded_from"] = list(seeded_from)
+    return summary
 
 
 def _existing_document(session: Session, organization_id: str, generator_name: str,
@@ -193,6 +202,164 @@ def _related_titles(
                           if scope.kind == scopes.KIND_BUNDLE
                           else spec.resolve_title(scope.title))
     return titles
+
+
+def topic_chapters(
+    scope: scopes.Scope,
+    controls: Sequence[Any],
+    domain_names: Dict[str, str],
+) -> Tuple[List[DomainWithControls], List[str]]:
+    """A grouped procedure's chapters, and its members with nothing in scope.
+
+    One chapter per leaf topic the group is made of, in the group's order,
+    presented to the chapter prompt as a domain whose principle is the topic's
+    description -- the same disguise a single topic wears on the single-call
+    path. Each leaf selects its own controls: a group is never flattened into
+    one list, because its members select in different ways.
+
+    A leaf with no controls in scope gets no chapter. It gets a line in the
+    Scope section instead (the second return value), so the document records
+    the scoping decision rather than saying nothing.
+    """
+    chapters: List[DomainWithControls] = []
+    notes: List[str] = []
+    for leaf in scope.leaves():
+        selected = leaf.select(controls)
+        if not selected:
+            notes.append(chaptered.not_applicable_note(leaf.title))
+            continue
+        chapters.append(DomainWithControls(
+            domain=Domain(
+                identifier=leaf.key,
+                name=leaf.title,
+                principle=leaf.description,
+                principle_intent=(
+                    "Operational procedure drawing on: "
+                    + ", ".join(domain_names[d] for d in leaf.domains if d in domain_names)
+                ),
+            ),
+            controls=selected,
+        ))
+    return chapters, notes
+
+
+_HEADING_LINE = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
+
+
+def _section_under(markdown: str, level: int, title: str) -> str:
+    """The body of the first heading of ``level`` named ``title``, or ""."""
+    lines = markdown.splitlines()
+    wanted = title.strip().lower()
+    start = None
+    for i, line in enumerate(lines):
+        m = _HEADING_LINE.match(line)
+        if not m:
+            continue
+        depth = len(m.group(1))
+        if start is None:
+            if depth == level and m.group(2).strip().lower() == wanted:
+                start = i + 1
+        elif depth <= level:
+            return "\n".join(lines[start:i]).strip()
+    return "\n".join(lines[start:]).strip() if start is not None else ""
+
+
+def _without_document_control(markdown: str) -> str:
+    """A procedure's text less its title and Document Control table.
+
+    Version numbers, dates and the change history belong to the document being
+    superseded, not to the one that takes its place.
+    """
+    lines = markdown.splitlines()
+    out: List[str] = []
+    skipping = False
+    for line in lines:
+        m = _HEADING_LINE.match(line)
+        if m and len(m.group(1)) == 1:
+            continue
+        if m and len(m.group(1)) == 2:
+            skipping = m.group(2).strip().lower().lstrip("0123456789. ").startswith("document control")
+        if not skipping:
+            out.append(line)
+    return "\n".join(out).strip()
+
+
+@dataclass(frozen=True)
+class Predecessor:
+    """A stored procedure that covered part of what a group now covers."""
+
+    key: str
+    content: str
+    updated_at: Optional[datetime] = None
+
+
+def chapter_seeds(
+    scope: scopes.Scope, predecessors: Sequence[Predecessor],
+) -> Tuple[Dict[str, str], List[str]]:
+    """Predecessor text for each chapter of a group, and the keys it came from.
+
+    A chapter is one leaf topic. Its seed is the organisation's existing text
+    for that topic: the whole of a procedure stored under the leaf's own key,
+    or that leaf's chapter of a procedure stored under a group between the leaf
+    and ``scope``. When both exist the more recently updated one wins, because
+    it is the one the organisation last worked on.
+
+    Returns ``({leaf key: text}, [keys used, in the group's own order])``.
+    """
+    def age(p: Predecessor) -> float:
+        # Stored timestamps may or may not carry a timezone; compare as numbers.
+        return p.updated_at.timestamp() if p.updated_at else 0.0
+
+    by_key: Dict[str, Predecessor] = {}
+    for p in predecessors:
+        held = by_key.get(p.key.upper())
+        if held is None or age(p) > age(held):
+            by_key[p.key.upper()] = p
+
+    seeds: Dict[str, str] = {}
+    used: List[str] = []
+    order = [d.key for d in scopes.descendants(scope)]
+    for leaf in scope.leaves():
+        candidates: List[Tuple[float, str, str]] = []
+        for member in scopes.descendants(scope):
+            stored = by_key.get(member.key)
+            if stored is None or leaf.key not in {x.key for x in member.leaves()}:
+                continue
+            text = strip_markers(stored.content or "")
+            text = (
+                _without_document_control(text) if member.key == leaf.key
+                else _section_under(text, 3, leaf.title)
+            )
+            if text:
+                candidates.append((age(stored), member.key, text))
+        if candidates:
+            _, key, text = max(candidates, key=lambda c: c[0])
+            seeds[leaf.key] = text
+            if key not in used:
+                used.append(key)
+    used.sort(key=order.index)
+    return seeds, used
+
+
+def _predecessors(session: Session, organization_id: str, generator_name: str,
+                  scope: scopes.Scope) -> List[Predecessor]:
+    """The organisation's stored procedures under any key the group is built from."""
+    from models import GeneratedDocument
+    keys = [d.key for d in scopes.descendants(scope)]
+    if not keys:
+        return []
+    rows = (
+        session.query(GeneratedDocument)
+        .filter(
+            GeneratedDocument.organization_id == organization_id,
+            GeneratedDocument.generator_name == generator_name,
+            GeneratedDocument.domain_id.in_(keys),
+        )
+        .all()
+    )
+    # Read only. The superseded documents are never changed by this.
+    return [Predecessor(key=r.domain_id, content=r.merged_content or "", updated_at=r.updated_at)
+            for r in rows]
 
 
 def _render_tier1(spec: GeneratorSpec, ctx: OrganisationContext) -> tuple:
@@ -334,8 +501,12 @@ def run_generation(
 
     bundle = None
     scope: Optional[scopes.Scope] = None
-    #: Bundled documents only: one DomainWithControls per chapter, in order.
+    #: Bundled documents and grouped procedures only: one DomainWithControls
+    #: per chapter, in order.
     chapters: Optional[List[DomainWithControls]] = None
+    #: Grouped procedures only: a Scope-section line per member topic with
+    #: nothing in scope.
+    scope_notes: List[str] = []
     if mode in (MODE_BUNDLE, MODE_TOPIC):
         domains = [(d.domain.identifier, d.domain.name) for d in ctx.domains]
         scope = scopes.resolve_for_generation(profile, spec.name, stored_domain, domains)
@@ -353,6 +524,18 @@ def run_generation(
         stored_domain = scope.key
         if mode == MODE_BUNDLE:
             chapters = [ctx.domain(d) for d in scope.domains if ctx.domain(d) is not None]
+        elif scope.members:
+            # A group of topics is written a chapter per member, as a bundle
+            # is written a chapter per domain.
+            chapters, scope_notes = topic_chapters(
+                scope, ctx.all_controls,
+                {d.domain.identifier: d.domain.name for d in ctx.domains},
+            )
+            if not chapters:
+                raise PipelineError(
+                    f"No controls in scope for the {scope.title} topic. Scope its "
+                    "controls before generating its procedure."
+                )
         else:
             selected = scope.select(ctx.all_controls)
             if not selected:
@@ -400,6 +583,28 @@ def run_generation(
 
     existing = _existing_document(session, organization_id, spec.name, stored_domain)
     generation_version = existing.generation_version if existing else 0
+
+    # A group written for the first time starts from the procedures it
+    # supersedes, so the organisation's real steps carry forward instead of
+    # being reinvented. The seeds are stored with the chapters and handed back
+    # on every later run: they are part of each chapter's prompt, and a prompt
+    # that lost them would rewrite the chapter from nothing.
+    seeds: Dict[str, str] = {}
+    seeded_from: List[str] = []
+    if scope is not None and scope.members and chapters is not None:
+        if existing is None:
+            seeds, seeded_from = chapter_seeds(
+                scope, _predecessors(session, organization_id, spec.name, scope))
+            wanted = {ch.domain.identifier for ch in chapters}
+            seeds = {k: v for k, v in seeds.items() if k in wanted}
+            if not seeds:
+                seeded_from = []
+        else:
+            seeds = {
+                ident: entry["seed"]
+                for ident, entry in (getattr(existing, "chapter_cache", None) or {}).items()
+                if isinstance(entry, dict) and entry.get("seed")
+            }
     if chapters is not None:
         scope_controls = [c for ch in chapters for c in ch.controls]
     else:
@@ -416,6 +621,8 @@ def run_generation(
             spec, ctx, scope, chapters, profile, related,
             generation_version=generation_version,
             existing_content=(existing.merged_content if existing else ""),
+            scope_notes=scope_notes,
+            seeds=seeds,
         )
         system_prompt = tier2.SYSTEM_PROMPT
         title = chaptered.document_title(spec, scope)
@@ -492,6 +699,8 @@ def run_generation(
                 else (getattr(existing, "chapter_cache", None) or {})
             ),
             progress=progress,
+            scope_notes=scope_notes,
+            seeds=seeds,
         )
         content, model_id, mocked = bundled.content, bundled.model_id, bundled.mocked
         new_chapter_cache = bundled.chapter_cache
@@ -601,7 +810,10 @@ def run_generation(
             actor_user_id=user_id,
             actor_email=user_email,
             trigger="generation",
-            reason="Document generated",
+            reason=(
+                "Document generated; seeded from " + ", ".join(seeded_from)
+                if seeded_from else "Document generated"
+            ),
         ))
         action = "created"
     else:
@@ -659,6 +871,7 @@ def run_generation(
             counts,
             len(scope_controls),
             existing is None,
+            seeded_from,
         ),
     ))
 

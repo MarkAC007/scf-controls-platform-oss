@@ -51,6 +51,8 @@ from catalog_models import (  # noqa: E402
     SCFCatalogControl,
     SCFCatalogDomain,
     SCFCatalogEvidence,
+    SCFCatalogRisk,
+    SCFCatalogThreat,
 )
 from models import CatalogImportRun, OrganizationCatalogState  # noqa: E402
 from schemas_catalog_upgrade import (  # noqa: E402
@@ -78,6 +80,8 @@ TABLES = (
     SCFCatalogDomain,
     SCFCatalogEvidence,
     SCFCatalogAssessmentObjective,
+    SCFCatalogRisk,
+    SCFCatalogThreat,
     CapabilityTheme,
     CapabilityThemeMapping,
     CatalogImportRun,
@@ -89,6 +93,8 @@ ENTITY_TABLE_NAMES = {
     "scf_catalog_domains",
     "scf_catalog_evidence",
     "scf_catalog_assessment_objectives",
+    "scf_catalog_risks",
+    "scf_catalog_threats",
 }
 
 
@@ -1266,3 +1272,36 @@ async def test_revert_leaves_framework_registry_untouched():
     assert rows[0].source == "apply"
     assert rows[0].updated_at == T0
     assert "catalog_framework_registries" not in session.deleted_tables
+
+
+# ---------------------------------------------------------------------------
+# Risk / Threat Catalog entities ride the generic path (ISC-13, ISC-44)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_risks_and_threats_apply_from_the_stored_diff():
+    """An added risk and a deprecated threat come from DiffDetail alone; the
+    allowlist keeps lifecycle/version columns out of the payload's hands and no
+    data directory is consulted."""
+    live_threat = SCFCatalogThreat(code="NT-1", grouping="Natural", title="Old threat",
+                                   description=None, status="active", retired_in_version=None,
+                                   catalog_version=FROM_V, created_at=T0, updated_at=T0)
+    session = _session()
+    session.tables[SCFCatalogThreat] = [live_threat]
+    run = _run()
+    detail = _detail({
+        CatalogEntityType.RISKS: EntityDiff(added=[AddedEntity(key="R-XX-1", name="Example risk", data={
+            "grouping": "Example", "old_code": None, "title": "Example risk",
+            "description": "d", "nist_csf_function": "Govern",
+            "status": "deprecated", "catalog_version": "9999.9",   # poisoned, filtered
+        })]),
+        CatalogEntityType.THREATS: EntityDiff(deprecated=[DeprecatedEntity(key="NT-1", name="Old threat")]),
+    })
+    await ca.apply_catalog_run(session, run, detail, themes_json=THEMES_JSON)
+
+    risk = session.tables[SCFCatalogRisk][0]
+    assert (risk.code, risk.title, risk.grouping) == ("R-XX-1", "Example risk", "Example")
+    assert risk.status == "active" and risk.catalog_version == TO_V
+    assert live_threat.status == "deprecated" and live_threat.retired_in_version == TO_V
+    assert live_threat.title == "Old threat"

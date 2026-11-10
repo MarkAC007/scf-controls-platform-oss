@@ -54,18 +54,38 @@ def tracked_values(row: VendorCompensatingControl) -> Dict[str, object]:
     return {f: getattr(row, f) for f in COMPENSATING_TRACKED_FIELDS}
 
 
+def catalog_linked_codes(risk_codes, risk_ratings) -> Set[str]:
+    """The catalogue risk codes that count as LINKED to a control for governance.
+
+    A 2026.3+ catalogue maps every control to each risk it does not rate
+    Unlikely (median 13 risks per control), and records the rating. For the
+    compensating-control gate only a *Likely* rating is a link: a merely
+    Possible one must not make an accepted risk a valid justification for
+    living with a material gap. Catalogues without ratings (pre-2026.3 summary
+    columns) have no such distinction and every code counts.
+    """
+    codes = set(risk_codes or [])
+    if risk_ratings:
+        return {c for c in codes if str(risk_ratings.get(c, "")).lower() == "likely"}
+    return codes
+
+
 async def linked_risk_codes(db: AsyncSession, org_id: UUID, scf_id: str) -> Set[str]:
-    """The risks linked to this control: the catalogue's and the organisation's own."""
-    catalog = await db.scalar(
-        select(SCFCatalogControl.risk_codes).where(SCFCatalogControl.scf_id == scf_id)
-    )
+    """The risks linked to this control: the catalogue's (Likely-rated when the
+    catalogue carries ratings) and the organisation's own links."""
+    catalog = (await db.execute(
+        select(SCFCatalogControl.risk_codes, SCFCatalogControl.risk_ratings).where(
+            SCFCatalogControl.scf_id == scf_id
+        )
+    )).first()
     custom = (await db.execute(
         select(CustomRiskControlMapping.risk_code).where(
             CustomRiskControlMapping.organization_id == org_id,
             func.upper(CustomRiskControlMapping.scf_id) == scf_id,
         )
     )).scalars().all()
-    return set(catalog or []) | set(custom)
+    linked = catalog_linked_codes(catalog[0], catalog[1]) if catalog else set()
+    return linked | set(custom)
 
 
 async def is_material_here(db: AsyncSession, org_id: UUID, scf_id: str) -> bool:

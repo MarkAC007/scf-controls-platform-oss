@@ -18,7 +18,18 @@ They are git-ignored. See the deployment guide (https://docs.scfcontrolsplatform
 - `erl.json` - Evidence Request List entries
 - `assessment_objectives.json` - Assessment objectives for controls
 - `frameworks.json` / `controls_mapping.json` - Framework mapping definitions
+- `risks.json` - SCF Risk Catalog (2026.3+ workbooks; code, grouping, title, description, `old_code`)
+- `threats.json` - SCF Threat Catalog (2026.3+ workbooks)
 - `catalog_meta.json` - Importer-written metadata (detected SCF version + extracted counts)
+
+> `risks.json` and `threats.json` are written only when the workbook carries the
+> Risk Catalog / Threat Catalog sheets (SCF 2026.3 onwards). From that release the
+> per-control risk and threat mapping comes from the publisher's
+> Unlikely / Possible / Likely rating columns: a code is mapped when rated Possible
+> or Likely, and the rating itself is kept alongside (`risk_ratings`,
+> `threat_ratings` on each control). An install that was already on 2026.3 before
+> these files existed loads them with `python -m cli.admin refresh-risk-catalog`
+> (see `backend/cli/README.md`).
 
 > The curated, **non-SCF** files in this directory (`capability_themes.json`,
 > `collection_interfaces.json`, `evidence_templates.json`, `system_collection_recipes.json`)

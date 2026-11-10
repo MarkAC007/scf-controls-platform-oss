@@ -20,13 +20,16 @@ import { answerConfirm, confirmClosed, confirmWrapper, findConfirm } from '../..
 import RiskDetailPage from '../RiskDetailPage'
 import {
   addCustomRiskControl,
+  createOrUpdateRiskAssessment,
   fetchScopedControlsPage,
   getControlsForRisk,
   getCustomRiskControlLinks,
+  getRiskCatalog,
   removeCustomRiskControl,
   setCustomRiskControlDocument,
 } from '../../data/apiClient'
 import type { RiskAssessment, RiskCodesFile, UserSimple } from '../../types'
+import { catalogCodeNote } from '../../hooks/useRiskCatalog'
 
 // RiskDetailPage and the panels it hosts read server state through react-query.
 function queryWrapper() {
@@ -38,7 +41,9 @@ function queryWrapper() {
 
 // --- Fixtures ---------------------------------------------------------------
 
+// Invented rows throughout: SCF titles are CC BY-ND and never leave the database.
 const riskCodes: RiskCodesFile = {
+  catalog_version: 'test',
   categories: {
     GV: { name: 'Governance', color: '#6366f1' },
     ORG: { name: 'Custom', color: '#6b7280' },
@@ -53,6 +58,7 @@ const riskCodes: RiskCodesFile = {
       category: 'GV' as any,
       title: 'Policy gap',
       description: 'Missing policies.',
+      old_code: 'R-GV-9',
     },
     'R-ORG-1': {
       category: 'ORG' as any,
@@ -61,6 +67,14 @@ const riskCodes: RiskCodesFile = {
     },
   },
 }
+
+/** What GET /api/catalog/risks serves: the SCF rows alone, no custom ones. */
+const servedRiskCatalog: RiskCodesFile = {
+  catalog_version: 'test',
+  categories: { GV: riskCodes.categories.GV },
+  codes: { 'R-GV-1': riskCodes.codes['R-GV-1'], 'R-GV-2': riskCodes.codes['R-GV-2'] },
+}
+const servedThreatCatalog: RiskCodesFile = { catalog_version: 'test', categories: {}, codes: {} }
 
 const baseAssessment: RiskAssessment = {
   risk_code: 'R-GV-1',
@@ -99,6 +113,8 @@ const users: UserSimple[] = [
 ]
 
 vi.mock('../../data/apiClient', () => ({
+  // No `source` here: the shape before 2026.3, which the page must still read
+  // (catalogue links on SCF risks, organisation links on custom ones).
   getControlsForRisk: vi.fn().mockResolvedValue({
     risk_code: 'R-GV-1',
     total_catalog_controls: 2,
@@ -141,6 +157,9 @@ vi.mock('../../data/apiClient', () => ({
   setCustomRiskControlDocument: vi.fn().mockResolvedValue(undefined),
   acceptRisk: vi.fn(),
   withdrawRiskAcceptance: vi.fn(),
+  // SCF 2026.3: the catalogue comes from the server (RiskDashboard tests render through it)
+  getRiskCatalog: vi.fn(async () => servedRiskCatalog),
+  getThreatCatalog: vi.fn(async () => servedThreatCatalog),
 }))
 
 vi.mock('../../data/documentsApi', async (importOriginal) => ({
@@ -543,6 +562,97 @@ describe('RiskDetailPage — custom risk', () => {
   })
 })
 
+// ─── SCF risks take organisation control links (2026.3) ───────────────────
+
+describe('RiskDetailPage — control links on an SCF risk', () => {
+  const mixed = {
+    risk_code: 'R-GV-1',
+    total_catalog_controls: 3,
+    catalog_control_ids: ['GOV-01', 'GOV-04', 'AST-02'],
+    sources: { 'GOV-01': 'catalog', 'GOV-04': 'catalog', 'AST-02': 'org' },
+    ratings: { 'GOV-01': 'likely', 'GOV-04': 'possible' },
+    scoped_controls: [
+      { scf_id: 'GOV-01', control_name: 'Governance Program', implementation_status: 'in_progress', priority: null, target_date: null, source: 'catalog', rating: 'likely' },
+      { scf_id: 'GOV-04', control_name: 'Security Responsibilities', implementation_status: 'implemented', priority: null, target_date: null, source: 'catalog', rating: 'possible' },
+      { scf_id: 'AST-02', control_name: 'Asset Inventories', implementation_status: 'implemented', priority: null, target_date: null, source: 'org', rating: null },
+    ],
+  }
+
+  it('offers + Add Control on an SCF risk once the organisation links have loaded', async () => {
+    renderPage({ assessment: baseAssessment })
+    expect(await screen.findByRole('button', { name: '+ Add Control' })).toBeInTheDocument()
+    expect(getCustomRiskControlLinks).toHaveBeenCalledWith('R-GV-1', 'org-1')
+  })
+
+  it('keeps + Add Control back while the links load, and on a failed read, for an SCF risk too', async () => {
+    vi.mocked(getCustomRiskControlLinks).mockRejectedValueOnce(new Error('Links unavailable'))
+    renderPage({ assessment: baseAssessment })
+    expect(await screen.findByRole('alert')).toHaveTextContent('Links unavailable')
+    expect(screen.queryByRole('button', { name: '+ Add Control' })).toBeNull()
+  })
+
+  it('shows the remove button only on rows the organisation linked, with each link source named', async () => {
+    vi.mocked(getControlsForRisk).mockResolvedValueOnce(mixed as never)
+    renderPage({ assessment: baseAssessment })
+    expect(await screen.findByRole('button', { name: 'Remove AST-02' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Remove GOV-01' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Remove GOV-04' })).toBeNull()
+    const chips = Array.from(document.querySelectorAll('.risk-link-source')).map((c) => c.textContent)
+    expect(chips).toEqual(['Likely', 'Possible', 'Org link'])
+    expect(screen.getByText(/2 mapped in SCF catalog/)).toHaveTextContent('1 linked by your organisation')
+  })
+
+  it('links a control to an SCF risk through the same endpoint as a custom risk', async () => {
+    vi.mocked(addCustomRiskControl).mockClear()
+    vi.mocked(fetchScopedControlsPage).mockResolvedValue(searchPage([{ scf_id: 'TESTCONTROL', control_name: 'Test control' }]))
+    renderPage({ assessment: baseAssessment })
+    fireEvent.click(await screen.findByRole('button', { name: '+ Add Control' }))
+    fireEvent.change(screen.getByPlaceholderText('Search controls by ID or name...'), { target: { value: 'TEST' } })
+    fireEvent.click(await screen.findByRole('button', { name: 'TESTCONTROL — Test control' }))
+    await waitFor(() => expect(addCustomRiskControl).toHaveBeenCalledWith('R-GV-1', 'TESTCONTROL', 'org-1', null))
+    vi.mocked(fetchScopedControlsPage).mockResolvedValue(searchPage([]))
+  })
+
+  it('reads a response from before `source` existed as catalogue-only on an SCF risk', async () => {
+    renderPage({ assessment: baseAssessment })
+    await screen.findByText('Governance Program')
+    expect(screen.queryByRole('button', { name: /^Remove / })).toBeNull()
+    expect(document.querySelectorAll('.risk-link-source')).toHaveLength(0)
+  })
+})
+
+describe('catalogCodeNote — what the register says about a row against the catalogue', () => {
+  it('badges a code the catalogue does not define, naming the version', () => {
+    expect(catalogCodeNote('R-SA-3', riskCodes)).toEqual({ kind: 'missing', label: 'not in test' })
+  })
+
+  it('badges a code the publisher renumbered, naming its successor', () => {
+    expect(catalogCodeNote('R-GV-9', riskCodes)).toEqual({ kind: 'renumbered', label: 'renumbered → R-GV-2', successor: 'R-GV-2' })
+  })
+
+  it('says nothing for custom risks, for defined codes, or while the catalogue is empty', () => {
+    expect(catalogCodeNote('R-ORG-7', riskCodes)).toBeNull()
+    expect(catalogCodeNote('R-GV-1', riskCodes)).toBeNull()
+    expect(catalogCodeNote('R-SA-3', { categories: {}, codes: {} })).toBeNull()
+  })
+
+  it('treats a code the publisher reused as current, not renumbered', () => {
+    // 2026.3: R-AM-3 is a live risk AND the old code of R-AI-5.
+    const reused: RiskCodesFile = {
+      ...riskCodes,
+      codes: { ...riskCodes.codes, 'R-GV-9': { category: 'GV' as any, title: 'Reused code', description: 'Invented.' } },
+    }
+    expect(catalogCodeNote('R-GV-9', reused)).toBeNull()
+  })
+
+  it('renders the note as a header chip on the detail page, and offers no Add Control there', async () => {
+    renderPage({ assessment: { ...baseAssessment, risk_code: 'R-SA-3' } as RiskAssessment })
+    expect(document.querySelector('.risk-catalog-note')?.textContent).toBe('not in test')
+    await waitFor(() => expect(getCustomRiskControlLinks).toHaveBeenCalledWith('R-SA-3', 'org-1'))
+    expect(screen.queryByRole('button', { name: '+ Add Control' })).toBeNull()
+  })
+})
+
 // ─── Risk acceptance + standards exceptions (PIG R7) ─────────────────────
 
 describe('RiskDetailPage — risk acceptance', () => {
@@ -749,6 +859,38 @@ describe('RiskDashboard — bare arrival lands on list, not detail', () => {
     })
     // Detail page is rendered (breadcrumb present)
     expect(screen.getByText(/Risk Register/i, { selector: 'button, [role="button"]' })).toBeInTheDocument()
+  })
+})
+
+describe('RiskDashboard — the catalogue arrives asynchronously', () => {
+  beforeEach(() => {
+    vi.mocked(createOrUpdateRiskAssessment).mockClear()
+  })
+
+  it('creates the missing SCF rows even when the catalogue resolves after the assessments', async () => {
+    let serve: (c: RiskCodesFile) => void = () => {}
+    vi.mocked(getRiskCatalog).mockReturnValueOnce(new Promise((resolve) => { serve = resolve }))
+    const { default: RiskDashboard } = await import('../RiskDashboard')
+    await act(async () => {
+      render(<RiskDashboard organizationId="org-1" riskItem={null} onRiskItemChange={vi.fn()} />, { wrapper: queryWrapper() })
+    })
+    // Assessments (R-GV-1 only) and custom definitions are in; the catalogue is not.
+    expect(createOrUpdateRiskAssessment).not.toHaveBeenCalled()
+    await act(async () => { serve(servedRiskCatalog) })
+    await waitFor(() =>
+      expect(createOrUpdateRiskAssessment).toHaveBeenCalledWith({ risk_code: 'R-GV-2', treatment_status: 'identified' }, 'org-1'),
+    )
+    expect(vi.mocked(createOrUpdateRiskAssessment).mock.calls.map((c) => c[0].risk_code)).toEqual(['R-GV-2'])
+  })
+
+  it('says the catalogue is not loaded, and what loads it, when the server has no rows', async () => {
+    vi.mocked(getRiskCatalog).mockResolvedValueOnce({ catalog_version: null, categories: {}, codes: {} })
+    const { default: RiskDashboard } = await import('../RiskDashboard')
+    await act(async () => {
+      render(<RiskDashboard organizationId="org-1" riskItem={null} onRiskItemChange={vi.fn()} />, { wrapper: queryWrapper() })
+    })
+    expect(await screen.findByRole('status')).toHaveTextContent('refresh-risk-catalog')
+    expect(createOrUpdateRiskAssessment).not.toHaveBeenCalled()
   })
 })
 

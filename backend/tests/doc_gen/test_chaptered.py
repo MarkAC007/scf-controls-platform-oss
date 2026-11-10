@@ -190,3 +190,211 @@ class TestGenerateBundle:
         assert "policy-statements.identification-authentication" in ids
         assert "policy-statements.cryptographic-protections.requirements" in ids
         assert out.content.startswith("> **MOCK OUTPUT**")
+
+
+PROCEDURE_FRAME = """## Document Control
+
+| Field | Value |
+|-------|-------|
+| **Version** | 1.0 |
+
+## Purpose
+
+Why.
+
+## Scope and Applicability
+
+What.
+
+## Prerequisites
+
+Before.
+
+## Exception Handling
+
+Unless.
+
+## Records and Retention
+
+Kept.
+"""
+
+GROUP = scopes.resolve_key("T-ACCESS-MGMT")
+ACTIVITIES = [_chapter("T-ACCESS", "Joiners, Movers & Leavers", "IAC-04", "HRS-08"),
+              _chapter("T-IDENTITY", "Authentication, Privileged Access & Access Review", "IAC-02")]
+NOTE = chaptered.not_applicable_note("Physical Access & Visitor Control")
+
+
+class TestGroupedProcedures:
+    """A procedure for a group of topics is written a chapter per topic."""
+
+    def test_procedures_have_a_chapter_layout(self):
+        layout = chaptered.layout_for(get_generator("procedure"))
+        assert (layout.core_heading, layout.insert_before, layout.identifier_prefix) == (
+            "Procedure Steps", "Exception Handling", "PRO")
+
+    def test_the_steps_go_between_prerequisites_and_exceptions(self):
+        doc = chaptered.assemble(
+            PROCEDURE_FRAME, [("Joiners, Movers & Leavers", "#### Grant access\n\nx [IAC-04]")],
+            chaptered.LAYOUTS["procedure"],
+        )
+        ids = _ids(doc)
+        assert ids.index("prerequisites") < ids.index("procedure-steps") < ids.index("exception-handling")
+        assert "procedure-steps.joiners-movers-leavers.grant-access" in ids
+
+    def test_a_topic_with_nothing_in_scope_is_named_in_the_scope_section(self):
+        doc = chaptered.assemble(
+            PROCEDURE_FRAME, [("A", "#### B\n\nc")], chaptered.LAYOUTS["procedure"], [NOTE],
+        )
+        assert NOTE == ("Physical Access & Visitor Control: Not applicable in this "
+                        "organisation's scope — see the Statement of Applicability.")
+        scope_section = doc[doc.index("## Scope and Applicability"):doc.index("## Prerequisites")]
+        assert f"- {NOTE}" in scope_section
+        assert doc.count(NOTE) == 1
+
+    def test_the_note_is_not_repeated_when_the_frame_already_wrote_it(self):
+        frame = PROCEDURE_FRAME.replace("What.", f"What.\n\n- {NOTE}")
+        doc = chaptered.assemble(frame, [("A", "#### B\n\nc")], chaptered.LAYOUTS["procedure"], [NOTE])
+        assert doc.count(NOTE) == 1
+
+    def test_without_a_scope_section_the_note_opens_the_steps(self):
+        frame = PROCEDURE_FRAME.replace("## Scope and Applicability\n\nWhat.\n\n", "")
+        doc = chaptered.assemble(frame, [("A", "#### B\n\nc")], chaptered.LAYOUTS["procedure"], [NOTE])
+        assert doc.index("## Procedure Steps") < doc.index(NOTE) < doc.index("### A")
+
+    def test_no_notes_leaves_the_frame_as_written(self):
+        layout = chaptered.LAYOUTS["procedure"]
+        assert chaptered.assemble(PROCEDURE_FRAME, [("A", "#### B\n\nc")], layout) == \
+            chaptered.assemble(PROCEDURE_FRAME, [("A", "#### B\n\nc")], layout, [])
+
+    def test_the_frame_names_its_activities_and_the_ones_out_of_scope(self):
+        prompt = chaptered.build_frame_prompt(
+            get_generator("procedure"), CTX, GROUP, ACTIVITIES, ["Access Control Policy"],
+            scope_notes=[NOTE],
+        )
+        assert "PRO-T-ACCESS-MGMT-2026" in prompt
+        assert "- Joiners, Movers & Leavers: " in prompt
+        # Topic keys are internal: outside the document identifier they must
+        # not reach the model, or they turn up in the prose.
+        assert "T-ACCESS —" not in prompt and "T-IDENTITY" not in prompt
+        assert f"- {NOTE}" in prompt
+        assert "Do NOT write a Procedure Steps section" in prompt
+        assert "- Access Control Policy" in prompt
+
+    def test_the_chapter_prompt_is_about_one_activity(self):
+        prompt = chaptered.build_chapter_prompt(
+            get_generator("procedure"), CTX, GROUP, ACTIVITIES[0], scopes.get_profile("compact"),
+        )
+        assert "Joiners, Movers & Leavers" in prompt
+        assert "IAC-04" in prompt and "IAC-02" not in prompt
+
+    def test_a_topic_leaving_scope_changes_the_fingerprint(self):
+        # Otherwise the document would not read as stale when a whole member
+        # topic is descoped, and its not-applicable line would never appear.
+        spec, profile = get_generator("procedure"), scopes.get_profile("compact")
+        before = chaptered.fingerprint_prompt(spec, CTX, GROUP, ACTIVITIES[:1], profile, [])
+        after = chaptered.fingerprint_prompt(
+            spec, CTX, GROUP, ACTIVITIES[:1], profile, [], scope_notes=[NOTE])
+        assert before != after
+
+    def test_each_activity_is_written_once_and_cached_by_topic_key(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(tier2, "is_mock_mode", lambda: False)
+        monkeypatch.setattr(tier2, "resolve_model", lambda: "test-model")
+
+        def fake(prompt, *, label):
+            calls.append(label)
+            return PROCEDURE_FRAME if label.endswith(":frame") else "#### Grant access\n\nDo. [IAC-04]"
+
+        monkeypatch.setattr(tier2, "invoke_model", fake)
+        out = chaptered.generate_bundle(
+            get_generator("procedure"), CTX, GROUP, ACTIVITIES, scopes.get_profile("compact"), [],
+            scope_notes=[NOTE],
+        )
+        assert calls == ["procedure:T-ACCESS-MGMT:T-ACCESS", "procedure:T-ACCESS-MGMT:T-IDENTITY",
+                         "procedure:T-ACCESS-MGMT:frame"]
+        assert set(out.chapter_cache) == {"T-ACCESS", "T-IDENTITY"}
+        assert "### Joiners, Movers & Leavers" in out.content
+        assert "### Authentication, Privileged Access & Access Review" in out.content
+        assert f"- {NOTE}" in out.content
+
+    def test_mock_output_has_the_procedure_sections(self):
+        if not tier2.is_mock_mode():
+            pytest.skip("an API key is configured in this environment")
+        out = chaptered.generate_bundle(
+            get_generator("procedure"), CTX, GROUP, ACTIVITIES, scopes.get_profile("compact"), [],
+            scope_notes=[NOTE],
+        )
+        ids = _ids(out.content)
+        assert ids.index("procedure-steps") < ids.index("exception-handling")
+        assert "procedure-steps.joiners-movers-leavers" in ids
+        assert NOTE in out.content
+
+
+class TestSeededChapters:
+    """A new group's chapters start from the procedures the group supersedes."""
+
+    SEED = "## Procedure Steps\n\n1. The service desk raises a ticket in Halo."
+
+    def _prompt(self, seed=""):
+        return chaptered.build_chapter_prompt(
+            get_generator("procedure"), CTX, GROUP, ACTIVITIES[0],
+            scopes.get_profile("compact"), seed=seed,
+        )
+
+    def test_no_seed_leaves_the_prompt_exactly_as_it_was(self):
+        # Chapter caches are keyed on the prompt: a changed byte here would
+        # rewrite every cached chapter of every grouped procedure.
+        assert self._prompt("") == chaptered.build_chapter_prompt(
+            get_generator("procedure"), CTX, GROUP, ACTIVITIES[0], scopes.get_profile("compact"))
+        assert "EXISTING PROCEDURE" not in self._prompt("")
+
+    def test_the_seed_reaches_the_chapter_prompt(self):
+        prompt = self._prompt(self.SEED)
+        assert "EXISTING PROCEDURE FOR THIS ACTIVITY" in prompt
+        assert "The service desk raises a ticket in Halo." in prompt
+        assert prompt.index("EXISTING PROCEDURE") > prompt.index("IAC-04")
+
+    def test_a_long_seed_is_cut_not_sent_whole(self):
+        prompt = self._prompt("x" * (chaptered.SEED_LIMIT + 5000))
+        assert prompt.count("x" * 1000) <= chaptered.SEED_LIMIT // 1000
+
+    def test_a_seed_changes_the_fingerprint(self):
+        spec, profile = get_generator("procedure"), scopes.get_profile("compact")
+        plain = chaptered.fingerprint_prompt(spec, CTX, GROUP, ACTIVITIES[:1], profile, [])
+        same = chaptered.fingerprint_prompt(spec, CTX, GROUP, ACTIVITIES[:1], profile, [], seeds={})
+        seeded = chaptered.fingerprint_prompt(
+            spec, CTX, GROUP, ACTIVITIES[:1], profile, [],
+            seeds={ACTIVITIES[0].domain.identifier: self.SEED})
+        assert plain == same != seeded
+
+    def test_the_seed_is_kept_with_the_chapter_so_a_later_run_reuses_it(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(tier2, "is_mock_mode", lambda: False)
+        monkeypatch.setattr(tier2, "resolve_model", lambda: "test-model")
+
+        def fake(prompt, *, label):
+            calls.append(label)
+            return PROCEDURE_FRAME if label.endswith(":frame") else "#### Grant access\n\nx [IAC-04]"
+
+        monkeypatch.setattr(tier2, "invoke_model", fake)
+        spec, profile = get_generator("procedure"), scopes.get_profile("compact")
+        ident = ACTIVITIES[0].domain.identifier
+        first = chaptered.generate_bundle(
+            spec, CTX, GROUP, ACTIVITIES, profile, [], seeds={ident: self.SEED})
+        assert first.chapter_cache[ident]["seed"] == self.SEED
+        assert all("seed" not in v for k, v in first.chapter_cache.items() if k != ident)
+
+        # What the pipeline does on every later run: hand the stored seeds back.
+        stored = {k: v["seed"] for k, v in first.chapter_cache.items() if v.get("seed")}
+        calls.clear()
+        second = chaptered.generate_bundle(
+            spec, CTX, GROUP, ACTIVITIES, profile, [],
+            chapter_cache=first.chapter_cache, seeds=stored)
+        assert sorted(second.reused_chapters) == sorted(a.domain.identifier for a in ACTIVITIES)
+        assert second.chapter_cache[ident]["seed"] == self.SEED
+        # Without them the chapter's prompt changes and it is written again.
+        calls.clear()
+        chaptered.generate_bundle(
+            spec, CTX, GROUP, ACTIVITIES, profile, [], chapter_cache=first.chapter_cache)
+        assert any(label.endswith(f":{ident}") for label in calls)

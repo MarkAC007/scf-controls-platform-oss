@@ -74,7 +74,10 @@ from catalog_models import (
     SCFCatalogControl,
     SCFCatalogDomain,
     SCFCatalogEvidence,
+    SCFCatalogRisk,
+    SCFCatalogThreat,
 )
+from services.risk_catalog import RISK_COMPARED_FIELDS, THREAT_COMPARED_FIELDS
 from models import CatalogImportRun, OrganizationCatalogState
 from schemas_catalog_upgrade import (
     CatalogEntityType,
@@ -217,6 +220,10 @@ ENTITY_SPECS: Tuple[_EntitySpec, ...] = (
         "ao_id",
         AO_COMPARED_FIELDS,
     ),
+    # The Risk / Threat Catalogs ride the same generic path: added / changed /
+    # deprecated / resurrected from the stored diff, never from a data dir.
+    _EntitySpec(CatalogEntityType.RISKS, SCFCatalogRisk, "code", RISK_COMPARED_FIELDS),
+    _EntitySpec(CatalogEntityType.THREATS, SCFCatalogThreat, "code", THREAT_COMPARED_FIELDS),
 )
 
 # Revert consumes exactly these entities. FRAMEWORK_MAPPINGS is informational

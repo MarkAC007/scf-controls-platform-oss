@@ -659,6 +659,8 @@ async def list_scoped_controls_paginated(
             "risk_threat_mapping": {
                 "risk_codes": catalog.risk_codes or [],
                 "threat_codes": catalog.threat_codes or [],
+                "risk_ratings": catalog.risk_ratings,
+                "threat_ratings": catalog.threat_ratings,
             },
         })
 

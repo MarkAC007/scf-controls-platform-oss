@@ -118,6 +118,8 @@ def _catalog_control(scf_id: str = CONTROL_ID) -> SimpleNamespace:
         scrm_tier3_tactical="t3",
         risk_codes=["R-1"],
         threat_codes=["T-1"],
+        risk_ratings=None,
+        threat_ratings=None,
     )
 
 

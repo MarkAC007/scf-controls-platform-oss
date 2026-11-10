@@ -7,6 +7,13 @@ covers a bundle of domains, and procedures cover an operational topic instead.
 This module turns that file into :class:`Scope` records the pipeline, the
 staleness check and the API all resolve the same way.
 
+Procedures compress with the profile as policies do. The file declares leaf
+topics once, then one topic set per bundled profile; each smaller set is made
+of unions of the entries of the set before it. A union is a *group* scope: it
+holds its member scopes and asks them, rather than copying their selectors
+into one list, because members select in different ways (a whole domain, or
+named control families within one).
+
 A scope's ``key`` is what ``generated_documents.domain_id`` stores: an SCF
 domain identifier ("IAC") for a domain document, or a prefixed bundle or topic
 key ("B-ACCESS", "T-INCIDENT") otherwise. The prefixes keep the two disjoint,
@@ -18,7 +25,7 @@ import functools
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import yaml
 
@@ -64,12 +71,29 @@ class Scope:
     #: Overrides "<title> Policy" for a document that is not named after its
     #: scope, such as the essentials manual.
     document_title: Optional[str] = None
+    #: Group topics only: the scopes this one is a union of, in document order.
+    #: ``domains`` is then the union of theirs, for callers that walk domains,
+    #: but membership is always decided by the members themselves.
+    members: Tuple["Scope", ...] = ()
+    #: Whole-domain topics only: earlier family topics whose controls this one
+    #: leaves to them (``exclude_topics``).
+    excludes: Tuple["Scope", ...] = ()
 
     def includes(self, scf_id: str, domain_identifier: str) -> bool:
         """Whether a scoped control belongs to this scope."""
+        if self.members:
+            return any(m.includes(scf_id, domain_identifier) for m in self.members)
         if self.controls:
-            return any(scf_id == c or scf_id.startswith(c + ".") for c in self.controls)
-        return domain_identifier in self.domains
+            return any(_in_family(scf_id, c) for c in self.controls)
+        if domain_identifier not in self.domains:
+            return False
+        return not any(e.includes(scf_id, domain_identifier) for e in self.excludes)
+
+    def leaves(self) -> Tuple["Scope", ...]:
+        """The leaf topics this scope is made of; itself when it is one."""
+        if not self.members:
+            return (self,)
+        return tuple(leaf for m in self.members for leaf in m.leaves())
 
     def select(self, controls: Iterable[Any]) -> List[Any]:
         """Filter objects with ``scf_id`` and ``domain_identifier`` attributes."""
@@ -84,6 +108,7 @@ class Scope:
             "controls": list(self.controls),
             "description": self.description,
             "document_title": self.document_title,
+            "topics": [m.key for m in self.members],
         }
 
 
@@ -96,6 +121,8 @@ class Profile:
     generators: Dict[str, str]
     fold_standards: bool
     bundles: Tuple[Scope, ...] = field(default_factory=tuple)
+    #: The procedures this profile produces in topic mode, in order.
+    topics: Tuple[Scope, ...] = field(default_factory=tuple)
 
     def mode_for(self, generator_name: str) -> Optional[str]:
         """How this profile scopes a generator, or ``None`` if it doesn't."""
@@ -108,6 +135,14 @@ class _Config:
     default_profile: str
     topics: Tuple[Scope, ...]
     by_key: Dict[str, Scope]
+
+
+def _in_family(scf_id: str, family: str) -> bool:
+    """Whether a control is the named control or one of its enhancements.
+
+    The dot is the boundary: "IAC-04" takes "IAC-04.2" and not "IAC-040".
+    """
+    return scf_id == family or scf_id.startswith(family + ".")
 
 
 def _check_key(key: str) -> None:
@@ -156,24 +191,48 @@ def _parse(raw: Dict[str, Any]) -> _Config:
 
     topics: List[Scope] = []
     for entry in raw.get("topics") or []:
+        key = entry["key"]
+        domains = tuple(d.upper() for d in entry.get("domains") or ())
+        controls = tuple(c.upper() for c in entry.get("controls") or ())
+        if not domains and not controls:
+            raise ScopeConfigError(f"Topic {key} selects no controls")
+        excludes: List[Scope] = []
+        for ref in entry.get("exclude_topics") or []:
+            # An exclusion carves a family topic's controls out of a
+            # whole-domain topic. Anything looser -- excluding a later topic,
+            # a whole domain, or a topic with exclusions of its own -- makes
+            # "which procedure is this control in?" depend on reading order.
+            if controls:
+                raise ScopeConfigError(
+                    f"Topic {key} lists controls, so it cannot also exclude {ref}"
+                )
+            found = by_key.get(ref)
+            if found is None or found.kind != KIND_TOPIC:
+                raise ScopeConfigError(
+                    f"Topic {key} excludes {ref}, which is not a topic declared before it"
+                )
+            if not found.controls or found.excludes:
+                raise ScopeConfigError(
+                    f"Topic {key} excludes {ref}, which must be a topic that "
+                    "lists control families and excludes nothing itself"
+                )
+            excludes.append(found)
+        if controls and not domains:
+            domains = tuple(sorted({c.split("-")[0] for c in controls}))
         scope = Scope(
-            key=entry["key"],
+            key=key,
             kind=KIND_TOPIC,
             title=entry["title"],
             description=(entry.get("description") or "").strip(),
-            domains=tuple(d.upper() for d in entry.get("domains") or ()),
-            controls=tuple(c.upper() for c in entry.get("controls") or ()),
+            domains=domains,
+            controls=controls,
+            excludes=tuple(excludes),
         )
-        if not scope.domains and not scope.controls:
-            raise ScopeConfigError(f"Topic {scope.key} selects no controls")
-        if scope.controls and not scope.domains:
-            scope = Scope(
-                key=scope.key, kind=scope.kind, title=scope.title,
-                description=scope.description, controls=scope.controls,
-                domains=tuple(sorted({c.split("-")[0] for c in scope.controls})),
-            )
         register(scope)
         topics.append(scope)
+    _check_leaf_partition(topics, [b for scopes in bundle_sets.values() for b in scopes])
+
+    topic_sets = _parse_topic_sets(raw.get("topic_sets") or {}, topics, register)
 
     profiles: Dict[str, Profile] = {}
     reference: Optional[Tuple[str, frozenset]] = None
@@ -202,6 +261,12 @@ def _parse(raw: Dict[str, Any]) -> _Config:
                 raise ScopeConfigError(
                     f"Profile {name} and {reference[0]} cover different domains: {', '.join(diff)}"
                 )
+        topic_set = entry.get("topics")
+        profile_topics = tuple(topic_sets.get(topic_set, ())) if topic_set else ()
+        if MODE_TOPIC in generators.values() and not profile_topics:
+            # Without a set the profile would list no procedures at all, and
+            # every in-scope control would silently have none.
+            raise ScopeConfigError(f"Profile {name} uses topics but names no topic set")
         profiles[name] = Profile(
             name=name,
             display_name=entry.get("display_name") or name.title(),
@@ -210,6 +275,7 @@ def _parse(raw: Dict[str, Any]) -> _Config:
             generators=generators,
             fold_standards=bool(entry.get("fold_standards", False)),
             bundles=bundles,
+            topics=profile_topics,
         )
 
     default_profile = raw.get("default_profile") or "granular"
@@ -221,6 +287,128 @@ def _parse(raw: Dict[str, Any]) -> _Config:
         topics=tuple(topics),
         by_key=by_key,
     )
+
+
+def _check_leaf_partition(topics: Sequence[Scope], bundles: Sequence[Scope]) -> None:
+    """Refuse a topic list under which a control could have two procedures, or none.
+
+    Checked against the domains this file's own bundles name, never the live
+    catalogue: a catalogue import that adds a domain must not stop the backend
+    from starting. That domain gets a procedure of its own instead; see
+    :func:`scopes_for`.
+    """
+    family_topics = [t for t in topics if t.controls]
+    whole_topics = [t for t in topics if not t.controls]
+
+    # No two family topics may claim the same control: equal families, or one
+    # family being an enhancement of another ("IAC-04" and "IAC-04.1").
+    claimed: List[Tuple[str, str]] = []
+    for topic in family_topics:
+        for family in topic.controls:
+            for other_family, other_key in claimed:
+                if _in_family(family, other_family) or _in_family(other_family, family):
+                    raise ScopeConfigError(
+                        f"Topics {other_key} and {topic.key} both take {family}: "
+                        f"{other_family} and {family} overlap"
+                    )
+            claimed.append((family, topic.key))
+
+    home: Dict[str, Scope] = {}
+    for topic in whole_topics:
+        for domain in topic.domains:
+            if domain in home:
+                raise ScopeConfigError(
+                    f"Domain {domain} is taken whole by both {home[domain].key} and {topic.key}"
+                )
+            home[domain] = topic
+
+    # A family topic takes controls out of a domain another topic takes whole,
+    # so that topic must leave them to it.
+    for topic in family_topics:
+        for domain in topic.domains:
+            owner = home.get(domain)
+            if owner is not None and topic not in owner.excludes:
+                raise ScopeConfigError(
+                    f"Topic {owner.key} takes all of {domain} and {topic.key} takes "
+                    f"families in it; {owner.key} must list {topic.key} in exclude_topics"
+                )
+
+    bundle_domains = {d for b in bundles for d in b.domains}
+    if topics and bundle_domains:
+        missing = sorted(bundle_domains - set(home))
+        if missing:
+            raise ScopeConfigError(
+                f"No topic takes the whole of {', '.join(missing)}; controls there "
+                "would have no procedure"
+            )
+
+
+def _parse_topic_sets(
+    raw_sets: Dict[str, Any],
+    leaves: Sequence[Scope],
+    register: Callable[[Scope], None],
+) -> Dict[str, List[Scope]]:
+    """Read ``topic_sets``: one list of procedures per bundled profile.
+
+    The sets are read in file order and each is built only from the entries of
+    the one before it (the first from the leaf topics), every one of them
+    exactly once. So every set holds every leaf exactly once, and moving
+    between sets only ever merges or splits whole procedures.
+    """
+    out: Dict[str, List[Scope]] = {}
+    previous: Dict[str, Scope] = {t.key: t for t in leaves}
+    previous_name = "topics"
+    for set_name, entries in raw_sets.items():
+        scopes_in_set: List[Scope] = []
+        cited: List[str] = []
+
+        def take(ref: str, by: str) -> Scope:
+            if ref not in previous:
+                raise ScopeConfigError(
+                    f"Topic set {set_name}: {by} refers to {ref}, "
+                    f"which is not an entry of {previous_name}"
+                )
+            if ref in cited:
+                raise ScopeConfigError(f"Topic set {set_name} uses {ref} more than once")
+            cited.append(ref)
+            return previous[ref]
+
+        for entry in entries or []:
+            if isinstance(entry, str):
+                scopes_in_set.append(take(entry, entry))
+                continue
+            key = entry["key"]
+            refs = list(entry.get("topics") or [])
+            if len(refs) < 2:
+                raise ScopeConfigError(
+                    f"Topic group {key} needs at least two members; "
+                    "write the member's own key instead of a group of one"
+                )
+            members = tuple(take(ref, key) for ref in refs)
+            domains: List[str] = []
+            for member in members:
+                domains += [d for d in member.domains if d not in domains]
+            group = Scope(
+                key=key,
+                kind=KIND_TOPIC,
+                title=entry["title"],
+                description=(entry.get("description") or "").strip(),
+                domains=tuple(domains),
+                members=members,
+            )
+            register(group)
+            scopes_in_set.append(group)
+
+        unused = [k for k in previous if k not in cited]
+        if unused:
+            raise ScopeConfigError(
+                f"Topic set {set_name} leaves out {', '.join(unused)}; "
+                "controls there would have no procedure"
+            )
+        out[set_name] = scopes_in_set
+        previous = {s.key: s for s in scopes_in_set}
+        previous_name = f"topic set {set_name}"
+    return out
 
 
 @functools.lru_cache(maxsize=1)
@@ -252,7 +440,19 @@ def get_profile(name: Optional[str]) -> Profile:
 
 
 def topics() -> List[Scope]:
+    """The leaf topics, in file order. A profile's own procedures are
+    ``get_profile(name).topics``."""
     return list(_load().topics)
+
+
+def _topic_claimed_domains() -> set:
+    """Domains some leaf topic takes whole. Every profile's set is built from
+    the same leaves, so this is the same for all of them."""
+    return {d for t in _load().topics if not t.controls for d in t.domains}
+
+
+def _orphan(ident: str, name: str, kind: str) -> Scope:
+    return Scope(key=f"{_ORPHAN_PREFIX}{ident}", kind=kind, title=name, domains=(ident,))
 
 
 def resolve_key(key: str) -> Optional[Scope]:
@@ -284,7 +484,8 @@ def scopes_for(
     A bundle is listed when any of its domains has scoped controls. A scoped
     domain that no bundle claims -- a domain added by a later SCF release
     before ``bundles.yaml`` names it -- becomes a bundle of its own rather than
-    vanishing from the organisation's policies.
+    vanishing from the organisation's policies. Topics do the same: a scoped
+    domain no topic takes whole gets a procedure of its own.
     """
     mode = profile.mode_for(generator_name)
     if mode is None or mode == MODE_NONE:
@@ -295,18 +496,19 @@ def scopes_for(
     present = {ident for ident, _ in domains}
     if mode == MODE_TOPIC:
         if scoped_control_ids is None:
-            return list(_load().topics)
-        pairs = list(scoped_control_ids)
-        return [t for t in _load().topics if any(t.includes(s, d) for s, d in pairs)]
+            out = list(profile.topics)
+        else:
+            pairs = list(scoped_control_ids)
+            out = [t for t in profile.topics if any(t.includes(s, d) for s, d in pairs)]
+        claimed = _topic_claimed_domains()
+        out += [_orphan(ident, name, KIND_TOPIC) for ident, name in domains
+                if ident not in claimed]
+        return out
 
     out = [b for b in profile.bundles if present.intersection(b.domains)]
     claimed = {d for b in profile.bundles for d in b.domains}
-    for ident, name in domains:
-        if ident not in claimed:
-            out.append(Scope(
-                key=f"{_ORPHAN_PREFIX}{ident}", kind=KIND_BUNDLE, title=name,
-                domains=(ident,),
-            ))
+    out += [_orphan(ident, name, KIND_BUNDLE) for ident, name in domains
+            if ident not in claimed]
     return out
 
 
@@ -319,8 +521,8 @@ def resolve_for_generation(
     """The scope a generation request names, or ``None`` if the profile has no
     such scope for that generator.
 
-    ``domains`` is as for :func:`scopes_for`. Orphan bundles are synthesised
-    there, so they resolve here too.
+    ``domains`` is as for :func:`scopes_for`. Orphan bundles and topics are
+    synthesised there, so they resolve here too.
     """
     wanted = (key or "").upper()
     for scope in scopes_for(profile, generator_name, domains):
@@ -364,10 +566,62 @@ def is_current(profile: Profile, generator_name: str, stored_key: str) -> bool:
     if mode == MODE_DOMAIN:
         return scope_for_stored_key(key) is None
     if mode == MODE_TOPIC:
-        return any(t.key == key for t in _load().topics)
-    if any(b.key == key for b in profile.bundles):
+        # Only the profile's own set: a procedure another profile merges or
+        # splits is superseded here, exactly as its policies are.
+        if any(t.key == key for t in profile.topics):
+            return True
+        claimed = _topic_claimed_domains()
+    elif any(b.key == key for b in profile.bundles):
         return True
-    # An orphan bundle is current while its domain is still unclaimed.
-    claimed = {d for b in profile.bundles for d in b.domains}
+    else:
+        claimed = {d for b in profile.bundles for d in b.domains}
+    # An orphan is current while its domain is still unclaimed.
     return key.startswith(_ORPHAN_PREFIX) and resolve_key(key) is None \
         and key[len(_ORPHAN_PREFIX):] not in claimed
+
+
+def covering(
+    profile: Profile,
+    generator_name: str,
+    stored_key: str,
+    domain_names: Optional[Dict[str, str]] = None,
+) -> List[Scope]:
+    """The profile's documents that cover what a superseded document covered.
+
+    Empty for a document the profile still produces, and for a generator the
+    profile does not produce at all. Topic sets nest, so a procedure's
+    successors are exact: the entries of the profile's set built from the same
+    leaf topics. One entry when the profile merged it into a group, several
+    when the profile splits a group it was. Anything else is matched on the
+    domains the document drew on.
+    """
+    mode = profile.mode_for(generator_name)
+    if mode is None or mode == MODE_NONE or is_current(profile, generator_name, stored_key):
+        return []
+    key = (stored_key or "").upper()
+    stored = scope_for_stored_key(key)
+    domains = set(stored.domains) if stored is not None else {key}
+    if mode == MODE_DOMAIN:
+        names = domain_names or {}
+        ordered = stored.domains if stored is not None else (key,)
+        return [domain_scope(d, names.get(d, d)) for d in ordered]
+    if mode == MODE_TOPIC:
+        if stored is not None and stored.kind == KIND_TOPIC and resolve_key(key) is not None:
+            wanted = {leaf.key for leaf in stored.leaves()}
+            return [t for t in profile.topics
+                    if wanted.intersection(leaf.key for leaf in t.leaves())]
+        return [t for t in profile.topics if domains.intersection(t.domains)]
+    return [b for b in profile.bundles if domains.intersection(b.domains)]
+
+
+def descendants(scope: Scope) -> List[Scope]:
+    """Every scope a group is built from, groups and leaf topics alike.
+
+    A document stored under any of these keys is a predecessor of the group's
+    document: it covered part of what the group now covers.
+    """
+    out: List[Scope] = []
+    for member in scope.members:
+        out.append(member)
+        out.extend(descendants(member))
+    return out

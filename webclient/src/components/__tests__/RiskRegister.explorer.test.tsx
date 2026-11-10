@@ -17,6 +17,7 @@
  * We test RiskAssessmentList directly (the list panel).
  */
 import { render, screen, fireEvent } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { describe, it, expect, vi } from 'vitest'
 import RiskAssessmentList from '../RiskAssessmentList'
 import type { RiskAssessment, RiskCodesFile } from '../../types'
@@ -261,6 +262,16 @@ vi.mock('../../data/apiClient', () => ({
   deleteCustomRisk: vi.fn().mockResolvedValue({}),
   // RiskAssessmentDetail also calls getScopedControls
   getScopedControls: vi.fn().mockResolvedValue([]),
+  // SCF 2026.3: the catalogue comes from the server; invented rows for the two assessed codes
+  getRiskCatalog: vi.fn().mockResolvedValue({
+    catalog_version: 'test',
+    categories: { GV: { name: 'Governance', color: '#6366f1' }, AC: { name: 'Access', color: '#3b82f6' } },
+    codes: {
+      'R-GV-1': { category: 'GV', title: 'Invented', description: 'Invented.' },
+      'R-AC-1': { category: 'AC', title: 'Invented', description: 'Invented.' },
+    },
+  }),
+  getThreatCatalog: vi.fn().mockResolvedValue({ catalog_version: 'test', categories: {}, codes: {} }),
 }))
 
 vi.mock('../../contexts/RiskProfileContext', () => ({
@@ -273,10 +284,18 @@ vi.mock('../../contexts/OrganizationContext', () => ({
   useOrganization: () => ({ currentOrg: 'org-1' }),
 }))
 
+// RiskDashboard reads the SCF risk catalogue through react-query.
+function queryWrapper() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return ({ children }: { children: React.ReactNode }) => (
+    <QueryClientProvider client={client}>{children}</QueryClientProvider>
+  )
+}
+
 describe('RiskDashboard — level summary strip', () => {
   it('renders the level summary strip with level-label mono elements', async () => {
     await act(async () => {
-      render(<RiskDashboard organizationId="org-1" />)
+      render(<RiskDashboard organizationId="org-1" />, { wrapper: queryWrapper() })
     })
     // The strip uses .risk-level-label elements (uppercase mono font)
     const labels = document.querySelectorAll('.risk-level-label')
@@ -289,7 +308,7 @@ describe('RiskDashboard — level summary strip', () => {
 
   it('renders "+ Add Custom Risk" button in the dashboard strip (always visible in default matrix view)', async () => {
     await act(async () => {
-      render(<RiskDashboard organizationId="org-1" />)
+      render(<RiskDashboard organizationId="org-1" />, { wrapper: queryWrapper() })
     })
     // Default is matrix view with no cell selected; button should be visible in the strip
     const btn = screen.getByRole('button', { name: /add custom risk/i })

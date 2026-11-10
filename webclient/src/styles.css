@@ -30716,6 +30716,70 @@ button.risk-list-header-cell:hover {
   font-weight: 500;
 }
 
+/* SCF Risk Catalog (2026.3): what the register says about a row's code against
+   the loaded catalogue, the source of each risk→control link, the Possible
+   toggle on a control's Risk & Threat Context, and the not-loaded notice. */
+.risk-catalog-note {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  background: var(--warning-bg);
+  color: var(--warning);
+}
+
+.risk-catalog-note--renumbered {
+  background: var(--secondary);
+  color: var(--muted);
+}
+
+.risk-link-source {
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  background: var(--secondary);
+  color: var(--muted);
+}
+
+.risk-link-source--likely {
+  color: var(--primary);
+}
+
+.risk-link-source--org {
+  border: 1px solid var(--border);
+}
+
+.risk-threat-possible-toggle {
+  background: none;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  padding: 2px 8px;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.risk-threat-possible-toggle:hover {
+  color: var(--text);
+}
+
+.risk-catalog-notice {
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  border-radius: 6px;
+  background: var(--warning-bg);
+  color: var(--warning);
+  font-size: 13px;
+}
+
+.risk-catalog-notice code {
+  font-size: 12px;
+}
+
 /* PIG R7 — risk acceptance: approval/expiry chip, decision panel, and the
    supporting document on a custom risk's control link. .btn-small carries
    flex:1, so these containers hold their buttons at content width. */
@@ -38468,6 +38532,7 @@ span.rich-text p { display: inline; margin: 0; }
 }
 .doc-superseded-banner p { margin: 0; font-size: 0.88rem; line-height: 1.5; color: var(--text); }
 .doc-superseded-banner strong { color: var(--danger); }
+.doc-superseded-banner strong.doc-superseded-successor { color: var(--text); }
 .doc-superseded-banner .doc-section-badge { flex: none; margin-top: 0.1rem; }
 .doc-reader-title-badge { margin-left: 0.6rem; vertical-align: middle; font-size: 0.7rem; }
 /* Light text on the dark theme's bright red fails contrast; use near-black. */

@@ -12,6 +12,9 @@ Usage:
 Commands:
     setup               Initial platform setup - create Default Organization
     seed-catalog        Seed SCF catalog from JSON files (run after setup)
+    refresh-risk-catalog
+                        Load the SCF Risk/Threat Catalogs and refresh control
+                        risk/threat mappings from the extracted JSON (2026.3+)
     list-users          List all users with optional filters
     list-orgs           List all organisations with stats
     list-admins         List all platform admins
@@ -83,6 +86,7 @@ from models import (
     EvidenceTracking,
 )
 from catalog_seeder import seed_catalog_if_empty, reseed_catalog, get_catalog_stats
+import catalog_seeder
 
 
 # =============================================================================
@@ -1172,6 +1176,67 @@ async def cmd_backfill_framework_registry(args: argparse.Namespace) -> int:
     return 0
 
 
+async def cmd_refresh_risk_catalog(args: argparse.Namespace) -> int:
+    """Load the SCF Risk/Threat Catalogs and refresh every control's mapping.
+
+    The augmentation path for an install whose catalogue is already on a
+    workbook version without the 'Risk Threat Summary' columns (2026.3+): the
+    upgrade carried the controls but every active control's risk_codes came out
+    empty. Reads risks.json, threats.json, control_guidance.json and
+    catalog_meta.json from the seeder data directory (or --data-dir), upserts
+    the two catalog tables and rewrites only the four mapping columns on
+    existing control rows. Organisation tables are never read or written.
+    """
+    from services.catalog_diff import resolve_live_catalog_version
+    from services.risk_catalog import (
+        RiskCatalogEmptyExtraction,
+        RiskCatalogVersionMismatch,
+        refresh_risk_catalog,
+    )
+
+    data_dir = Path(args.data_dir) if args.data_dir else Path(catalog_seeder.DATA_DIR)
+
+    async with AsyncSessionLocal() as session:
+        live_version = await resolve_live_catalog_version(session)
+        try:
+            report = await refresh_risk_catalog(
+                session,
+                data_dir,
+                live_version=live_version,
+                allow_version_mismatch=args.allow_version_mismatch,
+                dry_run=args.dry_run,
+            )
+        except FileNotFoundError as exc:
+            print(f"❌ {exc}")
+            print("   Re-run the catalogue importer on your SCF workbook, or pass --data-dir.")
+            return 1
+        except RiskCatalogEmptyExtraction as exc:
+            print(f"❌ {exc}")
+            return 1
+        except RiskCatalogVersionMismatch as exc:
+            print(
+                f"❌ Extraction is catalog version {exc.file_version!r} but the live "
+                f"catalog is {exc.live_version!r}.\n"
+                "   A mapping written from the wrong workbook describes controls the live "
+                "rows are not.\n"
+                "   Re-extract the matching workbook, or pass --allow-version-mismatch "
+                "if you know they are equivalent."
+            )
+            return 1
+
+    label = "DRY RUN — nothing written" if report.dry_run else "written"
+    print(f"✅ Risk catalog refresh from {data_dir} ({label})")
+    print(f"   Catalog version:        {report.file_version} (live {report.live_version})")
+    r, t, c = report.risks, report.threats, report.controls
+    print(f"   Risks:                  +{r.added} added, {r.updated} updated, {r.deprecated} deprecated, {r.unchanged} unchanged")
+    print(f"   Threats:                +{t.added} added, {t.updated} updated, {t.deprecated} deprecated, {t.unchanged} unchanged")
+    print(f"   Controls remapped:      {c.controls_updated} updated, {c.controls_unchanged} unchanged")
+    print(f"   Deprecated controls:    {c.deprecated_remapped} remapped via Old Risk #")
+    if c.extraction_only:
+        print(f"   ⚠️  {len(c.extraction_only)} controls in the extraction are not in the live catalog (upgrade first)")
+    return 0
+
+
 def create_parser() -> argparse.ArgumentParser:
     """Create the argument parser."""
     parser = argparse.ArgumentParser(
@@ -1274,6 +1339,14 @@ def create_parser() -> argparse.ArgumentParser:
     seed_catalog.add_argument("--force", action="store_true", help="Force reseed (deletes existing catalog data)")
     seed_catalog.add_argument("--confirm", action="store_true", help="Confirm force reseed")
 
+    refresh_risks = subparsers.add_parser(
+        "refresh-risk-catalog",
+        help="Load the SCF Risk/Threat Catalogs and refresh every control's risk/threat mapping from the extracted JSON",
+    )
+    refresh_risks.add_argument("--data-dir", help="Directory holding risks.json, threats.json, control_guidance.json and catalog_meta.json (default: the seeder data directory)")
+    refresh_risks.add_argument("--allow-version-mismatch", action="store_true", help="Accept an extraction whose catalog version differs from the live one")
+    refresh_risks.add_argument("--dry-run", action="store_true", help="Report what would change and write nothing")
+
     return parser
 
 
@@ -1305,6 +1378,7 @@ def main():
         "backfill-encrypt": cmd_backfill_encrypt,
         "secrets-status": cmd_secrets_status,
         "backfill-framework-registry": cmd_backfill_framework_registry,
+        "refresh-risk-catalog": cmd_refresh_risk_catalog,
     }
 
     handler = commands.get(args.command)

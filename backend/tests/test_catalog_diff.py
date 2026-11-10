@@ -102,6 +102,8 @@ def _extracted(
     evidence: dict | None = None,
     objectives: list | None = None,
     framework_names: dict | None = None,
+    risks: list | None = None,
+    threats: list | None = None,
 ) -> cd.ExtractedCatalog:
     """Raw-extractor-shaped ExtractedCatalog with sane non-empty defaults."""
     if controls is None:
@@ -150,8 +152,53 @@ def _extracted(
         evidence=evidence,
         assessment_objectives=objectives,
         framework_names=framework_names,
+        risks=risks or [],
+        threats=threats or [],
         meta={"catalog_version": version},
     )
+
+
+# Invented codes and titles: the real SCF Risk / Threat Catalog text is
+# CC BY-ND and never lands in a fixture.
+def _risk(code, title, **over):
+    entry = {
+        "code": code,
+        "grouping": "Example Grouping",
+        "old_code": None,
+        "title": title,
+        "description": f"{title} description.",
+        "nist_csf_function": "Govern",
+    }
+    entry.update(over)
+    return entry
+
+
+def _orm_risk(code, title, **over):
+    attrs = {
+        "code": code,
+        "status": "active",
+        "superseded_by": None,
+        "grouping": "Example Grouping",
+        "old_code": None,
+        "title": title,
+        "description": f"{title} description.",
+        "nist_csf_function": "Govern",
+    }
+    attrs.update(over)
+    return SimpleNamespace(**attrs)
+
+
+def _orm_threat(code, title, **over):
+    attrs = {
+        "code": code,
+        "status": "active",
+        "superseded_by": None,
+        "grouping": "Example Threats",
+        "title": title,
+        "description": f"{title} description.",
+    }
+    attrs.update(over)
+    return SimpleNamespace(**attrs)
 
 
 # ---------------------------------------------------------------------------
@@ -610,8 +657,17 @@ class FakeSession:
         registry=None,
         live_version=None,
         registry_source="apply",
+        risks=(),
+        threats=(),
     ):
-        self._results = [list(controls), list(domains), list(evidence), list(objectives)]
+        self._results = [
+            list(controls),
+            list(domains),
+            list(evidence),
+            list(objectives),
+            list(risks),
+            list(threats),
+        ]
         self._live_version = live_version
         self._registry_row = (
             SimpleNamespace(
@@ -1712,3 +1768,102 @@ def test_real_2026_3_pairs_eight_deprecations_into_reused_ids():
         for d in diff.deprecated
         if d.key in paired_into_reused
     )
+
+
+# ---------------------------------------------------------------------------
+# Risk / Threat Catalog entities (ISC-44): the diff carries them so apply and
+# revert never have to read a data directory for them.
+# ---------------------------------------------------------------------------
+
+
+def test_workbook_rows_carry_risks_and_threats_keyed_by_code():
+    extracted = _extracted(
+        risks=[_risk("R-XX-1", "Example risk one"), _risk("r-xx-2", "Example risk two", old_code="R-YY-9")],
+        threats=[{"code": "NT-9", "grouping": "Natural", "title": "Example threat", "description": "d"}],
+    )
+    rows = cd._workbook_rows(extracted)
+    assert set(rows[CatalogEntityType.RISKS]) == {"R-XX-1", "R-XX-2"}
+    assert rows[CatalogEntityType.RISKS]["R-XX-2"] == {
+        "grouping": "Example Grouping",
+        "old_code": "R-YY-9",
+        "title": "Example risk two",
+        "description": "Example risk two description.",
+        "nist_csf_function": "Govern",
+    }
+    assert set(rows[CatalogEntityType.RISKS]["R-XX-1"]) == set(cd.RISK_COMPARED_FIELDS)
+    assert rows[CatalogEntityType.THREATS] == {
+        "NT-9": {"grouping": "Natural", "title": "Example threat", "description": "d"}
+    }
+    assert set(rows[CatalogEntityType.THREATS]["NT-9"]) == set(cd.THREAT_COMPARED_FIELDS)
+
+
+def test_workbook_without_catalog_sheets_yields_empty_risk_entities():
+    rows = cd._workbook_rows(_extracted())
+    assert rows[CatalogEntityType.RISKS] == {}
+    assert rows[CatalogEntityType.THREATS] == {}
+
+
+def test_workbook_without_catalog_sheets_never_deprecates_the_live_risks():
+    """A pre-2026.3 workbook has no Risk / Threat Catalog sheet. That is
+    nothing to say about the live rows, not a retirement of every one."""
+    live = cd.LiveCatalog(
+        risks={"R-XX-1": cd.LiveEntityRow("R-XX-1", "active", fields={}, name="Example risk one", superseded_by=None)},
+        threats={"NT-1": cd.LiveEntityRow("NT-1", "active", fields={}, name="Example threat", superseded_by=None)},
+    )
+    diff = cd.compute_catalog_diff(_extracted(), live, from_version="2026.3")
+    risks = diff.entities[CatalogEntityType.RISKS]
+    threats = diff.entities[CatalogEntityType.THREATS]
+    assert risks.deprecated == [] and risks.added == [] and risks.changed == []
+    assert threats.deprecated == [] and threats.added == [] and threats.changed == []
+
+
+@pytest.mark.asyncio
+async def test_live_catalog_loads_risks_and_threats():
+    session = FakeSession(
+        risks=[_orm_risk("R-XX-1", "Example risk one")],
+        threats=[_orm_threat("MT-2", "Example threat two")],
+    )
+    live = await cd.load_live_catalog(session)
+    assert set(live.risks) == {"R-XX-1"}
+    assert live.risks["R-XX-1"].name == "Example risk one"
+    assert live.risks["R-XX-1"].fields["title"] == "Example risk one"
+    assert set(live.threats) == {"MT-2"}
+    assert live.by_entity()[CatalogEntityType.RISKS] is live.risks
+    assert live.by_entity()[CatalogEntityType.THREATS] is live.threats
+
+
+@pytest.mark.asyncio
+async def test_diff_classifies_risks_added_changed_deprecated_resurrected():
+    live = cd.LiveCatalog()
+    live.risks["R-XX-1"] = cd.LiveEntityRow(
+        key="R-XX-1", status="active", superseded_by=None, name="Example risk one",
+        fields={"grouping": "Example Grouping", "old_code": None, "title": "Example risk one",
+              "description": "Example risk one description.", "nist_csf_function": "Govern"},
+    )
+    live.risks["R-XX-2"] = cd.LiveEntityRow(
+        key="R-XX-2", status="active", superseded_by=None, name="Gone",
+        fields={"grouping": "Example Grouping", "old_code": None, "title": "Gone",
+              "description": None, "nist_csf_function": None},
+    )
+    live.risks["R-XX-3"] = cd.LiveEntityRow(
+        key="R-XX-3", status="deprecated", superseded_by=None, name="Back",
+        fields={"grouping": "Example Grouping", "old_code": None, "title": "Back",
+              "description": "Back description.", "nist_csf_function": "Govern"},
+    )
+    extracted = _extracted(
+        risks=[
+            _risk("R-XX-1", "Example risk one", description="Reworded."),
+            _risk("R-XX-3", "Back"),
+            _risk("R-XX-4", "Brand new"),
+        ],
+    )
+    diff = cd.compute_catalog_diff(extracted, live, from_version="2026.1")
+    risks = diff.entities[CatalogEntityType.RISKS]
+    assert [a.key for a in risks.added] == ["R-XX-4"]
+    assert [c.key for c in risks.changed] == ["R-XX-1"]
+    assert list(risks.changed[0].fields) == ["description"]
+    assert [d.key for d in risks.deprecated] == ["R-XX-2"]
+    assert [r.key for r in risks.resurrected] == ["R-XX-3"]
+    assert risks.added[0].name == "Brand new"
+    # Threats are an entity too, even when the workbook has none.
+    assert CatalogEntityType.THREATS in diff.entities

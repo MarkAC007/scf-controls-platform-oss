@@ -1,10 +1,9 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import type { RiskThreatMapping } from '../types'
-import riskCodesData from '../data/risk_codes.json'
-import threatCodesData from '../data/threat_codes.json'
+import type { RiskCodesFile, RiskThreatMapping } from '../types'
 import { getRiskAssessments } from '../data/apiClient'
 import { useOrganization } from '../contexts/OrganizationContext'
+import { useRiskCatalog, useThreatCatalog } from '../hooks/useRiskCatalog'
 import AppLink from './AppLink'
 
 interface Props {
@@ -18,35 +17,35 @@ interface CodeInfo {
   title: string
   description: string
   color: string
+  /** The publisher's rating of this mapping on a 2026.3+ catalogue. */
+  rating: 'likely' | 'possible' | null
 }
 
-function getRiskInfo(code: string): CodeInfo | null {
-  const riskCode = riskCodesData.codes[code as keyof typeof riskCodesData.codes]
-  if (!riskCode) return null
-
-  const category = riskCodesData.categories[riskCode.category as keyof typeof riskCodesData.categories]
+function describe(code: string, catalog: RiskCodesFile, ratings?: Record<string, string> | null): CodeInfo | null {
+  const entry = catalog.codes[code]
+  if (!entry) return null
+  const category = catalog.categories[entry.category]
+  const rating = String(ratings?.[code] ?? '').toLowerCase()
   return {
     code,
-    category: riskCode.category,
-    categoryName: category?.name || riskCode.category,
-    title: riskCode.title,
-    description: riskCode.description,
-    color: category?.color || '#6b7280'
+    category: entry.category,
+    categoryName: category?.name || entry.category,
+    title: entry.title,
+    description: entry.description,
+    color: category?.color || '#6b7280',
+    rating: rating === 'likely' || rating === 'possible' ? rating : null,
   }
 }
 
-function getThreatInfo(code: string): CodeInfo | null {
-  const threatCode = threatCodesData.codes[code as keyof typeof threatCodesData.codes]
-  if (!threatCode) return null
-
-  const category = threatCodesData.categories[threatCode.category as keyof typeof threatCodesData.categories]
+/**
+ * Likely-rated codes (and every code of an unrated catalogue) show open; the
+ * merely Possible ones sit behind a count, since a 2026.3 control maps to a
+ * median of thirteen risks and the page is about the ones that matter.
+ */
+function split(infos: CodeInfo[]): { open: CodeInfo[]; possible: CodeInfo[] } {
   return {
-    code,
-    category: threatCode.category,
-    categoryName: category?.name || threatCode.category,
-    title: threatCode.title,
-    description: threatCode.description,
-    color: category?.color || '#6b7280'
+    open: infos.filter((i) => i.rating !== 'possible'),
+    possible: infos.filter((i) => i.rating === 'possible'),
   }
 }
 
@@ -113,25 +112,68 @@ function CodeBadge({ info, isExpanded, onToggle, isRisk = false }: { info: CodeI
 
 export default function RiskThreatContext({ mapping }: Props) {
   const [expandedCode, setExpandedCode] = useState<string | null>(null)
+  const [showPossible, setShowPossible] = useState<{ risks: boolean; threats: boolean }>({ risks: false, threats: false })
+  const riskCatalog = useRiskCatalog()
+  const threatCatalog = useThreatCatalog()
 
   if (!mapping) {
     return null
   }
 
-  const riskCodes = (mapping.risk_codes || [])
-    .map(getRiskInfo)
-    .filter((info): info is CodeInfo => info !== null)
+  const risks = split(
+    (mapping.risk_codes || [])
+      .map((code) => describe(code, riskCatalog.catalog, mapping.risk_ratings))
+      .filter((info): info is CodeInfo => info !== null),
+  )
+  const threats = split(
+    (mapping.threat_codes || [])
+      .map((code) => describe(code, threatCatalog.catalog, mapping.threat_ratings))
+      .filter((info): info is CodeInfo => info !== null),
+  )
 
-  const threatCodes = (mapping.threat_codes || [])
-    .map(getThreatInfo)
-    .filter((info): info is CodeInfo => info !== null)
-
-  if (riskCodes.length === 0 && threatCodes.length === 0) {
+  if (risks.open.length + risks.possible.length + threats.open.length + threats.possible.length === 0) {
     return null
   }
 
   const handleToggle = (code: string) => {
     setExpandedCode(expandedCode === code ? null : code)
+  }
+
+  const renderSection = (
+    label: string,
+    group: { open: CodeInfo[]; possible: CodeInfo[] },
+    key: 'risks' | 'threats',
+    isRisk: boolean,
+  ) => {
+    if (group.open.length + group.possible.length === 0) return null
+    const shown = showPossible[key] ? [...group.open, ...group.possible] : group.open
+    return (
+      <div className="risk-threat-section">
+        <div className="risk-threat-section-label">{label}</div>
+        <div className="risk-threat-badges">
+          {shown.map(info => (
+            <CodeBadge
+              key={info.code}
+              info={info}
+              isExpanded={expandedCode === info.code}
+              onToggle={() => handleToggle(info.code)}
+              isRisk={isRisk}
+            />
+          ))}
+          {group.possible.length > 0 && (
+            <button
+              type="button"
+              className="risk-threat-possible-toggle"
+              aria-expanded={showPossible[key]}
+              onClick={() => setShowPossible((s) => ({ ...s, [key]: !s[key] }))}
+              title="Codes the SCF rates only Possible for this control"
+            >
+              {showPossible[key] ? 'hide possible' : `+${group.possible.length} possible`}
+            </button>
+          )}
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -141,37 +183,8 @@ export default function RiskThreatContext({ mapping }: Props) {
         <span className="container-title">Risk & Threat Context</span>
       </div>
       <div className="container-content">
-        {riskCodes.length > 0 && (
-          <div className="risk-threat-section">
-            <div className="risk-threat-section-label">Risk Codes:</div>
-            <div className="risk-threat-badges">
-              {riskCodes.map(info => (
-                <CodeBadge
-                  key={info.code}
-                  info={info}
-                  isExpanded={expandedCode === info.code}
-                  onToggle={() => handleToggle(info.code)}
-                  isRisk
-                />
-              ))}
-            </div>
-          </div>
-        )}
-        {threatCodes.length > 0 && (
-          <div className="risk-threat-section">
-            <div className="risk-threat-section-label">Threat Codes:</div>
-            <div className="risk-threat-badges">
-              {threatCodes.map(info => (
-                <CodeBadge
-                  key={info.code}
-                  info={info}
-                  isExpanded={expandedCode === info.code}
-                  onToggle={() => handleToggle(info.code)}
-                />
-              ))}
-            </div>
-          </div>
-        )}
+        {renderSection('Risk Codes:', risks, 'risks', true)}
+        {renderSection('Threat Codes:', threats, 'threats', false)}
         <div className="risk-threat-hint">
           Click a badge to see details
         </div>

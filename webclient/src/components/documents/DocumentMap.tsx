@@ -6,7 +6,8 @@
  * IAC-21 written down?" has no obvious answer from the library alone. Search
  * answers it per control; the table below shows the whole mapping. Membership
  * comes from the backend rather than being inferred from domain prefixes,
- * because topic procedures are defined by named controls, not domains.
+ * because a topic procedure can take named control families out of a domain
+ * and leave the rest of it to another procedure.
  */
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
@@ -283,8 +284,8 @@ export default function DocumentMap({ organizationId, onOpenDocument, onOpenSett
               {g.mode === 'topic' && uncovered > 0 && (
                 <p className="docmap-note">
                   {uncovered} in-scope control{uncovered === 1 ? ' has' : 's have'} no {g.display_name.toLowerCase()} under
-                  this structure — topic {g.display_name.toLowerCase()}s cover named control families only. Search a
-                  control to check it.
+                  this structure. Every in-scope control should be in one; search a control to check it, and
+                  report this if it persists.
                 </p>
               )}
             </section>

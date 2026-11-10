@@ -22,6 +22,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.dialects.postgresql import insert
 
 from database import AsyncSessionLocal
+from services.risk_catalog import (
+    risk_to_columns as _risk_to_columns,
+    threat_to_columns as _threat_to_columns,
+)
 from catalog_models import (
     CatalogFrameworkRegistry,
     SCFCatalogControl,
@@ -32,6 +36,8 @@ from catalog_models import (
     CapabilityThemeMapping,
     SystemCatalogTemplate,
     SystemCatalogRecipe,
+    SCFCatalogRisk,
+    SCFCatalogThreat,
 )
 from services.system_catalog_validation import validate_vendor_file, validate_fallbacks_file
 
@@ -165,9 +171,68 @@ async def seed_catalog_if_empty() -> dict:
             "assessment_objectives": await seed_assessment_objectives_if_empty(session),
             "capability_themes": await seed_capability_themes_if_empty(session),
             "framework_registry": await seed_framework_registry_if_empty(session),
+            "risks": await seed_risks_if_empty(session),
+            "threats": await seed_threats_if_empty(session),
             "system_catalog": await seed_system_catalog(session),
         }
         return results
+
+
+async def _seed_code_catalog_if_empty(
+    session: AsyncSession, model, filename: str, key: str, to_columns
+) -> dict:
+    """Shared body of the risk / threat catalog seeders.
+
+    The file is OPTIONAL: an extraction from a workbook without the sheet
+    writes an empty list, and an extraction from before this feature writes
+    nothing at all. Either way the table stays empty, the API reports an empty
+    catalogue, and ``refresh-risk-catalog`` fills it later. Only a missing file
+    on a destructive reseed would be a problem, and the file is deliberately
+    not in REQUIRED_RESEED_INPUTS for the same reason.
+    """
+    catalog_version = _resolve_catalog_version()
+    existing_count = (await session.execute(select(func.count()).select_from(model))).scalar()
+    if existing_count > 0:
+        logger.info(f"SCF catalog {key} already seeded ({existing_count} records)")
+        return {"status": "skipped", "existing": existing_count}
+
+    json_path = DATA_DIR / filename
+    if not json_path.exists():
+        logger.warning(
+            f"{filename} not found in {DATA_DIR}; the {key} catalog stays empty until "
+            f"the workbook is re-extracted (python -m cli.admin refresh-risk-catalog)"
+        )
+        return {"status": "skipped", "message": f"File not found: {json_path}"}
+
+    with open(json_path, "r") as f:
+        entries = json.load(f).get(key, [])
+    if not entries:
+        logger.warning(f"{filename} carries no {key}; the {key} catalog stays empty")
+        return {"status": "skipped", "message": f"{filename} is empty"}
+
+    logger.info(f"Seeding {len(entries)} SCF catalog {key}...")
+    for entry in entries:
+        code = str(entry.get("code") or "").strip().upper()
+        if not code:
+            continue
+        session.add(model(code=code, catalog_version=catalog_version, **to_columns(entry)))
+    await session.commit()
+    logger.info(f"Successfully seeded {len(entries)} SCF catalog {key}")
+    return {"status": "seeded", "count": len(entries)}
+
+
+async def seed_risks_if_empty(session: AsyncSession) -> dict:
+    """Seed the SCF Risk Catalog from risks.json if the table is empty."""
+    return await _seed_code_catalog_if_empty(
+        session, SCFCatalogRisk, "risks.json", "risks", _risk_to_columns
+    )
+
+
+async def seed_threats_if_empty(session: AsyncSession) -> dict:
+    """Seed the SCF Threat Catalog from threats.json if the table is empty."""
+    return await _seed_code_catalog_if_empty(
+        session, SCFCatalogThreat, "threats.json", "threats", _threat_to_columns
+    )
 
 
 def load_system_catalog_files() -> tuple:
@@ -398,9 +463,11 @@ async def seed_controls_if_empty(session: AsyncSession) -> dict:
             scrm_tier1_strategic=scrm.get("tier1_strategic", False),
             scrm_tier2_operational=scrm.get("tier2_operational", False),
             scrm_tier3_tactical=scrm.get("tier3_tactical", False),
-            # Risk/Threat codes
+            # Risk/Threat codes (+ per-code ratings from 2026.3 workbooks)
             risk_codes=risk_threat.get("risk_codes", []),
             threat_codes=risk_threat.get("threat_codes", []),
+            risk_ratings=risk_threat.get("risk_ratings"),
+            threat_ratings=risk_threat.get("threat_ratings"),
             # Metadata
             catalog_version=catalog_version,
         )
@@ -850,6 +917,19 @@ async def reseed_catalog(force: bool = False) -> dict:
         await session.execute(SCFCatalogEvidence.__table__.delete())
         await session.execute(SCFCatalogControl.__table__.delete())
         await session.execute(SCFCatalogDomain.__table__.delete())
+        # risks.json / threats.json are optional inputs (an extraction from
+        # before the Risk Catalog sheet writes neither), so they are not in
+        # REQUIRED_RESEED_INPUTS. The same guard still applies per table: a
+        # delete with nothing to reseed from is the data-loss case, so each
+        # table is cleared only when its file can be read.
+        for model, filename in ((SCFCatalogRisk, "risks.json"), (SCFCatalogThreat, "threats.json")):
+            if _is_readable(Path(DATA_DIR) / filename):
+                await session.execute(model.__table__.delete())
+            else:
+                logger.warning(
+                    f"{filename} not readable in {DATA_DIR}; keeping {model.__table__.name} "
+                    f"as it is (reload it with python -m cli.admin refresh-risk-catalog)"
+                )
         await session.commit()
         logger.info("Existing catalog data cleared")
 
@@ -884,6 +964,8 @@ async def get_catalog_stats() -> dict:
         theme_mappings = await session.execute(
             select(func.count()).select_from(CapabilityThemeMapping)
         )
+        risks = await session.execute(select(func.count()).select_from(SCFCatalogRisk))
+        threats = await session.execute(select(func.count()).select_from(SCFCatalogThreat))
 
         return {
             "controls": controls.scalar(),
@@ -892,5 +974,7 @@ async def get_catalog_stats() -> dict:
             "assessment_objectives": aos.scalar(),
             "capability_themes": themes.scalar(),
             "capability_theme_mappings": theme_mappings.scalar(),
+            "risks": risks.scalar(),
+            "threats": threats.scalar(),
             "catalog_version": _resolve_catalog_version(),
         }

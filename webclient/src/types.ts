@@ -66,6 +66,9 @@ export interface SCRMFocus {
 export interface RiskThreatMapping {
   risk_codes?: string[]      // e.g., ['R-AC-1', 'R-AM-2', 'R-GV-1']
   threat_codes?: string[]    // e.g., ['NT-1', 'MT-5', 'MT-12']
+  /** Publisher's rating per code ('likely' | 'possible') on 2026.3+ catalogues; absent before. */
+  risk_ratings?: Record<string, string> | null
+  threat_ratings?: Record<string, string> | null
 }
 
 /**
@@ -843,17 +846,25 @@ export type TreatmentStatus =
 export type RiskLevel = 'low' | 'medium' | 'high' | 'critical'
 
 /**
- * Risk category from SCF risk codes
+ * Risk category key: the middle segment of an SCF risk code (R-GV-1 → GV),
+ * ORG for the organisation's custom risks. The set comes from the catalogue
+ * the server holds (GET /api/catalog/risks), not from a fixed list.
  */
-export type RiskCategory = 'AC' | 'AM' | 'BC' | 'EX' | 'GV' | 'IR' | 'SA' | 'SC' | 'ORG'
+export type RiskCategory = string
 
 /**
- * Risk code information from risk_codes.json catalog
+ * One SCF Risk Catalog (or Threat Catalog) entry, as GET /api/catalog/risks
+ * serves it. The catalogue is seeded from the SCF workbook on the server;
+ * nothing of its text is bundled with the client.
  */
 export interface RiskCodeInfo {
   category: RiskCategory
   title: string
   description: string
+  /** The code this risk carried in the previous catalogue, when renumbered. */
+  old_code?: string | null
+  status?: 'active' | 'deprecated' | string
+  nist_csf_function?: string | null
 }
 
 /**
@@ -865,11 +876,16 @@ export interface RiskCategoryInfo {
 }
 
 /**
- * Risk codes catalog file structure
+ * The risk (or threat) catalogue as the web client renders it: categories
+ * keyed by RiskCategory, codes keyed by code. Served by GET /api/catalog/risks
+ * and /api/catalog/threats; the register merges custom risks into a copy.
  */
 export interface RiskCodesFile {
   categories: Partial<Record<RiskCategory, RiskCategoryInfo>>
   codes: Record<string, RiskCodeInfo>
+  /** The SCF release the catalogue came from; null when none is loaded. */
+  catalog_version?: string | null
+  total?: number
 }
 
 /**
