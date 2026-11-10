@@ -4,9 +4,9 @@
 # decides what one document covers:
 #
 #   granular      one document per SCF domain (the original behaviour)
-#   consolidated  13 topic bundles
-#   compact       6 groups, each a union of consolidated bundles
-#   essentials    one policy manual covering everything
+#   consolidated  13 topic bundles, 21 procedures
+#   compact       6 groups, each a union of consolidated bundles; 12 procedures
+#   essentials    one policy manual covering everything; 8 procedures
 #
 # The levels nest — every group is a union of bundles, and every bundle a union
 # of domains — so a document at any level is assembled from domain chapters,
@@ -14,7 +14,8 @@
 #
 # services/doc_gen/scopes.py refuses to load this file unless every profile
 # covers all 34 domains exactly once. A domain missing from a profile would
-# silently drop its controls from that organisation's policies.
+# silently drop its controls from that organisation's policies. Procedures are
+# held to the same rule through topics and topic_sets, further down.
 #
 # Scope keys are stored in generated_documents.domain_id. Prefixes keep them
 # disjoint from the three-letter SCF domain identifiers:
@@ -37,25 +38,28 @@ profiles:
     fold_standards: false
   consolidated:
     display_name: Consolidated
-    description: 13 topic policies and standards, with procedures by operational topic.
+    description: 13 topic policies and standards, with 21 procedures by operational topic.
     recommended_for: Medium organisations (50–249 staff)
     generators: {policy: bundle, standard: bundle, procedure: topic}
     fold_standards: false
     bundles: consolidated
+    topics: consolidated
   compact:
     display_name: Compact
-    description: Six policies with their requirements built in, and procedures by operational topic.
+    description: Six policies with their requirements built in, and 12 procedures by operational topic.
     recommended_for: Small organisations (10–49 staff)
     generators: {policy: bundle, standard: none, procedure: topic}
     fold_standards: true
     bundles: compact
+    topics: compact
   essentials:
     display_name: Essentials
-    description: One information security policy manual, and procedures by operational topic.
+    description: One information security policy manual, and eight procedures by operational topic.
     recommended_for: Micro organisations (fewer than 10 staff)
     generators: {policy: bundle, standard: none, procedure: topic}
     fold_standards: true
     bundles: essentials
+    topics: essentials
 
 default_profile: granular
 
@@ -135,6 +139,12 @@ bundle_sets:
 #
 # `domains` takes every scoped control in those domains. `controls` takes each
 # listed control and its enhancements ("IAC-04" also takes "IAC-04.2").
+#
+# A whole-domain topic may carve out the families an earlier topic already
+# takes with `exclude_topics`, naming that topic by key, so the family list is
+# written once. scopes.py refuses to load this file unless every domain the
+# bundles name sits in exactly one whole-domain topic, so every in-scope
+# control lands in exactly one procedure.
 topics:
   - key: T-ACCESS
     title: Joiners, Movers & Leavers
@@ -154,9 +164,162 @@ topics:
     domains: [CHG]
   - key: T-VULN
     title: Vulnerability & Patch Management
-    description: Scanning, ranking, remediating and patching vulnerabilities within agreed timescales.
-    domains: [VPM]
+    description: Consuming threat intelligence and vendor advisories, scanning, ranking, remediating and patching vulnerabilities within agreed timescales.
+    domains: [VPM, THR]
   - key: T-SUPPLIER
     title: Supplier Onboarding & Review
     description: Assessing, contracting, monitoring and exiting third-party relationships.
     domains: [TPM]
+  - key: T-GOVERNANCE
+    title: Management Review & Programme Reporting
+    description: Running the security programme, assigning resources, and reviewing performance with management.
+    domains: [GOV, PRM]
+  - key: T-ASSURANCE
+    title: Internal Audit & Compliance Checks
+    description: Planning, performing and reporting internal audits and compliance checks, and tracking corrective actions.
+    domains: [CPL, IAO]
+  - key: T-RISK
+    title: Risk Assessment & Treatment
+    description: Identifying, assessing, treating, accepting and reviewing risks.
+    domains: [RSK]
+  - key: T-ASSET
+    title: Asset Register, Maintenance & Disposal
+    description: Recording, tagging, maintaining, capacity-planning and disposing of technology assets.
+    domains: [AST, MNT]
+  - key: T-DATA
+    title: Data Classification & Handling
+    description: Classifying, labelling, handling, transferring and destroying data.
+    domains: [DCH]
+  - key: T-CRYPTO
+    title: Cryptography & Key Management
+    description: Selecting, generating, storing, rotating and retiring cryptographic keys and certificates.
+    domains: [CRY, QTS]
+  - key: T-PRIVACY
+    title: Data Subject Requests & Privacy Operations
+    description: Recording processing, handling data subject requests, assessing privacy impact and managing breaches of personal data.
+    domains: [PRI]
+  - key: T-PEOPLE
+    title: Screening, Training & Conduct
+    description: Screening candidates, agreeing terms and rules of behaviour, training staff, and applying sanctions.
+    domains: [HRS, SAT]
+    exclude_topics: [T-ACCESS]
+  - key: T-PHYSICAL
+    title: Physical Access & Visitor Control
+    description: Authorising, granting, monitoring and revoking physical access, and protecting facilities and equipment.
+    domains: [PES]
+  - key: T-IDENTITY
+    title: Authentication, Privileged Access & Access Review
+    description: Managing identities, authenticators, passwords, multi-factor authentication and privileged accounts.
+    domains: [IAC]
+    exclude_topics: [T-ACCESS]
+  - key: T-HARDENING
+    title: Secure Configuration & Operations
+    description: Baselining, building, hardening and operating endpoints, mobiles, embedded devices and their day-to-day operating procedures.
+    domains: [OPS, CFG, CAP, END, MDM, EMB]
+  - key: T-NETWORK
+    title: Network & Cloud Configuration Review
+    description: Configuring, segmenting, protecting and reviewing networks, cloud services and internet-facing systems.
+    domains: [NET, CLD, WEB]
+  - key: T-MONITORING
+    title: Log Review & Security Monitoring
+    description: Collecting logs, reviewing them on a schedule, monitoring alerts and escalating suspicious events.
+    domains: [MON]
+  - key: T-CONTINUITY
+    title: Continuity Planning & Recovery Exercises
+    description: Maintaining, coordinating, testing and exercising continuity and recovery plans and alternate sites.
+    domains: [BCD]
+    exclude_topics: [T-BACKUP]
+  - key: T-SDLC
+    title: Secure Development & Acquisition
+    description: Designing, building, acquiring, testing and releasing systems and AI securely.
+    domains: [TDA, SEA, AAT]
+
+# Procedure sets, one per bundled profile, mirroring bundle_sets. Consolidated
+# lists the 21 topics above. Each smaller set is declared as unions of the
+# entries of the set before it, so the levels nest by construction: a switch
+# of document structure only ever merges or splits whole procedures.
+#
+# An entry is either a bare key (the same procedure at this level) or a group
+# with its own key, title and description. A group is written one chapter per
+# member topic. A group of one is refused; write the bare key instead.
+topic_sets:
+  consolidated:
+    - T-ACCESS
+    - T-INCIDENT
+    - T-BACKUP
+    - T-CHANGE
+    - T-VULN
+    - T-SUPPLIER
+    - T-GOVERNANCE
+    - T-ASSURANCE
+    - T-RISK
+    - T-ASSET
+    - T-DATA
+    - T-CRYPTO
+    - T-PRIVACY
+    - T-PEOPLE
+    - T-PHYSICAL
+    - T-IDENTITY
+    - T-HARDENING
+    - T-NETWORK
+    - T-MONITORING
+    - T-CONTINUITY
+    - T-SDLC
+  compact:
+    - key: T-GOV-ASSURANCE
+      title: Management Review, Internal Audit & Compliance
+      description: Running and resourcing the security programme, reviewing it with management, auditing it and tracking corrective actions.
+      topics: [T-GOVERNANCE, T-ASSURANCE]
+    - T-RISK
+    - key: T-ACCESS-MGMT
+      title: Access Control
+      description: Granting, authenticating, reviewing and removing user and privileged access across the joiner, mover and leaver cycle.
+      topics: [T-ACCESS, T-IDENTITY]
+    - key: T-PEOPLE-WORKPLACE
+      title: People & Workplace Security
+      description: Screening, training and conduct of staff, and securing the places and equipment they work with, in the office or at home.
+      topics: [T-PEOPLE, T-PHYSICAL]
+    - key: T-DATA-PROTECTION
+      title: Data Protection & Privacy
+      description: Classifying and handling data, managing keys and certificates, and operating privacy obligations and data subject requests.
+      topics: [T-DATA, T-CRYPTO, T-PRIVACY]
+    - key: T-IT-OPS
+      title: Secure Configuration & Patching
+      description: Baselining, building and hardening systems, and finding and patching vulnerabilities within agreed timescales.
+      topics: [T-HARDENING, T-VULN]
+    - T-NETWORK
+    - T-ASSET
+    - T-SUPPLIER
+    - key: T-CHANGE-DEV
+      title: Change & Development
+      description: Requesting, assessing, testing and releasing changes, and building or acquiring software securely where we do so.
+      topics: [T-CHANGE, T-SDLC]
+    - key: T-DETECT-RESPOND
+      title: Log Review & Incident Response
+      description: Collecting and reviewing logs, triaging alerts, and detecting, handling, reporting and learning from incidents.
+      topics: [T-MONITORING, T-INCIDENT]
+    - key: T-RESILIENCE
+      title: Backup & Recovery
+      description: Taking, protecting and testing backups, and maintaining and exercising continuity and recovery plans.
+      topics: [T-BACKUP, T-CONTINUITY]
+  essentials:
+    - key: T-GOVERNANCE-RISK
+      title: Governance, Risk & Assurance
+      description: Assessing and treating risk, running and reviewing the security programme with management, and checking compliance.
+      topics: [T-GOV-ASSURANCE, T-RISK]
+    - T-ACCESS-MGMT
+    - T-PEOPLE-WORKPLACE
+    - T-DATA-PROTECTION
+    - key: T-DEVICE-NETWORK
+      title: Device & Network Security
+      description: Secure configuration, patching, malware protection and firewalls for the devices, networks and cloud services we use.
+      topics: [T-IT-OPS, T-NETWORK]
+    - key: T-ASSETS-SUPPLIERS
+      title: Assets & Suppliers
+      description: The inventory of what we own and the services we rely on, and how both are checked, maintained and retired.
+      topics: [T-ASSET, T-SUPPLIER]
+    - key: T-INCIDENT-RESILIENCE
+      title: Incident Response & Recovery
+      description: Reviewing logs and alerts, handling and reporting incidents, and backing up and recovering systems and data.
+      topics: [T-DETECT-RESPOND, T-RESILIENCE]
+    - T-CHANGE-DEV

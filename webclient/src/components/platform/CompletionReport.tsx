@@ -23,6 +23,8 @@ const ENTITY_LABELS: Record<CatalogEntityType, string> = {
   assessment_objectives: 'Assessment Objectives',
   capability_themes: 'Capability Themes',
   framework_mappings: 'Framework Mappings',
+  risks: 'Risks',
+  threats: 'Threats',
 }
 
 interface CompletionReportProps {

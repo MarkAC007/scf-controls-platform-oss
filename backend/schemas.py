@@ -317,9 +317,17 @@ class SCRMFocus(BaseModel):
 
 
 class RiskThreatMapping(BaseModel):
-    """Catalogue risk/threat code mappings."""
+    """Catalogue risk/threat code mappings.
+
+    ``risk_ratings`` / ``threat_ratings`` carry the publisher's per-code rating
+    (``likely`` | ``possible``) on catalogues extracted from a 2026.3+ workbook;
+    None on older extractions, where every code in ``risk_codes`` is a summary
+    mapping with no rating.
+    """
     risk_codes: List[str] = Field(default_factory=list)
     threat_codes: List[str] = Field(default_factory=list)
+    risk_ratings: Optional[Dict[str, str]] = None
+    threat_ratings: Optional[Dict[str, str]] = None
 
 
 class ScopedControlListItem(BaseModel):

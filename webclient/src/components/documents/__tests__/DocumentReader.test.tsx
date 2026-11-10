@@ -312,6 +312,23 @@ describe('DocumentReader superseded document', () => {
     expect(screen.getAllByText('Superseded').length).toBeGreaterThanOrEqual(2)
   })
 
+  it('names the shape that superseded it and what covers it now', async () => {
+    vi.mocked(getDocument).mockResolvedValue({
+      ...documentFixture,
+      superseded: true,
+      superseded_under: 'Compact',
+      superseded_by: [
+        { key: 'T-DETECT-RESPOND', title: 'Log Review & Incident Response' },
+        { key: 'T-RESILIENCE', title: 'Backup & Recovery' },
+      ],
+    } as unknown as DocumentDetail)
+    renderReader()
+    const banner = (await screen.findByText('This document is no longer current.')).closest('p')!
+    expect(banner.textContent).toContain(
+      'Superseded under the Compact shape; now covered by Log Review & Incident Response and Backup & Recovery.',
+    )
+  })
+
   it('shows no superseded banner on a current document', async () => {
     vi.mocked(getDocument).mockResolvedValue(documentFixture as unknown as DocumentDetail)
     renderReader()

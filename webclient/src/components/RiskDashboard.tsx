@@ -41,7 +41,7 @@ import {
 import { useRiskProfile } from '../contexts/RiskProfileContext'
 import { useModalDismiss } from '../hooks/useModalDismiss'
 import { saveOutcome } from './RiskAcceptancePanel'
-import riskCodesData from '../data/risk_codes.json'
+import { useRiskCatalog } from '../hooks/useRiskCatalog'
 
 interface RiskDashboardProps {
   organizationId: string
@@ -56,6 +56,10 @@ type ViewMode = 'matrix' | 'list'
 
 export default function RiskDashboard({ organizationId, onNavigateToControl, riskItem = null, onRiskItemChange }: RiskDashboardProps) {
   const { riskThresholds } = useRiskProfile()
+  // The SCF Risk Catalog the server holds. Empty until loaded (or on an
+  // install whose catalogue predates it): the register still renders, the
+  // custom risks still work, and the notice below says what to run.
+  const riskCatalog = useRiskCatalog()
 
   // State
   const [assessments, setAssessments] = useState<RiskAssessment[]>([])
@@ -76,14 +80,14 @@ export default function RiskDashboard({ organizationId, onNavigateToControl, ris
   // and the list view each render it, but never at the same time.
   useModalDismiss(showCreateModal, () => setShowCreateModal(false))
 
-  // Cast the imported JSON to the correct type
-  const scfRiskCodes = riskCodesData as RiskCodesFile
+  const scfRiskCodes = riskCatalog.catalog
 
   // Merge SCF catalog with custom risk definitions
   const riskCodes = useMemo<RiskCodesFile>(() => {
     const merged: RiskCodesFile = {
       categories: { ...scfRiskCodes.categories, ORG: { name: 'Custom', color: '#6b7280' } },
       codes: { ...scfRiskCodes.codes },
+      catalog_version: scfRiskCodes.catalog_version ?? null,
     }
     for (const def of customDefs) {
       merged.codes[def.risk_code] = {
@@ -211,6 +215,11 @@ export default function RiskDashboard({ organizationId, onNavigateToControl, ris
       lazyCreateAttemptedOrg.current = null
     }
 
+    // The catalogue arrives asynchronously. Until it has, the merged codes are
+    // the custom risks alone; firing (and spending the one-shot guard) on that
+    // partial set would leave every SCF code uncreated until a reload.
+    if (!riskCatalog.isSuccess) return
+
     const allRiskCodes = Object.keys(riskCodes.codes)
     const existingCodes = new Set(assessments.map(a => a.risk_code))
     const missingCodes = allRiskCodes.filter(code => !existingCodes.has(code))
@@ -235,7 +244,7 @@ export default function RiskDashboard({ organizationId, onNavigateToControl, ris
       }
       createMissing()
     }
-  }, [assessments, loading, organizationId, riskCodes.codes])
+  }, [assessments, loading, organizationId, riskCodes.codes, riskCatalog.isSuccess])
 
   // Handle cell click in matrix
   const handleCellClick = (likelihood: number, impact: number, riskCodes: string[]) => {
@@ -482,6 +491,20 @@ export default function RiskDashboard({ organizationId, onNavigateToControl, ris
 
       {/* Content area */}
       <div className="risk-dashboard-content">
+        {riskCatalog.isEmpty && (
+          <div className="risk-catalog-notice" role="status">
+            The SCF risk catalogue is not loaded on this install, so only your organisation's own risks
+            are listed. An administrator can load it with{' '}
+            <code>python -m cli.admin refresh-risk-catalog</code>.
+          </div>
+        )}
+        {riskCatalog.isError && (
+          <div className="risk-catalog-notice" role="alert">
+            The SCF risk catalogue could not be read:{' '}
+            {riskCatalog.error instanceof Error ? riskCatalog.error.message : 'unknown error'}
+          </div>
+        )}
+
         {/* Main area - Matrix or List */}
         <div className="risk-main-area">
           {viewMode === 'matrix' ? (

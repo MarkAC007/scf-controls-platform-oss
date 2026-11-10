@@ -627,3 +627,152 @@ def test_framework_columns_for_matches_extract_controls(tmp_path):
         xl, sheets["controls"], focal_headers
     )
     assert cheap == full
+
+
+# ---------------------------------------------------------------------------
+# Risk / Threat Catalog sheets and the 2026.3 rating columns
+# ---------------------------------------------------------------------------
+#
+# 2026.3 removed the 'Risk Threat Summary' / 'Control Threat Summary' columns
+# and rates every control against every risk and threat instead. These
+# fixtures use invented codes (R-XX-1, R-YY-2, NT-1, MT-1) and invented titles:
+# the real SCF catalogue text is licensed and never lands in this repo.
+
+RATING_HEADERS = ["Risk\nR-XX-1", "Risk\nR-YY-2", "Threat\nNT-1", "Threat\nMT-1"]
+SUMMARY_HEADERS = ["Risk Threat Summary", "Control Threat Summary"]
+
+RISK_CATALOG_ROWS = [
+    ("RISK CATALOG use case: narrative", None, None, None, None, None),
+    (None, None, None, None, None, None),
+    ("Risk Grouping", "Risk #", "Old Risk #", "Risk*\nNote", "Description of Possible Risk", "NIST CSF \nFunction"),
+    (None, None, None, None, "IF THE CONTROL FAILS", None),
+    ("Example Grouping", "R-XX-1", "R-XX-1", "First invented risk", "What goes wrong first.", "Govern"),
+    (None, "R-YY-2", "R-ZZ-9", "Second invented risk", "What goes wrong second.", "Protect"),
+]
+
+THREAT_CATALOG_ROWS = [
+    ("THREAT CATALOG use case: narrative", None, None, None),
+    (None, None, None, None),
+    ("Threat Grouping", "Threat #", "Threat*", "Threat Description"),
+    (None, None, None, "≥ 5% of pre-tax income"),
+    ("Natural Example", "NT-1", "Invented natural threat", "Weather does something."),
+    ("Man-Made Example", "MT-1", "Invented man-made threat", "Someone does something."),
+]
+
+
+def build_rating_era_workbook(path, *, summary_columns: bool = False, catalog_sheets: bool = True):
+    """A 2026.3-shaped workbook: rating columns (or, for the regression case,
+    the old summary columns) on the controls sheet, plus optional Risk and
+    Threat Catalog sheets laid out like the publisher's (narrative rows, a
+    header row found by 'Risk #' / 'Threat #', a sub-header, then data)."""
+    wb = Workbook()
+    wb.remove(wb.active)
+    _add_sheet(wb, "SCF Domains & Principles", domains_headers("focal_documents"), DEFAULT_DOMAIN_ROWS)
+    _add_sheet(wb, *NAMES_SHEET_NEW)
+
+    base_headers = controls_headers("focal_documents")
+    extra_headers = SUMMARY_HEADERS if summary_columns else RATING_HEADERS
+    if summary_columns:
+        extra_rows = [("R-YY-2", "MT-1"), (None, None)]
+    else:
+        # Control A: one Likely risk, one Unlikely risk; one Possible threat, one Unlikely threat.
+        # Control B: everything Unlikely -> no mapping at all.
+        extra_rows = [("Likely", "Unlikely", "Possible", "Unlikely"), ("Unlikely", "Unlikely", "Unlikely", "Unlikely")]
+    rows = [tuple(row) + extra for row, extra in zip(DEFAULT_CONTROL_ROWS, extra_rows)]
+    _add_sheet(wb, "SCF 2026.3", base_headers + extra_headers, rows)
+    _add_sheet(wb, "Evidence Request List 2026.3", EVIDENCE_HEADERS, DEFAULT_EVIDENCE_ROWS)
+    _add_sheet(wb, "Assessment Objectives 2026.3", AO_HEADERS, DEFAULT_AO_ROWS)
+
+    if catalog_sheets:
+        ws = wb.create_sheet("Risk Catalog")
+        for row in RISK_CATALOG_ROWS:
+            ws.append(row)
+        ws = wb.create_sheet("Threat Catalog")
+        for row in THREAT_CATALOG_ROWS:
+            ws.append(row)
+    wb.save(path)
+    return Path(path)
+
+
+def _extract_rating_era(tmp_path, **kwargs):
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    workbook = build_rating_era_workbook(tmp_path / "scf.xlsx", **kwargs)
+    out_dir = tmp_path / "out"
+    meta = extractor.extract_to_dir(workbook, out_dir)
+    return meta, out_dir
+
+
+def test_rating_threshold_is_one_constant_and_unlikely_never_maps():
+    assert extractor.RISK_MAPPING_RATINGS == frozenset({"possible", "likely"})
+    assert "unlikely" not in extractor.RISK_MAPPING_RATINGS
+
+
+def test_extracts_risk_and_threat_catalog_sheets(tmp_path):
+    meta, out_dir = _extract_rating_era(tmp_path)
+
+    assert meta["risks"] == 2
+    assert meta["threats"] == 2
+
+    risks = _load(out_dir, "risks.json")
+    assert risks["catalog_version"] == "2026.3"
+    assert risks["risks"] == [
+        {
+            "code": "R-XX-1",
+            "grouping": "Example Grouping",
+            "old_code": "R-XX-1",
+            "title": "First invented risk",
+            "description": "What goes wrong first.",
+            "nist_csf_function": "Govern",
+        },
+        {
+            # Grouping forward-filled from the merged cell above; renumbered from R-ZZ-9.
+            "code": "R-YY-2",
+            "grouping": "Example Grouping",
+            "old_code": "R-ZZ-9",
+            "title": "Second invented risk",
+            "description": "What goes wrong second.",
+            "nist_csf_function": "Protect",
+        },
+    ]
+
+    threats = _load(out_dir, "threats.json")["threats"]
+    assert [t["code"] for t in threats] == ["NT-1", "MT-1"]
+    assert threats[0] == {
+        "code": "NT-1",
+        "grouping": "Natural Example",
+        "title": "Invented natural threat",
+        "description": "Weather does something.",
+    }
+
+
+def test_rating_columns_map_possible_and_likely_with_ratings(tmp_path):
+    _, out_dir = _extract_rating_era(tmp_path)
+    controls = {c["scf_id"]: c for c in _load(out_dir, "control_guidance.json")["controls"]}
+
+    mapping = controls["GOV-A1"]["risk_threat_mapping"]
+    assert mapping["risk_codes"] == ["R-XX-1"]  # R-YY-2 is Unlikely: never mapped
+    assert mapping["risk_ratings"] == {"R-XX-1": "likely"}
+    assert mapping["threat_codes"] == ["NT-1"]
+    assert mapping["threat_ratings"] == {"NT-1": "possible"}
+
+    # Every rating Unlikely -> no mapping, same as a blank summary column.
+    assert controls["GOV-A2"]["risk_threat_mapping"] is None
+
+
+def test_summary_columns_still_win_when_present(tmp_path):
+    """2026.2-era regression: the summary columns decide and no ratings are invented."""
+    _, out_dir = _extract_rating_era(tmp_path, summary_columns=True, catalog_sheets=False)
+    controls = {c["scf_id"]: c for c in _load(out_dir, "control_guidance.json")["controls"]}
+
+    mapping = controls["GOV-A1"]["risk_threat_mapping"]
+    assert mapping == {"risk_codes": ["R-YY-2"], "threat_codes": ["MT-1"]}
+    assert controls["GOV-A2"]["risk_threat_mapping"] is None
+
+
+def test_workbook_without_catalog_sheets_writes_empty_catalogs(tmp_path):
+    meta, out_dir = _extract(tmp_path, version="2026.2", era="focal_documents")
+
+    assert meta["risks"] == 0
+    assert meta["threats"] == 0
+    assert _load(out_dir, "risks.json") == {"catalog_version": "2026.2", "risks": []}
+    assert _load(out_dir, "threats.json") == {"catalog_version": "2026.2", "threats": []}

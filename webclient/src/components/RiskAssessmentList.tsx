@@ -31,6 +31,7 @@ import {
 import FilterSidebar, { FilterGroup, FilterSelect, defaultFiltersCollapsed } from './explorer/FilterSidebar'
 import ListToolbar from './explorer/ListToolbar'
 import ExplorerListRow, { RowChip, RowMeta } from './explorer/ListRow'
+import { catalogCodeNote } from '../hooks/useRiskCatalog'
 
 interface RiskAssessmentListProps {
   assessments: RiskAssessment[]
@@ -185,7 +186,7 @@ export default function RiskAssessmentList({
     { value: 'all', label: 'All Categories' },
     ...Object.entries(riskCodes.categories).map(([key, cat]) => ({
       value: key,
-      label: cat.name,
+      label: cat?.name ?? key,
     })),
   ], [riskCodes.categories])
 
@@ -310,6 +311,7 @@ export default function RiskAssessmentList({
             const likelihood = matrixType === 'inherent' ? assessment.likelihood : assessment.residual_likelihood
             const impact = matrixType === 'inherent' ? assessment.impact : assessment.residual_impact
             const isCustom = assessment.risk_code.startsWith('R-ORG-')
+            const catalogNote = catalogCodeNote(assessment.risk_code, riskCodes)
 
             return (
               <div key={assessment.risk_code} className="risk-list-row-wrap">
@@ -332,6 +334,18 @@ export default function RiskAssessmentList({
                       {isCustom && <span className="risk-custom-tag">Custom · </span>}
                       {categoryInfo?.name || category}
                     </span>
+                    {catalogNote && (
+                      <span
+                        className={`risk-catalog-note risk-catalog-note--${catalogNote.kind}`}
+                        title={
+                          catalogNote.kind === 'renumbered'
+                            ? `The SCF catalogue now carries this risk as ${catalogNote.successor}; this record keeps its scores and history.`
+                            : 'This code is not in the loaded SCF risk catalogue; the record is kept as it is.'
+                        }
+                      >
+                        {catalogNote.label}
+                      </span>
+                    )}
                   </RowMeta>
 
                   {/* Inline likelihood select */}

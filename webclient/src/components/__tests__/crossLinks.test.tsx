@@ -13,8 +13,27 @@ import type { ReactNode } from 'react'
 vi.mock('../../contexts/OrganizationContext', () => ({
   useOrganization: () => ({ currentOrg: { id: 'org-1' } }),
 }))
+// Invented catalogue rows: the SCF's own titles are CC BY-ND and live only in
+// the database, so tests describe codes the server would never return.
+const RISK_CATALOG = {
+  catalog_version: 'test',
+  categories: { XX: { name: 'Test grouping', color: '#6366f1' } },
+  codes: {
+    'R-XX-1': { category: 'XX', title: 'Invented risk one', description: 'Invented.' },
+    'R-XX-2': { category: 'XX', title: 'Invented risk two', description: 'Invented.' },
+    'R-XX-3': { category: 'XX', title: 'Invented risk three', description: 'Invented.' },
+  },
+}
+const THREAT_CATALOG = {
+  catalog_version: 'test',
+  categories: { NT: { name: 'Natural', color: '#10b981' } },
+  codes: { 'NT-1': { category: 'NT', title: 'Invented threat', description: 'Invented.' } },
+}
+
 vi.mock('../../data/apiClient', () => ({
   getRiskAssessments: vi.fn(),
+  getRiskCatalog: vi.fn(async () => RISK_CATALOG),
+  getThreatCatalog: vi.fn(async () => THREAT_CATALOG),
 }))
 
 import AppLink, { destinationSearch, navigateToDestination } from '../AppLink'
@@ -23,15 +42,14 @@ import RiskThreatContext from '../RiskThreatContext'
 import { auditEntityDestination } from '../AuditLogPage'
 import { changelogDestination } from '../CatalogChangelogPage'
 import { getRiskAssessments } from '../../data/apiClient'
-import riskCodesData from '../../data/risk_codes.json'
 import type { AuditLogEntry } from '../../types'
 
-// Fixture identifiers. The risk code must exist in the bundled catalogue,
+// Fixture identifiers. The risk code must exist in the served catalogue,
 // since RiskThreatContext drops codes it cannot describe.
 const CONTROL = 'CONTROL_ONE'
 const SUCCESSOR = 'CONTROL_TWO'
 const EVIDENCE = 'EVIDENCE_ONE'
-const RISK = Object.keys(riskCodesData.codes)[0]
+const RISK = 'R-XX-1'
 
 function withQuery(ui: ReactNode) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -114,7 +132,7 @@ describe('control → risk record', () => {
   it('offers the organisation risk record when one exists', async () => {
     vi.mocked(getRiskAssessments).mockResolvedValue([{ risk_code: RISK }] as never)
     render(withQuery(<RiskThreatContext mapping={mapping} />))
-    fireEvent.click(screen.getByRole('button', { name: RISK }))
+    fireEvent.click(await screen.findByRole('button', { name: RISK }))
     const link = await screen.findByRole('link', { name: 'Open risk record' })
     expect(link.getAttribute('href')).toBe(`/?tab=risk-register&risk=${RISK}`)
   })
@@ -122,11 +140,53 @@ describe('control → risk record', () => {
   it('says plainly when the organisation has no record for the code', async () => {
     vi.mocked(getRiskAssessments).mockResolvedValue([])
     render(withQuery(<RiskThreatContext mapping={mapping} />))
-    fireEvent.click(screen.getByRole('button', { name: RISK }))
+    fireEvent.click(await screen.findByRole('button', { name: RISK }))
     await waitFor(() =>
       expect(screen.getByText(new RegExp(`no ${RISK} record in this organisation`))).toBeInTheDocument(),
     )
     expect(screen.queryByRole('link')).toBeNull()
+  })
+})
+
+describe('control → risk codes by rating (SCF 2026.3)', () => {
+  it('shows Likely codes open and keeps Possible ones behind a count until asked', async () => {
+    vi.mocked(getRiskAssessments).mockResolvedValue([])
+    render(withQuery(
+      <RiskThreatContext
+        mapping={{
+          risk_codes: ['R-XX-1', 'R-XX-2', 'R-XX-3'],
+          threat_codes: ['NT-1'],
+          risk_ratings: { 'R-XX-1': 'likely', 'R-XX-2': 'possible', 'R-XX-3': 'possible' },
+          threat_ratings: { 'NT-1': 'likely' },
+        }}
+      />,
+    ))
+    expect(await screen.findByRole('button', { name: 'R-XX-1' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'R-XX-2' })).toBeNull()
+    const toggle = screen.getByRole('button', { name: '+2 possible' })
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    fireEvent.click(toggle)
+    expect(screen.getByRole('button', { name: 'R-XX-2' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'R-XX-3' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'hide possible' }).getAttribute('aria-expanded')).toBe('true')
+    // Threats are rated separately and here have nothing to hide.
+    expect(screen.getByRole('button', { name: 'NT-1' })).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: /possible/ })).toHaveLength(1)
+  })
+
+  it('shows every code open when the catalogue carries no ratings (pre-2026.3 install)', async () => {
+    vi.mocked(getRiskAssessments).mockResolvedValue([])
+    render(withQuery(<RiskThreatContext mapping={{ risk_codes: ['R-XX-1', 'R-XX-2'], threat_codes: [] }} />))
+    expect(await screen.findByRole('button', { name: 'R-XX-1' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'R-XX-2' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /possible/ })).toBeNull()
+  })
+
+  it('drops codes the served catalogue does not define', async () => {
+    vi.mocked(getRiskAssessments).mockResolvedValue([])
+    render(withQuery(<RiskThreatContext mapping={{ risk_codes: ['R-XX-1', 'R-ZZ-9'], threat_codes: [] }} />))
+    expect(await screen.findByRole('button', { name: 'R-XX-1' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'R-ZZ-9' })).toBeNull()
   })
 })
 

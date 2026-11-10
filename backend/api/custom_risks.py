@@ -10,7 +10,7 @@ from uuid import UUID
 
 from database import get_db
 from models import CustomRiskDefinition, CustomRiskControlMapping, RiskAssessment, ScopedControl
-from catalog_models import SCFCatalogControl
+from catalog_models import SCFCatalogControl, SCFCatalogRisk
 from schemas import (
     CustomRiskDefinitionCreate,
     CustomRiskDefinitionUpdate,
@@ -20,6 +20,7 @@ from schemas import (
     SuccessResponse,
 )
 from auth import require_org_role, OrgMembership
+from services.compensating_controls import catalog_linked_codes
 from services.audit_service import (
     log_entity_changes, detect_action_source, get_request_id,
     CUSTOM_RISK_TRACKED_FIELDS, CUSTOM_RISK_CONTROL_MAPPING_TRACKED_FIELDS,
@@ -47,6 +48,34 @@ async def _withdraw_approval_on_link_change(
         action_source=detect_action_source(request),
         request_id=get_request_id(request),
     )
+
+
+async def _risk_exists(db: AsyncSession, org_id: UUID, risk_code: str) -> bool:
+    """Whether ``risk_code`` is a risk this organisation can link controls to:
+    one of its own custom risks (R-ORG-n) or an active SCF Risk Catalog entry.
+
+    Organisation-level links on SCF risks say "this control treats that risk
+    for us" where the publisher does not; they live in the same mapping table
+    as custom-risk links, which has no foreign key to the custom definitions.
+    """
+    custom = await db.execute(
+        select(CustomRiskDefinition).where(
+            and_(
+                CustomRiskDefinition.organization_id == org_id,
+                CustomRiskDefinition.risk_code == risk_code
+            )
+        )
+    )
+    if custom.scalar_one_or_none():
+        return True
+    if risk_code.upper().startswith("R-ORG-"):
+        return False
+    catalog = await db.execute(
+        select(SCFCatalogRisk.code).where(
+            and_(SCFCatalogRisk.code == risk_code.upper(), SCFCatalogRisk.status == "active")
+        )
+    )
+    return catalog.scalar_one_or_none() is not None
 
 
 async def _next_risk_code(org_id: UUID, db: AsyncSession) -> str:
@@ -282,6 +311,7 @@ async def list_custom_risk_controls(
     db: AsyncSession = Depends(get_db)
 ):
     """List controls linked to a custom risk."""
+    risk_code = risk_code.upper()
     # Get the scf_ids from mappings, with the standard's document when the
     # link records an exception (PIG R7).
     result = await db.execute(
@@ -371,18 +401,15 @@ async def add_custom_risk_control(
     membership: OrgMembership = Depends(require_org_role("editor")),
     db: AsyncSession = Depends(get_db)
 ):
-    """Link a scoped control to a custom risk."""
-    # Verify the custom risk exists
-    risk_result = await db.execute(
-        select(CustomRiskDefinition).where(
-            and_(
-                CustomRiskDefinition.organization_id == org_id,
-                CustomRiskDefinition.risk_code == risk_code
-            )
-        )
-    )
-    if not risk_result.scalar_one_or_none():
-        raise HTTPException(status_code=404, detail=f"Custom risk '{risk_code}' not found")
+    """Link a control to a risk: one of the organisation's custom risks, or an
+    SCF Risk Catalog risk the publisher does not already rate the control
+    Likely for."""
+    # Codes are upper-case everywhere they are stored and compared; normalise
+    # once so the existence check, the duplicate check, the row and the
+    # approval withdrawal all see the same value.
+    risk_code = risk_code.upper()
+    if not await _risk_exists(db, org_id, risk_code):
+        raise HTTPException(status_code=404, detail=f"Risk '{risk_code}' not found")
 
     # Check for duplicate
     existing = await db.execute(
@@ -402,9 +429,12 @@ async def add_custom_risk_control(
     # mappings are untouched — they keep resolving, badged.
     catalog_row = (
         await db.execute(
-            select(SCFCatalogControl.status, SCFCatalogControl.superseded_by).where(
-                SCFCatalogControl.scf_id == data.scf_id
-            )
+            select(
+                SCFCatalogControl.status,
+                SCFCatalogControl.superseded_by,
+                SCFCatalogControl.risk_codes,
+                SCFCatalogControl.risk_ratings,
+            ).where(SCFCatalogControl.scf_id == data.scf_id)
         )
     ).first()
     if catalog_row is not None and catalog_row[0] == "deprecated":
@@ -414,6 +444,19 @@ async def add_custom_risk_control(
             detail=(
                 f"Control '{data.scf_id}' is deprecated in the SCF catalog "
                 f"and cannot be newly linked to a risk.{hint}"
+            ),
+        )
+    # An SCF risk the catalogue already LINKS this control to (a Likely rating,
+    # or any mapping on a catalogue without ratings) needs no organisation
+    # link. A merely Possible rating is not a link for governance
+    # (compensating_controls.catalog_linked_codes), so the organisation may
+    # add its own on top; the row then reads source "both".
+    if catalog_row is not None and risk_code in catalog_linked_codes(catalog_row[2], catalog_row[3]):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"The SCF catalog already maps '{data.scf_id}' to '{risk_code}'; "
+                f"an organisation link would duplicate it."
             ),
         )
 
@@ -472,6 +515,7 @@ async def update_custom_risk_control(
     ``document_id`` is required, ``null`` to clear, so an empty body cannot
     clear it by accident.
     """
+    risk_code = risk_code.upper()
     if "document_id" not in data.model_fields_set:
         raise HTTPException(
             status_code=422,
@@ -526,6 +570,7 @@ async def remove_custom_risk_control(
     db: AsyncSession = Depends(get_db)
 ):
     """Remove a control link from a custom risk."""
+    risk_code = risk_code.upper()
     result = await db.execute(
         select(CustomRiskControlMapping).where(
             and_(

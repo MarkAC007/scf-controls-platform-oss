@@ -58,6 +58,7 @@ import RiskAcceptancePanel, {
 import CustomRiskLinkDocument, { LinkDocumentSelect } from './CustomRiskLinkDocument'
 import { useConfirm } from '../contexts/ConfirmContext'
 import { customRiskLinksKey, useCustomRiskLinks } from '../hooks/useCustomRiskLinks'
+import { catalogCodeNote } from '../hooks/useRiskCatalog'
 import { useIsOrgAdmin } from '../hooks/useIsOrgAdmin'
 import { JOURNEY_QUERY_ROOT } from '../hooks/useJourney'
 import { useDebounce } from '../hooks/useDebounce'
@@ -183,7 +184,9 @@ export default function RiskDetailPage({
 
   const riskCode = assessment?.risk_code ?? ''
   const isCustom = riskCode.startsWith('R-ORG-')
-  const customLinks = useCustomRiskLinks(currentOrg?.id, riskCode, isCustom)
+  // Every risk can carry the organisation's own control links (an SCF risk's
+  // sit beside the catalogue's mapping), so the links load for all of them.
+  const customLinks = useCustomRiskLinks(currentOrg?.id, riskCode, Boolean(riskCode))
   const documentByControl = useMemo(
     () => new Map((customLinks.data ?? []).map((link) => [link.scf_id, link.document_id])),
     [customLinks.data],
@@ -529,6 +532,28 @@ export default function RiskDetailPage({
   const category = assessment.risk_code.split('-')[1]
   const categoryInfo = riskCodes.categories[category as keyof typeof riskCodes.categories]
   const isCustomRisk = isCustom
+  const catalogNote = catalogCodeNote(assessment.risk_code, riskCodes)
+  // A row the organisation linked itself can be unlinked; a catalogue mapping
+  // cannot. Responses from before `source` existed carry only org links on
+  // custom risks and only catalogue links on SCF risks.
+  const isOrgLink = (control: ScopedControlForRisk) =>
+    control.source ? control.source !== 'catalog' : isCustomRisk
+  // Links can be added to a custom risk, or to an SCF risk the loaded
+  // catalogue defines; a row badged "not in <version>" / "renumbered" would
+  // only get a 404 from the server, so it is read-only here as well.
+  const canLink = isCustomRisk || (Boolean(codeInfo) && !catalogNote)
+  const linkCounts = (() => {
+    const sources = controlsData?.sources
+    if (!controlsData || !sources) return null
+    let catalog = 0
+    let org = 0
+    for (const id of controlsData.catalog_control_ids) {
+      const source = sources[id]
+      if (source === 'catalog' || source === 'both') catalog++
+      if (source === 'org' || source === 'both') org++
+    }
+    return { catalog, org }
+  })()
   // While the links (and their documents) load or after they fail, an empty
   // map would read as "no document": offer no edit until they are known.
   const linksLoading = customLinks.isLoading
@@ -643,6 +668,18 @@ export default function RiskDetailPage({
             )}
             {!isCustomRisk && (
               <span className="risk-detail-page-chip">SCF Risk Catalog</span>
+            )}
+            {catalogNote && (
+              <span
+                className={`risk-detail-page-chip risk-catalog-note risk-catalog-note--${catalogNote.kind}`}
+                title={
+                  catalogNote.kind === 'renumbered'
+                    ? `The SCF catalogue now carries this risk as ${catalogNote.successor}; this record keeps its scores and history.`
+                    : 'This code is not in the loaded SCF risk catalogue; the record is kept as it is.'
+                }
+              >
+                {catalogNote.label}
+              </span>
             )}
             {isCustomRisk && (
               <span className="risk-detail-page-chip risk-detail-page-chip--custom">Custom</span>
@@ -930,8 +967,17 @@ export default function RiskDetailPage({
             </span>
             {controlsData && (
               <span className="risk-detail-page-section-meta">
-                {controlsData.total_catalog_controls} linked in{' '}
-                {isCustomRisk ? 'org' : 'SCF catalog'}
+                {linkCounts && !isCustomRisk ? (
+                  <>
+                    {linkCounts.catalog} mapped in SCF catalog
+                    {linkCounts.org > 0 && <> · {linkCounts.org} linked by your organisation</>}
+                  </>
+                ) : (
+                  <>
+                    {controlsData.total_catalog_controls} linked in{' '}
+                    {isCustomRisk ? 'org' : 'SCF catalog'}
+                  </>
+                )}
                 {controlsData.scoped_controls.length > 0 && (
                   <span className="risk-detail-page-in-scope">
                     {' · '}
@@ -954,8 +1000,14 @@ export default function RiskDetailPage({
               the approval.
             </p>
           )}
+          {!isCustomRisk && assessment.accepted_at && (
+            <p className="gov-note">
+              This risk's acceptance was approved for the controls your organisation linked. Changing those
+              links withdraws the approval; the SCF catalogue's own mappings do not.
+            </p>
+          )}
           {linkError && <div role="alert" className="gov-error">{linkError}</div>}
-          {isCustomRisk && customLinks.isError && (
+          {customLinks.isError && (
             <div role="alert" className="gov-error">
               Could not load the control links' supporting documents:{' '}
               {customLinks.error instanceof Error ? customLinks.error.message : 'unknown error'}
@@ -980,10 +1032,30 @@ export default function RiskDetailPage({
                         </span>
                       </button>
                       <div className="risk-detail-page-control-meta">
+                        {control.source && (
+                          <span
+                            className={`risk-link-source risk-link-source--${control.source === 'catalog' ? control.rating ?? 'catalog' : 'org'}`}
+                            title={
+                              control.source === 'catalog'
+                                ? `Mapped in the SCF catalogue${control.rating ? ` (${control.rating})` : ''}`
+                                : control.source === 'both'
+                                  ? 'Mapped in the SCF catalogue and linked by your organisation'
+                                  : 'Linked by your organisation'
+                            }
+                          >
+                            {control.source !== 'catalog'
+                              ? 'Org link'
+                              : control.rating === 'likely'
+                                ? 'Likely'
+                                : control.rating === 'possible'
+                                  ? 'Possible'
+                                  : 'SCF'}
+                          </span>
+                        )}
                         <span className={getStatusBadgeClass(control.implementation_status)}>
                           {formatStatus(control.implementation_status)}
                         </span>
-                        {isCustomRisk && (
+                        {isOrgLink(control) && (
                           <button
                             className="risk-detail-page-remove-control"
                             onClick={() => handleRemoveControl(control.scf_id)}
@@ -995,7 +1067,7 @@ export default function RiskDetailPage({
                         )}
                       </div>
                     </div>
-                    {isCustomRisk && currentOrg && (linksLoading ? (
+                    {isOrgLink(control) && currentOrg && (linksLoading ? (
                       <div className="risk-link-document">Loading supporting document…</div>
                     ) : linksReady ? (
                       <CustomRiskLinkDocument
@@ -1035,7 +1107,8 @@ export default function RiskDetailPage({
                 </div>
               ) : !isCustomRisk ? (
                 <div className="risk-detail-page-no-controls">
-                  No controls mapped to this risk code in the SCF catalog.
+                  No controls mapped to this risk code in the SCF catalog. Link the controls your
+                  organisation relies on with + Add Control.
                 </div>
               ) : !showControlSearch ? (
                 <div className="risk-detail-page-no-controls">
@@ -1043,8 +1116,8 @@ export default function RiskDetailPage({
                 </div>
               ) : null}
 
-              {/* Add Control button + search for custom risks */}
-              {isCustomRisk && linksReady && (
+              {/* Add Control button + search: every risk the catalogue defines takes organisation links */}
+              {linksReady && canLink && (
                 <div className="risk-detail-page-add-control">
                   {!showControlSearch ? (
                     <button

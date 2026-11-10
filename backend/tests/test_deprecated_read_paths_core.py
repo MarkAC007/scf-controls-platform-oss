@@ -161,6 +161,8 @@ def _catalog_control(
         scrm_tier1_strategic="", scrm_tier2_operational="", scrm_tier3_tactical="",
         risk_codes=[],
         threat_codes=[],
+        risk_ratings=None,
+        threat_ratings=None,
         required_artifact_types=[],
         required_artifact_types_extracted_at=None,
         catalog_version="2026.1",

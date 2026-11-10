@@ -65,9 +65,29 @@ COL_CMM_CANDIDATES = [
 COL_LEGACY_SCF_ID = 'Legacy SCF #'
 LEGACY_NONE_SENTINEL = 'NONE'
 
-# Risk/Threat Mapping columns
+# Risk/Threat Mapping columns.
+#
+# Up to 2026.2 the controls sheet carried two summary columns listing the codes
+# a control addresses. 2026.3 removed them: every control is instead rated
+# against every risk ('Risk\nR-AC-1', ...) and every threat ('Threat\nNT-1',
+# ...) as Unlikely / Possible / Likely, with no blanks. The summary columns
+# are read when present; otherwise a code is mapped when its rating is in
+# RISK_MAPPING_RATINGS, and the rating itself is kept alongside so a consumer
+# can tell a Likely link from a Possible one. Unlikely never maps.
 COL_RISK_SUMMARY = 'Risk Threat Summary'
 COL_THREAT_SUMMARY = 'Control Threat Summary'
+RISK_MAPPING_RATINGS = frozenset({'possible', 'likely'})
+RISK_CODE_RE = re.compile(r'^R-[A-Z]{2}-\d+$')
+THREAT_CODE_RE = re.compile(r'^[NM]T-\d+$')
+# Cleaned headers of the per-code rating columns ('Risk R-AC-1', 'Threat NT-1').
+RISK_RATING_COLUMN_RE = re.compile(r'^Risk\s+(R-[A-Z]{2}-\d+)$', re.I)
+THREAT_RATING_COLUMN_RE = re.compile(r'^Threat\s+([NM]T-\d+)$', re.I)
+
+# The Risk Catalog / Threat Catalog sheets (present from 2026.2; 2026.3 added
+# the 'Old Risk #' column carrying the renumbering). Optional: a workbook
+# without them still imports, with empty risks.json / threats.json.
+SHEET_RISK_CATALOG = (['Risk Catalog'], ['risk catalog'])
+SHEET_THREAT_CATALOG = (['Threat Catalog'], ['threat catalog'])
 
 # Framework display-name columns. SCF renamed both the sheet ('Authoritative
 # Sources' -> 'Focal Documents') and its columns in the 2026.2 catalogue:
@@ -590,15 +610,65 @@ def parse_scrm_focus(row: pd.Series, col_map: dict) -> dict | None:
     return result if has_data else None
 
 
-def parse_risk_threat_mapping(row: pd.Series, col_map: dict) -> dict | None:
+def rating_columns_in(col_map: dict) -> dict:
+    """The per-code rating columns of a controls sheet, by code.
+
+    Returns ``{'risk': {code: column}, 'threat': {code: column}}`` from the
+    cleaned column names in ``col_map``. Empty for workbooks up to 2026.2.
+    """
+    risk, threat = {}, {}
+    for cleaned in col_map.values():
+        m = RISK_RATING_COLUMN_RE.match(cleaned)
+        if m:
+            risk[m.group(1).upper()] = cleaned
+            continue
+        m = THREAT_RATING_COLUMN_RE.match(cleaned)
+        if m:
+            threat[m.group(1).upper()] = cleaned
+    return {'risk': risk, 'threat': threat}
+
+
+def _ratings_from_row(row: pd.Series, columns: dict) -> dict:
+    """``{code: 'likely'|'possible'}`` for the codes this row maps."""
+    ratings = {}
+    for code, column in columns.items():
+        value = row.get(column)
+        if pd.isna(value):
+            continue
+        rating = str(value).strip().lower()
+        if rating in RISK_MAPPING_RATINGS:
+            ratings[code] = rating
+    return ratings
+
+
+def _sort_codes(codes) -> list:
+    """Codes in catalogue order (prefix, then number), not string order."""
+    def key(code):
+        prefix, _, number = code.rpartition('-')
+        return (prefix, int(number) if number.isdigit() else 0)
+    return sorted(codes, key=key)
+
+
+def parse_risk_threat_mapping(
+    row: pd.Series, col_map: dict, rating_columns: dict | None = None
+) -> dict | None:
     """Parse Risk and Threat code mappings from row.
 
     Returns a dictionary with risk_codes and threat_codes arrays, or None if no data.
     Risk codes are in format R-XX-N (e.g., R-AC-1, R-GV-3)
     Threat codes are in format NT-N or MT-N (e.g., NT-1, MT-15)
+
+    Summary columns win when the sheet has them (2026.2 and earlier). Without
+    them the per-code rating columns decide (2026.3+): a code is mapped when its
+    rating is in ``RISK_MAPPING_RATINGS`` and the rating is kept under
+    ``risk_ratings`` / ``threat_ratings``. ``rating_columns`` is
+    ``rating_columns_in(col_map)``, passed in by the caller so it is computed
+    once per sheet rather than once per row.
     """
     result = {}
     has_data = False
+    if rating_columns is None:
+        rating_columns = rating_columns_in(col_map)
 
     # Parse risk codes from Risk Threat Summary column
     risk_col = col_map.get(COL_RISK_SUMMARY)
@@ -612,6 +682,12 @@ def parse_risk_threat_mapping(row: pd.Series, col_map: dict) -> dict | None:
             if risk_codes:
                 result['risk_codes'] = risk_codes
                 has_data = True
+    elif rating_columns['risk']:
+        ratings = _ratings_from_row(row, rating_columns['risk'])
+        if ratings:
+            result['risk_codes'] = _sort_codes(ratings)
+            result['risk_ratings'] = {code: ratings[code] for code in result['risk_codes']}
+            has_data = True
 
     # Parse threat codes from Control Threat Summary column
     threat_col = col_map.get(COL_THREAT_SUMMARY)
@@ -625,8 +701,153 @@ def parse_risk_threat_mapping(row: pd.Series, col_map: dict) -> dict | None:
             if threat_codes:
                 result['threat_codes'] = threat_codes
                 has_data = True
+    elif rating_columns['threat']:
+        ratings = _ratings_from_row(row, rating_columns['threat'])
+        if ratings:
+            result['threat_codes'] = _sort_codes(ratings)
+            result['threat_ratings'] = {code: ratings[code] for code in result['threat_codes']}
+            has_data = True
 
     return result if has_data else None
+
+
+def _find_header_row(df: pd.DataFrame, marker: str) -> int | None:
+    """Index of the first row holding a cell equal to ``marker`` (cleaned)."""
+    for idx, row in df.iterrows():
+        for value in row:
+            if isinstance(value, str) and clean_column_name(value) == marker:
+                return idx
+    return None
+
+
+def _catalog_sheet_rows(
+    xl: pd.ExcelFile, sheet_name: str, code_header: str
+) -> tuple[list, dict] | None:
+    """Header map and data rows of a Risk/Threat Catalog sheet.
+
+    The sheets open with a few rows of narrative, then a header row (found by
+    the ``code_header`` cell, 'Risk #' / 'Threat #'), then a sub-header row of
+    materiality thresholds, then the data. Returns ``(rows, header_index)``
+    where ``header_index`` maps each cleaned header to its column position.
+    """
+    df = pd.read_excel(xl, sheet_name, header=None)
+    header_row = _find_header_row(df, code_header)
+    if header_row is None:
+        print(f"Warning: sheet {sheet_name!r} has no {code_header!r} header; skipped")
+        return None
+    headers = {}
+    for position, value in enumerate(df.iloc[header_row]):
+        if isinstance(value, str) and value.strip():
+            headers[clean_column_name(value)] = position
+    rows = [list(df.iloc[i]) for i in range(header_row + 1, len(df))]
+    return rows, headers
+
+
+def _header_position(headers: dict, exact: str | None = None, prefix: str | None = None) -> int | None:
+    if exact is not None and exact in headers:
+        return headers[exact]
+    if prefix is not None:
+        for name, position in headers.items():
+            if name.lower().startswith(prefix.lower()):
+                return position
+    return None
+
+
+def _catalog_cell(row: list, position: int | None) -> str | None:
+    if position is None or position >= len(row):
+        return None
+    value = row[position]
+    if value is None or (not isinstance(value, str) and pd.isna(value)):
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def extract_risk_catalog(xl: pd.ExcelFile) -> list:
+    """The Risk Catalog sheet as a list of risk dicts, in sheet order.
+
+    Each entry: ``code``, ``grouping`` (the merged grouping cell forward-filled),
+    ``old_code`` (2026.3+ 'Old Risk #'; None where absent or unchanged-less),
+    ``title``, ``description``, ``nist_csf_function``. Empty list when the
+    workbook has no such sheet.
+    """
+    sheet_name = resolve_optional_sheet(xl, *SHEET_RISK_CATALOG)
+    if not sheet_name:
+        print("Warning: no Risk Catalog sheet in this workbook; risks.json will be empty")
+        return []
+    print("Reading risk catalog...")
+    parsed = _catalog_sheet_rows(xl, sheet_name, 'Risk #')
+    if parsed is None:
+        return []
+    rows, headers = parsed
+    pos = {
+        'grouping': _header_position(headers, 'Risk Grouping', 'Risk Grouping'),
+        'code': _header_position(headers, 'Risk #'),
+        'old_code': _header_position(headers, 'Old Risk #', 'Old Risk'),
+        'title': _header_position(headers, prefix='Risk*'),
+        'description': _header_position(headers, prefix='Description'),
+        'nist': _header_position(headers, prefix='NIST CSF'),
+    }
+    if pos['title'] is None:
+        pos['title'] = _header_position(headers, 'Risk')
+    risks, grouping = [], None
+    for row in rows:
+        grouping = _catalog_cell(row, pos['grouping']) or grouping
+        code = (_catalog_cell(row, pos['code']) or '').upper()
+        if not RISK_CODE_RE.match(code):
+            continue
+        old_code = (_catalog_cell(row, pos['old_code']) or '').upper() or None
+        if old_code and not RISK_CODE_RE.match(old_code):
+            old_code = None
+        risks.append({
+            'code': code,
+            'grouping': grouping,
+            'old_code': old_code,
+            'title': _catalog_cell(row, pos['title']),
+            'description': _catalog_cell(row, pos['description']),
+            'nist_csf_function': _catalog_cell(row, pos['nist']),
+        })
+    print(f"Extracted {len(risks)} risks")
+    return risks
+
+
+def extract_threat_catalog(xl: pd.ExcelFile) -> list:
+    """The Threat Catalog sheet as a list of threat dicts, in sheet order.
+
+    Each entry: ``code``, ``grouping`` (forward-filled), ``title``,
+    ``description``. Empty list when the workbook has no such sheet.
+    """
+    sheet_name = resolve_optional_sheet(xl, *SHEET_THREAT_CATALOG)
+    if not sheet_name:
+        print("Warning: no Threat Catalog sheet in this workbook; threats.json will be empty")
+        return []
+    print("Reading threat catalog...")
+    parsed = _catalog_sheet_rows(xl, sheet_name, 'Threat #')
+    if parsed is None:
+        return []
+    rows, headers = parsed
+    pos = {
+        'grouping': _header_position(headers, 'Threat Grouping', 'Threat Grouping'),
+        'code': _header_position(headers, 'Threat #'),
+        'title': _header_position(headers, prefix='Threat*'),
+        'description': _header_position(headers, prefix='Threat Description'),
+    }
+    if pos['title'] is None:
+        pos['title'] = _header_position(headers, 'Threat')
+    threats, grouping = [], None
+    for row in rows:
+        grouping = _catalog_cell(row, pos['grouping']) or grouping
+        code = (_catalog_cell(row, pos['code']) or '').upper()
+        if not THREAT_CODE_RE.match(code):
+            continue
+        threats.append({
+            'code': code,
+            'grouping': grouping,
+            'title': _catalog_cell(row, pos['title']),
+            'description': _catalog_cell(row, pos['description']),
+        })
+    print(f"Extracted {len(threats)} threats")
+    return threats
 
 
 def normalize_framework_id(col_name: str) -> str:
@@ -682,6 +903,12 @@ def extract_controls(
 
     controls = []
     all_framework_mappings = {}
+    rating_columns = rating_columns_in(col_map)
+    if rating_columns['risk'] or rating_columns['threat']:
+        print(
+            f"Found {len(rating_columns['risk'])} risk and "
+            f"{len(rating_columns['threat'])} threat rating columns"
+        )
 
     for _, row in df.iterrows():
         scf_id = str(row.get('SCF #', '')).strip()
@@ -725,7 +952,7 @@ def extract_controls(
         cmm_maturity = parse_cmm_maturity(row, col_map)
         business_size_guidance = parse_business_size_guidance(row, col_map)
         scrm_focus = parse_scrm_focus(row, col_map)
-        risk_threat_mapping = parse_risk_threat_mapping(row, col_map)
+        risk_threat_mapping = parse_risk_threat_mapping(row, col_map, rating_columns)
 
         control = {
             'scf_id': scf_id,
@@ -1414,6 +1641,10 @@ def extract_to_dir(excel_path, output_dir):
     # Optional from 2026.3: what the publisher SAYS it changed. Absent from
     # every earlier release, so this is an empty structure, not an error.
     publisher_changes = extract_publisher_changes(xl)
+    # Optional sheets: the Risk and Threat Catalogs (2026.2+). Empty lists for
+    # a workbook without them; the seeder treats an empty file as "no catalog".
+    risks = extract_risk_catalog(xl)
+    threats = extract_threat_catalog(xl)
 
     # Write control_guidance.json
     control_guidance = {'controls': controls}
@@ -1461,6 +1692,14 @@ def extract_to_dir(excel_path, output_dir):
         json.dump(assessment_objectives_file, f, indent=2)
     print(f"Wrote {output_dir / 'assessment_objectives.json'}")
 
+    # Write risks.json / threats.json (the SCF Risk and Threat Catalogs).
+    with open(output_dir / 'risks.json', 'w') as f:
+        json.dump({'catalog_version': catalog_version, 'risks': risks}, f, indent=2)
+    print(f"Wrote {output_dir / 'risks.json'}")
+    with open(output_dir / 'threats.json', 'w') as f:
+        json.dump({'catalog_version': catalog_version, 'threats': threats}, f, indent=2)
+    print(f"Wrote {output_dir / 'threats.json'}")
+
     # Write catalog_meta.json
     catalog_meta = {
         'catalog_version': catalog_version,
@@ -1470,6 +1709,8 @@ def extract_to_dir(excel_path, output_dir):
         'evidence': len(evidence),
         'assessment_objectives': len(assessment_objectives),
         'frameworks': len(framework_names),
+        'risks': len(risks),
+        'threats': len(threats),
         # Every column the framework partition refused, and why. Without this the
         # exclusion is invisible: a column that silently stops being ingested
         # looks identical to a column the publisher removed.
@@ -1493,6 +1734,8 @@ def extract_to_dir(excel_path, output_dir):
     print(f"Evidence items: {len(evidence)}")
     print(f"Domains: {len(domains)}")
     print(f"Assessment Objectives: {len(assessment_objectives)}")
+    print(f"Risks: {len(risks)}")
+    print(f"Threats: {len(threats)}")
     print(f"Frameworks: {len(framework_names)}")
 
     # Count extended fields coverage

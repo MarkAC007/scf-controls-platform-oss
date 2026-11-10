@@ -1,11 +1,11 @@
 {
   "schema": 1,
-  "version": "1.2.0",
-  "released": "2026-11-09T13:34:11Z",
+  "version": "1.3.0",
+  "released": "2026-11-10T21:21:01Z",
   "min_upgradable_version": "0.0.0",
   "breaking": false,
   "required_stops": [],
-  "release_url": "https://github.com/MarkAC007/scf-controls-platform-oss/releases/tag/v1.2.0",
+  "release_url": "https://github.com/MarkAC007/scf-controls-platform-oss/releases/tag/v1.3.0",
   "summary": ".",
   "migration_range": [
     "20260119_000000_62bdef86f249_initial_schema",
@@ -112,7 +112,8 @@
     "20261013_230000_pig_due_care_pack",
     "20261014_010000_pig_capability_tests",
     "20261028_120000_doc_gen_profiles",
-    "20261028_140000_isms_profile"
+    "20261028_140000_isms_profile",
+    "20261110_150000_risk_threat_catalog"
   ],
   "env_added": [],
   "min_compose_action": "rebuild"

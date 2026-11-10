@@ -19,13 +19,72 @@ import { toast } from 'react-hot-toast'
 import { useConfirm } from '../../contexts/ConfirmContext'
 import {
   getDocGenSettings,
+  getProfilePreview,
   listDocuments,
   updateDocGenSettings,
   type DocumentProfile,
+  type ProfilePreview,
 } from '../../data/documentsApi'
 
 /** The generators a document structure decides; everything else is unaffected by it. */
 const PROFILED_GENERATORS = ['policy', 'standard', 'procedure']
+
+const joinTitles = (items: { title: string }[]) => {
+  const titles = items.map((i) => i.title)
+  return titles.length <= 1
+    ? titles.join('')
+    : `${titles.slice(0, -1).join(', ')} and ${titles[titles.length - 1]}`
+}
+
+/**
+ * The confirmation shown before a structure switch, from the server's preview:
+ * how many documents are superseded, then procedure by procedure what replaces
+ * each one, what is new, and what carries on unchanged.
+ */
+export function describeSwitch(preview: ProfilePreview): string {
+  const n = preview.superseded_total
+  const signedOff = preview.signed_off_total
+  const from = preview.current.title
+  const to = preview.target.title
+  const { superseded, created, kept } = preview.procedures
+  const parts = [
+    `${n} ${n === 1 ? 'policy, standard or procedure was' : 'policies, standards and procedures were'} ` +
+      `generated under ${from}` +
+      (signedOff ? `, ${signedOff} of them approved or published` : '') +
+      `. Switching marks ${n === 1 ? 'it' : 'them'} superseded: kept in the library and still ` +
+      `readable and exportable, but no longer current and no longer regenerated.`,
+  ]
+  if (superseded.length) {
+    parts.push(
+      'Procedures superseded:\n' +
+        superseded
+          .map((p) =>
+            p.replaced_by.length
+              ? `• ${p.title}: replaced by ${joinTitles(p.replaced_by)}`
+              : `• ${p.title}: nothing in scope replaces it`,
+          )
+          .join('\n'),
+    )
+  }
+  if (created.length) {
+    const seeded = created.filter((p) => p.seeded_from.length)
+    parts.push(
+      `${created.length} ${created.length === 1 ? 'procedure is' : 'procedures are'} new under ${to} ` +
+        `and ${created.length === 1 ? 'starts' : 'start'} ungenerated.` +
+        (seeded.length
+          ? ' These start their first draft from the procedures they replace:\n' +
+            seeded.map((p) => `• ${p.title}: from ${joinTitles(p.seeded_from)}`).join('\n')
+          : ''),
+    )
+  }
+  if (kept.length) {
+    parts.push(`Procedures kept as they are: ${joinTitles(kept)}.`)
+  }
+  parts.push(
+    `Nothing is deleted, and switching back to ${from} makes the superseded documents current again.`,
+  )
+  return parts.join('\n\n')
+}
 
 /**
  * What a profile produces, in words. Counted from the profile itself rather
@@ -44,7 +103,12 @@ export function describeProfileOutput(profile: DocumentProfile): string {
   else if (standard === 'bundle') parts.push(`${bundles} standards`)
   const procedure = profile.generators.procedure
   if (procedure === 'domain') parts.push('a procedure per domain')
-  else if (procedure === 'topic') parts.push('procedures by operational topic')
+  else if (procedure === 'topic') {
+    // Fewer procedures the smaller the structure: each is a union of the
+    // operational topics of the structure above it.
+    const topics = profile.topics?.length ?? 0
+    parts.push(topics ? `${topics} procedures by operational topic` : 'procedures by operational topic')
+  }
   const text = parts.join(', ')
   return profile.fold_standards ? `${text}; requirements are built into each policy` : text
 }
@@ -106,6 +170,28 @@ export default function DocGenSettingsCard({ organizationId, canAdminister = tru
    * policy set stops being the current one, and that is worth a second look.
    */
   async function changeProfile(next: DocumentProfile) {
+    // The server works out what the switch does from the same rules that flag
+    // a document superseded. If it cannot be reached, fall back to counting
+    // the loaded library so the switch is still never made unannounced.
+    let preview: ProfilePreview | null = null
+    try {
+      preview = await getProfilePreview(organizationId, next.name)
+    } catch {
+      preview = null
+    }
+    if (preview) {
+      if (preview.superseded_total > 0) {
+        const ok = await confirm({
+          title: `Switch to ${next.display_name}?`,
+          message: describeSwitch(preview),
+          confirmLabel: `Switch to ${next.display_name}`,
+          destructive: true,
+        })
+        if (!ok) return
+      }
+      mutation.mutate({ document_profile: next.name })
+      return
+    }
     const affected = documents.filter(
       (d) => !d.superseded && PROFILED_GENERATORS.includes(d.generator_name),
     )

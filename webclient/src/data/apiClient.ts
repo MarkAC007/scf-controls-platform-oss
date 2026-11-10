@@ -1343,6 +1343,7 @@ import type {
   EvidenceGapsResponse,
   FrameworkReadinessRequest,
   FrameworkReadinessResponse,
+  RiskCodesFile,
 } from '../types'
 
 export async function getSystems(orgId?: string): Promise<System[]> {
@@ -2583,6 +2584,9 @@ export interface RisksForControlResponse {
   assessments: RiskAssessment[]
 }
 
+/** Where a risk→control link came from: the SCF catalogue, the organisation, or (pre-guard) both. */
+export type RiskLinkSource = 'catalog' | 'org' | 'both'
+
 /**
  * Scoped control info returned in controls-for-risk response
  */
@@ -2592,6 +2596,12 @@ export interface ScopedControlForRisk {
   implementation_status: string | null
   priority: string | null
   target_date: string | null
+  catalog_status?: string | null
+  retired_in_version?: string | null
+  superseded_by?: string | null
+  source?: RiskLinkSource
+  /** The publisher's rating of the catalogue link ('likely' | 'possible'), null for org links. */
+  rating?: string | null
 }
 
 /**
@@ -2600,8 +2610,21 @@ export interface ScopedControlForRisk {
 export interface ControlsForRiskResponse {
   risk_code: string
   total_catalog_controls: number
+  /** Likely → Possible → organisation-only, then by control id. */
   catalog_control_ids: string[]
+  sources?: Record<string, RiskLinkSource>
+  ratings?: Record<string, string>
   scoped_controls: ScopedControlForRisk[]
+}
+
+/** The SCF Risk Catalog the server holds (empty until loaded). */
+export async function getRiskCatalog(): Promise<RiskCodesFile> {
+  return apiFetch<RiskCodesFile>('/catalog/risks')
+}
+
+/** The SCF Threat Catalog, same shape. */
+export async function getThreatCatalog(): Promise<RiskCodesFile> {
+  return apiFetch<RiskCodesFile>('/catalog/threats')
 }
 
 /**

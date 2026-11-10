@@ -58,6 +58,8 @@ from catalog_models import (  # noqa: E402
     SCFCatalogControl,
     SCFCatalogDomain,
     SCFCatalogEvidence,
+    SCFCatalogRisk,
+    SCFCatalogThreat,
 )
 from models import (  # noqa: E402
     CatalogImportRun,
@@ -100,6 +102,8 @@ TABLES = (
     SCFCatalogDomain,
     SCFCatalogEvidence,
     SCFCatalogAssessmentObjective,
+    SCFCatalogRisk,
+    SCFCatalogThreat,
     CapabilityTheme,
     CapabilityThemeMapping,
     CatalogImportRun,

@@ -268,6 +268,60 @@ the console does not offer it. The row is always stamped with the LIVE version
 whichever workbook it was read from, and catalogue control rows are never
 touched.
 
+#### Loading the SCF Risk and Threat Catalogs on an existing install
+
+From SCF 2026.3 the workbook ships a **Risk Catalog** sheet (65 risks, grouped,
+with the publisher's `Old Risk #` renumbering) and a **Threat Catalog** sheet, and
+it replaces the per-control "Risk Threat Summary" columns with one
+Unlikely / Possible / Likely rating per risk and threat. The platform stores the
+two catalogues in `scf_catalog_risks` / `scf_catalog_threats`, serves them at
+`GET /api/catalog/risks` and `GET /api/catalog/threats`, and maps a control to a
+code when the rating is Possible or Likely, keeping the rating in
+`risk_ratings` / `threat_ratings` on the control row.
+
+Fresh installs seed all of this from `risks.json` / `threats.json`, and a
+catalogue upgrade run carries the two catalogues in its diff. **Run this command
+on an install that was already on 2026.3 before this release**: its controls
+carry empty `risk_codes`, every SCF risk shows "No controls mapped", and the two
+tables are empty. Also run it after re-extracting a 2026.3 workbook with a newer
+importer.
+
+```bash
+# Extract the live catalogue's workbook (writes risks.json, threats.json and a
+# control_guidance.json whose rows carry risk_ratings / threat_ratings).
+docker compose --profile init run --rm catalog-importer
+
+# Load them. Reads the importer's output directory by default.
+docker compose exec backend python -m cli.admin refresh-risk-catalog
+
+# Or point it at another extraction, and see what would change first.
+docker compose exec backend python -m cli.admin refresh-risk-catalog \
+    --data-dir /path/to/extraction --dry-run
+```
+
+What it writes, and only this:
+
+- `scf_catalog_risks` / `scf_catalog_threats`: insert or update by code; a code
+  absent from the files is flipped to `deprecated` (never deleted) and stamped
+  `retired_in_version`.
+- On catalogue control rows: `risk_codes`, `threat_codes`, `risk_ratings`,
+  `threat_ratings` and `updated_at`. Rows present in the extraction take the
+  mapping as extracted; deprecated rows absent from it have their old codes
+  renumbered through `old_code` and unknown codes dropped. No other control
+  column, no `risk_assessments` row, no acceptance and no org control link is
+  touched, so it is safe to run again.
+
+It refuses (exit 1) when `catalog_meta.json` names a different version from the
+live catalogue, printing both: ratings extracted from another release describe
+different rows. `--allow-version-mismatch` overrides that when you know the
+mapping is the one you want; the rows are stamped with the LIVE version
+whichever files they came from. `--dry-run` runs everything inside a rolled-back
+transaction and prints the same report.
+
+In the register, a row whose code the loaded catalogue does not define is badged
+"not in 2026.3", and one the publisher renumbered is badged "renumbered → R-XX-N".
+Both are read-only: the command never rewrites an organisation's risk rows.
+
 ## Safety Features
 
 ### Dry Run Mode

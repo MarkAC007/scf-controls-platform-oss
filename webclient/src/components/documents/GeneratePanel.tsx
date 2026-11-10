@@ -41,7 +41,7 @@ const SCOPE_PICKERS: Record<ScopeKind, { heading: string; sub: string; empty: st
   },
   topic: {
     heading: 'Procedure topics',
-    sub: 'One procedure per selected operational topic. Only topics with controls in scope are listed.',
+    sub: 'One procedure per operational topic for the current document shape. Only topics with controls in scope are listed.',
     empty: 'No procedure topics have controls in scope yet.',
   },
 }

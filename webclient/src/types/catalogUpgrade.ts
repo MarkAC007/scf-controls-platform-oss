@@ -17,6 +17,8 @@ export type CatalogEntityType =
   | 'assessment_objectives'
   | 'capability_themes'
   | 'framework_mappings'
+  | 'risks'
+  | 'threats'
 
 export const CATALOG_ENTITY_TYPES: CatalogEntityType[] = [
   'controls',
@@ -25,6 +27,8 @@ export const CATALOG_ENTITY_TYPES: CatalogEntityType[] = [
   'assessment_objectives',
   'capability_themes',
   'framework_mappings',
+  'risks',
+  'threats',
 ]
 
 /** Per-entity diff classification (plan §4.2.2). */

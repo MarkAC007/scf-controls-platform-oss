@@ -27,6 +27,11 @@ class CatalogEntityType(str, Enum):
     DOMAINS = "domains"
     EVIDENCE = "evidence"
     ASSESSMENT_OBJECTIVES = "assessment_objectives"
+    # The SCF Risk and Threat Catalog sheets (2026.2+). Carried in the stored
+    # diff like every other entity so apply and revert never re-read the
+    # workbook or the seeder data directory.
+    RISKS = "risks"
+    THREATS = "threats"
     CAPABILITY_THEMES = "capability_themes"
     FRAMEWORK_MAPPINGS = "framework_mappings"
     # The framework REGISTRY: which focal documents the catalogue offers at all.

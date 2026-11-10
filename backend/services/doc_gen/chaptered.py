@@ -1,5 +1,5 @@
 """
-Chaptered generation — one document from several domains.
+Chaptered generation — one document from several domains or activities.
 
 A bundled policy can cover 15 domains and well over a hundred controls. One
 model call cannot write that well: the output limit truncates it, and a model
@@ -20,6 +20,11 @@ rest. The chapter heading paths -- ``policy-statements.<domain>.<subsection>``
 -- are stable across runs, so the three-layer merge keeps human edits per
 chapter with no change to the merge engine.
 
+A grouped procedure is written the same way, one chapter per member topic that
+has controls in scope. A member with none gets a single line in the Scope
+section instead of a chapter, placed by :func:`assemble` rather than left to
+the model, so an auditor always finds the scoping decision recorded.
+
 Like :mod:`tier2`, everything except the model call is a pure function of its
 inputs, and keyless runs produce clearly marked mock output.
 """
@@ -28,7 +33,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence, Mapping
 
 from .context import DomainWithControls, OrganisationContext
 from .fingerprint import sha256
@@ -67,7 +72,24 @@ LAYOUTS: Dict[str, ChapterLayout] = {
         insert_before="Compliance Measurement",
         identifier_prefix="STD",
     ),
+    "procedure": ChapterLayout(
+        frame_prompt="procedure_frame.md",
+        chapter_prompt="procedure_chapter.md",
+        core_heading="Procedure Steps",
+        insert_before="Exception Handling",
+        identifier_prefix="PRO",
+    ),
 }
+
+#: What a grouped procedure says of a member topic with no controls in scope.
+NOT_APPLICABLE = (
+    "Not applicable in this organisation's scope — see the Statement of Applicability."
+)
+
+
+def not_applicable_note(title: str) -> str:
+    """The Scope-section line for a member topic with nothing in scope."""
+    return f"{title}: {NOT_APPLICABLE}"
 
 #: Appended to a policy chapter when the profile has no separate standards
 #: (``fold_standards``): the measurable parameters a standard would hold live
@@ -136,6 +158,7 @@ def build_frame_prompt(
     generation_version: Optional[int] = None,
     existing_content: str = "",
     change_note: str = "",
+    scope_notes: Sequence[str] = (),
 ) -> str:
     controls = [c for d in chapters for c in d.controls]
     owners = sorted({c.owner for c in controls if c.owner})
@@ -148,7 +171,9 @@ def build_frame_prompt(
         scope_key=scope.key,
         document_title=document_title(spec, scope),
         domain_list="\n".join(
-            f"- {d.domain.identifier} — {d.domain.name}: "
+            # A procedure's chapters are topics, whose keys are internal; a
+            # domain's identifier is the SCF's own and belongs in the document.
+            f"- {d.domain.name if spec.name == 'procedure' else f'{d.domain.identifier} — {d.domain.name}'}: "
             f"{d.domain.principle or 'No principle recorded.'}"
             for d in chapters
         ),
@@ -156,6 +181,7 @@ def build_frame_prompt(
         control_index="\n".join(f"- {c.scf_id} — {c.control_name}" for c in controls),
         owners_list="\n".join(f"- {o}" for o in owners) or "- Unassigned",
         related_documents="\n".join(f"- {t}" for t in related_titles) or "- None",
+        not_applicable="\n".join(f"- {n}" for n in scope_notes) or "- None",
         doc_version=doc_version,
         change_history_instruction=tier2._change_history_instruction(
             tier2.extract_change_history(existing_content), doc_version,
@@ -165,13 +191,43 @@ def build_frame_prompt(
     )
 
 
+#: Longest predecessor text handed to one chapter. A procedure runs to a few
+#: thousand words; this is a guard against a pathological document, not a
+#: budget the usual one meets.
+SEED_LIMIT = 40_000
+
+_SEED_BLOCK = """
+EXISTING PROCEDURE FOR THIS ACTIVITY:
+{org_name} already works to the procedure text below, written before this activity was merged into "{document_title}". It is the organisation's own record of how the work is done. Carry it forward: keep its concrete steps, named functions, tools, timings, thresholds and record names wherever they still satisfy a control in the CONTROLS DATA block, and write new steps only for what it does not cover. Drop anything in it that relates to a control absent from the CONTROLS DATA block, and any section that is not procedure steps. Rewrite it into the sequence format required below; do not quote it or refer to it.
+
+<<<EXISTING
+{seed}
+EXISTING>>>
+"""
+
+
+def seed_block(org_name: str, title: str, seed: str) -> str:
+    """The chapter prompt's account of the procedure this chapter replaces."""
+    seed = (seed or "").strip()
+    if not seed:
+        return ""
+    return _SEED_BLOCK.format(org_name=org_name, document_title=title, seed=seed[:SEED_LIMIT])
+
+
 def build_chapter_prompt(
     spec: GeneratorSpec,
     ctx: OrganisationContext,
     scope: Scope,
     chapter: DomainWithControls,
     profile: Profile,
+    seed: str = "",
 ) -> str:
+    """One chapter's prompt.
+
+    ``seed`` is the organisation's text for this chapter from a document this
+    one supersedes. Only the procedure layout has somewhere to put it; with no
+    seed the prompt is exactly what it was, so stored chapter caches hold.
+    """
     fold = spec.name == "policy" and profile.fold_standards
     return _template(layout_for(spec).chapter_prompt).format(
         org_name=ctx.name,
@@ -185,6 +241,7 @@ def build_chapter_prompt(
         control_sections=tier2._control_sections(chapter),
         example_id=chapter.controls[0].scf_id if chapter.controls else "SCF-01",
         requirements_instruction=FOLDED_REQUIREMENTS if fold else "",
+        existing_steps=seed_block(ctx.name, document_title(spec, scope), seed),
     )
 
 
@@ -198,6 +255,8 @@ def fingerprint_prompt(
     *,
     generation_version: Optional[int] = None,
     existing_content: str = "",
+    scope_notes: Sequence[str] = (),
+    seeds: Optional[Mapping[str, str]] = None,
 ) -> str:
     """Every prompt the document would send, change note withheld.
 
@@ -208,8 +267,11 @@ def fingerprint_prompt(
     parts = [build_frame_prompt(
         spec, ctx, scope, chapters, related_titles,
         generation_version=generation_version, existing_content=existing_content,
+        scope_notes=scope_notes,
     )]
-    parts += [build_chapter_prompt(spec, ctx, scope, c, profile) for c in chapters]
+    seeds = seeds or {}
+    parts += [build_chapter_prompt(spec, ctx, scope, c, profile, seeds.get(c.domain.identifier, ""))
+              for c in chapters]
     return "\n\n=== CHAPTER ===\n\n".join(parts)
 
 
@@ -258,12 +320,46 @@ def _find_h2(lines: List[str], text: str) -> Optional[int]:
     return None
 
 
+def _add_scope_notes(lines: List[str], notes: Sequence[str]) -> List[str]:
+    """Append ``notes`` to the frame's Scope section, one bullet each.
+
+    Returns the notes that could not be placed because the frame has no Scope
+    heading; the caller puts those at the head of the core section instead. A
+    note the model already wrote verbatim is not repeated.
+    """
+    text = "\n".join(lines)
+    wanted = [n for n in notes if n not in text]
+    if not wanted:
+        return []
+    at = next(
+        (i for i, line in enumerate(lines)
+         if (m := _HEADING.match(line)) and len(m.group(1)) == 2
+         and m.group(2).strip().lower().lstrip("0123456789. ").startswith("scope")),
+        None,
+    )
+    if at is None:
+        return wanted
+    end = next(
+        (j for j in range(at + 1, len(lines))
+         if (m := _HEADING.match(lines[j])) and len(m.group(1)) <= 2),
+        len(lines),
+    )
+    while end > at + 1 and not lines[end - 1].strip():
+        end -= 1
+    lines[end:end] = [""] + [f"- {n}" for n in wanted] + [""]
+    return []
+
+
 def assemble(
     frame: str,
     chapters: Sequence[tuple],
     layout: ChapterLayout,
+    scope_notes: Sequence[str] = (),
 ) -> str:
     """Insert the core section into the frame.
+
+    ``scope_notes`` are lines the Scope section must carry whatever the model
+    wrote -- a grouped procedure's members with nothing in scope.
 
     ``chapters`` is ``[(domain_name, chapter_markdown), ...]`` in order. The
     core section goes before ``layout.insert_before``; if the model renamed or
@@ -271,12 +367,16 @@ def assemble(
     the end -- a document with its sections slightly out of order is
     recoverable by a human; one missing its policy statements is not.
     """
+    lines = frame.strip().split("\n")
+    unplaced = _add_scope_notes(lines, scope_notes)
+
     body = [f"## {layout.core_heading}", ""]
+    if unplaced:
+        body += [f"- {n}" for n in unplaced] + [""]
     for name, content in chapters:
         body += [f"### {name}", "", content.strip(), ""]
     core = "\n".join(body).rstrip()
 
-    lines = frame.strip().split("\n")
     # Any core heading the model wrote despite the instruction would duplicate
     # ours and fork the section ids; drop it and its body.
     existing = _find_h2(lines, layout.core_heading)
@@ -346,14 +446,17 @@ def _mock_frame(spec: GeneratorSpec, scope: Scope, chapters: Sequence[DomainWith
         f"{len(chapters)} domain(s).",
         "",
     ]
-    tail = (
-        ["## Roles and Responsibilities", "", "All roles referenced in this document "
-         "describe organisational *functions*, not specific job titles.", "",
-         "## Review and Revision", "", "This document is reviewed annually.", ""]
-        if spec.name == "policy" else
-        ["## Compliance Measurement", "", "Conformance is tested annually.", "",
-         "## Deviation and Waiver", "", "Deviations require CISO function approval.", ""]
-    )
+    if spec.name == "policy":
+        tail = ["## Roles and Responsibilities", "", "All roles referenced in this document "
+                "describe organisational *functions*, not specific job titles.", "",
+                "## Review and Revision", "", "This document is reviewed annually.", ""]
+    elif spec.name == "procedure":
+        tail = ["## Exception Handling", "", "Deviations require CISO function approval "
+                "and are recorded.", "",
+                "## Records and Retention", "", "Records are retained for three years.", ""]
+    else:
+        tail = ["## Compliance Measurement", "", "Conformance is tested annually.", "",
+                "## Deviation and Waiver", "", "Deviations require CISO function approval.", ""]
     return "\n".join(lines + tail)
 
 
@@ -386,12 +489,21 @@ def generate_bundle(
     change_note: str = "",
     chapter_cache: Optional[Dict[str, Dict[str, Any]]] = None,
     progress: Optional[Callable[[str, str], None]] = None,
+    scope_notes: Sequence[str] = (),
+    seeds: Optional[Mapping[str, str]] = None,
 ) -> BundleOutput:
     """Write the frame and each chapter, reusing cached chapters, and assemble.
 
     ``chapter_cache`` is the document's stored cache; pass ``None`` (as a
     forced regeneration does) to rewrite every chapter.
+
+    ``seeds`` maps a chapter identifier to predecessor text for that chapter.
+    A seed is stored with the chapter in the new cache, because it is part of
+    the chapter's prompt: the caller hands the stored seeds back on every later
+    run, so the prompt stays the same and a rewritten chapter still starts from
+    the organisation's own steps.
     """
+    seeds = seeds or {}
     layout = layout_for(spec)
     cache = chapter_cache or {}
     mocked = tier2.is_mock_mode()
@@ -403,7 +515,8 @@ def generate_bundle(
     reused: List[str] = []
     for index, chapter in enumerate(chapters, start=1):
         ident = chapter.domain.identifier
-        prompt = build_chapter_prompt(spec, ctx, scope, chapter, profile)
+        seed = seeds.get(ident, "")
+        prompt = build_chapter_prompt(spec, ctx, scope, chapter, profile, seed)
         prompt_hash = sha256(prompt)
         cached = cache.get(ident)
         # A mock chapter is never reused once a key is configured, and a real
@@ -425,6 +538,8 @@ def generate_bundle(
             "prompt_hash": prompt_hash, "content": content,
             "model_id": cached.get("model_id") if ident in reused else model_id,
         }
+        if seed:
+            new_cache[ident]["seed"] = seed
         written.append((chapter.domain.name, content))
 
     if progress:
@@ -432,7 +547,7 @@ def generate_bundle(
     frame_prompt = build_frame_prompt(
         spec, ctx, scope, chapters, related_titles,
         generation_version=generation_version, existing_content=existing_content,
-        change_note=change_note,
+        change_note=change_note, scope_notes=scope_notes,
     )
     if mocked:
         frame = _mock_frame(spec, scope, chapters,
@@ -444,7 +559,7 @@ def generate_bundle(
         logger.info("doc_gen %s %s: reused %d of %d chapters",
                     spec.name, scope.key, len(reused), len(chapters))
     return BundleOutput(
-        content=assemble(frame, written, layout),
+        content=assemble(frame, written, layout, scope_notes),
         model_id=model_id,
         mocked=mocked,
         chapter_cache=new_cache,

@@ -18,12 +18,15 @@ from sqlalchemy import select, func, or_, text
 from sqlalchemy.orm import load_only
 
 from database import get_db
+from services.catalog_diff import resolve_live_catalog_version
 from auth import require_auth, User
 from catalog_models import (
     SCFCatalogControl,
     SCFCatalogDomain,
     SCFCatalogEvidence,
     SCFCatalogAssessmentObjective,
+    SCFCatalogRisk,
+    SCFCatalogThreat,
 )
 
 import json
@@ -250,6 +253,8 @@ async def bulk_export_controls(
                 "risk_threat_mapping": {
                     "risk_codes": c.risk_codes or [],
                     "threat_codes": c.threat_codes or [],
+                    "risk_ratings": c.risk_ratings,
+                    "threat_ratings": c.threat_ratings,
                 },
                 "catalog_status": c.status,
                 "retired_in_version": c.retired_in_version,
@@ -441,6 +446,8 @@ async def get_control(
         "risk_threat_mapping": {
             "risk_codes": control.risk_codes,
             "threat_codes": control.threat_codes,
+            "risk_ratings": control.risk_ratings,
+            "threat_ratings": control.threat_ratings,
         },
         "required_artifact_types": control.required_artifact_types,
         "required_artifact_types_extracted_at": control.required_artifact_types_extracted_at,
@@ -952,3 +959,92 @@ async def list_frameworks(
         "total": len(frameworks),
         "frameworks": frameworks,
     }
+
+
+# =============================================================================
+# RISK / THREAT CATALOG ENDPOINTS
+# =============================================================================
+
+# One colour per code category (AC, AM, ..., NT, MT), assigned by sorted
+# prefix order so a prefix keeps its colour across requests and versions as
+# long as the set of prefixes is stable. Fourteen entries: the 2026.3 Risk
+# Catalog has fourteen groupings.
+_CATALOG_CODE_PALETTE = (
+    "#2563eb", "#dc2626", "#16a34a", "#d97706", "#7c3aed", "#0891b2", "#db2777",
+    "#65a30d", "#ea580c", "#4f46e5", "#0d9488", "#b91c1c", "#9333ea", "#475569",
+)
+
+
+def _code_prefix(code: str) -> str:
+    """The category key the web client derives from a code: R-AC-1 -> AC
+    (the register splits on '-' and takes the middle segment, and custom risks
+    are R-ORG-n -> ORG); NT-3 -> NT, MT-12 -> MT for threats."""
+    parts = code.split("-")
+    if len(parts) == 3 and parts[0] == "R":
+        return parts[1]
+    return code.rsplit("-", 1)[0] if "-" in code else code
+
+
+def _code_catalog_payload(rows, catalog_version: Optional[str], extra_fields) -> dict:
+    """The RiskCodesFile shape the web client renders: categories keyed by
+    prefix (name = the publisher's grouping, a palette colour) and codes."""
+    categories: dict = {}
+    codes: dict = {}
+    prefixes = sorted({_code_prefix(r.code) for r in rows})
+    colours = {p: _CATALOG_CODE_PALETTE[i % len(_CATALOG_CODE_PALETTE)] for i, p in enumerate(prefixes)}
+    for r in rows:
+        prefix = _code_prefix(r.code)
+        categories.setdefault(prefix, {"name": r.grouping, "color": colours[prefix]})
+        entry = {
+            "category": prefix,
+            "title": r.title,
+            "description": r.description,
+            "status": r.status,
+        }
+        for f in extra_fields:
+            entry[f] = getattr(r, f)
+        codes[r.code] = entry
+    return {
+        "catalog_version": catalog_version,
+        "total": len(codes),
+        "categories": categories,
+        "codes": codes,
+    }
+
+
+async def _code_catalog(db: AsyncSession, model, include_deprecated: bool, extra_fields):
+    query = select(model)
+    if not include_deprecated:
+        query = query.where(model.status == "active")
+    rows = (await db.execute(query.order_by(model.code))).scalars().all()
+    # The LIVE catalogue version (ledger first, then the controls' stamp), not
+    # a lexicographic max over this table: '2026.10' sorts below '2026.3', and
+    # an empty table has no version at all yet the register still needs one
+    # to say "not in <version>".
+    version = await resolve_live_catalog_version(db)
+    return _code_catalog_payload(rows, version, extra_fields)
+
+
+@router.get("/risks")
+async def list_catalog_risks(
+    include_deprecated: bool = Query(False, description="Also return risks retired from the catalogue"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_auth),
+):
+    """The SCF Risk Catalog, in the shape the web client's risk register reads.
+
+    Empty (``codes: {}``) until the catalogue has been loaded: on an install
+    whose catalogue predates this table, run
+    ``python -m cli.admin refresh-risk-catalog``.
+    """
+    return await _code_catalog(db, SCFCatalogRisk, include_deprecated, ("old_code", "nist_csf_function"))
+
+
+@router.get("/threats")
+async def list_catalog_threats(
+    include_deprecated: bool = Query(False, description="Also return threats retired from the catalogue"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_auth),
+):
+    """The SCF Threat Catalog, same shape as ``/catalog/risks``."""
+    return await _code_catalog(db, SCFCatalogThreat, include_deprecated, ())
