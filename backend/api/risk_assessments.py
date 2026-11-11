@@ -665,10 +665,20 @@ async def get_risks_for_control(
     # Load org risk profile thresholds
     low_max, medium_max, high_max = await _load_thresholds(org_id, db)
 
+    # This route answers with a plain dict, so nothing coerces the rows for
+    # us: enrich_risk_response carries the ORM ``owner`` (a User), which the
+    # JSON encoder cannot serialise. Validate each row through the same schema
+    # the other risk-assessment routes declare as their response_model.
     return {
         "scf_id": scf_id.upper(),
         "catalog_risk_codes": risk_codes,
-        "assessments": [enrich_risk_response(a, low_max, medium_max, high_max) for a in assessments],
+        "assessments": [
+            RiskAssessmentResponse.model_validate(
+                enrich_risk_response(a, low_max, medium_max, high_max),
+                from_attributes=True,
+            )
+            for a in assessments
+        ],
         **badge,
     }
 
