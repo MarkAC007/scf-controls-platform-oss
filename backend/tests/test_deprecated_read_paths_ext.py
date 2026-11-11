@@ -326,6 +326,55 @@ class TestConsumer9Risks:
         assert resp["retired_in_version"] == "2026.2"
         assert resp["superseded_by"] == "TESTCTL2"
 
+    @pytest.mark.asyncio
+    async def test_mapped_control_with_owned_assessment_serialises(
+        self, membership, org_id,
+    ):
+        """A control with mapped risk codes and an assessment that has an
+        owner must produce a JSON-serialisable body. The route returns a
+        plain dict, so an ORM User left in ``owner`` used to raise
+        PydanticSerializationError (HTTP 500) once the 2026.3 risk catalogue
+        gave controls non-empty risk_codes."""
+        import json
+        from pydantic import TypeAdapter
+        from api.risk_assessments import get_risks_for_control
+        from models import RiskAssessment, User
+
+        owner = User(id=uuid4(), email="owner@example.test", display_name="Owner")
+        now = datetime(2026, 11, 11, 9, 0, 0)
+        assessment = RiskAssessment(
+            id=uuid4(), organization_id=org_id, risk_code="R-XX-1",
+            likelihood=3, impact=4, treatment_status="analysed",
+            owner_user_id=owner.id, created_at=now, updated_at=now,
+        )
+        assessment.owner = owner
+
+        catalog_row = (["R-XX-1"], "active", None, None)
+        db = AsyncMock()
+        db.execute = AsyncMock(side_effect=[
+            _result(first=catalog_row),               # catalog risk_codes + lifecycle
+            _result(scalars_all=[assessment]),        # org assessments
+            _result(scalar_one_or_none=None),         # risk profile -> defaults
+        ])
+
+        resp = await get_risks_for_control(
+            org_id=org_id, scf_id="TESTCTL1",
+            membership=membership, db=db,
+        )
+
+        # FastAPI serialises a ``response_model=dict`` route this way; it
+        # raised "Unable to serialize unknown type: User" before the fix.
+        body = json.loads(TypeAdapter(dict).dump_json(resp))
+        assert body["catalog_risk_codes"] == ["R-XX-1"]
+        row = body["assessments"][0]
+        assert row["risk_code"] == "R-XX-1"
+        assert row["inherent_risk_score"] == 12
+        assert row["owner"] == {
+            "id": str(owner.id),
+            "email": "owner@example.test",
+            "display_name": "Owner",
+        }
+
 
 # ---------------------------------------------------------------------------
 # Consumer 10 — evidence tracking
