@@ -52,7 +52,10 @@ jobs:
     name: Static Analysis
     runs-on: ubuntu-latest
     container:
-      image: returntocorp/semgrep
+      # No tag meant `latest`. This is the release `latest` pointed at when it
+      # was pinned, under the image's current name (returntocorp/semgrep is the
+      # old name for the same image). The digest decides what runs.
+      image: semgrep/semgrep:1.184.0@sha256:cc1b68266f267878b39739373ea9985b9a78e5d64497dd875c8de100b22695ed
     permissions:
       contents: read
       security-events: write # upload-sarif; no-op here, required in the public mirror
@@ -61,6 +64,7 @@ jobs:
         # SHA-pinned rather than @v5: this file ships into the public snapshot,
         # and semgrep's own github-actions-mutable-action-tag rule fires on
         # floating tags. A gate that trips over its own workflow is not credible.
+        # zizmor: ignore[artipacked] the diff gate below fetches the base branch with this credential
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           # Full history so the diff gate can resolve the merge base. The

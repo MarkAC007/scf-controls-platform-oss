@@ -1,0 +1,19 @@
+# Waivers for the vulnerability scan (scripts/osv-scan.sh).
+#
+# The scan blocks on a high or critical finding that has a fixed version. The
+# right answer is nearly always to move the package. A waiver is for the case
+# where that cannot happen yet, and it says so in writing, with a date.
+#
+# One entry per advisory:
+#
+#   [[IgnoredVulns]]
+#   id = "GHSA-xxxx-xxxx-xxxx"          # the advisory id, or any alias the scan prints for it
+#   ignoreUntil = 2027-01-31            # a date, no quotes; the waiver holds up to and including this day
+#   reason = "Why it is safe to wait, and what has to happen before the date."
+#
+# Rules scripts/osv_policy.py enforces:
+#   - all three fields are required;
+#   - after ignoreUntil the entry itself blocks, until it is removed or renewed;
+#   - only [[IgnoredVulns]] is read. The scanner's other settings do nothing here.
+#
+# No waivers today.

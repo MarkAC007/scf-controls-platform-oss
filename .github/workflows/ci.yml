@@ -7,6 +7,12 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Every job in this file reads the repository and nothing else. Without this
+# block the jobs take whatever the repository's settings give the token by
+# default. A job that needs more states it on the job.
+permissions:
+  contents: read
+
 env:
   PYTHON_VERSION: '3.11'
   NODE_VERSION: '20'
@@ -28,6 +34,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
+        # zizmor: ignore[artipacked] the release-notes gates below fetch the base branch with this credential
         # SHA-pinned: semgrep's github-actions-mutable-action-tag rule fires on
         # floating tags, and the new diff-scoped gate would flag this very line.
         # The rest of this file still uses @v5 — pre-existing, not touched here.
@@ -249,6 +256,7 @@ jobs:
       version_bump_only: ${{ steps.bump.outputs.version_bump_only }}
     steps:
       - name: Checkout code
+        # zizmor: ignore[artipacked] the version-bump classifier below fetches the base branch with this credential
         # SHA-pinned for the same semgrep reason as the Version Consistency
         # checkout; full history so the bump classifier below has a merge base.
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
@@ -378,7 +386,10 @@ jobs:
     # below; the schema is created and dropped by the test's own fixtures.
     services:
       postgres:
-        image: postgres:16
+        # The same major and variant the product ships in docker-compose.yml
+        # (PostgreSQL 15.20 at the time of pinning). The digest decides what runs;
+        # the tag is there to be read.
+        image: postgres:15-alpine@sha256:fc41cfa8a90c09e84dd723ee764be4b2f59ba6c98b1e5b3fca540adddf68a5ba
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -392,30 +403,36 @@ jobs:
           --health-retries 5
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          # The token is needed for the clone only; no later step talks to the
+          # remote through git.
+          persist-credentials: false
 
       - name: Set up Python ${{ env.PYTHON_VERSION }}
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: 'pip'
 
+      # Both files are locks: every package pinned by version and sha256,
+      # compiled by scripts/lock-python-deps.sh. --require-hashes stops the
+      # job on anything the locks do not list. The lint and test tools go in
+      # first because that lock also carries setuptools, which builds pyclamd,
+      # the one backend dependency published as source only.
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install -r backend/requirements.txt
-          pip install pytest pytest-cov flake8 black
+          python -m pip install --require-hashes --only-binary :all: \
+            -r backend/requirements-dev.txt
+          python -m pip install --require-hashes --only-binary :all: \
+            --no-binary pyclamd --no-build-isolation \
+            -r backend/requirements.txt
 
+      # Syntax errors and undefined names stop the job. Plan 8.3 removed the
+      # advisory flake8 pass (--exit-zero) and the black check
+      # (continue-on-error): neither could fail, so neither was a gate.
       - name: Lint with flake8
-        run: |
-          # Stop build if there are Python syntax errors or undefined names
-          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-          # Exit-zero treats all errors as warnings
-          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
-
-      - name: Format check with black
-        run: black --check .
-        continue-on-error: true
+        run: flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
 
       # A second Alembic head — two branches each adding a migration off the
       # same parent — fails here, in CI, rather than at an operator's
@@ -453,7 +470,7 @@ jobs:
 
       - name: Upload coverage
         if: always()
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
         with:
           file: ./coverage.xml
           flags: python
@@ -469,33 +486,33 @@ jobs:
         working-directory: ./webclient
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          # The token is needed for the clone only; no later step talks to the
+          # remote through git.
+          persist-credentials: false
 
       - name: Set up Node.js ${{ env.NODE_VERSION }}
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
           cache-dependency-path: './webclient/package-lock.json'
 
       - name: Install dependencies
-        run: |
-          npm ci
-          # Workaround for npm optional dependencies bug (https://github.com/npm/cli/issues/4828)
-          # Explicitly install platform-specific rollup binary if missing
-          npm ls @rollup/rollup-linux-x64-gnu || npm install @rollup/rollup-linux-x64-gnu --save-optional --ignore-scripts
-
-      - name: Lint
-        run: npm run lint --if-present
+        # A frozen install: exactly what webclient/package-lock.json pins, or
+        # the step fails. No step in this job may change the lockfile or fetch
+        # a package it does not pin (backend/tests/test_frontend_lock.py).
+        run: npm ci
 
       - name: Type check
-        run: npm run type-check --if-present || npx tsc --noEmit --skipLibCheck || echo "No TypeScript config found"
+        run: npm run type-check
 
       - name: Build
         run: npm run build
 
       - name: Test
-        run: npm test --if-present
+        run: npm test
 
   docker:
     name: Docker Build
@@ -509,12 +526,40 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
-          submodules: 'recursive'
-          # PAT required for private submodule access
-          # Create a PAT with 'repo' scope and add as GH_PAT secret
-          token: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+          # The job's own token, and no submodules. This checkout used to pass
+          # GH_PAT to fetch a private `catalog` submodule; that submodule was
+          # removed in 798ccae5, so the personal token reached this job for
+          # nothing.
+          # The token is needed for the clone only. Left at the default it
+          # stays in the git config for every later step, and the steps below
+          # run Dockerfiles and dependency installs that have no business
+          # reading it.
+          persist-credentials: false
+
+      - name: Assert no git credential was persisted
+        # Fails if the checkout above ever goes back to leaving a token behind,
+        # in this repository or in a submodule. actions/checkout stores it as an
+        # http.<url>.extraheader entry, directly or through an included file.
+        run: |
+          set -euo pipefail
+          found=0
+          check() { # <label> <dir>
+            if git -C "$2" config --show-origin --get-regexp '^http\..*\.extraheader$' >/dev/null 2>&1; then
+              echo "::error::git credential persisted in $1"
+              git -C "$2" config --show-origin --name-only --get-regexp '^http\..*\.extraheader$' || true
+              found=1
+            fi
+          }
+          check "the repository" "$PWD"
+          while IFS= read -r sub; do
+            [ -n "$sub" ] && check "submodule $sub" "$PWD/$sub"
+          done < <(git submodule foreach --quiet --recursive 'echo "$displaypath"' 2>/dev/null || true)
+          if [ "$found" -ne 0 ]; then
+            exit 1
+          fi
+          echo "ok: no http extraheader credential in the repository or its submodules"
 
       - name: Free disk space
         # The runner's default ~14GB writable disk has overflowed on this job
@@ -535,7 +580,7 @@ jobs:
           df -h /
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
       - name: Build with Docker Compose
         if: hashFiles('docker-compose.yml') != ''
@@ -552,16 +597,187 @@ jobs:
 
       - name: Build Docker image
         if: hashFiles('docker-compose.yml') == '' && hashFiles('Dockerfile') != ''
+        env:
+          IMAGE: ghcr.io/${{ needs.detect.outputs.repo_lower }}:${{ github.sha }}
         run: |
-          docker build -t ghcr.io/${{ needs.detect.outputs.repo_lower }}:${{ github.sha }} .
-          echo "✓ Built image: ghcr.io/${{ needs.detect.outputs.repo_lower }}:${{ github.sha }}"
+          docker build -t "$IMAGE" .
+          echo "✓ Built image: $IMAGE"
 
-      - name: Test containers
+      - name: Boot the stack and assert it is healthy
         if: hashFiles('docker-compose.yml') != ''
+        # This step is part of a required check and must be able to fail. Its
+        # predecessor ran `up -d`, slept ten seconds and was continue-on-error:
+        # Postgres exited on every run for want of a password and the step still
+        # passed, so no pull request was ever boot-tested.
         run: |
-          docker compose up -d
-          sleep 10
+          set -euo pipefail
+          # Throwaway credentials for this job only. The stack and its volume are
+          # destroyed in the tear-down step below.
+          # AWS_ENDPOINT_URL is set empty: this is the shape of an install made
+          # with `scripts/install.sh --no-minio`. The object store is not part of
+          # this boot (it sits behind the `storage` profile), and with the
+          # default endpoint the backend rightly refuses to start in production
+          # mode without object-store credentials.
+          (
+            umask 077
+            {
+              echo "DB_PASSWORD=$(openssl rand -hex 24)"
+              echo "API_KEY=$(openssl rand -hex 32)"
+              echo "DOWNLOAD_TOKEN_SECRET=$(openssl rand -hex 32)"
+              echo "AWS_ENDPOINT_URL="
+            } > .env
+          )
+          # --wait returns once every service is running and every service with a
+          # healthcheck is healthy. It fails if a container exits or the timeout
+          # passes. The backend image carries its own healthcheck on /health.
+          docker compose up -d --wait --wait-timeout 300
           docker compose ps
-          docker compose logs
-          docker compose down
-        continue-on-error: true
+          # Backend, from the host: /health must answer and report "healthy"
+          # (it reports "degraded" when Redis is unreachable).
+          health="$(curl --fail --silent --show-error --max-time 10 http://localhost:8000/health)"
+          echo "$health"
+          echo "$health" | python3 -c 'import json, sys; sys.exit(0 if json.load(sys.stdin).get("status") == "healthy" else 1)'
+          # Frontend: the smoke test operators are told to run after a deploy. It
+          # fails on a dev server or on a missing security header.
+          bash scripts/verify-prod-build.sh http://localhost:5173
+
+      # Plan 8.2. A passive ZAP baseline scan of the frontend the step above
+      # booted. Any alert not dispositioned in .github/zap/rules.tsv fails the
+      # job (no -I: a WARN is a failure), and so does a scan that writes no
+      # report.
+      - name: ZAP baseline scan
+        if: hashFiles('docker-compose.yml') != ''
+        env:
+          ZAP_IMAGE: ghcr.io/zaproxy/zaproxy:2.17.0@sha256:9624669db72f54d86c4b46a7064518bd9bf79d8c61a4c31befa9923489f328af
+        run: |
+          set -euo pipefail
+          out="${RUNNER_TEMP}/zap"
+          mkdir -p "$out"
+          chmod 0777 "$out"  # the image runs as its own zap user
+          cp .github/zap/rules.tsv "$out/rules.tsv"
+          status=0
+          docker run --rm --network host -v "$out:/zap/wrk:rw" "$ZAP_IMAGE" \
+            zap-baseline.py -t http://localhost:5173 -c rules.tsv -m 2 \
+            -J zap-report.json -r zap-report.html || status=$?
+          if [ ! -s "$out/zap-report.json" ]; then
+            echo "::error::the ZAP baseline scan wrote no report (exit ${status})"
+            exit 1
+          fi
+          # 0 no alerts, 1 a FAIL rule fired, 2 a WARN rule fired, 3 ZAP error.
+          exit "$status"
+
+      - name: Upload the ZAP report
+        if: ${{ !cancelled() && hashFiles('docker-compose.yml') != '' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: zap-baseline
+          path: ${{ runner.temp }}/zap/zap-report.*
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Show container state and logs when the boot test fails
+        if: failure() && hashFiles('docker-compose.yml') != ''
+        run: |
+          docker compose ps --all || true
+          docker compose logs --no-color --tail 200 || true
+
+      - name: Tear down the stack
+        if: always() && hashFiles('docker-compose.yml') != ''
+        run: docker compose down --volumes --remove-orphans || true
+
+  # The Python locks must follow from their .in files. This recompiles each
+  # lock in a scratch copy and fails on any difference, so a changed .in file
+  # cannot merge with a stale lock beside it.
+  python-lock:
+    name: Python Lock
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install uv from its hash-locked requirements file
+        run: |
+          python -m pip install --require-hashes --only-binary :all: \
+            -r .github/requirements/uv.txt
+
+      - name: Recompile the locks and fail on any difference
+        run: scripts/lock-python-deps.sh --check
+
+  # Lints every workflow in this repository with zizmor. It looks for the
+  # mistakes that turn a workflow into a way in: an action not pinned by commit,
+  # a token left in the checkout, a `${{ }}` value written into script text,
+  # permissions wider than the job needs. Any finding fails the job.
+  #
+  # A finding that is accepted carries a zizmor ignore comment, with its
+  # reason, on the line it excuses (docs/CONTRIBUTING.md shows the form). The
+  # pinning policy is in .github/zizmor.yml.
+  #
+  # --offline: the lint reads the files in the checkout and nothing else. It
+  # makes no network calls and is given no token, so one commit always gets one
+  # answer.
+  workflow-lint:
+    name: Workflow Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install zizmor from its hash-locked requirements file
+        run: |
+          python -m pip install --require-hashes --only-binary :all: \
+            -r .github/requirements/zizmor.txt
+
+      - name: Lint the workflows
+        # --strict-collection: a workflow file zizmor cannot parse fails the
+        # job. Without it the file is skipped with a warning and the lint
+        # passes on what is left.
+        run: zizmor --offline --no-progress --strict-collection .
+
+  # Known vulnerabilities in the locked dependencies (OSV-Scanner).
+  #
+  # scripts/osv-scan.sh scans the four lockfiles and applies the policy: a high
+  # or critical finding with a fixed version published fails this job; anything
+  # else is listed in the job summary. A waiver is an entry in osv-scanner.toml
+  # with a reason and a date, and it fails this job once the date has passed.
+  # A scanner that cannot run fails the job too: no result is not a clean result.
+  #
+  # The scanner sends package names and versions to api.osv.dev. It runs in a
+  # digest-pinned container that is given only the lockfiles.
+  #
+  # No `if:` and no `needs:` here, for the same reason as the Python Lock job:
+  # a skipped job counts as passing.
+  osv-scan:
+    name: OSV Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Scan the lockfiles and apply the blocking policy
+        run: scripts/osv-scan.sh

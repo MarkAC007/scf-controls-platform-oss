@@ -1,0 +1,17 @@
+# Lint and test tools the "Python Backend" job in .github/workflows/ci.yml
+# installs on top of requirements.txt. They are not in the backend image.
+#
+# requirements-dev.txt is compiled from this file by
+# scripts/lock-python-deps.sh. The constraint line keeps every package the two
+# locks share (pytest, for one) on the version requirements.txt pins.
+-c requirements.txt
+
+pytest-cov
+flake8
+black
+
+# Build backend for pyclamd, the one backend dependency PyPI publishes as
+# source only. CI builds it with this setuptools instead of one fetched
+# unpinned at install time. The version is the one requirements.txt pins (the
+# -c line above), which the image installs over the base image's copy.
+setuptools

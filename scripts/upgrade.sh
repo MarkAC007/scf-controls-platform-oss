@@ -22,7 +22,7 @@
 # └───────────────────────────────────────────────────────────────────────────┘
 #
 # Usage:
-#   scripts/upgrade.sh vX.Y.Z [--manifest FILE] [--yes]
+#   scripts/upgrade.sh vX.Y.Z [--manifest FILE] [--require-verified] [--yes]
 #   scripts/upgrade.sh --rollback <backup-timestamp>
 #   scripts/upgrade.sh --resume-post-checkout [<backup-timestamp>]
 #   scripts/upgrade.sh --help
@@ -30,6 +30,15 @@
 #   vX.Y.Z            target release tag (the "v" is optional; 0.9.0 == v0.9.0)
 #   --manifest FILE   use a local upgrade-manifest.json instead of fetching it
 #                     from the GitHub Release (air-gapped installs)
+#   --require-verified
+#                     stop unless the release's upgrade-manifest.json and
+#                     release-images.json pass `gh attestation verify` against
+#                     this repository's release workflow. A check that runs and
+#                     FAILS always stops the upgrade. Without this flag, a check
+#                     that cannot run (no gh, gh signed out, or no
+#                     release-images.json) is a warning and the upgrade
+#                     continues. With --manifest, release-images.json is read
+#                     from the same directory as the manifest file.
 #   --yes             assume "yes" to the pre-upgrade confirmation (unattended)
 #   --rollback <ts>   restore both data stores from the backup set with the
 #                     given timestamp (see ./backups/<ts>_*), then rebuild.
@@ -56,6 +65,7 @@ set -euo pipefail
 
 # --- Constants ---------------------------------------------------------------
 OSS_REPO="MarkAC007/scf-controls-platform-oss"
+OSS_IMAGE_NAMES="ghcr.io/markac007/scf-backend ghcr.io/markac007/scf-frontend"
 HEALTH_URL="${HEALTH_URL:-http://localhost:8000/health}"
 HEALTH_TIMEOUT=120            # seconds to wait for /health after start
 BACKUPS_DIR="./backups"
@@ -1134,6 +1144,97 @@ revert_checkout_and_fail() {
 # =============================================================================
 # Phases 0-3. TARGET / TAG / INSTALLED / M_MIN / M_RANGE / ROLLBACK_TS /
 # PRE_REF / PRE_IMAGE_ID / PG_DUMP_FILE / MINIO_TAR_FILE / SUM_FILE /
+# --- Release verification (attestations) ------------------------------------
+# The public release workflow signs a build-provenance attestation for
+# upgrade-manifest.json and release-images.json. These helpers check both with
+# the GitHub CLI and report one of three results in RELEASE_VERIFIED:
+#   verified   both files carry an attestation from SIGNER_WORKFLOW
+#   failed     a check ran and did not pass, or release-images.json is not a
+#              valid record for this release
+#   unchecked  the check could not run (no gh, gh not signed in, no record)
+# failed is always fatal. unchecked is a warning, fatal with --require-verified.
+SIGNER_WORKFLOW="${OSS_REPO}/.github/workflows/oss-release.yml"
+RELEASE_VERIFIED="unchecked"
+RELEASE_VERIFY_NOTE=""
+RELEASE_IMAGE_REFS=""
+
+# release_image_refs FILE VERSION -> "name@digest" lines, or exit 1 with a reason.
+release_image_refs() {
+  python3 - "$1" "$2" "$OSS_IMAGE_NAMES" <<'PY'
+import json, re, sys
+path, version, names = sys.argv[1], sys.argv[2], sys.argv[3].split()
+try:
+    doc = json.load(open(path))
+except (OSError, ValueError) as exc:
+    sys.exit(f"release-images.json is not valid JSON ({exc})")
+if not isinstance(doc, dict) or doc.get("schema") != 1:
+    sys.exit("release-images.json is not a schema 1 record")
+if str(doc.get("version", "")).lstrip("v") != version:
+    sys.exit(f"release-images.json is for {doc.get('version')!r}, not {version}")
+images = doc.get("images")
+if not isinstance(images, list):
+    sys.exit("release-images.json has no images list")
+for name in names:
+    rows = [i for i in images if isinstance(i, dict) and i.get("name") == name]
+    if len(rows) != 1:
+        sys.exit(f"release-images.json names {name} {len(rows)} times, not once")
+    digest = rows[0].get("digest")
+    if not isinstance(digest, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+        sys.exit(f"release-images.json has no sha256 digest for {name}")
+    print(f"{name}@{digest}")
+PY
+}
+
+# verify_release_files MANIFEST IMAGES_FILE_OR_EMPTY   (reads TAG and TARGET)
+verify_release_files() {
+  local manifest="$1" images="$2" out label file
+  RELEASE_VERIFIED="unchecked"; RELEASE_VERIFY_NOTE=""; RELEASE_IMAGE_REFS=""
+  if [[ -z "$images" || ! -f "$images" ]]; then
+    RELEASE_VERIFY_NOTE="there is no release-images.json for ${TAG} (releases up to v1.3.1 have none; with --manifest, put it next to the manifest file)"
+    return 0
+  fi
+  if ! RELEASE_IMAGE_REFS="$(release_image_refs "$images" "$TARGET" 2>&1)"; then
+    RELEASE_VERIFIED="failed"; RELEASE_VERIFY_NOTE="${RELEASE_IMAGE_REFS}"; RELEASE_IMAGE_REFS=""
+    return 0
+  fi
+  if ! have gh; then
+    RELEASE_VERIFY_NOTE="the GitHub CLI (gh) is not installed"; return 0
+  fi
+  if ! gh auth status >/dev/null 2>&1; then
+    RELEASE_VERIFY_NOTE="gh is not signed in (run 'gh auth login')"; return 0
+  fi
+  for label in upgrade-manifest.json release-images.json; do
+    if [[ "$label" == upgrade-manifest.json ]]; then file="$manifest"; else file="$images"; fi
+    if ! out="$(gh attestation verify "$file" --repo "$OSS_REPO" --signer-workflow "$SIGNER_WORKFLOW" 2>&1)"; then
+      RELEASE_VERIFIED="failed"
+      RELEASE_VERIFY_NOTE="${label} did not pass 'gh attestation verify': $(printf '%s' "$out" | tail -n 3 | tr '\n' ' ')"
+      return 0
+    fi
+  done
+  RELEASE_VERIFIED="verified"
+}
+
+# report_release_verification   (reads RELEASE_* and REQUIRE_VERIFIED)
+report_release_verification() {
+  case "$RELEASE_VERIFIED" in
+    verified)
+      info "Release verified: upgrade-manifest.json and release-images.json were signed by ${SIGNER_WORKFLOW}." ;;
+    failed)
+      # A check that ran and did not pass means these are not the files the
+      # release published (or not this release's record). Never continue.
+      die "release ${TAG} FAILED verification: ${RELEASE_VERIFY_NOTE}. Nothing was changed. If the cause was a network error, re-run the upgrade; otherwise do not use these files." ;;
+    *)
+      [[ "${REQUIRE_VERIFIED:-0}" == "1" ]] \
+        && die "release ${TAG} could not be verified: ${RELEASE_VERIFY_NOTE}. Stopping because --require-verified was given."
+      warn "release ${TAG} NOT verified: ${RELEASE_VERIFY_NOTE}. Pass --require-verified to make this fatal." ;;
+  esac
+  if [[ -n "$RELEASE_IMAGE_REFS" ]]; then
+    info "Image digests for ${TAG} (Helm: set each image's digest to these):"
+    local ref
+    while IFS= read -r ref; do info "  ${ref}"; done <<<"$RELEASE_IMAGE_REFS"
+  fi
+}
+
 # MANIFEST_FILE / MANIFEST_IS_TMP are GLOBAL on purpose: do_upgrade_post_checkout
 # reads them, and a resumed process (--resume-post-checkout, after the re-exec)
 # populates the same names from the handoff contract instead. Keeping one set of
@@ -1186,6 +1287,22 @@ do_upgrade() {
   [[ -n "$M_MIN" ]] || M_MIN="0.0.0"
   info "Manifest OK: version=${m_version:-$TARGET} min_upgradable=${M_MIN} breaking=${m_breaking:-false}"
   [[ -n "$m_summary" ]] && info "Summary: $m_summary"
+
+  # The image-digest record sits beside the manifest: fetched from the same
+  # release, or read from the manifest's directory with --manifest.
+  step "Phase 0 — Verify the release files for ${TAG}"
+  local images_file="" images_tmp=""
+  if [[ -n "${MANIFEST_OPT:-}" ]]; then
+    images_file="$(dirname "$MANIFEST_OPT")/release-images.json"
+  elif have curl; then
+    images_tmp="$(mktemp)"
+    if curl -fsSL "https://github.com/${OSS_REPO}/releases/download/${TAG}/release-images.json" -o "$images_tmp" 2>/dev/null; then
+      images_file="$images_tmp"
+    fi
+  fi
+  verify_release_files "$MANIFEST_FILE" "$images_file"
+  [[ -n "$images_tmp" ]] && rm -f "$images_tmp"
+  report_release_verification
 
   # Confirm the tag actually exists (yanked-release guard). Remote first; for
   # air-gap/--manifest, a local tag (fetched from a bundle) is acceptable.
@@ -1712,6 +1829,7 @@ main() {
   resolve_compose_files
   ASSUME_YES="${SCF_UPGRADE_ASSUME_YES:-0}"
   MANIFEST_OPT=""
+  REQUIRE_VERIFIED=0
   local target="" rollback_ts="" mode="upgrade"
 
   while [[ $# -gt 0 ]]; do
@@ -1719,6 +1837,7 @@ main() {
       -h|--help) print_help; exit 0 ;;
       --yes|-y) ASSUME_YES=1; shift ;;
       --manifest) MANIFEST_OPT="${2:-}"; [[ -n "$MANIFEST_OPT" ]] || die "--manifest requires a FILE argument."; shift 2 ;;
+      --require-verified) REQUIRE_VERIFIED=1; shift ;;
       --rollback) mode="rollback"; rollback_ts="${2:-}"; shift 2 ;;
       --resume-post-checkout) mode="resume"; shift ;;
       -*) die "unknown option: $1 (see --help)." ;;

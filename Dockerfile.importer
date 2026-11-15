@@ -4,13 +4,20 @@
 # catalog_seeder.py consumes on startup. This image ships the importer CODE ONLY — it never
 # contains SCF's licensed catalogue content (CC BY-ND 4.0). Operators supply their own SCF
 # Excel workbook at run time. See https://docs.scfcontrolsplatform.app/admin-guide/deployment/
-FROM python:3.11-slim
+# Python 3.11.18. The tag is kept so the line stays readable; the digest is what is
+# pulled. Change the two together.
+FROM python:3.11-slim@sha256:07d4824036af339fa1b6ef769cc99d9c10a141769538b52b3b597c84f7a7b535
 
 WORKDIR /app
 
-# Importer-only deps (pandas + openpyxl), pinned. Separate layer for build-cache reuse.
+# Importer-only deps (pandas + openpyxl and what they depend on), locked by
+# version and sha256. Compiled from scripts/requirements-importer.in by
+# scripts/lock-python-deps.sh. --require-hashes stops the build on a file whose
+# hash is not in the lock; --only-binary :all: installs wheels only.
+# Separate layer for build-cache reuse.
 COPY scripts/requirements-importer.txt /app/requirements-importer.txt
-RUN pip install --no-cache-dir -r /app/requirements-importer.txt
+RUN pip install --no-cache-dir --require-hashes --only-binary :all: \
+      -r /app/requirements-importer.txt
 
 # Extraction scripts.
 COPY scripts/ /app/scripts/

@@ -20,7 +20,8 @@ backend/
 ├── database.py             # Database connection and session management
 ├── models.py               # SQLAlchemy ORM models
 ├── schemas.py              # Pydantic schemas for API validation
-├── requirements.txt        # Python dependencies
+├── requirements.in         # Python dependencies the backend asks for
+├── requirements.txt        # The lock compiled from it: every package pinned by version and sha256
 ├── init-db.sql            # Database initialization script
 ├── api/                   # API endpoint modules
 │   ├── __init__.py
@@ -148,7 +149,8 @@ cd backend
 python3 -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 
-# Install dependencies
+# Install dependencies (requirements.txt is a hash-locked file; pip checks
+# every download against it)
 pip install -r requirements.txt
 
 # Set environment variables

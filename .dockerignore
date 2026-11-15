@@ -37,3 +37,10 @@ docs/
 
 # Archives
 _archive/
+
+# Release record. The release workflow writes it into the release commit after
+# the images are built; it names their digests. It must never be an input to a
+# build, or building from a release tag would use a context the published
+# images did not have.
+release-images.json
+release-evidence

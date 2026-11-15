@@ -11,6 +11,11 @@ backend/.venv/
 .vite/
 
 webclient/node_modules/*
+# webclient/package-lock.json is the frontend's one committed lockfile: CI and
+# the images install from it. A local `bun install` writes its own lockfile,
+# which stays out of the repository.
+webclient/bun.lock
+webclient/bun.lockb
 webclient/.vite/deps_temp_305ae4c8/package.json
 webclient/dist/*
 webclient/.DS_Store

@@ -5,8 +5,8 @@ on:
     branches: [main]
   workflow_dispatch:
 
-permissions:
-  contents: write
+# Nothing by default; the one job below names what it needs.
+permissions: {}
 
 jobs:
   release:
@@ -21,13 +21,28 @@ jobs:
     # OSS-only workflows in the keep-list.
     if: github.repository == 'MarkAC007/scf-controls-platform-oss'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # push the release tag, create and publish the release
+      id-token: write # the short-lived identity the attestation is signed with
+      attestations: write # store the attestation
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0
+          # The token is not left in .git/config for the steps that follow. The
+          # tag push below hands it to git for that one command.
+          persist-credentials: false
 
-      - name: Tag and publish release if version is new
+      # The release is made in three steps so that the attestation sits between
+      # "the assets are known to be right" and "the release is public":
+      #   1. stage    tag, draft release, check both assets
+      #   2. attest   sign both assets (fails the job if it cannot)
+      #   3. publish  upload both assets, then flip the draft to published
+      # A failure in 2 or 3 leaves the tag and the draft in place; the next run
+      # finds them and carries on from there.
+      - name: Tag and stage a draft release if the version is new
+        id: stage
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -67,6 +82,12 @@ jobs:
             git config user.name "scf-oss-publisher"
             git config user.email "noreply@compliancegenie.io"
             git tag -a "$TAG" -m "Release $TAG"
+            # The checkout kept no credential, so git is told how to ask for
+            # one: a helper that reads the token from the environment when the
+            # push runs. Only the helper's text reaches .git/config, never the
+            # token. The single quotes keep ${GH_TOKEN} unexpanded on purpose.
+            # shellcheck disable=SC2016
+            git config --local credential.helper '!f() { echo "username=x-access-token"; echo "password=${GH_TOKEN}"; }; f'
             git push origin "$TAG"
           fi
 
@@ -78,23 +99,107 @@ jobs:
             NOTES_ARGS=(--notes-file RELEASE_NOTES.md)
           fi
 
-          # Publish atomically: create as a DRAFT, attach the upgrade manifest, then
-          # flip to published. This guarantees a consumer never sees a "latest"
-          # release whose upgrade-manifest.json asset 404s (the manifest is the
-          # machine-readable contract the upgrade tooling reasons about).
+          # Publish atomically: create as a DRAFT, attach the assets, then flip to
+          # published (the last step of this job). This guarantees a consumer
+          # never sees a "latest" release whose assets 404: upgrade-manifest.json
+          # is the machine-readable contract the upgrade tooling reasons about,
+          # and release-images.json names the image digests of this release.
           # Skip creation when repairing an existing draft from a failed run.
           if ! gh release view "$TAG" >/dev/null 2>&1; then
             gh release create "$TAG" --title "$TAG" --draft --verify-tag "${NOTES_ARGS[@]}"
           fi
 
+          # Both assets must be present and right BEFORE anything is signed.
+          # release-images.json is written into the release commit by the
+          # release workflow; a commit without it, or with the previous
+          # release's copy, did not come from that workflow.
+          PROBLEM=""
           if [[ ! -f upgrade-manifest.json ]]; then
-            echo "::error::upgrade-manifest.json is missing from the snapshot — refusing to publish a release without it."
+            PROBLEM="upgrade-manifest.json is missing from the snapshot"
+          elif [[ ! -f release-images.json ]]; then
+            PROBLEM="release-images.json is missing from the snapshot"
+          elif ! jq -e --arg v "$VERSION" '
+                 .version == $v
+                 and (.images | type == "array" and length > 0)
+                 and all(.images[]; (.name | type == "string" and startswith("ghcr.io/"))
+                                    and (.digest | type == "string" and test("^sha256:[0-9a-f]{64}$")))
+               ' release-images.json >/dev/null 2>&1; then
+            PROBLEM="release-images.json does not describe ${TAG} (wrong version, no images, or a digest that is not sha256:<64 hex>)"
+          fi
+          # release-evidence/ is written into the release commit by the release
+          # workflow too: one CycloneDX SBOM per image in release-images.json
+          # (sbom-<image>.cdx.json), the image scan gate's result
+          # (image-scan-gate.json) and the VEX documents it applied
+          # (vex-*.json). Nothing else may be there: every file in it becomes a
+          # signed release asset.
+          if [[ -z "$PROBLEM" ]]; then
+            if [[ ! -d release-evidence || -L release-evidence ]]; then
+              PROBLEM="release-evidence/ is missing from the snapshot"
+            else
+              WANT="$(jq -r '.images[].name | split("/") | last | "sbom-\(.).cdx.json"' release-images.json | sort)"
+              GOT="$(find release-evidence -mindepth 1 -maxdepth 1 -name 'sbom-*' | sed 's|^release-evidence/||' | sort)"
+              STRAY="$(find release-evidence -mindepth 1 -maxdepth 1 \( ! -type f -o \( ! -name 'sbom-*.cdx.json' ! -name 'vex-*.json' ! -name 'image-scan-gate.json' \) \) | sort)"
+              if [[ -n "$STRAY" ]]; then
+                PROBLEM="release-evidence/ holds something that is not evidence: ${STRAY//$'\n'/ }"
+              elif [[ "$WANT" != "$GOT" ]]; then
+                PROBLEM="release-evidence/ does not hold exactly one SBOM per image in release-images.json"
+              else
+                while IFS= read -r f; do
+                  if ! jq -e '.bomFormat == "CycloneDX" and (.components | type == "array" and length > 0)' "release-evidence/$f" >/dev/null 2>&1; then
+                    PROBLEM="release-evidence/$f is not a CycloneDX SBOM that lists components"; break
+                  fi
+                done <<< "$GOT"
+                if [[ -z "$PROBLEM" ]] && ! jq -e '(.blocked | type == "boolean") and (.findings | type == "array") and (.missing | type == "array")' release-evidence/image-scan-gate.json >/dev/null 2>&1; then
+                  PROBLEM="release-evidence/image-scan-gate.json is missing or is not an image scan gate result"
+                fi
+                if [[ -z "$PROBLEM" ]]; then
+                  for f in release-evidence/vex-*.json; do
+                    [[ -e "$f" ]] || continue
+                    if ! jq -e '(."@context" | type == "string" and startswith("https://openvex.dev/ns")) and (.statements | type == "array")' "$f" >/dev/null 2>&1; then
+                      PROBLEM="$f is not an OpenVEX document"; break
+                    fi
+                  done
+                fi
+              fi
+            fi
+          fi
+          if [[ -n "$PROBLEM" ]]; then
+            echo "::error::${PROBLEM} — refusing to publish this release."
             # Roll back the draft + tag so a corrected re-run can proceed cleanly.
             gh release delete "$TAG" --yes --cleanup-tag || true
             exit 1
           fi
 
-          gh release upload "$TAG" upgrade-manifest.json --clobber
+          {
+            echo "publish=true"
+            echo "tag=${TAG}"
+          } >> "$GITHUB_OUTPUT"
+          echo "staged draft release ${TAG}; all assets are present"
+
+      - name: Attest the release assets
+        # Signs a statement that THIS workflow, at this commit, produced these
+        # exact bytes. Anyone can check a downloaded copy with:
+        #   gh attestation verify upgrade-manifest.json --repo MarkAC007/scf-controls-platform-oss
+        # Deliberately not continue-on-error: an asset nobody can verify is not
+        # published. The draft stays, and a re-run tries again.
+        if: steps.stage.outputs.publish == 'true'
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-path: |
+            upgrade-manifest.json
+            release-images.json
+            release-evidence/*
+
+      - name: Upload the assets and publish the release
+        if: steps.stage.outputs.publish == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.stage.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # Every asset goes up while the release is still a draft, in one call.
+          gh release upload "$TAG" upgrade-manifest.json release-images.json release-evidence/* --clobber
           gh release edit "$TAG" --draft=false
 
-          echo "published release ${TAG} with upgrade-manifest.json"
+          echo "published release ${TAG} with upgrade-manifest.json, release-images.json and release-evidence/"
