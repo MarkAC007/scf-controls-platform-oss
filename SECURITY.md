@@ -11,6 +11,10 @@ This repository is published as periodic sanitised snapshots from an upstream so
 | Latest released snapshot | :white_check_mark: |
 | Older snapshots          | :x:                |
 
+## Verifying what you download
+
+Releases after v1.3.1 carry `upgrade-manifest.json` and `release-images.json`, each with a build-provenance attestation signed by this repository's release workflow. `release-images.json` names the release's images by digest. The commands are in the README under "Verifying a release".
+
 ## Reporting a Vulnerability
 
 **Please do not report security vulnerabilities through public GitHub issues, discussions, or pull requests.** Public disclosure before a fix is available puts users at risk.

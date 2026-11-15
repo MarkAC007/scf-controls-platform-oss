@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "version": "1.3.1",
-  "released": "2026-11-11T11:46:18Z",
+  "version": "1.3.2",
+  "released": "2026-11-15T15:08:18Z",
   "min_upgradable_version": "0.0.0",
   "breaking": false,
   "required_stops": [],
-  "release_url": "https://github.com/MarkAC007/scf-controls-platform-oss/releases/tag/v1.3.1",
-  "summary": ".",
+  "release_url": "https://github.com/MarkAC007/scf-controls-platform-oss/releases/tag/v1.3.2",
+  "summary": "Release hardening. upgrade.sh now verifies each release's attestations, and --require-verified refuses a release it cannot verify. Each release also publishes the image SBOMs, the VEX statements applied and the image-scan result as attested release assets, and the bundled Postgres, Redis and base images are pinned by digest. No database migration or configuration change.",
   "migration_range": [
     "20260119_000000_62bdef86f249_initial_schema",
     "20260120_075300_add_implementation_status_values",

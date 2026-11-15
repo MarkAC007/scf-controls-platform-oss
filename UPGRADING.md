@@ -192,7 +192,9 @@ precondition fails:
 
 1. **Load the manifest** for the target tag from the GitHub Release (or supply a
    local one with `--manifest FILE` for air-gapped installs). A release with no
-   manifest is refused — there is nothing safe to reason about.
+   manifest is refused — there is nothing safe to reason about. It then checks
+   the release's attestations and prints the image digests (see *Verifying the
+   release* below).
 2. **Preflight** — clean working tree, version floor (`min_upgradable_version`),
    no downgrade, `.env` drift warnings, disk-space, floating-image warnings,
    compose validity. Nothing is changed here.
@@ -214,6 +216,34 @@ precondition fails:
 6. **Done** — prints the new version and where your backups live.
 
 Add `--yes` to skip the confirmation prompt (for unattended runs).
+
+### Verifying the release
+
+Each release after v1.3.1 carries `upgrade-manifest.json` and
+`release-images.json`, both signed by this repository's release workflow. In
+phase 1 the script checks both with `gh attestation verify` when the GitHub CLI
+is installed and signed in, and reports one of three results:
+
+- **verified**: both files carry an attestation from
+  `.github/workflows/oss-release.yml` in this repository.
+- **failed**: a check ran and did not pass, or `release-images.json` is not a
+  valid record for the target version.
+- **not verified**: the check could not run (no `gh`, `gh` not signed in, or a
+  release from before the record existed).
+
+A **failed** check always stops the upgrade before anything is changed: the
+files are not the ones the release published. If the failure was a network
+error, re-run the upgrade. A **not verified** result is a warning by default
+and the upgrade continues. Pass `--require-verified` to make it fatal too:
+
+```bash
+scripts/upgrade.sh v1.4.0 --require-verified
+```
+
+When `release-images.json` is valid, the script also prints the backend and
+frontend image references by digest. On Helm, set each image's `digest` to
+these values. A digest wins over the tag, so the cluster runs exactly the
+released bytes.
 
 ### The catalogue directory's group (Linux hosts)
 
@@ -318,6 +348,27 @@ covering an external store.
   it and unrecoverable without it.
 
 ### Version-specific notes
+
+- **The bundled PostgreSQL, Redis and Keycloak images, and the base images the
+  backend and frontend are built from, are now pinned by digest.** Earlier
+  releases named them by tag (`postgres:15-alpine`, `redis:7-alpine`,
+  `quay.io/keycloak/keycloak:26.3`, `python:3.11-slim`, `node:20-alpine`,
+  `nginx:alpine`), and a tag resolves to whatever the registry serves on the
+  day you pull or build. Each of those lines now ends in an `@sha256:` digest,
+  as the two MinIO images already did, so every install of a given release runs
+  the same images. The tags are unchanged and still shown; the digest is what
+  is pulled. Three things follow:
+
+  1. **The first `up` after the upgrade pulls the pinned images** unless your
+     host already holds exactly those. This release pins PostgreSQL 15.20,
+     Redis 7.4.12 and Keycloak 26.3.5. PostgreSQL stays on major version 15, so
+     the data directory is used as it is.
+  2. **Base image fixes now arrive with a release.** Before, a rebuild picked
+     up whatever the tag pointed at that day; now a rebuild of the same release
+     always uses the same base images, and a newer one reaches you when you
+     upgrade.
+  3. **An air-gapped host needs the pinned images in its image store** before
+     the upgrade. See [section 5](#5-air-gapped--offline-upgrades), step 3.
 
 - **The two bundled MinIO images are now pulled from `quay.io` instead of Docker
   Hub.** MinIO unpublished `minio/minio` and `minio/mc` from Docker Hub, so on
@@ -448,7 +499,7 @@ covering an external store.
   >
   > No supported deployment is affected: PostgreSQL 15 is what this platform
   > already pins and documents everywhere — `postgres:15-alpine` in
-  > `docker-compose.yml`, `docker-compose.dev-demo.yml` and
+  > `docker-compose.yml` and
   > `docker-compose.prod-test.yml`, and PostgreSQL 15 in both
   > READMEs. What changes is that the floor is now **load-bearing rather than
   > conventional**. If you self-host against your own PostgreSQL instance rather
@@ -733,11 +784,27 @@ The same script works offline; you supply the inputs out-of-band.
 
    (A full release tarball is an alternative to the bundle.)
 
-2. **Supply the manifest locally** instead of fetching it from GitHub:
+2. **Verify the release files before you transfer them, then supply them
+   locally** instead of fetching them from GitHub. The air-gapped host cannot
+   reach GitHub to check attestations, so check them on the connected machine:
 
    ```bash
+   # On a connected machine:
+   gh release download v0.9.0 --repo MarkAC007/scf-controls-platform-oss \
+     --pattern upgrade-manifest.json --pattern release-images.json
+   for f in upgrade-manifest.json release-images.json; do
+     gh attestation verify "$f" --repo MarkAC007/scf-controls-platform-oss \
+       --signer-workflow MarkAC007/scf-controls-platform-oss/.github/workflows/oss-release.yml
+   done
+
+   # On the air-gapped host, with both files in the same directory:
    scripts/upgrade.sh v0.9.0 --manifest ./upgrade-manifest.json
    ```
+
+   The script reads `release-images.json` from the manifest's directory. It
+   still prints the image digests, but reports the release as not verified
+   because it cannot reach GitHub. Do not pass `--require-verified` on the
+   air-gapped host.
 
 3. **Pre-cache base images.** `docker compose up --build` re-resolves base
    images (e.g. MinIO); make sure the exact refs in `docker-compose.yml` are
@@ -753,6 +820,20 @@ The same script works offline; you supply the inputs out-of-band.
    docker pull quay.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
    docker pull quay.io/minio/mc@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727
    ```
+
+   Those two are an example, not the whole list. PostgreSQL, Redis, Keycloak
+   and the base images of the backend and frontend builds are pinned the same
+   way, and the digests change from release to release. Read the full list for
+   the release you are installing from the files themselves, from the repo root
+   at that tag:
+
+   ```bash
+   grep -hoE '[a-z0-9./-]+(:[A-Za-z0-9._-]+)?@sha256:[0-9a-f]{64}' \
+     docker-compose.yml Dockerfile.backend Dockerfile.frontend Dockerfile.importer | sort -u
+   ```
+
+   Pull each line it prints, as it is printed. You can leave out the MinIO and
+   Keycloak images if you do not run the `storage` or `idp` profile.
 
    The compose refs carry a tag *and* a digest, but the digest-only pulls above
    satisfy them: when a reference has a digest, the tag is not consulted —

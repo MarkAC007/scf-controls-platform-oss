@@ -1,0 +1,17 @@
+# Dependencies for the one-shot SCF catalogue importer (scripts/extract_scf_data.py).
+# Kept separate from backend/requirements.txt so the runtime image stays slim — the
+# importer only runs at install time to extract a user-supplied SCF Excel catalogue.
+# Registry packages only, pinned for reproducible installs.
+#
+# requirements-importer.txt is compiled from this file by
+# scripts/lock-python-deps.sh: it pins these and everything they depend on by
+# version and sha256, and it is what Dockerfile.importer installs. After editing
+# this file, run the script and commit both files.
+pandas==2.2.3
+openpyxl==3.1.5
+
+# One version per package (backend/tests/test_python_lock.py). numpy comes with
+# pandas and its newest releases have dropped Python 3.11, which the importer
+# image runs. Left open, the lock pins numpy twice and Dependabot cannot update
+# it. Same cap as backend/requirements.in; raise both together.
+numpy<2.5        # 2.5 needs Python 3.12

@@ -1,17 +1,19 @@
 # Dockerfile for CG CCF Frontend (Development)
 # Uses Vite dev server for local development with hot reload
 
-FROM node:20-alpine
+# Node.js 20.20.2. The tag is kept so the line stays readable; the digest is what is
+# pulled. Change the two together.
+FROM node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293
 
 WORKDIR /app
 
 # Copy package files including lockfile for reproducible installs
 COPY webclient/package*.json ./
 
-# Install dependencies from lockfile; add missing linux-x64 rollup binary
-RUN npm ci && \
-    npm ls @rollup/rollup-linux-x64-gnu || npm install @rollup/rollup-linux-x64-gnu --save-optional --ignore-scripts && \
-    npm cache clean --force
+# Install exactly what webclient/package-lock.json pins. `npm ci` stops if the
+# lockfile and package.json disagree and never changes either. The lockfile
+# lists the Rollup binary for every platform, so there is nothing to add here.
+RUN npm ci && npm cache clean --force
 
 # Copy source code
 COPY webclient/ ./

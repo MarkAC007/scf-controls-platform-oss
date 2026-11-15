@@ -6,7 +6,7 @@
 
 services:
   postgres:
-    image: postgres:15-alpine
+    image: postgres:15-alpine@sha256:fc41cfa8a90c09e84dd723ee764be4b2f59ba6c98b1e5b3fca540adddf68a5ba
     container_name: cg-scf-postgres-test
     environment:
       POSTGRES_DB: cg_scf

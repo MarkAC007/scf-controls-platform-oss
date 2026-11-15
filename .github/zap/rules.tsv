@@ -1,0 +1,33 @@
+# ZAP baseline rules for the CI scan of the running stack (plan 8.2).
+#
+# Format, one rule per line, tab-separated:   <rule id>	<IGNORE|WARN|FAIL>	<rule name>
+# Every passive rule not listed here is WARN, and in CI a WARN fails the job:
+# zap-baseline.py runs without -I, so any alert stops the Docker Build check.
+#
+# To accept an alert instead of fixing it, add an IGNORE line. The line
+# directly above it must be a comment starting "# disposition:" that says, in
+# the maintainer's words, why the alert does not apply or is accepted, and who
+# accepted it. backend/tests/test_ci_zap_baseline.py enforces that, and keeps
+# the security-header rules from ever being ignored.
+#
+
+# disposition: Low risk, accepted by Mark Almeida-Cardy 2026-11-15. The Server header shows nginx/1.31.8. That only helps someone pick a CVE to try, and the defence is keeping the nginx image patched, not hiding the version.
+10036	IGNORE	Server Leaks Version Information via "Server" HTTP Response Header Field
+
+# disposition: Accepted by Mark Almeida-Cardy 2026-11-15. COOP is set to same-origin-allow-popups on purpose so the Google sign-in popup works (nginx.conf:165), and Cross-Origin-Resource-Policy is not set. The Spectre-style cross-origin leak this rule covers is accepted as low risk for a self-hosted, single-origin app.
+90004	IGNORE	Insufficient Site Isolation Against Spectre Vulnerability
+
+# disposition: Accepted by Mark Almeida-Cardy 2026-11-15. The CSP allows img-src https: and style-src 'unsafe-inline'. Neither one can run script: script-src is limited to named origins, object-src is 'none', and base-uri and form-action are 'self'.
+10055	IGNORE	CSP: Wildcard Directive / CSP: style-src unsafe-inline
+
+# disposition: Informational, accepted by Mark Almeida-Cardy 2026-11-15. ZAP is only labelling responses as storable or non-storable. Cache-Control is set on purpose by the $cache_control map in nginx.conf.
+10049	IGNORE	Non-Storable / Storable and Cacheable / Storable but Non-Cacheable Content
+
+# disposition: Informational, accepted by Mark Almeida-Cardy 2026-11-15. ZAP has spotted that the frontend is a single-page app. This is not a vulnerability.
+10109	IGNORE	Modern Web Application
+
+# disposition: False positive, accepted by Mark Almeida-Cardy 2026-11-15. The match is the word "select" inside minified React code in assets/index-*.js. It is not a comment a developer wrote.
+10027	IGNORE	Information Disclosure - Suspicious Comments
+
+# disposition: Accepted by Mark Almeida-Cardy 2026-11-15. This is about the scanner's own version, not the app. The CI pin is now ZAP 2.17.0, the current release.
+10116	IGNORE	ZAP is Out of Date

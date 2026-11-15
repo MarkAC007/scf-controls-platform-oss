@@ -1,0 +1,15 @@
+# Configuration for zizmor, the workflow linter run by the "Workflow Lint" job
+# in .github/workflows/ci.yml.
+#
+# Waivers are not listed here. Each one is a comment on the line it excuses,
+# `# zizmor: ignore[rule] reason`, so it is read beside that line and moves
+# with it. backend/tests/test_workflow_lint.py requires every waiver to give
+# its reason.
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        # Every action is pinned by full commit sha, whoever publishes it.
+        # This is zizmor's default. It is written down so that a later version
+        # with a different default cannot loosen it unnoticed.
+        "*": hash-pin
