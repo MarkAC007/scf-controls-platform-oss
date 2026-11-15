@@ -17,7 +17,7 @@ from sqlalchemy import select, func
 from uuid import UUID
 
 from database import get_db
-from auth import require_auth, User
+from auth import require_auth, User, _mask_email
 from rate_limiting import rate_limit_provisioning_sync
 from models import (
     User as DBUser,
@@ -187,7 +187,7 @@ async def sync_subscription(
         )
         db.add(db_user)
         await db.flush()  # Get the ID without committing
-        logger.info(f"Created new user {db_user.id} from marketing site sync: {sync_data.user_email}")
+        logger.info(f"Created new user {db_user.id} from marketing site sync: {_mask_email(sync_data.user_email)}")
 
     # Get tier limits
     try:
@@ -564,17 +564,17 @@ async def delete_user(
                     if org:
                         await db.delete(org)
                         orgs_deleted += 1
-                        logger.info(f"Deleted sole-admin org {org_id} for user deletion {db_user.email}")
+                        logger.info(f"Deleted sole-admin org {org_id} for user deletion {_mask_email(db_user.email)}")
                 else:
                     # Shared org — remove membership only
                     await db.delete(membership)
                     memberships_removed += 1
-                    logger.info(f"Removed admin membership from org {org_id} for user deletion {db_user.email}")
+                    logger.info(f"Removed admin membership from org {org_id} for user deletion {_mask_email(db_user.email)}")
             else:
                 # Non-admin — remove membership only
                 await db.delete(membership)
                 memberships_removed += 1
-                logger.info(f"Removed membership from org {org_id} for user deletion {db_user.email}")
+                logger.info(f"Removed membership from org {org_id} for user deletion {_mask_email(db_user.email)}")
 
         # Delete user subscription
         sub_result = await db.execute(
@@ -590,7 +590,7 @@ async def delete_user(
         await db.commit()
 
         logger.info(
-            f"Account deletion complete for {db_user.email}: "
+            f"Account deletion complete for {_mask_email(db_user.email)}: "
             f"{orgs_deleted} orgs deleted, {memberships_removed} memberships removed"
         )
 
@@ -603,7 +603,7 @@ async def delete_user(
 
     except Exception as e:
         await db.rollback()
-        logger.error(f"Account deletion failed for {delete_data.email}: {e}")
+        logger.error(f"Account deletion failed for {_mask_email(delete_data.email)}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Account deletion failed: {str(e)}",

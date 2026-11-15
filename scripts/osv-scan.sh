@@ -19,8 +19,16 @@
 #   - a scanner that fails, or output that does not cover every lockfile, is a
 #     failure. A scan that did not happen never counts as a clean scan.
 #
+# A lockfile under a tree in PRIVATE_TREES is skipped when that whole tree is
+# absent (the public snapshot, which scripts/prepare-oss.sh builds without it),
+# and the skip is printed. A tree that is there without its lockfile still fails.
+#
 # Exit status: 0 nothing blocks, 1 a finding or an expired waiver blocks,
 # 2 the scan did not complete.
+#
+# With OSV_VERDICT_JSON set to a path, the verdict is also written there as
+# counts (scripts/osv_policy.py --json), for the release evidence. A scan that
+# did not complete writes no verdict.
 #
 # Used by the "OSV Scan" job in ci.yml, the nightly scan in osv-nightly.yml and
 # the snapshot job of release-oss.yml. Needs docker and python3 (3.11 or later).
@@ -45,6 +53,15 @@ LOCKFILES=(
   "requirements.txt:backend/requirements-dev.txt"
   "requirements.txt:scripts/requirements-importer.txt"
   "package-lock.json:webclient/package-lock.json"
+  "package-lock.json:docs-site/package-lock.json"
+)
+
+# Trees scripts/prepare-oss.sh removes from the public snapshot, whole. The docs
+# site is built from docs-site/bun.lock, which is migrated from the
+# package-lock.json scanned here; backend/tests/test_osv_scan.py keeps the two
+# pinning the same packages, and holds this list to what prepare-oss.sh removes.
+PRIVATE_TREES=(
+  "docs-site"
 )
 
 usage() { sed -n '2,5p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
@@ -73,6 +90,13 @@ expect_args=()
 for entry in "${LOCKFILES[@]}"; do
   parser="${entry%%:*}"
   path="${entry#*:}"
+  tree="${path%%/*}"
+  for private in "${PRIVATE_TREES[@]}"; do
+    if [ "$tree" = "$private" ] && [ ! -e "$ROOT/$tree" ]; then
+      echo "  --  $tree/ absent (public snapshot): not scanning $path" >&2
+      continue 2
+    fi
+  done
   [ -f "$ROOT/$path" ] || { echo "missing lockfile: $path (under $ROOT); the scan did not run" >&2; exit 2; }
   mkdir -p "$scratch/src/$(dirname "$path")"
   cp "$ROOT/$path" "$scratch/src/$path"
@@ -98,8 +122,13 @@ if [ "$scanner_status" -ne 0 ] && [ "$scanner_status" -ne 1 ]; then
   exit 2
 fi
 
+verdict_args=()
+if [ -n "${OSV_VERDICT_JSON:-}" ]; then
+  verdict_args=(--json "$OSV_VERDICT_JSON" --scanner "$OSV_SCANNER_IMAGE")
+fi
+
 python3 "$HERE/osv_policy.py" \
   --results "$scratch/results.json" \
   --waivers "$ROOT/osv-scanner.toml" \
   --strip-prefix /src/ \
-  "${expect_args[@]}"
+  "${expect_args[@]}" ${verdict_args[@]+"${verdict_args[@]}"}

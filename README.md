@@ -106,11 +106,21 @@ Releases after v1.3.1 also carry the release's image scan evidence, signed the s
   or High finding, and whether it blocked, was fixed or was waived.
 - `vex-*.json`: the OpenVEX documents the scan applied, which say why a waived finding does not
   affect the images. A release with no waivers has none.
+- `scan-gitleaks.json`, `scan-osv.json`, `scan-semgrep.json`, `scan-zap.json`, `scan-zizmor.json`:
+  one record per scan of the release's source commit, taken from the CI run on that commit in the
+  private repository: secrets (Gitleaks), dependency advisories (OSV-Scanner), static analysis
+  (Semgrep), a baseline web scan of the running stack (ZAP) and the GitHub workflows (zizmor). Each
+  gives the scanner's version, the commit, the run, the outcome (`pass`, `fail`, `reported`,
+  `error`, or `missing` when no scan ran) and how many findings it reported at each severity. They
+  name no finding: the scanned source is private. The run id is a reference for the maintainers;
+  the run itself is not public. Releases before these files were added do not have them.
+- `scan-summary.md`: the same records as one page.
 
 ```bash
 gh release download "$TAG" --repo MarkAC007/scf-controls-platform-oss \
-  --pattern 'sbom-*.cdx.json' --pattern image-scan-gate.json --pattern 'vex-*.json'
-for f in sbom-*.cdx.json image-scan-gate.json vex-*.json; do
+  --pattern 'sbom-*.cdx.json' --pattern image-scan-gate.json --pattern 'vex-*.json' \
+  --pattern 'scan-*.json' --pattern scan-summary.md
+for f in sbom-*.cdx.json image-scan-gate.json vex-*.json scan-*.json scan-summary.md; do
   [ -e "$f" ] || continue
   gh attestation verify "$f" --repo MarkAC007/scf-controls-platform-oss \
     --signer-workflow MarkAC007/scf-controls-platform-oss/.github/workflows/oss-release.yml

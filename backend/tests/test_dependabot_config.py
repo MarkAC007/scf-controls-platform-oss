@@ -87,6 +87,7 @@ def test_everything_that_is_pinned_is_covered():
         ("uv", "/scripts"),
         ("pip", "/.github/requirements"),
         ("npm", "/webclient"),
+        ("npm", "/docs-site"),
     } <= covered
     assert len(covered) == len(_updates()), "the same ecosystem and directory is listed twice"
 
@@ -109,6 +110,7 @@ def test_locks_compiled_by_uv_are_not_updated_by_the_pip_ecosystem():
         ("pip", "/.github/requirements", ".github/requirements/uv.txt"),
         ("pip", "/.github/requirements", ".github/requirements/zizmor.txt"),
         ("npm", "/webclient", "webclient/package-lock.json"),
+        ("npm", "/docs-site", "docs-site/package-lock.json"),
         ("docker", "/", "Dockerfile.backend"),
         ("docker-compose", "/", "docker-compose.yml"),
     ],

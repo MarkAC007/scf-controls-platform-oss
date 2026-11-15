@@ -81,7 +81,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from auth import OrgMembership, User, require_org_role, user_is_platform_admin
+from auth import OrgMembership, User, require_org_role, user_is_platform_admin, _mask_email
 from database import get_db
 from models import EvidenceFile, EvidenceStorageConfig
 from rate_limiting import rate_limit_read, rate_limit_write
@@ -258,7 +258,7 @@ async def test_evidence_storage(
         org_id,
         config.config_id,
         report.get("success"),
-        membership.user.email,
+        _mask_email(membership.user.email),
     )
 
     return EvidenceStorageTestResponse(

@@ -107,7 +107,7 @@ def test_the_readme_prints_the_image_references_from_the_record(tmp_path):
 
 
 # Plan 7.5: the evidence files the release workflow writes are the files the README verifies.
-EVIDENCE_PATTERNS = ["sbom-*.cdx.json", "image-scan-gate.json", "vex-*.json"]
+EVIDENCE_PATTERNS = ["sbom-*.cdx.json", "image-scan-gate.json", "vex-*.json", "scan-*.json", "scan-summary.md"]
 
 
 def test_the_readme_verifies_the_release_evidence():
@@ -129,6 +129,9 @@ def test_every_evidence_name_the_release_writes_matches_a_readme_pattern():
     names = re.findall(r"\$\{out\}/([\w.${}-]+)", step["run"])
     names = ["vex-a.json" if n.startswith("vex-$") else n.replace("${image}", "scf-backend") for n in names]
     assert sorted(names) == ["image-scan-gate.json", "sbom-scf-backend.cdx.json", "vex-a.json"]
+    # The source scan summaries are copied as the collector named them.
+    assert 'cp "${scans}"/scan-*.json "${scans}/scan-summary.md" "${out}/"' in step["run"]
+    names += ["scan-zap.json", "scan-summary.md"]
     assert names, "the step writes no evidence"
     for name in names:
         assert any(fnmatch.fnmatch(name, p) for p in EVIDENCE_PATTERNS), name

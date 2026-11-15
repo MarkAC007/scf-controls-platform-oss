@@ -21,7 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, Query,
 from sqlalchemy import select, and_, func as sa_func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from auth import require_org_role, OrgMembership
+from auth import require_org_role, OrgMembership, _mask_email
 from database import get_db
 from models import WebhookEndpoint, WebhookDelivery
 from schemas import (
@@ -100,7 +100,7 @@ async def create_webhook_endpoint(
 
     logger.info(
         "Webhook endpoint created: id=%s, name=%s, org=%s, by=%s",
-        endpoint.id, endpoint.name, org_id, membership.user.email,
+        endpoint.id, endpoint.name, org_id, _mask_email(membership.user.email),
     )
 
     return WebhookEndpointCreatedResponse(
@@ -223,7 +223,7 @@ async def revoke_webhook_endpoint(
 
     logger.info(
         "Webhook endpoint revoked: id=%s, org=%s, by=%s",
-        endpoint_id, org_id, membership.user.email,
+        endpoint_id, org_id, _mask_email(membership.user.email),
     )
     return {"message": "Webhook endpoint revoked successfully"}
 
@@ -282,7 +282,7 @@ async def rotate_webhook_secret(
 
     logger.info(
         "Webhook secret rotated: id=%s, org=%s, by=%s",
-        endpoint_id, org_id, membership.user.email,
+        endpoint_id, org_id, _mask_email(membership.user.email),
     )
 
     return WebhookEndpointCreatedResponse(

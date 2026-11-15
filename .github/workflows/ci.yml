@@ -646,6 +646,7 @@ jobs:
       # job (no -I: a WARN is a failure), and so does a scan that writes no
       # report.
       - name: ZAP baseline scan
+        id: zap
         if: hashFiles('docker-compose.yml') != ''
         env:
           ZAP_IMAGE: ghcr.io/zaproxy/zaproxy:2.17.0@sha256:9624669db72f54d86c4b46a7064518bd9bf79d8c61a4c31befa9923489f328af
@@ -659,6 +660,8 @@ jobs:
           docker run --rm --network host -v "$out:/zap/wrk:rw" "$ZAP_IMAGE" \
             zap-baseline.py -t http://localhost:5173 -c rules.tsv -m 2 \
             -J zap-report.json -r zap-report.html || status=$?
+          # For the release evidence: 0, 1, 2 and 3 mean different things there.
+          echo "status=${status}" >> "$GITHUB_OUTPUT"
           if [ ! -s "$out/zap-report.json" ]; then
             echo "::error::the ZAP baseline scan wrote no report (exit ${status})"
             exit 1
@@ -674,6 +677,30 @@ jobs:
           path: ${{ runner.temp }}/zap/zap-report.*
           if-no-files-found: warn
           retention-days: 14
+
+      # The release evidence. scripts/release/scan_summary.py turns the report into
+      # one small record (version, outcome, alert counts by risk, the target), and
+      # release-oss.yml publishes it with any release built from this commit
+      # (scripts/release/scan_evidence.py). It names no alert and no URL path.
+      # Private-only: the public mirror has no scripts/release, so it skips both.
+      - name: Summarise the ZAP scan for the release evidence
+        if: ${{ !cancelled() && hashFiles('docker-compose.yml') != '' && github.repository == 'MarkAC007/scf-controls-platform' }}
+        env:
+          ZAP_STATUS: ${{ steps.zap.outputs.status }}
+        run: >-
+          python3 scripts/release/scan_summary.py zap
+          --input "${RUNNER_TEMP}/zap/zap-report.json" --exit-code "$ZAP_STATUS"
+          --out "${RUNNER_TEMP}/scan-summary/scan-zap.json"
+
+      - name: Upload the ZAP scan summary
+        if: ${{ !cancelled() && hashFiles('docker-compose.yml') != '' && github.repository == 'MarkAC007/scf-controls-platform' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: scan-summary-zap
+          path: ${{ runner.temp }}/scan-summary/scan-zap.json
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 90
 
       - name: Show container state and logs when the boot test fails
         if: failure() && hashFiles('docker-compose.yml') != ''
@@ -744,10 +771,36 @@ jobs:
             -r .github/requirements/zizmor.txt
 
       - name: Lint the workflows
+        id: lint
         # --strict-collection: a workflow file zizmor cannot parse fails the
         # job. Without it the file is skipped with a warning and the lint
         # passes on what is left.
         run: zizmor --offline --no-progress --strict-collection .
+
+      # The release evidence (see the ZAP summary in the docker job). The same
+      # offline audit again with JSON output, which only counts: zizmor writes
+      # one format per run. It does not decide the job; the step above does.
+      - name: Summarise the lint for the release evidence
+        if: ${{ !cancelled() && github.repository == 'MarkAC007/scf-controls-platform' }}
+        env:
+          LINT_OUTCOME: ${{ steps.lint.outcome }}
+        run: |
+          set -euo pipefail
+          status=0
+          zizmor --offline --no-progress --strict-collection --format json . > "${RUNNER_TEMP}/zizmor.json" 2> "${RUNNER_TEMP}/zizmor-json.log" || status=$?
+          python3 scripts/release/scan_summary.py zizmor --input "${RUNNER_TEMP}/zizmor.json" \
+            --exit-code "$status" --step-outcome "$LINT_OUTCOME" --tool-version "$(zizmor --version || true)" \
+            --out "${RUNNER_TEMP}/scan-summary/scan-zizmor.json"
+
+      - name: Upload the scan summary
+        if: ${{ !cancelled() && github.repository == 'MarkAC007/scf-controls-platform' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: scan-summary-zizmor
+          path: ${{ runner.temp }}/scan-summary/scan-zizmor.json
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 90
 
   # Known vulnerabilities in the locked dependencies (OSV-Scanner).
   #
@@ -780,4 +833,29 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Scan the lockfiles and apply the blocking policy
+        id: scan
+        env:
+          # The verdict as counts, for the release evidence (below).
+          OSV_VERDICT_JSON: ${{ runner.temp }}/osv-verdict.json
         run: scripts/osv-scan.sh
+
+      # The release evidence (see the ZAP summary in the docker job): counts by
+      # rating and the lockfiles scanned, no package and no advisory.
+      - name: Summarise the scan for the release evidence
+        if: ${{ !cancelled() && github.repository == 'MarkAC007/scf-controls-platform' }}
+        env:
+          SCAN_OUTCOME: ${{ steps.scan.outcome }}
+        run: >-
+          python3 scripts/release/scan_summary.py osv
+          --input "${RUNNER_TEMP}/osv-verdict.json" --step-outcome "$SCAN_OUTCOME"
+          --out "${RUNNER_TEMP}/scan-summary/scan-osv.json"
+
+      - name: Upload the scan summary
+        if: ${{ !cancelled() && github.repository == 'MarkAC007/scf-controls-platform' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: scan-summary-osv
+          path: ${{ runner.temp }}/scan-summary/scan-osv.json
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 90

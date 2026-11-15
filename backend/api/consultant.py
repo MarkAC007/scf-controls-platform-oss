@@ -49,7 +49,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
-from auth import require_auth, verify_org_membership, User
+from auth import require_auth, verify_org_membership, User, _mask_email
 from models import ConsultantClientRelationship, ConsultantClientStatus, ConsultantInviteStatus, Organization
 from schemas import (
     ConsultantProfileResponse,
@@ -632,7 +632,7 @@ async def create_invite(
             detail=message,
         )
 
-    logger.info(f"Invitation created: consultant={profile.id}, email={invite_data.email}")
+    logger.info(f"Invitation created: consultant={profile.id}, email={_mask_email(invite_data.email)}")
 
     # Send invitation email with tokenized URL
     inviter_name = current_user.name or current_user.email.split('@')[0]

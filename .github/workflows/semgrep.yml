@@ -76,11 +76,37 @@ jobs:
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Run Semgrep
+        id: scan
         # Never fails the build directly — a scanner crash or a registry outage
         # must not block merges. Findings are enforced by the diff gate below,
         # which fails loudly and specifically.
         continue-on-error: true
         run: semgrep scan --config auto --sarif --output semgrep-results.sarif
+
+      # The release evidence: scripts/release/scan_summary.py counts the results by
+      # level, before the in-source-suppressed ones are dropped below, and names no
+      # finding. release-oss.yml publishes the record with any release built from
+      # this commit (scripts/release/scan_evidence.py). Written into the workspace,
+      # not runner.temp: this job runs in a container. Private-only: the public
+      # mirror has no scripts/release, so it skips both steps.
+      - name: Summarise the scan for the release evidence
+        if: ${{ !cancelled() && github.repository == 'MarkAC007/scf-controls-platform' }}
+        env:
+          SCAN_OUTCOME: ${{ steps.scan.outcome }}
+        run: >-
+          python3 scripts/release/scan_summary.py semgrep
+          --input semgrep-results.sarif --step-outcome "$SCAN_OUTCOME"
+          --out scan-summary/scan-semgrep.json
+
+      - name: Upload the scan summary
+        if: ${{ !cancelled() && github.repository == 'MarkAC007/scf-controls-platform' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: scan-summary-semgrep
+          path: scan-summary/scan-semgrep.json
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 90
 
       - name: Drop in-source-suppressed results before upload
         # GitHub code scanning does NOT honour SARIF `suppressions` -- it owns

@@ -269,6 +269,26 @@ def report(verdict: Verdict) -> str:
     return "\n".join(lines)
 
 
+def verdict_json(verdict: Verdict, scanner: str) -> dict:
+    """The verdict as counts, for the release evidence (scripts/release/scan_summary.py).
+
+    Counts and lockfile paths only: no package, advisory or waiver is named.
+    """
+    ratings = {rating: 0 for rating in reversed(ORDER)}
+    for finding in verdict.findings:
+        ratings[finding.rating] += 1
+    return {
+        "status": verdict.status,
+        "scanner": scanner,
+        "packages": dict(sorted(verdict.packages.items())),
+        "ratings": ratings,
+        "blocking": len(verdict.blocking),
+        "waived": sum(1 for finding in verdict.findings if finding.waiver),
+        "expired_waivers": len(verdict.expired),
+        "unused_waivers": len(verdict.unused),
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--results", required=True, type=Path, help="the scanner's JSON output")
@@ -278,6 +298,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--strip-prefix", default="", help="removed from the front of each lockfile path in the output")
     parser.add_argument("--today", type=dt.date.fromisoformat, default=None, help="for tests; defaults to today, UTC")
+    parser.add_argument("--json", type=Path, default=None,
+                        help="also write the verdict as counts to this file (only when the scan can be trusted)")
+    parser.add_argument("--scanner", default="", help="the scanner image, recorded in the --json file")
     arguments = parser.parse_args(argv)
     today = arguments.today or dt.datetime.now(dt.timezone.utc).date()
 
@@ -290,6 +313,9 @@ def main(argv: list[str] | None = None) -> int:
 
     verdict = evaluate(results, waivers, today)
     verdict.packages = packages
+    if arguments.json is not None:
+        arguments.json.parent.mkdir(parents=True, exist_ok=True)
+        arguments.json.write_text(json.dumps(verdict_json(verdict, arguments.scanner), indent=2) + "\n")
     text = report(verdict)
     print(text)
     summary = os.environ.get("GITHUB_STEP_SUMMARY")

@@ -262,7 +262,8 @@ def test_the_scan_job_runs_after_the_images_on_every_run():
     job = jobs["scan"]
     assert set(_needs(job)) >= {"preflight", "images"}
     assert "dry_run" not in str(job.get("if", "")), "dry runs are scanned too"
-    assert job["permissions"] == {"contents": "read"}
+    # actions: read lets scan_evidence.py read the commit's scan-summary-* artifacts.
+    assert job["permissions"] == {"contents": "read", "actions": "read"}
     assert not [s for s in job["steps"] if s.get("continue-on-error")]
     for step in job["steps"]:
         if "uses" in step:

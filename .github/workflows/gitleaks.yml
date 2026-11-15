@@ -30,6 +30,7 @@ jobs:
           persist-credentials: false
 
       - name: Run Gitleaks
+        id: gitleaks
         uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -43,3 +44,33 @@ jobs:
           name: gitleaks-results
           path: results.sarif
           retention-days: 5
+
+      # The release evidence: scripts/release/scan_summary.py counts the leaks in
+      # results.sarif and names none. release-oss.yml publishes the record with any
+      # release built from this commit (scripts/release/scan_evidence.py).
+      # Private-only: the public mirror has no scripts/release, so it skips both.
+      - name: Summarise the scan for the release evidence
+        if: ${{ !cancelled() && github.repository == 'MarkAC007/scf-controls-platform' }}
+        env:
+          SCAN_OUTCOME: ${{ steps.gitleaks.outcome }}
+        run: |
+          set -euo pipefail
+          # gitleaks writes "v8.0.0" into every SARIF it makes, so the version is
+          # asked of the binary gitleaks-action installed and ran.
+          version=""
+          for bin in /tmp/gitleaks-*/gitleaks; do
+            if [ -x "$bin" ]; then version="$("$bin" version || true)"; fi
+          done
+          python3 scripts/release/scan_summary.py gitleaks --input results.sarif \
+            --step-outcome "$SCAN_OUTCOME" --tool-version "$version" \
+            --out "${RUNNER_TEMP}/scan-summary/scan-gitleaks.json"
+
+      - name: Upload the scan summary
+        if: ${{ !cancelled() && github.repository == 'MarkAC007/scf-controls-platform' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: scan-summary-gitleaks
+          path: ${{ runner.temp }}/scan-summary/scan-gitleaks.json
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 90

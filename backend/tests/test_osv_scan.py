@@ -9,7 +9,9 @@ the two files, and the places that call them, to the rules they came with:
 * a waiver needs an id, a reason and a date, and blocks once the date passes;
 * a scan that did not run, or did not cover every lockfile, is a failure;
 * the scanner image is one exact digest and is given only the lockfiles;
-* every lockfile the product installs from is scanned;
+* every lockfile the product installs from is scanned, and the docs site's
+  bun.lock pins what its scanned package-lock.json pins;
+* a tree the public snapshot removes is skipped only when it is absent whole;
 * the CI job, the nightly run and the release step exist and cannot be skipped.
 
 Nothing here uses the network or Docker. The script is run against a stand-in
@@ -59,7 +61,13 @@ LOCKFILES = [
     "backend/requirements-dev.txt",
     "scripts/requirements-importer.txt",
     "webclient/package-lock.json",
+    "docs-site/package-lock.json",
 ]
+# Trees scripts/prepare-oss.sh removes from the public snapshot, whole. The scan
+# skips a lockfile under one of these when the tree is absent, and only then.
+PRIVATE_TREES = ["docs-site"]
+SKIPPABLE = [lockfile for lockfile in LOCKFILES if lockfile.split("/", 1)[0] in PRIVATE_TREES]
+ALWAYS = [lockfile for lockfile in LOCKFILES if lockfile not in SKIPPABLE]
 
 
 def _load_policy():
@@ -294,6 +302,48 @@ def test_the_report_is_also_written_to_the_job_summary(tmp_path, monkeypatch):
     assert "GHSA-aaaa" in summary.read_text()
 
 
+# --- The verdict as JSON, for the release evidence -----------------------------------
+# scripts/release/scan_summary.py turns this into the release's scan-osv.json. It
+# carries counts and lockfile paths only: never a package, an advisory or a waiver.
+
+
+def _verdict(tmp_path, output, waivers="", scanner="ghcr.io/google/osv-scanner:v9.9.9@sha256:" + "a" * 64):
+    path = tmp_path / "verdict.json"
+    status = _run(tmp_path, output, waivers, extra=["--json", str(path), "--scanner", scanner])
+    return status, json.loads(path.read_text())
+
+
+def test_the_verdict_counts_findings_by_rating(tmp_path):
+    output = _output(_package(_vuln("GHSA-aaaa"), score="9.8"), _package(_vuln("GHSA-bbbb", fixed=()), name="other", score="5.0"))
+    status, verdict = _verdict(tmp_path, output)
+    assert status == 1 and verdict["status"] == 1
+    assert verdict["ratings"] == {"critical": 1, "high": 0, "medium": 1, "low": 0, "unrated": 0}
+    assert verdict["blocking"] == 1 and verdict["waived"] == 0
+    assert verdict["expired_waivers"] == 0 and verdict["unused_waivers"] == 0
+    assert verdict["scanner"].startswith("ghcr.io/google/osv-scanner:v9.9.9@")
+    assert sorted(verdict["packages"]) == sorted(LOCKFILES)
+    assert "GHSA" not in json.dumps(verdict) and "demo" not in json.dumps(verdict)
+
+
+def test_the_verdict_counts_waivers(tmp_path):
+    output = _output(_package(_vuln("GHSA-aaaa"), score="9.8"))
+    status, verdict = _verdict(tmp_path, output, _waivers(("GHSA-aaaa", "2026-12-31", REASON), ("GHSA-zzzz", "2026-01-01", REASON)))
+    assert status == 1, "the expired waiver blocks"
+    assert verdict["waived"] == 1 and verdict["blocking"] == 0 and verdict["expired_waivers"] == 1
+    assert "GHSA" not in json.dumps(verdict)
+
+
+def test_without_json_no_verdict_file_is_written(tmp_path):
+    assert _run(tmp_path, _output()) == 0
+    assert not (tmp_path / "verdict.json").exists()
+
+
+def test_a_scan_that_cannot_be_trusted_writes_no_verdict(tmp_path):
+    path = tmp_path / "verdict.json"
+    assert _run(tmp_path, "not json", extra=["--json", str(path)]) == 2
+    assert not path.exists(), "no verdict means the scan did not complete"
+
+
 # --- The script, run against a stand-in for docker -----------------------------------
 
 BASH = shutil.which("bash") or "/bin/bash"
@@ -310,11 +360,16 @@ exit "${STUB_STATUS:-0}"
 """
 
 
-def _tree(tmp_path, *, without=None):
+def _tree(tmp_path, *, without=None, without_tree=None):
     root = tmp_path / "tree"
     for lockfile in LOCKFILES:
+        if without_tree and lockfile.startswith(f"{without_tree}/"):
+            continue
+        # The directory stays even when its lockfile is left out: a lockfile
+        # missing from a tree that is there is a failure, never a skip.
+        (root / lockfile).parent.mkdir(parents=True, exist_ok=True)
+        (root / lockfile).parent.joinpath("package.json").write_text("{}\n")
         if lockfile != without:
-            (root / lockfile).parent.mkdir(parents=True, exist_ok=True)
             (root / lockfile).write_text("placeholder\n")
     (root / "osv-scanner.toml").write_text("")
     (root / ".env").write_text("SECRET=do-not-mount\n")
@@ -322,7 +377,7 @@ def _tree(tmp_path, *, without=None):
     return root
 
 
-def _scan(tmp_path, *, status=0, output=None, root=None, with_docker=True):
+def _scan(tmp_path, *, status=0, output=None, root=None, with_docker=True, verdict=None):
     log = tmp_path / "log"
     log.mkdir(exist_ok=True)
     bin_dir = tmp_path / "bin"
@@ -346,6 +401,8 @@ def _scan(tmp_path, *, status=0, output=None, root=None, with_docker=True):
         "STUB_STATUS": str(status),
         "HOME": str(tmp_path),
     }
+    if verdict is not None:
+        env["OSV_VERDICT_JSON"] = str(verdict)
     if output is not None:
         canned = tmp_path / "canned.json"
         canned.write_text(json.dumps(output))
@@ -369,6 +426,16 @@ def test_the_script_passes_a_clean_scan(tmp_path):
     run, _ = _scan(tmp_path, status=0, output=_output(prefix="/src/"))
     assert run.returncode == 0, run.stderr
     assert "Nothing blocks." in run.stdout and "backend/requirements.txt (1)" in run.stdout
+
+
+@needs_python3
+def test_the_script_writes_the_verdict_when_asked(tmp_path):
+    verdict = tmp_path / "verdict.json"
+    run, _ = _scan(tmp_path, status=0, output=_output(prefix="/src/"), verdict=verdict)
+    assert run.returncode == 0, run.stderr
+    doc = json.loads(verdict.read_text())
+    assert doc["status"] == 0 and doc["scanner"].startswith("ghcr.io/google/osv-scanner:v")
+    assert doc["packages"]["backend/requirements.txt"] == 1
 
 
 @needs_python3
@@ -406,6 +473,37 @@ def test_a_missing_lockfile_fails_the_script_before_anything_runs(tmp_path, lock
     assert not (log / "args").exists(), "the scanner must not run on a partial set"
 
 
+@needs_python3
+@pytest.mark.parametrize("tree", PRIVATE_TREES)
+def test_a_tree_the_snapshot_removes_is_skipped_when_absent_and_says_so(tmp_path, tree):
+    rest = [lockfile for lockfile in LOCKFILES if not lockfile.startswith(f"{tree}/")]
+    run, log = _scan(tmp_path, status=0, output=_output(lockfiles=rest, prefix="/src/"),
+                     root=_tree(tmp_path, without_tree=tree))
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert f"{tree}/ absent" in run.stderr
+    args = (log / "args").read_text().splitlines()
+    scanned = [args[index + 1].split(":", 1)[1] for index, arg in enumerate(args) if arg == "--lockfile"]
+    assert scanned == [f"/src/{lockfile}" for lockfile in rest]
+
+
+@needs_python3
+def test_a_skipped_tree_is_not_expected_by_the_policy_and_a_present_one_is(tmp_path):
+    # With the tree present, output that leaves its lockfile out is a scan that
+    # did not cover everything.
+    run, _ = _scan(tmp_path, status=0, output=_output(lockfiles=ALWAYS, prefix="/src/"))
+    assert run.returncode == 2
+    assert SKIPPABLE[0] in run.stderr
+
+
+@pytest.mark.parametrize("tree", sorted({lockfile.split("/", 1)[0] for lockfile in ALWAYS}))
+def test_a_tree_the_snapshot_keeps_is_never_skipped(tmp_path, tree):
+    root = _tree(tmp_path)
+    shutil.rmtree(root / tree)
+    run, log = _scan(tmp_path, root=root)
+    assert run.returncode == 2 and f"missing lockfile: {tree}/" in run.stderr
+    assert not (log / "args").exists()
+
+
 def test_no_docker_fails_the_script(tmp_path):
     run, _ = _scan(tmp_path, with_docker=False)
     assert run.returncode == 2 and "docker is not installed" in run.stderr
@@ -417,6 +515,7 @@ def test_the_scanner_is_given_the_lockfiles_and_nothing_else(tmp_path):
     assert run.returncode == 0, run.stderr
     mounted = (log / "mounted").read_text().split()
     assert mounted == sorted(f"./{lockfile}" for lockfile in LOCKFILES)
+    assert not [path for path in mounted if path.endswith("/package.json")], "only lockfiles are mounted"
     args = (log / "args").read_text().splitlines()
     volumes = [args[index + 1] for index, arg in enumerate(args) if arg in ("-v", "--volume")]
     assert len(volumes) == 1 and volumes[0].endswith(":/src:ro"), volumes
@@ -460,8 +559,54 @@ def _script_lockfiles() -> list[str]:
     return [entry.split(":", 1)[1] for entry in re.findall(r'"([^"]+)"', block)]
 
 
+def _script_private_trees() -> list[str]:
+    block = re.search(r"^PRIVATE_TREES=\(\n(.*?)^\)", SCAN_SCRIPT.read_text(), re.MULTILINE | re.DOTALL).group(1)
+    return re.findall(r'"([^"]+)"', block)
+
+
 def test_the_script_scans_the_lockfiles_these_tests_know():
     assert _script_lockfiles() == LOCKFILES
+    assert _script_private_trees() == PRIVATE_TREES
+
+
+@private_only
+def test_a_tree_the_scan_may_skip_is_one_the_snapshot_removes_whole():
+    # Otherwise "absent" could mean "deleted by mistake", and the scan would pass
+    # on a tree it never read.
+    removed = set()
+    for line in PREPARE_OSS.read_text().splitlines():
+        words = line.split("#")[0].split()
+        if words[:2] == ["rm", "-rf"]:
+            removed.update(words[2:])
+    assert set(PRIVATE_TREES) <= removed, sorted(set(PRIVATE_TREES) - removed)
+
+
+def _bun_lock_pins(path: Path) -> set[str]:
+    # bun.lock is JSON with trailing commas. Each package entry starts "name@version".
+    text = re.sub(r",(\s*[}\]])", r"\1", path.read_text())
+    return {entry[0] for entry in json.loads(text)["packages"].values()}
+
+
+def _package_lock_pins(path: Path) -> set[str]:
+    packages = json.loads(path.read_text())["packages"]
+    return {
+        f"{entry.get('name') or key.rsplit('node_modules/', 1)[1]}@{entry['version']}"
+        for key, entry in packages.items()
+        if key
+    }
+
+
+def test_the_docs_site_builds_from_the_versions_the_scan_reads():
+    # The site is built from bun.lock (deploy-docs.yml: bun install
+    # --frozen-lockfile). The scan reads package-lock.json, which bun.lock is
+    # migrated from. A change to one without the other would scan one tree and
+    # ship another, so the two must pin exactly the same packages.
+    site = REPO_ROOT / "docs-site"
+    if not site.is_dir():
+        pytest.skip("docs-site/ is not in this tree (public snapshot)")
+    bun, npm = _bun_lock_pins(site / "bun.lock"), _package_lock_pins(site / "package-lock.json")
+    assert bun and npm, "read nothing from one of the lockfiles"
+    assert bun == npm, {"only in bun.lock": sorted(bun - npm), "only in package-lock.json": sorted(npm - bun)}
 
 
 def test_every_lockfile_the_product_installs_from_is_scanned():
@@ -473,11 +618,15 @@ def test_every_lockfile_the_product_installs_from_is_scanned():
     }
     node_locks = {
         str(path.relative_to(REPO_ROOT))
-        for path in (REPO_ROOT / "webclient").glob("*lock*")
+        for directory in ("webclient", "docs-site")
+        for path in (REPO_ROOT / directory).glob("*lock*")
         if path.name in {"package-lock.json", "bun.lock", "yarn.lock", "pnpm-lock.yaml"}
     }
-    assert python_locks | node_locks == set(LOCKFILES)
-    for lockfile in LOCKFILES:
+    # docs-site/bun.lock is held to docs-site/package-lock.json by the test above.
+    node_locks.discard("docs-site/bun.lock")
+    present = [lockfile for lockfile in LOCKFILES if lockfile in ALWAYS or (REPO_ROOT / lockfile.split("/", 1)[0]).is_dir()]
+    assert python_locks | node_locks == set(present)
+    for lockfile in present:
         assert (REPO_ROOT / lockfile).is_file(), lockfile
 
 
@@ -492,11 +641,20 @@ def _runs(job: dict) -> list[str]:
     return [step["run"].strip() for step in job["steps"] if "run" in step]
 
 
+EVIDENCE_STEPS = ["Summarise the scan for the release evidence", "Upload the scan summary"]
+
+
 def test_the_ci_job_runs_the_scan_and_can_fail():
     job = yaml.safe_load(CI.read_text())["jobs"]["osv-scan"]
-    _unskippable(job, "ci.yml osv-scan")
+    [scan] = [step for step in job["steps"] if "scripts/osv-scan.sh" in step.get("run", "")]
+    index = job["steps"].index(scan)
+    # The scan and everything before it cannot be skipped; after it come only the
+    # two steps that record its result for the release evidence.
+    _unskippable({**job, "steps": job["steps"][: index + 1]}, "ci.yml osv-scan")
+    assert [step.get("name") for step in job["steps"][index + 1:]] == EVIDENCE_STEPS
     # The whole step: nothing after the script that could swallow its status.
-    assert _runs(job) == ["scripts/osv-scan.sh"]
+    assert scan["run"].strip() == "scripts/osv-scan.sh"
+    assert scan["env"] == {"OSV_VERDICT_JSON": "${{ runner.temp }}/osv-verdict.json"}
     assert job["permissions"] == {"contents": "read"}
 
 

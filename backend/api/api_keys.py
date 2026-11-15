@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from database import get_db
-from auth import require_org_role, OrgMembership, ROLE_HIERARCHY
+from auth import require_org_role, OrgMembership, ROLE_HIERARCHY, _mask_email
 from models import ApiKey, User as DBUser
 from schemas import ApiKeyCreate, ApiKeyResponse, ApiKeyCreatedResponse
 from services.audit_service import log_entity_changes, detect_action_source, get_request_id, API_KEY_TRACKED_FIELDS
@@ -111,7 +111,7 @@ async def create_api_key(
     await db.commit()
     await db.refresh(api_key)
 
-    logger.info(f"API key created: prefix={prefix}, user={membership.user.email}, org={org_id}")
+    logger.info(f"API key created: prefix={prefix}, user={_mask_email(membership.user.email)}, org={org_id}")
 
     return ApiKeyCreatedResponse(
         id=api_key.id,
@@ -237,5 +237,5 @@ async def revoke_api_key(
 
     await db.commit()
 
-    logger.info(f"API key revoked: id={key_id}, org={org_id}, by={membership.user.email}")
+    logger.info(f"API key revoked: id={key_id}, org={org_id}, by={_mask_email(membership.user.email)}")
     return {"message": "API key revoked successfully"}

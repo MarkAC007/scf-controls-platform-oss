@@ -27,7 +27,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from auth import require_platform_admin, require_platform_admin_user_session, User
+from auth import require_platform_admin, require_platform_admin_user_session, User, _mask_email
 from catalog_models import SCFCatalogControl
 from celery_app import celery_app
 from database import get_db
@@ -629,7 +629,7 @@ async def put_upgrade_run_pairings(
     logger.info(
         "Superseded pairings updated on run %s by %s (%d pairings)",
         run.id,
-        user.email or user.user_id,
+        _mask_email(user.email) if user.email else user.user_id,
         len(body.pairings),
     )
     return PairingsUpdateResponse(run_id=run.id, pairings=body.pairings)
@@ -676,7 +676,7 @@ async def apply_upgrade_run(
         "Catalog apply enqueued for run %s (-> %s) by %s",
         run.id,
         run.to_version,
-        user.email or user.user_id,
+        _mask_email(user.email) if user.email else user.user_id,
     )
     return UpgradeApplyResponse(
         run_id=run.id, status="applying", task_id=task.id, detail="apply enqueued"
@@ -703,7 +703,7 @@ async def cancel_upgrade_run(
         )
     run.status = "cancelled"
     await db.commit()
-    logger.info("Catalog upgrade run %s cancelled by %s", run.id, user.email or user.user_id)
+    logger.info("Catalog upgrade run %s cancelled by %s", run.id, _mask_email(user.email) if user.email else user.user_id)
     return UpgradeCancelResponse(run_id=run.id, status="cancelled")
 
 
@@ -753,7 +753,7 @@ async def revert_upgrade_run(
         "Catalog revert enqueued for run %s (back to %s) by %s",
         run.id,
         run.from_version,
-        user.email or user.user_id,
+        _mask_email(user.email) if user.email else user.user_id,
     )
     return UpgradeRevertResponse(
         run_id=run.id, status="reverting", task_id=task.id, detail="revert enqueued"
@@ -868,7 +868,7 @@ async def patch_control_superseded_by(
         scf_id,
         old_value,
         successor_id,
-        user.email or user.user_id,
+        _mask_email(user.email) if user.email else user.user_id,
         body.justification,
     )
     return SupersededByPatchResponse(scf_id=scf_id, superseded_by=successor_id)

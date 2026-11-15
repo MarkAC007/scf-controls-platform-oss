@@ -129,16 +129,21 @@ jobs:
           # release-evidence/ is written into the release commit by the release
           # workflow too: one CycloneDX SBOM per image in release-images.json
           # (sbom-<image>.cdx.json), the image scan gate's result
-          # (image-scan-gate.json) and the VEX documents it applied
-          # (vex-*.json). Nothing else may be there: every file in it becomes a
-          # signed release asset.
+          # (image-scan-gate.json), the VEX documents it applied (vex-*.json),
+          # and one record per source scan of the released commit
+          # (scan-<tool>.json: version, outcome and counts, never a finding) with
+          # a page of them (scan-summary.md). Nothing else may be there: every
+          # file in it becomes a signed release asset. A scan record that says
+          # "fail", "error" or "missing" is published as it is: the release
+          # workflow decided whether that holds the release, and the record is
+          # the evidence either way. A record that is not one is refused.
           if [[ -z "$PROBLEM" ]]; then
             if [[ ! -d release-evidence || -L release-evidence ]]; then
               PROBLEM="release-evidence/ is missing from the snapshot"
             else
               WANT="$(jq -r '.images[].name | split("/") | last | "sbom-\(.).cdx.json"' release-images.json | sort)"
               GOT="$(find release-evidence -mindepth 1 -maxdepth 1 -name 'sbom-*' | sed 's|^release-evidence/||' | sort)"
-              STRAY="$(find release-evidence -mindepth 1 -maxdepth 1 \( ! -type f -o \( ! -name 'sbom-*.cdx.json' ! -name 'vex-*.json' ! -name 'image-scan-gate.json' \) \) | sort)"
+              STRAY="$(find release-evidence -mindepth 1 -maxdepth 1 \( ! -type f -o \( ! -name 'sbom-*.cdx.json' ! -name 'vex-*.json' ! -name 'image-scan-gate.json' ! -name 'scan-*.json' ! -name 'scan-summary.md' \) \) | sort)"
               if [[ -n "$STRAY" ]]; then
                 PROBLEM="release-evidence/ holds something that is not evidence: ${STRAY//$'\n'/ }"
               elif [[ "$WANT" != "$GOT" ]]; then
@@ -159,6 +164,48 @@ jobs:
                       PROBLEM="$f is not an OpenVEX document"; break
                     fi
                   done
+                fi
+                if [[ -z "$PROBLEM" ]]; then
+                  SCANS="$(find release-evidence -mindepth 1 -maxdepth 1 -name 'scan-*.json' | sed 's|^release-evidence/||' | sort | tr '\n' ' ')"
+                  if [[ "$SCANS" != "scan-gitleaks.json scan-osv.json scan-semgrep.json scan-zap.json scan-zizmor.json " ]]; then
+                    PROBLEM="release-evidence/ does not hold exactly the five source scan summaries (scan-gitleaks, -osv, -semgrep, -zap and -zizmor .json)"
+                  fi
+                fi
+                if [[ -z "$PROBLEM" ]]; then
+                  for f in $SCANS; do
+                    tool="${f#scan-}"; tool="${tool%.json}"
+                    if ! jq -e --arg tool "$tool" '
+                          def count: type == "number" and . >= 0 and . == floor;
+                          def text: type == "string" and length > 0;
+                          (keys == ["commit", "counts", "event", "job", "job_conclusion", "outcome", "policy",
+                                    "reason", "run_attempt", "run_id", "scanner", "schema", "scope", "tool",
+                                    "totals", "version", "workflow"])
+                          and .schema == 1 and .tool == $tool
+                          and (.commit | type == "string" and test("^[0-9a-f]{40}$"))
+                          and (.outcome | IN("pass", "fail", "error", "reported", "missing"))
+                          and all(.scanner, .workflow, .job, .policy; text)
+                          and all(.version, .event, .job_conclusion, .reason; . == null or text)
+                          and all(.run_id, .run_attempt; . == null or count)
+                          and (.scope | type == "array" and all(.[]; text))
+                          and all(.counts, .totals; type == "object" and all(.[]; count))
+                          and (if .outcome == "missing" or .outcome == "error" then (.reason | text) else true end)
+                          and (if .outcome == "missing" then true else (.run_id | count) end)
+                          and (if .outcome == "pass" or .outcome == "reported" then (.version | text) else true end)
+                        ' "release-evidence/$f" >/dev/null 2>&1; then
+                      PROBLEM="release-evidence/$f is not a source scan summary"; break
+                    fi
+                  done
+                fi
+                if [[ -z "$PROBLEM" ]]; then
+                  # shellcheck disable=SC2086 # $SCANS is the five fixed names above
+                  SCANNED="$(cd release-evidence && jq -rs 'map(.commit) | unique | if length == 1 then .[0] else "" end' $SCANS)"
+                  if [[ -z "$SCANNED" ]]; then
+                    PROBLEM="release-evidence/scan-*.json do not all describe one commit"
+                  elif [[ ! -f release-evidence/scan-summary.md || -L release-evidence/scan-summary.md ]] \
+                      || [[ "$(head -n 1 release-evidence/scan-summary.md)" != "# Source scans" ]] \
+                      || ! grep -qF "$SCANNED" release-evidence/scan-summary.md; then
+                    PROBLEM="release-evidence/scan-summary.md is missing or does not describe the scanned commit ${SCANNED}"
+                  fi
                 fi
               fi
             fi

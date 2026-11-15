@@ -41,17 +41,31 @@ def _job() -> dict:
     return jobs[JOB]
 
 
-def _run_lines() -> list[str]:
-    """Every shell line the job runs, with line continuations joined."""
+LINT_STEP = "Lint the workflows"
+# After the lint, and only after it, the job records its result for the release
+# evidence (scripts/release/scan_evidence.py). Those steps never decide the job.
+EVIDENCE_STEPS = ["Summarise the lint for the release evidence", "Upload the scan summary"]
+
+
+def _gating_steps() -> list[dict]:
+    """The steps up to and including the lint."""
+    steps = _job()["steps"]
+    names = [step.get("name") for step in steps]
+    assert LINT_STEP in names, f"the job has no `{LINT_STEP}` step"
+    return steps[: names.index(LINT_STEP) + 1]
+
+
+def _run_lines(steps: list[dict] | None = None) -> list[str]:
+    """Every shell line the steps run, with line continuations joined."""
     lines = []
-    for step in _job()["steps"]:
+    for step in _job()["steps"] if steps is None else steps:
         script = step.get("run", "").replace("\\\n", " ")
         lines += [" ".join(line.split()) for line in script.splitlines() if line.strip()]
     return lines
 
 
 def _lint_commands() -> list[str]:
-    return [line for line in _run_lines() if line.split()[0] == "zizmor"]
+    return [line for line in _run_lines(_gating_steps()) if line.split()[0] == "zizmor"]
 
 
 def test_the_lint_runs_on_every_trigger_and_can_fail():
@@ -61,9 +75,23 @@ def test_the_lint_runs_on_every_trigger_and_can_fail():
     assert "if" not in job, "the lint job must not be conditional"
     assert "needs" not in job, "the lint job must not wait on another job"
     assert "continue-on-error" not in job
-    for step in job["steps"]:
+    for step in _gating_steps():
         assert "continue-on-error" not in step, step.get("name")
         assert "if" not in step, step.get("name")
+    after = [step.get("name") for step in job["steps"][len(_gating_steps()):]]
+    assert after == EVIDENCE_STEPS, "nothing but the evidence steps may follow the lint"
+    for step in job["steps"][len(_gating_steps()):]:
+        assert "continue-on-error" not in step, step.get("name")
+
+
+def test_the_evidence_pass_reads_the_same_inputs_the_same_way():
+    [step] = [step for step in _job()["steps"] if step.get("name") == EVIDENCE_STEPS[0]]
+    lines = [" ".join(line.split()) for line in step["run"].replace("\\\n", " ").splitlines()]
+    [json_pass] = [line for line in lines if line.startswith("zizmor ") and "--format json" in line]
+    [lint] = _lint_commands()
+    # The same command, with only the output format added.
+    assert json_pass.split(" >")[0].replace(" --format json", "").split("||")[0].strip() == lint
+    assert step["env"]["LINT_OUTCOME"] == "${{ steps.lint.outcome }}"
 
 
 def test_zizmor_is_installed_only_from_the_hash_locked_file():

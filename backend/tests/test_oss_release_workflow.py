@@ -46,10 +46,36 @@ GATE = {"missing": [], "findings": [], "blocked": False, "enforcing": False, "en
 VEX = {"@context": "https://openvex.dev/ns/v0.2.0", "statements": []}
 
 
+# The source scans that ran on the released commit in the private repository, as
+# scripts/release/scan_evidence.py publishes them: one scan-<tool>.json per scan and a
+# scan-summary.md page. backend/tests/test_scan_evidence.py runs the real collector
+# into this workflow's real check.
+SCAN_TOOLS = ["gitleaks", "osv", "semgrep", "zap", "zizmor"]
+SCANNED_COMMIT = "d" * 40
+
+
+def scan(tool: str, **changes) -> dict:
+    doc = {
+        "schema": 1, "tool": tool, "scanner": tool.upper(), "version": "1.0.0", "commit": SCANNED_COMMIT,
+        "workflow": "CI", "job": "A job", "run_id": 4242, "run_attempt": 1, "event": "push",
+        "job_conclusion": "success", "outcome": "reported" if tool == "semgrep" else "pass",
+        "policy": "What fails it.", "scope": ["."], "counts": {"high": 0, "low": 3}, "totals": {}, "reason": None,
+    }
+    doc.update(changes)
+    return doc
+
+
+MISSING_SCAN = {"version": None, "run_id": None, "run_attempt": None, "event": None, "job_conclusion": None,
+                "outcome": "missing", "scope": [], "counts": {}, "totals": {}, "reason": "no completed run"}
+SCAN_PAGE = f"# Source scans\n\nCommit `{SCANNED_COMMIT}`.\n"
+
+
 def good_evidence(record=GOOD_RECORD) -> dict:
     """release-evidence/ as release-oss.yml writes it: name -> JSON text."""
     files = {f"sbom-{i['name'].rsplit('/', 1)[1]}.cdx.json": json.dumps(SBOM) for i in record["images"]}
     files["image-scan-gate.json"] = json.dumps(GATE)
+    files.update({f"scan-{tool}.json": json.dumps(scan(tool)) for tool in SCAN_TOOLS})
+    files["scan-summary.md"] = SCAN_PAGE
     return files
 
 
@@ -333,6 +359,30 @@ BAD_EVIDENCE = {
     "no gate result": (_evidence(image_scan_gate__json=...), "image-scan-gate.json is missing"),
     "a gate result that is not one": (_evidence(image_scan_gate__json="{}"), "not an image scan gate result"),
     "a VEX file that is not OpenVEX": ({**good_evidence(), "vex-a.json": "{}"}, "is not an OpenVEX document"),
+    "no summary for one scan": (_evidence(scan_zap__json=...), "the five source scan summaries"),
+    "a summary for a scan that is not one of the five": (
+        {**good_evidence(), "scan-trivy.json": json.dumps(scan("trivy"))}, "the five source scan summaries"),
+    "a summary filed under another scan's name": (
+        _evidence(scan_zap__json=json.dumps(scan("osv"))), "scan-zap.json is not a source scan summary"),
+    "an outcome that is not one": (
+        _evidence(scan_osv__json=json.dumps(scan("osv", outcome="fine"))), "scan-osv.json is not a source scan summary"),
+    "a pass with no version": (
+        _evidence(scan_osv__json=json.dumps(scan("osv", version=None))), "scan-osv.json is not a source scan summary"),
+    "a count that is not a number": (
+        _evidence(scan_osv__json=json.dumps(scan("osv", counts={"high": "0"}))), "is not a source scan summary"),
+    "a missing scan with no reason": (
+        _evidence(scan_zizmor__json=json.dumps(scan("zizmor", **{**MISSING_SCAN, "reason": None}))),
+        "scan-zizmor.json is not a source scan summary"),
+    "a short commit": (
+        _evidence(scan_zap__json=json.dumps(scan("zap", commit="abc123"))), "scan-zap.json is not a source scan summary"),
+    "scans of two commits": (
+        _evidence(scan_zap__json=json.dumps(scan("zap", commit="e" * 40))), "do not all describe one commit"),
+    "not JSON": (_evidence(scan_semgrep__json="{"), "scan-semgrep.json is not a source scan summary"),
+    "no summary page": (_evidence(scan_summary__md=...), "scan-summary.md is missing or does not describe"),
+    "a page with another heading": (
+        _evidence(scan_summary__md="# Notes\n" + SCANNED_COMMIT), "scan-summary.md is missing or does not describe"),
+    "a page for another commit": (
+        _evidence(scan_summary__md="# Source scans\n\n" + "e" * 40), "scan-summary.md is missing or does not describe"),
     "a stray file": ({**good_evidence(), "notes.txt": "x"}, "not evidence"),
     "a folder inside": ({**good_evidence(), "vex-dir.json": None}, "not evidence"),
 }
@@ -346,6 +396,16 @@ def test_missing_or_wrong_evidence_rolls_the_release_back(tmp_path, evidence, me
     assert message in run.stdout
     assert rel.outputs() == {}
     assert rel.state() == "missing" and rel.remote_tag() == ""
+
+
+def test_a_missing_or_failed_scan_is_published_as_it_was_recorded(tmp_path):
+    # The private side decides whether that holds the release; here it is evidence.
+    rel = Release(tmp_path, evidence=_evidence(
+        scan_zizmor__json=json.dumps(scan("zizmor", **MISSING_SCAN)),
+        scan_osv__json=json.dumps(scan("osv", outcome="fail", reason=None))))
+    assert rel.stage().returncode == 0
+    assert rel.publish().returncode == 0
+    assert {"scan-zizmor.json", "scan-osv.json", "scan-summary.md"} <= set(rel.assets())
 
 
 def test_vex_documents_are_published_with_the_evidence(tmp_path):
@@ -461,8 +521,11 @@ def test_the_evidence_the_release_workflow_assembles_is_the_evidence_this_workfl
     private = yaml.safe_load(ORCHESTRATOR.read_text())
     [step] = [s for s in private["jobs"]["scan"]["steps"] if s.get("name") == "Assemble the release evidence"]
     runner = tmp_path / "runner"
-    for d in ("sbom", "scan"):
+    for d in ("sbom", "scan", "source-scans"):
         (runner / d).mkdir(parents=True)
+    for name, body in good_evidence().items():
+        if name.startswith("scan-"):
+            (runner / "source-scans" / name).write_text(body)
     for image in ("scf-backend", "scf-frontend"):
         (runner / "sbom" / f"{image}.cdx.json").write_text(json.dumps(SBOM))
     (runner / "scan" / "gate-summary.json").write_text(json.dumps(GATE))
@@ -476,7 +539,8 @@ def test_the_evidence_the_release_workflow_assembles_is_the_evidence_this_workfl
                            capture_output=True, text=True, timeout=60)
     assert built.returncode == 0, built.stdout + built.stderr
     files = {p.name: p.read_text() for p in (runner / "release-evidence").iterdir()}
-    assert sorted(files) == ["image-scan-gate.json", "sbom-scf-backend.cdx.json", "sbom-scf-frontend.cdx.json", "vex-a.json"]
+    assert sorted(files) == sorted(["image-scan-gate.json", "sbom-scf-backend.cdx.json", "sbom-scf-frontend.cdx.json",
+                                    "vex-a.json", "scan-summary.md", *(f"scan-{t}.json" for t in SCAN_TOOLS)])
     rel = Release(tmp_path / "public", evidence=files)
     run = rel.stage()
     assert run.returncode == 0, run.stdout + run.stderr
