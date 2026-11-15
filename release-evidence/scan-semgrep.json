@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "tool": "semgrep",
+  "scanner": "Semgrep",
+  "version": "1.184.0",
+  "commit": "923466004c87f6dfe8bcfae9f7f8acaaf1190aea",
+  "workflow": "Semgrep SAST",
+  "job": "Static Analysis",
+  "run_id": 43762048330,
+  "run_attempt": 1,
+  "event": "push",
+  "job_conclusion": "success",
+  "outcome": "reported",
+  "policy": "A full scan with the registry's auto rules. Report only on this commit: findings are counted and none fail it. Pull requests fail on findings on the lines they add.",
+  "scope": [
+    "."
+  ],
+  "counts": {
+    "error": 0,
+    "warning": 19,
+    "note": 0
+  },
+  "totals": {
+    "rules": 1074,
+    "suppressed_in_source": 31
+  },
+  "reason": null
+}

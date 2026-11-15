@@ -15,7 +15,7 @@ from datetime import date, datetime
 
 from database import get_db
 from user_display import user_label as _user_label
-from auth import require_auth, get_accessible_org_ids, verify_org_membership, User
+from auth import require_auth, get_accessible_org_ids, verify_org_membership, User, _mask_email
 from models import CLOSED_TASK_STATUSES, Comment, EvidenceCollectionTask, EvidenceTracking, Notification, Team, User as DBUser
 from services.audit_service import (
     EVIDENCE_TASK_OWNERSHIP_TRACKED_FIELDS,
@@ -235,7 +235,7 @@ async def list_evidence_tasks(
             # is what lets support tell "no tasks" from "access refused".
             logger.warning(
                 "SECURITY: user %s requested evidence tasks for inaccessible org %s",
-                current_user.db_id or current_user.email,
+                current_user.db_id or _mask_email(current_user.email),
                 organization_id,
             )
             return []

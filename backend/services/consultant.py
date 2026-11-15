@@ -15,6 +15,8 @@ Design Considerations:
 """
 import secrets
 import logging
+
+from services.email_service import _mask_email
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any, Tuple
 from uuid import UUID
@@ -400,7 +402,7 @@ class ConsultantService:
         await self.db.commit()
         await self.db.refresh(invite)
 
-        logger.info(f"Created invite: consultant={profile.id}, email={email}, org={organization_name}")
+        logger.info(f"Created invite: consultant={profile.id}, email={_mask_email(email)}, org={organization_name}")
         return invite, "Invitation created successfully"
 
     async def list_invites(
@@ -631,7 +633,7 @@ class ConsultantService:
         await self.db.commit()
         await self.db.refresh(invite)
 
-        logger.info(f"Created admin invite: consultant={profile.id}, org={org_id}, email={email}")
+        logger.info(f"Created admin invite: consultant={profile.id}, org={org_id}, email={_mask_email(email)}")
         return invite
 
     async def accept_invite(

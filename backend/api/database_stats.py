@@ -32,7 +32,7 @@ from catalog_models import (
     SCFCatalogControl, SCFCatalogDomain,
     SCFCatalogEvidence, SCFCatalogAssessmentObjective
 )
-from auth import optional_auth, require_auth, require_admin, require_platform_admin, get_accessible_org_ids, User
+from auth import optional_auth, require_auth, require_admin, require_platform_admin, get_accessible_org_ids, User, _mask_email
 from redis_client import get_redis_client
 from upgrade_guard import compare_versions
 from schemas import DatabaseBackupResponse, DatabaseRestoreRequest, DatabaseRestoreResponse
@@ -791,7 +791,7 @@ async def get_database_stats(
 
     Requires authentication.
     """
-    logger.info(f"Database stats accessed by: {current_user.email or current_user.user_id} ({current_user.auth_method})")
+    logger.info(f"Database stats accessed by: {_mask_email(current_user.email) if current_user.email else current_user.user_id} ({current_user.auth_method})")
 
     try:
         # Count core tables
@@ -1011,7 +1011,7 @@ async def backup_database(
     NOTE: Catalog tables (scf_catalog_*) are NOT included in backups.
     Catalog data is reference data seeded from SCF JSON files on application startup.
     """
-    logger.info(f"Database backup initiated by: {current_user.email or current_user.user_id}")
+    logger.info(f"Database backup initiated by: {_mask_email(current_user.email) if current_user.email else current_user.user_id}")
 
     try:
         # Organisations in scope for this caller. Platform admin is cross-org,
@@ -1024,7 +1024,7 @@ async def backup_database(
             # no backup at all, so this fails loudly instead.
             logger.warning(
                 "Backup aborted for %s: no organisations in scope",
-                current_user.email or current_user.user_id,
+                _mask_email(current_user.email) if current_user.email else current_user.user_id,
             )
             raise HTTPException(
                 status_code=409,
@@ -1261,7 +1261,7 @@ async def restore_database(
     identity rather than tenant data, and an organisation delete cascades across
     roughly thirty tables.
     """
-    logger.info(f"Database restore initiated by: {current_user.email or current_user.user_id}")
+    logger.info(f"Database restore initiated by: {_mask_email(current_user.email) if current_user.email else current_user.user_id}")
 
     backup_data = restore_request.backup_data
 
@@ -1333,7 +1333,7 @@ async def restore_database(
     if forbidden_org_ids:
         logger.warning(
             "Restore denied for %s: backup names inaccessible organisation(s) %s",
-            current_user.email or current_user.user_id,
+            _mask_email(current_user.email) if current_user.email else current_user.user_id,
             ", ".join(str(org_id) for org_id in forbidden_org_ids),
         )
         raise HTTPException(
@@ -2054,7 +2054,7 @@ async def get_catalog_stats(
 
     NOTE: Catalog data is READ-ONLY reference data and is NOT included in backups.
     """
-    logger.info(f"Catalog stats accessed by: {current_user.email or current_user.user_id}")
+    logger.info(f"Catalog stats accessed by: {_mask_email(current_user.email) if current_user.email else current_user.user_id}")
 
     try:
         # Count catalog tables

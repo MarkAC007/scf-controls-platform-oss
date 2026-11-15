@@ -10,6 +10,8 @@ Handles:
 - Listing and cancelling invitations
 """
 import logging
+
+from services.email_service import _mask_email
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List
@@ -159,7 +161,7 @@ async def create_invite(
                 "Invited users must use a corporate email address. "
                 "Public email providers (e.g. Gmail, Outlook) are not supported."
             )
-        logger.info(f"Consultant cross-domain invite: {inviter_email} -> {email} for org {org_id}")
+        logger.info(f"Consultant cross-domain invite: {_mask_email(inviter_email)} -> {_mask_email(email)} for org {org_id}")
     else:
         # Standard domain validation for non-consultant invites
         is_valid, error_msg = validate_invite_domain(inviter_email, email)
@@ -303,14 +305,14 @@ async def create_invite(
                 logger.warning(
                     "Could not undo the Keycloak user created for a failed "
                     "invite to %s (idp_user_id=%s): %s",
-                    invite.email,
+                    _mask_email(invite.email),
                     provision.user_id,
                     cleanup_error,
                 )
         raise
 
     logger.info(
-        f"Created org invite: org={org_id}, email={email}, role={role}, "
+        f"Created org invite: org={org_id}, email={_mask_email(email)}, role={role}, "
         f"member_type={member_type}, idp_provisioned={bool(invite.idp_user_id)}"
     )
     return invite, (provision.temporary_password if provision and provision.created else None)

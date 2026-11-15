@@ -17,7 +17,7 @@ import logging
 from sqlalchemy.orm import joinedload
 
 from database import get_db
-from auth import require_auth, require_org_role, OrgMembership, User
+from auth import require_auth, require_org_role, OrgMembership, User, _mask_email
 from services.service_account import get_service_account_id
 from services.single_tenant import is_single_tenant_active
 from models import User as DBUser, OrganizationMember, Organization, OrganizationInvite, ApiKey
@@ -393,7 +393,7 @@ async def invite_user_to_organization(
     """
     current_user = membership.user
     logger.info(
-        f"Invite request: org={org_id}, email={invite_data.email}, "
+        f"Invite request: org={org_id}, email={_mask_email(invite_data.email)}, "
         f"role={invite_data.role}, member_type={invite_data.member_type}"
     )
 

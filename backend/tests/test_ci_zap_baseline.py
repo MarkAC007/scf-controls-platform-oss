@@ -153,3 +153,17 @@ def test_the_report_is_uploaded_even_when_the_scan_fails():
     upload = _step("Upload the ZAP report")
     assert upload["if"].startswith("${{ !cancelled()")
     assert upload["with"]["path"] == "${{ runner.temp }}/zap/zap-report.*"
+
+
+def test_the_scan_status_is_handed_to_the_release_evidence():
+    # scripts/release/scan_summary.py reads 0/1/2/3 to tell a pass from a fail
+    # from a ZAP error; the step's success or failure alone cannot.
+    step = _step("ZAP baseline scan")
+    assert step["id"] == "zap"
+    run = step["run"]
+    assert run.index('echo "status=${status}" >> "$GITHUB_OUTPUT"') < run.index('if [ ! -s "$out/zap-report.json" ]')
+    summary = _step("Summarise the ZAP scan for the release evidence")
+    assert summary["env"]["ZAP_STATUS"] == "${{ steps.zap.outputs.status }}"
+    names = [s.get("name") for s in _docker_steps()]
+    assert names.index("Upload the ZAP report") < names.index("Summarise the ZAP scan for the release evidence") \
+        < names.index("Tear down the stack")

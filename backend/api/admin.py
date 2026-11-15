@@ -41,7 +41,7 @@ from schemas import (
     GrantConsultantRequest,
     ConsultantAdminActionResponse,
 )
-from auth import require_platform_admin, User
+from auth import require_platform_admin, User, _mask_email
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +76,7 @@ async def list_all_users(
         admins_only: Only return platform admins
         search: Search by email or display name
     """
-    logger.info(f"Platform admin {user.email} listing users (skip={skip}, limit={limit})")
+    logger.info(f"Platform admin {_mask_email(user.email)} listing users (skip={skip}, limit={limit})")
 
     query = select(DBUser)
 
@@ -203,7 +203,7 @@ async def grant_platform_admin(
     target_user.is_platform_admin = True
     await db.commit()
 
-    logger.info(f"Platform admin {user.email} granted admin to {target_user.email}")
+    logger.info(f"Platform admin {_mask_email(user.email)} granted admin to {_mask_email(target_user.email)}")
 
     return PlatformAdminActionResponse(
         success=True,
@@ -255,7 +255,7 @@ async def revoke_platform_admin(
     target_user.is_platform_admin = False
     await db.commit()
 
-    logger.info(f"Platform admin {user.email} revoked admin from {target_user.email}")
+    logger.info(f"Platform admin {_mask_email(user.email)} revoked admin from {_mask_email(target_user.email)}")
 
     return PlatformAdminActionResponse(
         success=True,
@@ -307,7 +307,7 @@ async def delete_user(
     await db.delete(target_user)
     await db.commit()
 
-    logger.warning(f"Platform admin {user.email} deleted user {email}")
+    logger.warning(f"Platform admin {_mask_email(user.email)} deleted user {_mask_email(email)}")
 
     return SuccessResponse(message=f"Successfully deleted user {email}")
 
@@ -377,7 +377,7 @@ async def grant_consultant(
         message = f"Created consultant profile for {target_user.email}"
 
     await db.commit()
-    logger.info(f"Platform admin {user.email} granted consultant to {target_user.email}")
+    logger.info(f"Platform admin {_mask_email(user.email)} granted consultant to {_mask_email(target_user.email)}")
 
     return ConsultantAdminActionResponse(
         success=True,
@@ -427,7 +427,7 @@ async def revoke_consultant(
     profile.is_active = False
     await db.commit()
 
-    logger.info(f"Platform admin {user.email} revoked consultant from {target_user.email}")
+    logger.info(f"Platform admin {_mask_email(user.email)} revoked consultant from {_mask_email(target_user.email)}")
 
     return ConsultantAdminActionResponse(
         success=True,
@@ -455,7 +455,7 @@ async def list_all_organizations(
 
     SECURITY: Requires platform admin privileges.
     """
-    logger.info(f"Platform admin {user.email} listing organisations")
+    logger.info(f"Platform admin {_mask_email(user.email)} listing organisations")
 
     query = select(Organization)
 
@@ -591,7 +591,7 @@ async def delete_organization(
     await db.delete(org)
     await db.commit()
 
-    logger.warning(f"Platform admin {user.email} deleted organisation {name}")
+    logger.warning(f"Platform admin {_mask_email(user.email)} deleted organisation {name}")
 
     return SuccessResponse(message=f"Successfully deleted organisation {name}")
 
@@ -611,7 +611,7 @@ async def get_platform_stats(
 
     SECURITY: Requires platform admin privileges.
     """
-    logger.info(f"Platform admin {user.email} retrieving platform stats")
+    logger.info(f"Platform admin {_mask_email(user.email)} retrieving platform stats")
 
     # Total users
     total_users_result = await db.execute(select(func.count(DBUser.id)))

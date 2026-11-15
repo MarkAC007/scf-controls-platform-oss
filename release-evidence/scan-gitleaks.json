@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "tool": "gitleaks",
+  "scanner": "gitleaks",
+  "version": "8.24.3",
+  "commit": "923466004c87f6dfe8bcfae9f7f8acaaf1190aea",
+  "workflow": "Gitleaks Secret Scan",
+  "job": "Detect Secrets",
+  "run_id": 43762048355,
+  "run_attempt": 1,
+  "event": "push",
+  "job_conclusion": "success",
+  "outcome": "pass",
+  "policy": "Secret detection over the commits the push to main added. Any secret found fails it.",
+  "scope": [
+    "git: the commits the push added"
+  ],
+  "counts": {
+    "leaks": 0
+  },
+  "totals": {
+    "rules": 208
+  },
+  "reason": null
+}

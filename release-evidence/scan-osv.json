@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "tool": "osv",
+  "scanner": "OSV-Scanner",
+  "version": "2.7.0",
+  "commit": "923466004c87f6dfe8bcfae9f7f8acaaf1190aea",
+  "workflow": "CI",
+  "job": "OSV Scan",
+  "run_id": 43762048269,
+  "run_attempt": 1,
+  "event": "push",
+  "job_conclusion": "success",
+  "outcome": "pass",
+  "policy": "Known vulnerabilities in the lockfiles. A high or critical finding with a fixed version fails it unless osv-scanner.toml waives it with a reason and a date; an expired waiver fails it.",
+  "scope": [
+    "backend/requirements-dev.txt",
+    "backend/requirements.txt",
+    "docs-site/package-lock.json",
+    "scripts/requirements-importer.txt",
+    "webclient/package-lock.json"
+  ],
+  "counts": {
+    "critical": 0,
+    "high": 0,
+    "medium": 7,
+    "low": 3,
+    "unrated": 0
+  },
+  "totals": {
+    "packages": 1359,
+    "blocking": 0,
+    "waived": 0,
+    "expired_waivers": 0
+  },
+  "reason": null
+}
