@@ -1,17 +1,17 @@
 {
   "schema": 1,
-  "version": "1.5.0",
+  "version": "1.5.1",
   "source": {
-    "snapshot_sha256": "579197b188d2463b2fb41a9cd8326f4b1c4bf089108b32f781b0bf6c79ec1f87"
+    "snapshot_sha256": "8ee55af193c2c22a2f191147b331fee4267d23ee2aa070a7dfbceda48c5510f7"
   },
   "images": [
     {
       "name": "ghcr.io/markac007/scf-backend",
-      "digest": "sha256:546673c23446af3af27e1d6c9ea220a5c7fcfabf134a28aec3d23ffd17e49899"
+      "digest": "sha256:271071cbd96deef8f4db5f70f9c62139034881fa1ea9485ca9be022c6df58ae5"
     },
     {
       "name": "ghcr.io/markac007/scf-frontend",
-      "digest": "sha256:8d7513eb1af5c0ae63453abaffcae6e075a93de2e87db62f5e2e6d6ab4a35544"
+      "digest": "sha256:85157a3a846bc5db237d3a1db0973b58361c1956774778c7fe20506ac0bbf910"
     }
   ]
 }

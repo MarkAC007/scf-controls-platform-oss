@@ -49,6 +49,13 @@ def redact(text: str) -> str:
     return text
 
 
+def _redact_arg(value: object) -> object:
+    """Redact one log argument; a number stays a number so ``%d`` still formats."""
+    if isinstance(value, (int, float)):
+        return value
+    return redact(str(value))
+
+
 class RedactionFilter(logging.Filter):
     """Rewrite log records in place so a credential can never reach a handler."""
 
@@ -57,9 +64,9 @@ class RedactionFilter(logging.Filter):
             record.msg = redact(record.msg)
         if record.args:
             if isinstance(record.args, dict):
-                record.args = {k: redact(str(v)) for k, v in record.args.items()}
+                record.args = {k: _redact_arg(v) for k, v in record.args.items()}
             elif isinstance(record.args, tuple):
-                record.args = tuple(redact(str(a)) for a in record.args)
+                record.args = tuple(_redact_arg(a) for a in record.args)
         return True
 
 

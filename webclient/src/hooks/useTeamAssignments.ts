@@ -178,7 +178,25 @@ export function useTeamAssignments(
     [byItemId]
   )
 
-  return { byItemId, accountableFor, teamsFor, loading, error, reload: load }
+  // Ids the caller wants that nobody has answered yet count as loading. The
+  // fetch starts in an effect, so the render that first carries new ids still
+  // has ``loading`` false; without this, that one render reads as "answered,
+  // nothing owns it" and flashes a "No owning team" warning.
+  const unanswered =
+    enabled &&
+    !!organizationId &&
+    error === null &&
+    !!idsKey &&
+    idsKey.split(',').some(id => id && !fetchedIds.current.has(id))
+
+  return {
+    byItemId,
+    accountableFor,
+    teamsFor,
+    loading: loading || unanswered,
+    error,
+    reload: load,
+  }
 }
 
 /**

@@ -485,3 +485,31 @@ describe('useTaskTeamOwnership with a nested owning_team', () => {
     expect(result.current.ownershipFor(task).team?.has_owner).toBe(true)
   })
 })
+
+describe('useTaskTeamOwnership resolved gap', () => {
+  it('never reports resolved for tasks whose evidence items have not been asked about yet', async () => {
+    // Teams land first, the task list arrives later (the real page order),
+    // and the assignment read never answers. Every render is recorded, so the
+    // one render between "tasks arrived" and "fetch effect started" is seen
+    // even though act() would otherwise flush past it.
+    mockListTeams.mockResolvedValue([])
+    mockListAssignments.mockReturnValue(new Promise(() => {}))
+    const seen: boolean[] = []
+
+    const { result, rerender } = renderHook(
+      ({ tasks }: { tasks: { id: string; evidence_tracking_id: string }[] }) => {
+        const r = useTaskTeamOwnership(ORG, tasks)
+        if (tasks.length > 0) seen.push(r.resolved)
+        return r
+      },
+      { initialProps: { tasks: [] as { id: string; evidence_tracking_id: string }[] } }
+    )
+    await waitFor(() => expect(result.current.resolved).toBe(true))
+
+    rerender({ tasks: [{ id: 'task-1', evidence_tracking_id: TRACKING }] })
+    await waitFor(() => expect(mockListAssignments).toHaveBeenCalled())
+
+    expect(seen.length).toBeGreaterThan(0)
+    expect(seen).not.toContain(true)
+  })
+})
