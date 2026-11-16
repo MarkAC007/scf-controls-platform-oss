@@ -10,7 +10,10 @@ from datetime import datetime
 
 from database import get_db
 from auth import require_auth, get_accessible_org_ids, User
-from models import Comment, CommentHistory, User as DBUser, ScopedControl, EvidenceTracking, EvidenceCollectionTask
+from models import (
+    Comment, CommentHistory, User as DBUser, ScopedControl, EvidenceTracking, EvidenceCollectionTask,
+    EngagementQuery, EngagementEvidenceReview,
+)
 from schemas import (
     CommentCreate,
     CommentUpdate,
@@ -25,6 +28,20 @@ router = APIRouter(
     dependencies=[Depends(require_auth)]
 )
 
+# Engagement content (query responses, evidence-review discussion) is served
+# only by the engagement-scoped routes, which apply the auditor access and
+# `internal` visibility rules. These org-level routes refuse it with the same
+# 404 as an unknown id, so an auditor can never reach it through here.
+ENGAGEMENT_COMMENTABLE_TYPES = frozenset({
+    EngagementQuery.COMMENTABLE_TYPE,
+    EngagementEvidenceReview.COMMENTABLE_TYPE,
+})
+
+
+def _refuse_engagement_comment(commentable_type: Optional[str]) -> None:
+    if commentable_type in ENGAGEMENT_COMMENTABLE_TYPES:
+        raise HTTPException(status_code=404, detail="Comment not found")
+
 
 @router.post("/api/comments", response_model=CommentResponse, status_code=status.HTTP_201_CREATED)
 async def create_comment(
@@ -34,6 +51,9 @@ async def create_comment(
     db: AsyncSession = Depends(get_db)
 ):
     """Create a comment on a control, evidence, or task."""
+    # CommentCreate's pattern already rejects these types (422); kept so a
+    # widened pattern can never let engagement content in through here.
+    _refuse_engagement_comment(comment_data.commentable_type)
     if not current_user.db_id:
         raise HTTPException(status_code=403, detail="Only authenticated users can comment")
 
@@ -159,12 +179,13 @@ async def create_comment(
 
 @router.get("/api/comments", response_model=List[CommentResponse])
 async def list_comments(
-    commentable_type: str = Query(..., regex="^(control|evidence|task)$"),
+    commentable_type: str = Query(..., regex="^(control|evidence|task|engagement_query|engagement_evidence_review)$"),
     commentable_id: UUID = Query(...),
     current_user: User = Depends(require_auth),
     db: AsyncSession = Depends(get_db)
 ):
     """List comments for a control, evidence, or task."""
+    _refuse_engagement_comment(commentable_type)
     # Get user's accessible organisation IDs for tenant isolation
     accessible_org_ids = await get_accessible_org_ids(current_user, db)
 
@@ -297,6 +318,7 @@ async def update_comment(
 
     if not comment:
         raise HTTPException(status_code=404, detail="Comment not found")
+    _refuse_engagement_comment(comment.commentable_type)
 
     # Verify the comment's target entity belongs to user's accessible organisations
     # Return 404 (not 403) to avoid leaking existence of comments in other orgs
@@ -422,6 +444,7 @@ async def delete_comment(
 
     if not comment:
         raise HTTPException(status_code=404, detail="Comment not found")
+    _refuse_engagement_comment(comment.commentable_type)
 
     # Verify the comment's target entity belongs to user's accessible organisations
     # Return 404 (not 403) to avoid leaking existence of comments in other orgs
@@ -505,6 +528,7 @@ async def get_comment_history(
     comment = result.scalar_one_or_none()
     if not comment:
         raise HTTPException(status_code=404, detail="Comment not found")
+    _refuse_engagement_comment(comment.commentable_type)
 
     # Verify the comment's target entity belongs to user's accessible organisations
     # Return 404 (not 403) to avoid leaking existence of comments in other orgs

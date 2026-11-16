@@ -105,6 +105,8 @@ class TestRoutingPolicy:
         escalating = {key for key, event in EVENTS.items() if event.escalates}
         assert escalating == {
             "task_overdue", "evidence_rejected", "composite_insufficient",
+            # engrev001: an auditor waiting on the organisation is an escalation.
+            "engagement_evidence_action_required",
         }
 
 

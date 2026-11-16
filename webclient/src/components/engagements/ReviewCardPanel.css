@@ -1,0 +1,480 @@
+/* Detail panel for one evidence object on the review board, its stage
+   actions and its discussion thread. Colours come from
+   engagement-review-tokens.css (--erb-*) and the app tokens; nothing is set
+   in JSX. Every rule below resolves in both themes: the --erb-* tokens and
+   the app tokens are redefined under [data-theme="dark"]. */
+
+/* The board's panel slot (.erb-panel) owns width, sticky position, border,
+   background and scrolling; this fills it. */
+.erp {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  color: var(--erb-text);
+}
+
+.erp-header {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--erb-card-border);
+}
+
+.erp-header-row { display: flex; align-items: center; gap: 10px; }
+
+.erp-id {
+  font-family: var(--font-mono);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--erb-id);
+}
+
+.erp-stage {
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+}
+.erp-stage-open { background: var(--erb-open-bg); color: var(--erb-open); }
+.erp-stage-in_progress { background: var(--erb-progress-bg); color: var(--erb-progress); }
+.erp-stage-action_required { background: var(--erb-action-bg); color: var(--erb-action); }
+.erp-stage-submitted { background: var(--erb-submitted-bg); color: var(--erb-submitted); }
+.erp-stage-accepted { background: var(--erb-accepted-bg); color: var(--erb-accepted); }
+
+.erp-close {
+  margin-left: auto;
+  width: 36px;
+  height: 36px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: var(--erb-open-bg);
+  color: var(--erb-text);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+.erp-close:hover { border-color: var(--erb-card-border); }
+
+.erp-title { margin: 0; font-size: 18px; font-weight: 700; line-height: 1.3; }
+.erp-subline { margin: 0; font-size: 12px; color: var(--erb-muted); }
+.erp-description { margin: 0; font-size: 13px; line-height: 1.5; color: var(--erb-muted); white-space: pre-wrap; }
+
+.erp-verdict { font-weight: 600; }
+.erp-verdict-sufficient { color: var(--erb-verdict-sufficient); }
+.erp-verdict-partial { color: var(--erb-verdict-partial); }
+.erp-verdict-insufficient { color: var(--erb-verdict-insufficient); }
+.erp-verdict-not_assessed { color: var(--erb-verdict-none); }
+
+.erp-body { flex: 1 1 auto; }
+
+.erp-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--erb-card-border);
+}
+.erp-section:last-child { border-bottom: none; }
+
+.erp-h3 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--erb-muted);
+}
+
+.erp-muted { margin: 0; font-size: 13px; color: var(--erb-muted); }
+.erp-empty {
+  margin: 0;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--erb-open-bg);
+  font-size: 13px;
+  color: var(--erb-muted);
+}
+.erp-error {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--error-bg);
+  color: var(--text);
+  font-size: 13px;
+}
+
+.erp-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---- Buttons and fields ------------------------------------------------ */
+
+.erp-btn,
+.erp-move {
+  min-height: 36px;
+  padding: 7px 14px;
+  border: 1px solid var(--erb-card-border);
+  border-radius: 8px;
+  background: var(--erb-card-bg);
+  color: var(--erb-text);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.erp-btn:hover,
+.erp-move:hover { background: var(--erb-open-bg); }
+.erp-btn:disabled,
+.erp-move:disabled { cursor: progress; opacity: 0.7; }
+
+.erp-btn-primary { border-color: var(--primary); background: var(--primary); color: var(--primary-foreground); }
+.erp-btn-primary:hover { background: var(--primary-hover); border-color: var(--primary-hover); }
+
+.erp-btn-danger-solid { border-color: var(--erb-verdict-insufficient); color: var(--erb-verdict-insufficient); }
+.erp-btn-danger-solid:hover { background: var(--error-bg); }
+
+.erp-btn-link {
+  align-self: flex-start;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--erb-id);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.erp-btn-link:hover { text-decoration: underline; }
+.erp-btn-danger { color: var(--erb-verdict-insufficient); }
+
+.erp-btn:focus-visible,
+.erp-move:focus-visible,
+.erp-btn-link:focus-visible,
+.erp-close:focus-visible,
+.erp-tab:focus-visible,
+.erp-edited:focus-visible,
+.erp-chip-remove:focus-visible,
+.erp-artifact-name:focus-visible,
+.erp-control-id.is-link:focus-visible,
+.erp-textarea:focus-visible,
+.erp-select:focus-visible,
+.erp-check input:focus-visible {
+  outline: 2px solid var(--erb-card-selected);
+  outline-offset: 2px;
+}
+
+.erp-label { font-size: 12px; font-weight: 600; color: var(--erb-text); }
+.erp-required { font-weight: 400; color: var(--erb-muted); }
+
+.erp-textarea,
+.erp-select {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--field-border);
+  border-radius: 8px;
+  background: var(--field-bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+.erp-textarea { resize: vertical; }
+.erp-select { width: auto; max-width: 100%; }
+
+.erp-form-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* ---- Stage actions ------------------------------------------------------ */
+
+.erp-next-move { margin: 0; font-size: 13px; color: var(--erb-muted); }
+
+.erp-move-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.erp-move { flex: 1 1 140px; min-height: 44px; font-size: 14px; }
+.erp-move-accepted { border-color: var(--erb-accepted); background: var(--erb-accepted); color: var(--erb-card-bg); }
+.erp-move-accepted:hover { background: var(--erb-accepted); border-color: var(--erb-text); }
+.erp-move-action_required { border-color: var(--erb-action); color: var(--erb-action); }
+.erp-move-action_required:hover { background: var(--erb-action-bg); }
+.erp-move-in_progress { border-color: var(--erb-progress); color: var(--erb-progress); }
+.erp-move-in_progress:hover { background: var(--erb-progress-bg); }
+.erp-move-submitted { border-color: var(--erb-submitted); color: var(--erb-submitted); }
+.erp-move-submitted:hover { background: var(--erb-submitted-bg); }
+.erp-move.is-pending { box-shadow: inset 0 0 0 2px var(--erb-card-selected); }
+
+.erp-note-form,
+.erp-response,
+.erp-inline-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.erp-response {
+  padding: 14px;
+  border: 1px solid var(--erb-action);
+  border-radius: 10px;
+  background: var(--erb-action-bg);
+}
+
+.erp-decision {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--erb-card-bg);
+  border: 1px solid var(--erb-card-border);
+}
+.erp-decision-label { font-size: 12px; font-weight: 600; color: var(--erb-muted); }
+.erp-decision-text { margin: 4px 0 0; font-size: 13px; white-space: pre-wrap; }
+
+.erp-fieldset {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+.erp-fieldset > legend { padding: 0; margin-bottom: 6px; }
+
+.erp-check-list { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.erp-check { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+.erp-check > span:first-of-type { min-width: 0; overflow-wrap: anywhere; }
+
+.erp-upload {
+  padding: 10px;
+  border: 1px dashed var(--erb-card-border);
+  border-radius: 8px;
+  background: var(--erb-card-bg);
+}
+
+/* ---- Artifacts ---------------------------------------------------------- */
+
+.erp-artifacts,
+.erp-controls,
+.erp-events { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 0; list-style: none; }
+
+.erp-artifact,
+.erp-control {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--erb-card-border);
+  border-radius: 8px;
+}
+
+.erp-artifact-row,
+.erp-control-row { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+
+.erp-artifact-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--erb-id);
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.erp-artifact-name:hover { text-decoration: underline; }
+.erp-artifact-name[aria-busy="true"] { cursor: progress; }
+
+.erp-window { flex: none; font-size: 11px; font-weight: 600; }
+.erp-window.is-in { color: var(--erb-in-window); }
+.erp-window.is-out { color: var(--erb-warn); }
+
+.erp-artifact-meta { margin: 0; font-size: 12px; color: var(--erb-muted); }
+.erp-ai-status { font-weight: 600; color: var(--erb-text); }
+
+/* ---- Controls ----------------------------------------------------------- */
+
+.erp-control-id {
+  flex: none;
+  padding: 0;
+  border: none;
+  background: none;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--erb-control-chip);
+}
+.erp-control-id.is-link { cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.erp-control-id.is-link:hover { color: var(--erb-id); }
+.erp-control-title { font-size: 13px; color: var(--erb-text); min-width: 0; }
+
+.erp-clauses { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.erp-clauses-label { font-size: 11px; font-weight: 600; color: var(--erb-muted); margin-right: 2px; }
+.erp-clause {
+  padding: 2px 6px;
+  border: 1px solid var(--erb-clause-chip-border);
+  border-radius: 4px;
+  background: var(--erb-clause-chip-bg);
+  color: var(--erb-clause-chip);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* ---- Owner and reviewer ------------------------------------------------- */
+
+.erp-people {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 8px 14px;
+  margin: 0;
+  font-size: 13px;
+}
+.erp-people dt { font-weight: 600; color: var(--erb-muted); padding-top: 2px; }
+.erp-people dd { margin: 0; min-width: 0; }
+.erp-unowned { color: var(--erb-warn); font-weight: 600; }
+.erp-team { color: var(--erb-muted); }
+.erp-owner-pick { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+
+/* ---- Discussion --------------------------------------------------------- */
+
+.erp-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--erb-card-border); }
+
+.erp-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: -1px;
+  padding: 8px 12px;
+  border: none;
+  border-bottom: 3px solid transparent;
+  background: none;
+  color: var(--erb-muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.erp-tab:hover { color: var(--erb-text); }
+.erp-tab.is-active { color: var(--erb-text); border-bottom-color: var(--erb-tab-active); }
+.erp-tab-internal.is-active { border-bottom-color: var(--erb-action); }
+
+.erp-tab-count {
+  min-width: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--erb-open-bg);
+  color: var(--erb-muted);
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+}
+
+.erp-thread { display: flex; flex-direction: column; gap: 10px; padding-top: 4px; }
+
+.erp-thread-hint { margin: 0; font-size: 12px; color: var(--erb-muted); }
+.erp-thread-hint-internal {
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--erb-action-bg);
+  color: var(--erb-action);
+  font-weight: 600;
+}
+
+.erp-comments { display: flex; flex-direction: column; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.erp-replies { margin-top: 8px; padding-left: 14px; border-left: 2px solid var(--erb-card-border); }
+
+.erp-comment { display: flex; flex-direction: column; gap: 4px; }
+.erp-comment-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; font-size: 12px; }
+.erp-comment-author { font-weight: 700; color: var(--erb-text); }
+.erp-comment.is-deleted .erp-comment-author { color: var(--erb-muted); font-weight: 600; }
+.erp-comment-when { font-size: 12px; color: var(--erb-muted); }
+.erp-comment-body { margin: 0; font-size: 13px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.erp-comment.is-deleted > .erp-comment-body { font-style: italic; }
+.erp-comment-mentions { margin: 0; font-size: 12px; color: var(--erb-muted); }
+
+.erp-edited {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--erb-muted);
+  font-size: 12px;
+  font-style: italic;
+  text-decoration: underline dotted;
+  cursor: pointer;
+}
+.erp-edited:hover { color: var(--erb-id); }
+
+.erp-comment-actions { display: flex; gap: 12px; }
+.erp-comment-actions .erp-btn-link { font-size: 12px; }
+
+.erp-history {
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--erb-open-bg);
+}
+.erp-history-list { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; }
+
+.erp-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; }
+
+.erp-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--erb-card-border);
+  border-radius: 8px;
+}
+.erp-composer-internal { border-color: var(--erb-action); background: var(--erb-action-bg); }
+
+.erp-target { display: block; margin-top: 2px; font-weight: 400; color: var(--erb-muted); }
+.erp-target-internal { color: var(--erb-action); font-weight: 600; }
+
+.erp-composer-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.erp-spacer { flex: 1 1 auto; }
+
+.erp-mention-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px 2px 8px;
+  border: 1px solid var(--erb-control-chip-border);
+  border-radius: 999px;
+  background: var(--erb-control-chip-bg);
+  color: var(--erb-control-chip);
+  font-size: 12px;
+  font-weight: 600;
+}
+.erp-chip-remove {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: none;
+  color: inherit;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+.erp-chip-remove:hover { background: var(--erb-card-bg); }
+
+/* ---- Event history ------------------------------------------------------ */
+
+.erp-event {
+  padding: 8px 0 8px 12px;
+  border-left: 2px solid var(--erb-card-border);
+}
+.erp-event-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; font-size: 12px; }
+.erp-event-who { font-weight: 700; }
+.erp-actor { padding: 1px 6px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+.erp-actor-auditor { background: var(--erb-progress-bg); color: var(--erb-progress); }
+.erp-actor-org { background: var(--erb-control-chip-bg); color: var(--erb-control-chip); }
+.erp-event-what { margin: 2px 0 0; font-size: 13px; }
+.erp-event-note { margin: 4px 0 0; font-size: 13px; color: var(--erb-muted); white-space: pre-wrap; }
+
+/* ---- Narrow screens ----------------------------------------------------- */
+
+@media (max-width: 900px) {
+  .erp-people { grid-template-columns: minmax(0, 1fr); }
+}

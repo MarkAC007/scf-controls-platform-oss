@@ -2,26 +2,18 @@
   "schema": 1,
   "tool": "zizmor",
   "scanner": "zizmor",
-  "version": "1.32.0",
-  "commit": "923466004c87f6dfe8bcfae9f7f8acaaf1190aea",
+  "version": null,
+  "commit": "febe4662cb579c345b4debd49aa658725f35c65d",
   "workflow": "CI",
   "job": "Workflow Lint",
-  "run_id": 43762048269,
-  "run_attempt": 1,
+  "run_id": 43885359801,
+  "run_attempt": 2,
   "event": "push",
   "job_conclusion": "success",
-  "outcome": "pass",
+  "outcome": "error",
   "policy": "Offline lint of every workflow and action. Any finding not excused by an ignore comment with a reason fails it.",
-  "scope": [
-    "."
-  ],
-  "counts": {
-    "high": 0,
-    "medium": 0,
-    "low": 0,
-    "informational": 0,
-    "unknown": 0
-  },
+  "scope": [],
+  "counts": {},
   "totals": {},
-  "reason": null
+  "reason": "the summary is from attempt 1, the job's latest is attempt 2"
 }

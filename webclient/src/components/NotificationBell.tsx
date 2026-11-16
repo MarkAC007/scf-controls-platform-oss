@@ -3,8 +3,20 @@ import { apiClient } from '../data/apiClient';
 import { interactiveRowProps } from '../data/interactiveRow';
 import { navigateToDestination } from './AppLink';
 
+/** An engagement's review workspace, and the card or control to open in it. */
+export interface EngagementReviewTarget {
+  organizationId: string;
+  engagementId: string;
+  focus?: { evidenceId?: string; reviewId?: string; controlScfId?: string };
+}
+
 interface NotificationBellProps {
   onNavigateToEvidence?: (evidenceId: string) => void;
+  /**
+   * Engagement notifications (action required, submitted, reviewer assigned,
+   * query raised, mention) open the engagement's review board on the card.
+   */
+  onNavigateToEngagementReview?: (target: EngagementReviewTarget) => void;
   /**
    * For a control notification the server sent no key for: the SCF id of a
    * scoped_controls row in the organisation on screen. null means the loaded
@@ -25,6 +37,7 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
   onNavigateToTask,
   onNavigateToChangelog,
   onNavigateToRisk,
+  onNavigateToEngagementReview,
   resolveControlScfId,
   currentOrgId
 }) => {
@@ -156,8 +169,44 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
           }
         }
 
+      } else if (
+        (notification.reference_type === 'engagement_evidence_review'
+          || notification.reference_type === 'engagement_query')
+        && notification.engagement_id && notification.reference_id
+        && onNavigateToEngagementReview
+      ) {
+        // The row carries the engagement and either the review row (a card) or
+        // a query. An organisation member can only open it inside that
+        // organisation; an external auditor has no organisation on screen.
+        const orgId = notification.organization_id;
+        if (currentOrgId && orgId && orgId !== currentOrgId) {
+          setNavigationError(
+            `That engagement is in ${notification.organization_name || 'another organisation'}. Switch to it to open the card.`
+          );
+        } else if (notification.reference_type === 'engagement_evidence_review') {
+          onNavigateToEngagementReview({
+            organizationId: orgId,
+            engagementId: notification.engagement_id,
+            focus: { reviewId: notification.reference_id },
+          });
+          setShowDropdown(false);
+        } else {
+          // A query names its target: an evidence object (a card) or a control.
+          const query = await apiClient.get(
+            `/organizations/${orgId}/engagements/${notification.engagement_id}/queries/${notification.reference_id}`
+          );
+          onNavigateToEngagementReview({
+            organizationId: orgId,
+            engagementId: notification.engagement_id,
+            focus: query?.evidence_id
+              ? { evidenceId: query.evidence_id }
+              : query?.scf_id ? { controlScfId: query.scf_id } : undefined,
+          });
+          setShowDropdown(false);
+        }
+
       } else {
-        // engagement_query and any future reference_type land here. Previously
+        // Any future reference_type lands here. Previously
         // they fell past every branch, so the dropdown did not even close and
         // the click was indistinguishable from a missed tap.
         setNavigationError('There is nowhere to open this notification yet.');

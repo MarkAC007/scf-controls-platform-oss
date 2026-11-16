@@ -36669,6 +36669,42 @@ textarea.engagement-input {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 20%, transparent);
 }
 
+/* Clickable controls, evidence objects and artifacts in the engagement
+   drawers. A <button> reset that reads as a link: the drawer cards stay
+   cards, and only the named thing is the target. */
+.engagement-link {
+  display: inline;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: var(--primary);
+  text-align: left;
+  cursor: pointer;
+  border-radius: 3px;
+}
+.engagement-link:hover { text-decoration: underline; text-underline-offset: 2px; }
+.engagement-link:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.engagement-link:disabled { cursor: default; color: inherit; text-decoration: none; }
+
+/* An artifact chip that opens the file. Colours come from inline styles
+   (in/out of window); this adds the button reset and the affordance. */
+button.engagement-artifact {
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+button.engagement-artifact:hover { border-color: var(--primary) !important; }
+button.engagement-artifact:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+button.engagement-artifact:disabled { cursor: progress; opacity: 0.7; }
+
 /* ═══════════════════════════════════════════════════════════════════════════
    Rich text — user-written descriptions rendered by <RichText>
    (data/richText.ts). Links, code, lists; inherits the surrounding font.

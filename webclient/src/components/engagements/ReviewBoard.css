@@ -1,0 +1,655 @@
+/* Engagement review board: filter bar, no-evidence strip, five stage columns,
+   evidence cards and the detail panel slot. Colours come from
+   engagement-review-tokens.css and the app tokens; nothing is set in JSX.
+   Class prefix: erb- (the --erb-* tokens are shared; the classes are this file's). */
+:root {
+  --erb-board-avatar-bg: #e3e8ef;
+  --erb-board-backdrop: rgba(15, 23, 42, 0.45);
+  --erb-board-shadow: 0 1px 2px rgba(16, 24, 40, 0.08);
+  --erb-board-menu-shadow: 0 8px 24px rgba(16, 24, 40, 0.16);
+  --erb-board-input-border: #cfd5df;
+  --erb-board-divider: #eef1f5;
+}
+
+[data-theme="dark"] {
+  --erb-board-avatar-bg: rgba(255, 255, 255, 0.12);
+  --erb-board-backdrop: rgba(0, 0, 0, 0.6);
+  --erb-board-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --erb-board-menu-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  --erb-board-input-border: var(--border-visible);
+  --erb-board-divider: rgba(255, 255, 255, 0.08);
+}
+
+/* Stage colour carried by one custom property per stage class. */
+.erb-stage-open { --erb-stage: var(--erb-open); --erb-stage-bg: var(--erb-open-bg); }
+.erb-stage-in_progress { --erb-stage: var(--erb-progress); --erb-stage-bg: var(--erb-progress-bg); }
+.erb-stage-action_required { --erb-stage: var(--erb-action); --erb-stage-bg: var(--erb-action-bg); }
+.erb-stage-submitted { --erb-stage: var(--erb-submitted); --erb-stage-bg: var(--erb-submitted-bg); }
+.erb-stage-accepted { --erb-stage: var(--erb-accepted); --erb-stage-bg: var(--erb-accepted-bg); }
+
+.erb {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  color: var(--erb-text);
+}
+
+.erb-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.erb-icon {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+}
+
+/* ---- states ------------------------------------------------------------ */
+.erb-state {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 24px;
+  border: 1px dashed var(--erb-card-border);
+  border-radius: 12px;
+  background: var(--erb-card-bg);
+  color: var(--erb-muted);
+  font-size: 14px;
+}
+.erb-state p { margin: 0; }
+.erb-state-error { border-style: solid; border-color: var(--erb-action); color: var(--erb-text); }
+
+.erb-btn {
+  height: 34px;
+  padding: 0 14px;
+  border: 1px solid var(--erb-board-input-border);
+  border-radius: 8px;
+  background: var(--erb-card-bg);
+  color: var(--erb-text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.erb-btn:hover { border-color: var(--erb-card-selected); }
+
+.erb-link-btn {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--erb-id);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+  align-self: flex-start;
+}
+
+.erb-icon-btn {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 8px;
+  background: var(--erb-open-bg);
+  color: var(--erb-text);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+.erb-icon-btn:hover { background: var(--erb-column-bg); }
+
+.erb :is(button, input, select):focus-visible,
+.erb-dialog :is(button, input, select):focus-visible,
+.erb-dialog:focus-visible {
+  outline: 2px solid var(--erb-card-selected);
+  outline-offset: 2px;
+}
+
+/* ---- filter bar -------------------------------------------------------- */
+.erb-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+}
+
+.erb-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 1 300px;
+  min-width: 200px;
+  height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--erb-board-input-border);
+  border-radius: 8px;
+  background: var(--erb-card-bg);
+  color: var(--erb-muted);
+}
+.erb-search:focus-within { border-color: var(--erb-card-selected); }
+.erb-search input {
+  width: 100%;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--erb-text);
+  font: inherit;
+  font-size: 14px;
+}
+.erb-search input:focus-visible { outline: none; }
+
+.erb-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--erb-muted);
+  font-size: 13px;
+}
+.erb-field select {
+  height: 38px;
+  max-width: 220px;
+  padding: 0 10px;
+  border: 1px solid var(--erb-board-input-border);
+  border-radius: 8px;
+  background: var(--erb-card-bg);
+  color: var(--erb-text);
+  font: inherit;
+  font-size: 14px;
+}
+
+.erb-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--erb-muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+.erb-check input { width: 16px; height: 16px; accent-color: var(--erb-card-selected); }
+
+.erb-toggle {
+  height: 34px;
+  padding: 0 14px;
+  border: 1px solid var(--erb-board-input-border);
+  border-radius: 999px;
+  background: var(--erb-card-bg);
+  color: var(--erb-muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.erb-toggle:hover { color: var(--erb-text); border-color: var(--erb-card-selected); }
+.erb-toggle.is-on {
+  border-color: var(--erb-card-selected);
+  background: var(--erb-progress-bg);
+  color: var(--erb-id);
+}
+
+.erb-match {
+  margin-left: auto;
+  color: var(--erb-muted);
+  font-size: 12px;
+}
+
+/* ---- banners ----------------------------------------------------------- */
+.erb-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px 10px 14px;
+  border: 1px solid var(--erb-card-border);
+  border-left-width: 4px;
+  border-radius: 8px;
+  background: var(--erb-card-bg);
+  color: var(--erb-text);
+  font-size: 13px;
+}
+.erb-banner > span { flex: 1; min-width: 0; }
+.erb-banner-conflict { border-left-color: var(--erb-submitted); background: var(--erb-submitted-bg); }
+.erb-banner-forbidden { border-left-color: var(--erb-verdict-insufficient); background: var(--erb-action-bg); }
+.erb-banner-other { border-left-color: var(--erb-action); background: var(--erb-action-bg); }
+.erb-banner-info { border-left-color: var(--erb-progress); background: var(--erb-progress-bg); }
+
+/* ---- no-evidence strip ------------------------------------------------- */
+.erb-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--erb-card-border);
+  border-left: 4px solid var(--erb-open);
+  border-radius: 10px;
+  background: var(--erb-card-bg);
+}
+.erb-strip-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.erb-strip-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--erb-text);
+}
+.erb-strip-hint { color: var(--erb-muted); font-size: 12px; }
+.erb-strip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 156px;
+  overflow-y: auto;
+}
+.erb-strip-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  max-width: 420px;
+  padding: 7px 10px;
+  border: 1px solid var(--erb-card-border);
+  border-radius: 8px;
+  background: var(--erb-open-bg);
+  color: var(--erb-text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.erb-strip-item:hover { border-color: var(--erb-card-selected); }
+.erb-strip-id {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--erb-control-chip);
+}
+.erb-strip-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 220px;
+}
+.erb-strip-queries { color: var(--erb-muted); font-size: 12px; }
+.erb-strip-queries.has-open { color: var(--erb-warn); font-weight: 600; }
+
+/* ---- layout: columns + panel ------------------------------------------ */
+.erb-layout {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.erb-columns-scroll {
+  flex: 999 1 760px;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.erb-columns {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(220px, 1fr));
+  gap: 12px;
+  min-width: 1140px;
+}
+
+.erb-column {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  max-height: calc(100vh - 220px);
+  min-height: 240px;
+  padding: 0 10px 10px;
+  border: 2px solid transparent;
+  border-top: 4px solid var(--erb-stage);
+  border-radius: 12px;
+  background: var(--erb-column-bg);
+}
+.erb-columns.is-dragging .erb-column.is-drop-target {
+  border-color: var(--erb-stage);
+  border-style: dashed;
+  border-top-style: solid;
+  background: var(--erb-stage-bg);
+}
+.erb-columns.is-dragging .erb-column.is-drop-refused { opacity: 0.55; }
+.erb-column.is-drop-over { border-style: solid; }
+
+.erb-column-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 4px 0;
+}
+.erb-column-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--erb-stage);
+}
+.erb-column-count {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--erb-card-bg);
+  color: var(--erb-text);
+  font-size: 12px;
+  font-weight: 600;
+}
+.erb-column-hint {
+  margin: 0;
+  padding: 0 4px 4px;
+  color: var(--erb-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+.erb-column-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 2px;
+}
+.erb-column-empty {
+  margin: 0;
+  padding: 16px 8px;
+  border: 1px dashed var(--erb-card-border);
+  border-radius: 8px;
+  color: var(--erb-muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+/* ---- card -------------------------------------------------------------- */
+.erb-card {
+  display: flex;
+  flex-direction: column;
+  border: 2px solid var(--erb-card-border);
+  border-radius: 10px;
+  background: var(--erb-card-bg);
+  box-shadow: var(--erb-board-shadow);
+  color: var(--erb-text);
+}
+.erb-card:hover { border-color: var(--erb-board-input-border); }
+.erb-card[draggable="true"] { cursor: grab; }
+.erb-card.is-selected { border-color: var(--erb-card-selected); }
+.erb-card.is-pending { opacity: 0.7; }
+
+.erb-card-open {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  padding: 12px 12px 8px;
+  border: none;
+  border-radius: 8px 8px 0 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.erb-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.erb-card-id {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--erb-id);
+}
+.erb-verdict { font-size: 11px; font-weight: 600; white-space: nowrap; }
+.erb-verdict-sufficient { color: var(--erb-verdict-sufficient); }
+.erb-verdict-partial { color: var(--erb-verdict-partial); }
+.erb-verdict-insufficient { color: var(--erb-verdict-insufficient); }
+.erb-verdict-not_assessed { color: var(--erb-verdict-none); }
+
+.erb-card-title {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.erb-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+.erb-chip-label {
+  min-width: 44px;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--erb-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+.erb-chip {
+  padding: 1px 6px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.erb-chip-control {
+  border-color: var(--erb-control-chip-border);
+  background: var(--erb-control-chip-bg);
+  color: var(--erb-control-chip);
+}
+.erb-chip-clause {
+  border-color: var(--erb-clause-chip-border);
+  background: var(--erb-clause-chip-bg);
+  color: var(--erb-clause-chip);
+}
+.erb-chip-more { font-family: inherit; }
+
+.erb-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--erb-board-divider);
+  color: var(--erb-muted);
+  font-size: 12px;
+}
+.erb-files,
+.erb-queries { display: inline-flex; align-items: center; gap: 4px; }
+.erb-files.is-warn { color: var(--erb-warn); font-weight: 600; }
+.erb-queries { color: var(--erb-warn); font-weight: 600; }
+
+.erb-card-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 0 12px 10px;
+  font-size: 12px;
+}
+.erb-avatar {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  background: var(--erb-board-avatar-bg);
+  color: var(--erb-text);
+  font-size: 11px;
+  font-weight: 700;
+}
+.erb-unassigned {
+  flex: none;
+  padding: 2px 8px;
+  border: 1px dashed var(--erb-board-input-border);
+  border-radius: 999px;
+  color: var(--erb-muted);
+  font-size: 11px;
+}
+.erb-owner {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--erb-muted);
+}
+
+/* ---- move menu --------------------------------------------------------- */
+.erb-move { position: relative; flex: none; }
+.erb-move-btn {
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--erb-board-input-border);
+  border-radius: 6px;
+  background: var(--erb-card-bg);
+  color: var(--erb-text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.erb-move-btn:hover,
+.erb-move-btn[aria-expanded="true"] { border-color: var(--erb-card-selected); }
+.erb-move-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  min-width: 200px;
+  padding: 4px;
+  border: 1px solid var(--erb-card-border);
+  border-radius: 8px;
+  background: var(--erb-card-bg);
+  box-shadow: var(--erb-board-menu-shadow);
+}
+.erb-move-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--erb-text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.erb-move-item:hover,
+.erb-move-item:focus { background: var(--erb-stage-bg); }
+.erb-move-dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 999px;
+  background: var(--erb-stage);
+}
+.erb-move-note { color: var(--erb-muted); font-size: 12px; }
+.erb-next-move {
+  flex: none;
+  max-width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--erb-muted);
+  font-size: 11px;
+  font-style: italic;
+}
+
+/* ---- detail panel slot ------------------------------------------------- */
+.erb-panel {
+  position: sticky;
+  top: 12px;
+  flex: 1 1 380px;
+  max-width: 460px;
+  min-width: 0;
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
+  border: 1px solid var(--erb-card-border);
+  border-radius: 12px;
+  background: var(--erb-card-bg);
+}
+
+/* ---- control query dialog --------------------------------------------- */
+.erb-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 8vh 16px 16px;
+  background: var(--erb-board-backdrop);
+}
+.erb-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(640px, 100%);
+  max-height: 84vh;
+  overflow-y: auto;
+  padding: 20px;
+  border: 1px solid var(--erb-card-border);
+  border-radius: 12px;
+  background: var(--erb-card-bg);
+  color: var(--erb-text);
+  box-shadow: var(--erb-board-menu-shadow);
+}
+.erb-dialog-head { display: flex; align-items: flex-start; gap: 12px; }
+.erb-dialog-heading { flex: 1; min-width: 0; }
+.erb-dialog-title { margin: 0; font-size: 17px; font-weight: 700; line-height: 1.3; }
+.erb-dialog-id { font-family: var(--font-mono); color: var(--erb-control-chip); }
+.erb-dialog-sub { margin: 4px 0 0; color: var(--erb-muted); font-size: 13px; }
+.erb-dialog-body {
+  padding-top: 12px;
+  border-top: 1px solid var(--erb-board-divider);
+}
+
+/* ---- narrow screens ---------------------------------------------------- */
+@media (max-width: 900px) {
+  .erb-match { margin-left: 0; width: 100%; }
+  .erb-search { flex: 1 1 100%; }
+  .erb-panel { position: static; max-width: none; flex-basis: 100%; max-height: none; }
+  .erb-column { max-height: 70vh; }
+}
+
+/* Very wide screens: let columns breathe and give the panel more room. */
+@media (min-width: 2400px) {
+  .erb-columns { grid-template-columns: repeat(5, minmax(280px, 1fr)); }
+  .erb-panel { max-width: 560px; }
+}

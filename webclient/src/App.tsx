@@ -68,7 +68,8 @@ import GoogleSignIn from './components/GoogleSignIn'
 import OidcSignIn from './components/OidcSignIn'
 import { OIDC_ENABLED } from './data/authToken'
 import CatalogOnboarding from './components/CatalogOnboarding'
-import NoOrganisationScreen from './components/NoOrganisationScreen'
+import AuditorWorkspace from './components/engagements/AuditorWorkspace'
+import type { EngagementReviewRequest } from './components/EngagementsPage'
 import { getCatalogStatus } from './data/apiClient'
 import {
   SYNCED_TABS,
@@ -176,6 +177,10 @@ function AppContent() {
     () => readAppLocation(window.location.search).libraryMode,
   )
   // Seeded from the URL on mount so deep links land on the right risk.
+  // An engagement review workspace asked for from outside the Engagements page
+  // (a notification). The page opens it and then clears the request.
+  const [engagementReview, setEngagementReview] = useState<EngagementReviewRequest | null>(null)
+  const clearEngagementReview = useCallback(() => setEngagementReview(null), [])
   const [riskItem, setRiskItem] = useState<string | null>(
     () => readAppLocation(window.location.search).riskItem,
   )
@@ -348,6 +353,12 @@ function AppContent() {
 
   // Handler for opening a risk from a notification (PIG R7: an acceptance
   // that expired). Arriving at a risk is somewhere the user can go Back from.
+  // An engagement notification opens that engagement's review board on a card.
+  const handleNavigateToEngagementReview = (target: { engagementId: string; focus?: EngagementReviewRequest['focus'] }) => {
+    setEngagementReview({ engagementId: target.engagementId, view: 'board', focus: target.focus })
+    setActiveTab('engagements')
+  }
+
   const handleNavigateToRisk = (riskCode: string) => {
     pushSearch(withRiskItem(window.location.search, riskCode))
     setRiskItem(riskCode)
@@ -356,9 +367,9 @@ function AppContent() {
 
   // Handler for navigating to a specific control from the dashboard work
   // queue, a risk assessment, or a notification.
-  const handleNavigateToControl = (scfId: string) => {
-    pushSearch(withLibraryItem(withLibraryMode(window.location.search, 'in-scope'), scfId))
-    setLibraryMode('in-scope')
+  const handleNavigateToControl = (scfId: string, mode: typeof libraryMode = 'in-scope') => {
+    pushSearch(withLibraryItem(withLibraryMode(window.location.search, mode), scfId))
+    setLibraryMode(mode)
     setLibraryItem(scfId)
     setActiveTab('library')
   }
@@ -761,8 +772,11 @@ function AppContent() {
   // loadData only runs once an organisation is selected, so without this
   // branch a user with zero organisations sits on "Loading data" for ever.
   // The screen tells them what is actually going on.
+  // Someone with no organisation may still hold an auditor grant: the auditor
+  // workspace lists their engagements, and shows the "no organisation" screen
+  // itself when they have none.
   if (!currentOrg) {
-    return <NoOrganisationScreen />
+    return <AuditorWorkspace />
   }
 
   if (loading) {
@@ -795,6 +809,7 @@ function AppContent() {
         onTabChange={setActiveTab}
         onNavigateToEvidence={handleNavigateToEvidence}
         onNavigateToRisk={handleNavigateToRisk}
+        onNavigateToEngagementReview={handleNavigateToEngagementReview}
         resolveControlScfId={resolveControlScfId}
         isConsultant={isConsultant === true}
         clientOrgIds={clientOrgIds}
@@ -946,7 +961,13 @@ function AppContent() {
             />
           )}
           {activeTab === 'engagements' && scopingData && (
-            <EngagementsPage organizationId={scopingData.organizationId!} />
+            <EngagementsPage
+              organizationId={scopingData.organizationId!}
+              onNavigateToControl={handleNavigateToControl}
+              onNavigateToEvidence={handleNavigateToEvidence}
+              openReview={engagementReview}
+              onOpenReviewConsumed={clearEngagementReview}
+            />
           )}
           {activeTab === 'isms' && scopingData && (
             <IsmsProfilePage organizationId={scopingData.organizationId!} />

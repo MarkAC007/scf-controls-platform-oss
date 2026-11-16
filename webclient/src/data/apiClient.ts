@@ -46,7 +46,7 @@ const ORG_STORAGE_KEY = 'scf_current_org_id'
  * Generic fetch wrapper with error handling and authentication
  * Supports dual authentication: Google OAuth token (priority) or API key (fallback)
  */
-async function apiFetch<T>(
+export async function apiFetch<T>(
   endpoint: string,
   options: RequestInit = {}
 ): Promise<T> {
@@ -3635,6 +3635,17 @@ export async function listEvidenceFiles(
   )
 }
 
+/** One evidence file's metadata, including a short-lived signed `download_url`. */
+export async function getEvidenceFile(
+  evidenceId: string,
+  fileId: string,
+  orgId: string
+): Promise<EvidenceFileResponse> {
+  return apiFetch<EvidenceFileResponse>(
+    `/organizations/${orgId}/evidence/${evidenceId}/files/${fileId}`
+  )
+}
+
 export async function deleteEvidenceFile(
   evidenceId: string,
   fileId: string,
@@ -3920,10 +3931,21 @@ export async function getEngagementScope(
 
 export interface PresentationEvidenceItem {
   id: string | null
+  /** The catalog evidence object this artifact was uploaded against. */
+  evidence_id: string | null
   filename: string | null
   uploaded_at: string | null
   review_status: string | null
   in_window: boolean
+}
+
+/** A catalog evidence object mapped to a control, with its artifacts. */
+export interface PresentationEvidenceObject {
+  evidence_id: string
+  artifact_title: string | null
+  area_of_focus: string | null
+  artifacts: PresentationEvidenceItem[]
+  in_window_count: number
 }
 
 export interface PresentationControl {
@@ -3938,6 +3960,8 @@ export interface PresentationControl {
   owner: string | null
   evidence: PresentationEvidenceItem[]
   evidence_in_window_count: number
+  /** The same artifacts grouped under each mapped evidence object (objects with none included). */
+  evidence_objects: PresentationEvidenceObject[]
   queries: unknown[]
 }
 
@@ -3984,11 +4008,15 @@ export async function deleteEngagement(orgId: string, engagementId: string): Pro
 
 export type EngagementAuditorStatus = 'invited' | 'active' | 'revoked'
 
+/** `external` = an outside auditor; `internal` = an org member acting as the auditor. */
+export type EngagementAuditorKind = 'external' | 'internal'
+
 export interface EngagementAuditor {
   id: string
   engagement_id: string
   user_id: string
   email: string | null
+  kind: EngagementAuditorKind
   status: EngagementAuditorStatus
   invited_at: string | null
   accepted_at: string | null
@@ -4007,11 +4035,12 @@ export async function listEngagementAuditors(
 export async function grantEngagementAuditor(
   orgId: string,
   engagementId: string,
-  userId: string
+  userId: string,
+  kind: EngagementAuditorKind = 'external'
 ): Promise<EngagementAuditor> {
   return apiFetch<EngagementAuditor>(
     `/organizations/${orgId}/engagements/${engagementId}/auditors`,
-    { method: 'POST', body: JSON.stringify({ user_id: userId }) }
+    { method: 'POST', body: JSON.stringify({ user_id: userId, kind }) }
   )
 }
 
@@ -4037,6 +4066,9 @@ export type EngagementQueryStatus = 'open' | 'answered' | 'closed'
 export interface QueryResponseItem {
   id: string
   user_id: string | null
+  /** Display name, never an email. */
+  name: string | null
+  /** Null for an external auditor: they get names only. */
   email: string | null
   content: string
   created_at: string
@@ -4045,8 +4077,13 @@ export interface QueryResponseItem {
 export interface EngagementQuery {
   id: string
   engagement_id: string
-  scf_id: string
+  /** A query is about exactly one thing: a control (scf_id) or an evidence object (evidence_id). */
+  scf_id: string | null
+  evidence_id: string | null
   raised_by_user_id: string | null
+  /** Display name, never an email. */
+  raised_by_name: string | null
+  /** Null for an external auditor: they get names only. */
   raised_by_email: string | null
   title: string
   body: string
@@ -4061,10 +4098,11 @@ export interface EngagementQuery {
 export async function listEngagementQueries(
   orgId: string,
   engagementId: string,
-  opts?: { scfId?: string; status?: EngagementQueryStatus }
+  opts?: { scfId?: string; evidenceId?: string; status?: EngagementQueryStatus }
 ): Promise<EngagementQuery[]> {
   const params = new URLSearchParams()
   if (opts?.scfId) params.set('scf_id', opts.scfId)
+  if (opts?.evidenceId) params.set('evidence_id', opts.evidenceId)
   if (opts?.status) params.set('status', opts.status)
   const qs = params.toString()
   return apiFetch<EngagementQuery[]>(
@@ -4075,7 +4113,9 @@ export async function listEngagementQueries(
 export async function createEngagementQuery(
   orgId: string,
   engagementId: string,
-  data: { scf_id: string; title: string; body: string }
+  data:
+    | { scf_id: string; evidence_id?: undefined; title: string; body: string }
+    | { evidence_id: string; scf_id?: undefined; title: string; body: string }
 ): Promise<EngagementQuery> {
   return apiFetch<EngagementQuery>(
     `/organizations/${orgId}/engagements/${engagementId}/queries`,

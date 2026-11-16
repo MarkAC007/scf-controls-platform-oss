@@ -5388,6 +5388,7 @@ class EngagementScopeItem(BaseModel):
 
 class PresentationEvidenceItem(BaseModel):
     id: Optional[UUID] = None
+    evidence_id: Optional[str] = None
     filename: Optional[str] = None
     uploaded_at: Optional[datetime] = None
     review_status: Optional[str] = None
@@ -5404,6 +5405,15 @@ class PresentationEvidenceItem(BaseModel):
     effective_period_end: Optional[date] = None
 
 
+class PresentationEvidenceObject(BaseModel):
+    """A catalog evidence object mapped to a control, with its artifacts."""
+    evidence_id: str
+    artifact_title: Optional[str] = None
+    area_of_focus: Optional[str] = None
+    artifacts: list[PresentationEvidenceItem] = []
+    in_window_count: int = 0
+
+
 class PresentationControl(BaseModel):
     scf_id: str
     control_name: Optional[str] = None
@@ -5417,6 +5427,9 @@ class PresentationControl(BaseModel):
     owner: Optional[str] = None
     evidence: list[PresentationEvidenceItem] = []
     evidence_in_window_count: int = 0
+    # The same artifacts grouped under the evidence objects the catalog maps to
+    # this control; objects with no artifact yet are listed too.
+    evidence_objects: list[PresentationEvidenceObject] = []
     queries: list = []  # increment 4 placeholder
 
 
@@ -5436,6 +5449,9 @@ class FrameworkPresentation(BaseModel):
 
 class EngagementAuditorCreate(BaseModel):
     user_id: UUID  # existing user to grant read access to this engagement
+    # 'external' = an outside auditor; 'internal' = an org member acting as the
+    # auditor (must already be a member of the organisation).
+    kind: Literal['external', 'internal'] = 'external'
 
 
 class EngagementAuditorResponse(BaseModel):
@@ -5443,6 +5459,7 @@ class EngagementAuditorResponse(BaseModel):
     engagement_id: UUID
     user_id: UUID
     email: Optional[str] = None
+    kind: str = 'external'
     status: str
     invited_at: Optional[datetime] = None
     accepted_at: Optional[datetime] = None
@@ -5454,9 +5471,18 @@ class EngagementAuditorResponse(BaseModel):
 # --- Structured auditor queries (Increment 4) ------------------------------
 
 class EngagementQueryCreate(BaseModel):
-    scf_id: str
+    # A query is about exactly one thing: a control (scf_id) or an evidence
+    # object (evidence_id, an ERL id with a review card in this engagement).
+    scf_id: Optional[str] = None
+    evidence_id: Optional[str] = None
     title: str
     body: str
+
+    @model_validator(mode='after')
+    def _exactly_one_target(self):
+        if (self.scf_id is None) == (self.evidence_id is None):
+            raise ValueError("Provide exactly one of scf_id or evidence_id.")
+        return self
 
 
 class EngagementQueryResponseCreate(BaseModel):
@@ -5470,7 +5496,8 @@ class EngagementQueryStatusUpdate(BaseModel):
 class QueryResponseItem(BaseModel):
     id: UUID
     user_id: Optional[UUID] = None
-    email: Optional[str] = None
+    name: Optional[str] = None   # display name; never an email
+    email: Optional[str] = None  # null for an external auditor
     content: str
     created_at: datetime
 
@@ -5480,9 +5507,11 @@ class QueryResponseItem(BaseModel):
 class EngagementQueryItem(BaseModel):
     id: UUID
     engagement_id: UUID
-    scf_id: str
+    scf_id: Optional[str] = None
+    evidence_id: Optional[str] = None
     raised_by_user_id: Optional[UUID] = None
-    raised_by_email: Optional[str] = None
+    raised_by_name: Optional[str] = None   # display name; never an email
+    raised_by_email: Optional[str] = None  # null for an external auditor
     title: str
     body: str
     status: str

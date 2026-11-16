@@ -256,12 +256,16 @@ class TestListNotifications:
     async def test_no_accessible_orgs_returns_empty_without_querying(self, caller):
         """A caller with no memberships must not reach the notifications table.
 
-        Returning the empty payload before any query is what keeps a
-        de-provisioned account from probing the table at all.
+        Returning the empty payload before any query on ``notifications`` is
+        what keeps a de-provisioned account from probing the table at all.
+        Since engrev001 one statement is allowed first: the check for an
+        ACTIVE engagement auditor grant, which is how an external auditor
+        (not an org member) reads the notifications of their engagement.
+        With no grant, that check is the only statement issued.
         """
         from api.notifications import list_notifications
 
-        db = FakeSession()
+        db = FakeSession([None])
 
         with patch("api.notifications.get_accessible_org_ids", accessible_orgs()):
             with patch("api.notifications.resolve_reference_keys", no_reference_keys):
@@ -273,7 +277,10 @@ class TestListNotifications:
                 )
 
         assert result == {"unread_count": 0, "notifications": []}
-        assert db.statements == []
+        assert len(db.statements) == 1
+        grant_check = str(db.statements[0].compile(dialect=postgresql.dialect()))
+        assert "engagement_auditors" in grant_check
+        assert "notifications" not in grant_check
 
     @pytest.mark.asyncio
     async def test_member_sees_own_org_rows_with_org_identity(self, caller, org_a):
@@ -502,14 +509,20 @@ class TestMarkAllNotificationsRead:
         """A caller with no memberships marks nothing read — and issues no UPDATE.
 
         An unbounded IN () is either a SQL error or, worse, a no-op filter;
-        the endpoint must short-circuit before building the statement.
+        the endpoint must short-circuit before building the statement. The
+        one statement allowed first (engrev001) is the check for an ACTIVE
+        engagement auditor grant; with no grant nothing else is issued.
         """
         from api.notifications import mark_all_notifications_read
 
-        db = FakeSession()
+        db = FakeSession([None])
 
         with patch("api.notifications.get_accessible_org_ids", accessible_orgs()):
             result = await mark_all_notifications_read(db=db, current_user=caller)
 
-        assert db.statements == []
+        assert len(db.statements) == 1
+        grant_check = str(db.statements[0].compile(dialect=postgresql.dialect()))
+        assert "engagement_auditors" in grant_check
+        assert "UPDATE" not in grant_check.upper()
+        assert "notifications" not in grant_check
         assert success_message(result)

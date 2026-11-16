@@ -312,6 +312,18 @@ EVENTS: dict = {
         NotificationEvent("composite_insufficient", ROUTE_OWNERSHIP, escalates=True),
         # A control coming due for validation goes to whoever owns it (PIG R10).
         NotificationEvent("control_validation_due", ROUTE_OWNERSHIP),
+        # --- engagement evidence review board (engrev001) ------------------
+        # Resolved through the evidence object's EvidenceTracking row (item
+        # type 'evidence'). With no row the Item carries item_id=None, tier 2
+        # has no statement, and the chain lands on the org admins -- never
+        # dropped.
+        NotificationEvent("engagement_evidence_action_required", ROUTE_OWNERSHIP, escalates=True),
+        NotificationEvent("engagement_evidence_query_raised", ROUTE_OWNERSHIP),
+        # Recipients supplied by the caller: the reviewer or the active auditors.
+        NotificationEvent("engagement_evidence_submitted", ROUTE_DIRECTED),
+        NotificationEvent("engagement_evidence_reassigned", ROUTE_DIRECTED),
+        # The person who raised the query, named by the caller.
+        NotificationEvent("engagement_query_answered", ROUTE_DIRECTED),
         # --- org admin: the admins are the audience, not the fallback ------
         NotificationEvent("control_ready_for_review", ROUTE_ORG_ADMIN),
         NotificationEvent("engagement_query_raised", ROUTE_ORG_ADMIN),

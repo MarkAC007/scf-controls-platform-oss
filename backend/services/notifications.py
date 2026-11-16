@@ -79,6 +79,8 @@ from models import (
     Assignment,
     AuditEngagement,
     Comment,
+    EngagementAuditor,
+    EngagementAuditorStatus,
     EngagementQuery,
     EvidenceCollectionTask,
     EvidenceTracking,
@@ -132,6 +134,19 @@ async def _get_user_name(db: AsyncSession, user_id: UUID) -> str:
     if not user:
         return "Someone"
     return user.display_name or user.email
+
+
+async def _get_display_name(db: AsyncSession, user_id: UUID) -> str:
+    """A user's display name, never their email address.
+
+    The engagement notifications can be read by an external auditor, who is
+    not a member of the organisation, so the text must not carry a member's
+    email when they have set no display name."""
+    if not user_id:
+        return "Someone"
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    return (user.display_name if user else None) or "Someone"
 
 
 # ---------------------------------------------------------------------------
@@ -207,10 +222,15 @@ async def _emit(
     dedup_on: Optional[date | datetime] = None,
     email_subject: Optional[str] = None,
     email_body: Optional[str] = None,
+    engagement_id: Optional[UUID] = None,
 ) -> int:
     """Write one notification per recipient, atomically, and send the emails.
 
     Args:
+        engagement_id: stamped on engagement review events (engrev001) so an
+            external auditor holding an ACTIVE grant on that engagement can
+            read the row without being an org member. ``organization_id`` is
+            still required and still set.
         organization_id: the tenant the referenced entity belongs to (#852).
             Required — a notification without an org has no read boundary.
         dedup_on: when given, the whole emission is skipped if any
@@ -254,6 +274,7 @@ async def _emit(
                 reference_type=reference_type,
                 reference_id=reference_id,
                 message=message,
+                engagement_id=engagement_id,
             ))
 
         # One commit for the whole recipient set. All of them are notified or
@@ -1139,6 +1160,344 @@ async def create_engagement_query_raised_notifications(
 
     except Exception as e:
         logger.error(f"Failed to create engagement query raised notifications: {e}")
+        await db.rollback()
+        return 0
+
+
+# ---------------------------------------------------------------------------
+# Engagement evidence review board (engrev001)
+#
+# Every row written here carries ``engagement_id`` as well as the org, so an
+# external auditor with an ACTIVE grant can read it (see api/notifications.py).
+# The card is the evidence object, so ownership-routed events resolve through
+# the org's EvidenceTracking row for that evidence id.
+# ---------------------------------------------------------------------------
+
+#: The reference for any event about a card on the board.
+ENGAGEMENT_REVIEW_REFERENCE_TYPE = 'engagement_evidence_review'
+
+#: Long auditor notes are trimmed in the bell; the full note is on the card.
+_NOTE_PREVIEW_CHARS = 160
+
+
+def _note_preview(note: Optional[str]) -> str:
+    text = " ".join((note or "").split())
+    if len(text) > _NOTE_PREVIEW_CHARS:
+        text = text[: _NOTE_PREVIEW_CHARS - 1].rstrip() + "…"
+    return text
+
+
+async def _evidence_item(
+    db: AsyncSession, organization_id: UUID, evidence_id: str,
+) -> Item:
+    """The ``Item`` an ownership-routed engagement event resolves through.
+
+    With no tracking row the item has no id: the chain has nothing for tiers
+    1 and 2 and falls to the org admins, so the event is never dropped.
+    """
+    tracking = (await db.execute(
+        select(EvidenceTracking).where(
+            EvidenceTracking.organization_id == organization_id,
+            EvidenceTracking.evidence_id == evidence_id,
+        ).limit(1)
+    )).scalars().first()
+    return Item(
+        item_type='evidence',
+        item_id=tracking.id if tracking else None,
+        organization_id=organization_id,
+        explicit_user_ids=(
+            (tracking.assigned_user_id, tracking.owner_user_id) if tracking else ()
+        ),
+    )
+
+
+async def _active_auditor_user_ids(db: AsyncSession, engagement_id: UUID) -> list:
+    result = await db.execute(
+        select(EngagementAuditor.user_id).where(
+            EngagementAuditor.engagement_id == engagement_id,
+            EngagementAuditor.status == EngagementAuditorStatus.ACTIVE.value,
+        )
+    )
+    return list(result.scalars().all())
+
+
+async def create_engagement_evidence_action_required_notifications(
+    db: AsyncSession, *, organization_id, engagement_id, review_id, evidence_id,
+    actor_user_id, note=None,
+) -> int:
+    """The auditor needs more on an evidence object: tell its owner.
+
+    Ownership-routed and escalating, like ``evidence_rejected``: the owner
+    chain answers, and the accountable and consulted teams' primary and
+    delegate hear about it too.
+    """
+    try:
+        recipients = await resolve_recipients_for(
+            db,
+            await _evidence_item(db, organization_id, evidence_id),
+            'engagement_evidence_action_required',
+            exclude_user_ids=(actor_user_id,),
+        )
+        if not recipients:
+            return 0
+
+        message = f"Auditor needs more on evidence {evidence_id}"
+        preview = _note_preview(note)
+        if preview:
+            message = f"{message}: {preview}"
+
+        return await _emit(
+            db,
+            notification_type='engagement_evidence_action_required',
+            reference_type=ENGAGEMENT_REVIEW_REFERENCE_TYPE,
+            reference_id=review_id,
+            organization_id=organization_id,
+            engagement_id=engagement_id,
+            message=message,
+            recipient_ids=recipients.user_ids,
+            email_subject=f"Action required on evidence {evidence_id}",
+        )
+    except Exception as e:
+        logger.error(f"Failed to create engagement action-required notifications: {e}")
+        await db.rollback()
+        return 0
+
+
+async def create_engagement_evidence_submitted_notifications(
+    db: AsyncSession, *, organization_id, engagement_id, review_id, evidence_id,
+    actor_user_id, assigned_reviewer_user_id=None,
+) -> int:
+    """The organisation has responded: tell the auditor side.
+
+    The assigned reviewer alone when there is one and they still hold an
+    ACTIVE grant; otherwise every active auditor on the engagement. A revoked
+    reviewer must not swallow the submission.
+    """
+    try:
+        active = set(await _active_auditor_user_ids(db, engagement_id))
+        if assigned_reviewer_user_id is not None and assigned_reviewer_user_id in active:
+            targets = (assigned_reviewer_user_id,)
+        else:
+            targets = tuple(active)
+
+        recipients = await resolve_recipients_for(
+            db,
+            Item(
+                item_type=ENGAGEMENT_REVIEW_REFERENCE_TYPE,
+                item_id=review_id,
+                organization_id=organization_id,
+                explicit_user_ids=targets,
+            ),
+            'engagement_evidence_submitted',
+            exclude_user_ids=(actor_user_id,),
+        )
+        if not recipients:
+            return 0
+
+        actor_name = await _get_display_name(db, actor_user_id)
+        return await _emit(
+            db,
+            notification_type='engagement_evidence_submitted',
+            reference_type=ENGAGEMENT_REVIEW_REFERENCE_TYPE,
+            reference_id=review_id,
+            organization_id=organization_id,
+            engagement_id=engagement_id,
+            message=f"{actor_name} submitted evidence {evidence_id} for review",
+            recipient_ids=recipients.user_ids,
+            email_subject=f"Evidence {evidence_id} submitted for review",
+        )
+    except Exception as e:
+        logger.error(f"Failed to create engagement submitted notifications: {e}")
+        await db.rollback()
+        return 0
+
+
+async def create_engagement_evidence_reassigned_notifications(
+    db: AsyncSession, *, organization_id, engagement_id, review_id, evidence_id,
+    actor_user_id, new_reviewer_user_id,
+) -> int:
+    """A reviewer was assigned to a card: tell that reviewer, nobody else."""
+    try:
+        recipients = await resolve_recipients_for(
+            db,
+            Item(
+                item_type=ENGAGEMENT_REVIEW_REFERENCE_TYPE,
+                item_id=review_id,
+                organization_id=organization_id,
+                explicit_user_ids=(new_reviewer_user_id,),
+            ),
+            'engagement_evidence_reassigned',
+            exclude_user_ids=(actor_user_id,),
+        )
+        if not recipients:
+            return 0
+
+        actor_name = await _get_display_name(db, actor_user_id)
+        return await _emit(
+            db,
+            notification_type='engagement_evidence_reassigned',
+            reference_type=ENGAGEMENT_REVIEW_REFERENCE_TYPE,
+            reference_id=review_id,
+            organization_id=organization_id,
+            engagement_id=engagement_id,
+            message=f"{actor_name} assigned you to review evidence {evidence_id}",
+            recipient_ids=recipients.user_ids,
+            email_subject=f"You are reviewing evidence {evidence_id}",
+        )
+    except Exception as e:
+        logger.error(f"Failed to create engagement reassigned notifications: {e}")
+        await db.rollback()
+        return 0
+
+
+async def create_engagement_evidence_query_raised_notifications(
+    db: AsyncSession, *, organization_id, engagement_id, query_id, evidence_id,
+    raised_by_user_id,
+) -> int:
+    """An auditor query on an evidence object goes to that object's owner.
+
+    The control-targeted form stays :func:`create_engagement_query_raised_notifications`
+    (org admins); this one is ownership-routed because the evidence owner is
+    the person able to answer it.
+    """
+    try:
+        recipients = await resolve_recipients_for(
+            db,
+            await _evidence_item(db, organization_id, evidence_id),
+            'engagement_evidence_query_raised',
+            exclude_user_ids=(raised_by_user_id,),
+        )
+        if not recipients:
+            return 0
+
+        raiser_name = await _get_display_name(db, raised_by_user_id)
+        return await _emit(
+            db,
+            notification_type='engagement_evidence_query_raised',
+            reference_type='engagement_query',
+            reference_id=query_id,
+            organization_id=organization_id,
+            engagement_id=engagement_id,
+            message=f"{raiser_name} raised a query on evidence {evidence_id}",
+            recipient_ids=recipients.user_ids,
+            email_subject=f"New query raised on evidence {evidence_id}",
+        )
+    except Exception as e:
+        logger.error(f"Failed to create engagement evidence query notifications: {e}")
+        await db.rollback()
+        return 0
+
+
+async def _still_has_engagement_access(
+    db: AsyncSession, organization_id: UUID, engagement_id: UUID, user_id: UUID,
+) -> bool:
+    """Whether ``user_id`` can open this engagement now: an ACTIVE grant on it,
+    or membership of its organisation. Checked live, so a revoked auditor or a
+    departed member is not told about a query they can no longer read."""
+    if user_id in set(await _active_auditor_user_ids(db, engagement_id)):
+        return True
+    member = await db.execute(
+        select(OrganizationMember.user_id).where(
+            OrganizationMember.organization_id == organization_id,
+            OrganizationMember.user_id == user_id,
+        ).limit(1)
+    )
+    return member.scalar_one_or_none() is not None
+
+
+async def create_engagement_query_answered_notifications(
+    db: AsyncSession, *, organization_id, engagement_id, query_id,
+    raised_by_user_id, responder_user_id, scf_id=None, evidence_id=None,
+) -> int:
+    """A query was answered: tell the person who raised it.
+
+    Directed at the raiser alone, and nobody when they wrote the response
+    themselves or can no longer open the engagement. Covers control and
+    evidence queries alike; the row is stamped with ``engagement_id`` so an
+    external auditor who raised it can read it.
+    """
+    try:
+        if raised_by_user_id is None or raised_by_user_id == responder_user_id:
+            return 0
+        if not await _still_has_engagement_access(
+            db, organization_id, engagement_id, raised_by_user_id,
+        ):
+            return 0
+
+        recipients = await resolve_recipients_for(
+            db,
+            Item(
+                item_type='engagement_query',
+                item_id=query_id,
+                organization_id=organization_id,
+                explicit_user_ids=(raised_by_user_id,),
+            ),
+            'engagement_query_answered',
+            exclude_user_ids=(responder_user_id,),
+        )
+        if not recipients:
+            return 0
+
+        target = f"evidence {evidence_id}" if evidence_id else f"control {scf_id}"
+        responder_name = await _get_display_name(db, responder_user_id)
+        return await _emit(
+            db,
+            notification_type='engagement_query_answered',
+            reference_type='engagement_query',
+            reference_id=query_id,
+            organization_id=organization_id,
+            engagement_id=engagement_id,
+            message=f"{responder_name} answered your query on {target}",
+            recipient_ids=recipients.user_ids,
+            email_subject=f"Your query on {target} was answered",
+        )
+    except Exception as e:
+        logger.error(f"Failed to create engagement query answered notifications: {e}")
+        await db.rollback()
+        return 0
+
+
+async def create_engagement_mention_notifications(
+    db: AsyncSession, *, organization_id, engagement_id, review_id, evidence_id,
+    comment_id, author_user_id, mentioned_user_ids,
+) -> int:
+    """@mentions in a card's thread. Directed: the listed people, minus the author.
+
+    The caller has already limited ``mentioned_user_ids`` to people with
+    engagement access. The row references the review (not the comment) so the
+    bell can open the card; ``comment_id`` is kept for the log line.
+    """
+    try:
+        recipients = await resolve_recipients_for(
+            db,
+            Item(
+                item_type=ENGAGEMENT_REVIEW_REFERENCE_TYPE,
+                item_id=review_id,
+                organization_id=organization_id,
+                explicit_user_ids=tuple(mentioned_user_ids or ()),
+            ),
+            'mention',
+            exclude_user_ids=(author_user_id,),
+        )
+        if not recipients:
+            return 0
+
+        author_name = await _get_display_name(db, author_user_id)
+        created = await _emit(
+            db,
+            notification_type='mention',
+            reference_type=ENGAGEMENT_REVIEW_REFERENCE_TYPE,
+            reference_id=review_id,
+            organization_id=organization_id,
+            engagement_id=engagement_id,
+            message=f"{author_name} mentioned you on evidence {evidence_id}",
+            recipient_ids=recipients.user_ids,
+            email_subject=f"You were mentioned on evidence {evidence_id}",
+        )
+        logger.info(f"Created {created} engagement mention notifications for comment {comment_id}")
+        return created
+    except Exception as e:
+        logger.error(f"Failed to create engagement mention notifications: {e}")
         await db.rollback()
         return 0
 

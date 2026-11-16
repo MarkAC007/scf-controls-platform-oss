@@ -9,7 +9,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Security
 from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, func, text
+from sqlalchemy import select, and_, or_, func, text
 from sqlalchemy.orm import selectinload
 from typing import List, Optional
 from uuid import UUID
@@ -23,6 +23,8 @@ from models import (
     EngagementControlScope,
     EngagementQuery,
     EngagementQueryStatus,
+    EngagementEvidenceReview,
+    OrganizationMember,
     Comment,
     EvidenceFile,
     ScopedControl,
@@ -57,7 +59,12 @@ from services.audit_service import log_entity_changes, detect_action_source, get
 from services.engagement_presentation import build_framework_presentation
 from services.obligation_basis import derive_basis, selection_bases
 from services.engagement_queries import status_after_response, is_valid_query_transition
-from services.notifications import create_engagement_query_raised_notifications
+from services.notifications import (
+    create_engagement_query_raised_notifications,
+    create_engagement_evidence_query_raised_notifications,
+    create_engagement_query_answered_notifications,
+)
+from services.engagement_evidence_review import materialise_reviews
 
 
 # =============================================================================
@@ -133,6 +140,40 @@ async def resolve_engagement_access(
     raise HTTPException(status_code=404, detail="Audit engagement not found")
 
 
+async def _active_grant_kind(db: AsyncSession, engagement_id: UUID, user_id: Optional[UUID]) -> Optional[str]:
+    """The kind ('external' | 'internal') of the caller's ACTIVE grant on this
+    engagement, or None when they hold none."""
+    if user_id is None:
+        return None
+    result = await db.execute(
+        select(EngagementAuditor.kind).where(
+            and_(
+                EngagementAuditor.engagement_id == engagement_id,
+                EngagementAuditor.user_id == user_id,
+                EngagementAuditor.status == EngagementAuditorStatus.ACTIVE.value,
+            )
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def can_see_internal(db: AsyncSession, access: "EngagementAccess") -> bool:
+    """THE rule for `internal` comments on an engagement. Call this; never re-derive it.
+
+    True only for an organisation member who holds no active auditor grant on
+    this engagement. Anyone with an active grant (external, or an internal
+    auditor who is also an org member) sees `shared` only.
+
+    ``access.is_auditor`` is not enough on its own: resolve_engagement_access
+    tries membership first, so an org member holding an internal grant comes
+    back with is_auditor=False and their org role.
+    """
+    if access.is_auditor:
+        return False
+    user_id = UUID(access.user.db_id) if access.user and access.user.db_id else None
+    return await _active_grant_kind(db, access.engagement_id, user_id) is None
+
+
 def require_engagement_read():
     """Dependency: read access to an engagement (org member OR active auditor)."""
     async def dependency(
@@ -158,11 +199,11 @@ ENGAGEMENT_TRACKED_FIELDS = ['name', 'frameworks', 'status', 'start_date', 'end_
 # status answered->closed with closed_at set, against status closed->open with
 # closed_at cleared.
 QUERY_TRACKED_FIELDS = ['status', 'closed_at']
-QUERY_CREATE_TRACKED_FIELDS = ['scf_id', 'title', 'status']
+QUERY_CREATE_TRACKED_FIELDS = ['scf_id', 'evidence_id', 'title', 'status']
 
 # An auditor grant is an access-control record; who, on what, and live or not.
-AUDITOR_GRANT_TRACKED_FIELDS = ['user_id', 'status', 'revoked_at']
-AUDITOR_GRANT_CREATE_FIELDS = ['user_id', 'status']
+AUDITOR_GRANT_TRACKED_FIELDS = ['user_id', 'kind', 'status', 'revoked_at']
+AUDITOR_GRANT_CREATE_FIELDS = ['user_id', 'kind', 'status']
 
 
 class AuditEngagementVersionedResponse(AuditEngagementResponse):
@@ -176,8 +217,32 @@ class AuditEngagementVersionedResponse(AuditEngagementResponse):
 
 
 class EngagementScopeItemBadged(EngagementScopeItem, CatalogLifecycleBadge):
-    """Scope item + catalog lifecycle badge — the frozen scope keeps
-    rendering after a control is retired, marked as deprecated."""
+    """Scope item + catalog lifecycle badge."""
+
+
+def _not_retired():
+    """Engagement scope never lists a retired (deprecated) SCF control.
+
+    A retired control is replaced by its ``superseded_by`` control, which the
+    catalog maps to the same frameworks, so listing both shows the same
+    obligation twice. New engagements never snapshot retired controls; this
+    condition also hides them from engagements snapshotted before that rule.
+    Used with an outer join to the catalog, so a scope row whose control is
+    missing from the catalog still shows.
+    """
+    return or_(
+        SCFCatalogControl.status.is_(None),
+        SCFCatalogControl.status != "deprecated",
+    )
+
+
+def _scope_count_query(engagement_id):
+    return (
+        select(func.count())
+        .select_from(EngagementControlScope)
+        .outerjoin(SCFCatalogControl, EngagementControlScope.scf_id == SCFCatalogControl.scf_id)
+        .where(EngagementControlScope.engagement_id == engagement_id, _not_retired())
+    )
 
 
 # =============================================================================
@@ -193,6 +258,9 @@ async def _materialise_scope(
     """
     Snapshot the *complete* framework-mapped control set for an engagement,
     tagging each control with the organisation's scope decision.
+
+    Retired (deprecated) catalog controls are skipped: their replacement maps
+    to the same frameworks and is snapshotted instead.
 
     For every SCF control that maps to any requested framework (via the crosswalk
     ``framework_mappings`` JSONB), insert one EngagementControlScope row tagged:
@@ -217,7 +285,8 @@ async def _materialise_scope(
     catalog_query = text(f"""
         SELECT scf_id, framework_mappings
         FROM scf_catalog_controls
-        WHERE {framework_conditions}
+        WHERE ({framework_conditions})
+          AND status IS DISTINCT FROM 'deprecated'
     """)
     catalog_result = await db.execute(catalog_query, params)
     catalog_rows = catalog_result.fetchall()
@@ -329,11 +398,7 @@ async def list_engagements(
     # Annotate scope_count for each engagement
     responses = []
     for eng in engagements:
-        count_result = await db.execute(
-            select(func.count()).select_from(EngagementControlScope).where(
-                EngagementControlScope.engagement_id == eng.id
-            )
-        )
+        count_result = await db.execute(_scope_count_query(eng.id))
         scope_count = count_result.scalar_one()
         resp = AuditEngagementVersionedResponse.model_validate(eng)
         resp.scope_count = scope_count
@@ -386,6 +451,11 @@ async def create_engagement(
         org_id=org_id,
         frameworks=engagement_data.frameworks,
     )
+    # Autoflush is off: flush the scope rows so the review materialiser's
+    # scope read sees them. One open review card per in-scope evidence object,
+    # in the same transaction.
+    await db.flush()
+    await materialise_reviews(db, new_engagement.id, org_id)
     logger.info(
         "Engagement created id=%s name=%s org=%s scope_count=%d",
         new_engagement.id, new_engagement.name, org_id, scope_count
@@ -443,11 +513,7 @@ async def get_engagement(
     if not engagement:
         raise HTTPException(status_code=404, detail="Audit engagement not found")
 
-    count_result = await db.execute(
-        select(func.count()).select_from(EngagementControlScope).where(
-            EngagementControlScope.engagement_id == engagement_id
-        )
-    )
+    count_result = await db.execute(_scope_count_query(engagement_id))
     scope_count = count_result.scalar_one()
 
     resp = AuditEngagementVersionedResponse.model_validate(engagement)
@@ -512,11 +578,7 @@ async def update_engagement(
     await db.commit()
     await db.refresh(engagement)
 
-    count_result = await db.execute(
-        select(func.count()).select_from(EngagementControlScope).where(
-            EngagementControlScope.engagement_id == engagement_id
-        )
-    )
+    count_result = await db.execute(_scope_count_query(engagement_id))
     scope_count = count_result.scalar_one()
 
     resp = AuditEngagementVersionedResponse.model_validate(engagement)
@@ -632,7 +694,7 @@ async def get_engagement_scope(
             SCFCatalogControl.superseded_by,
         )
         .outerjoin(SCFCatalogControl, EngagementControlScope.scf_id == SCFCatalogControl.scf_id)
-        .where(EngagementControlScope.engagement_id == engagement_id)
+        .where(EngagementControlScope.engagement_id == engagement_id, _not_retired())
         .order_by(EngagementControlScope.scf_id)
     )
     rows = scope_result.fetchall()
@@ -712,7 +774,7 @@ async def get_engagement_presentation(
         )
         .outerjoin(SCFCatalogControl, EngagementControlScope.scf_id == SCFCatalogControl.scf_id)
         .outerjoin(ScopedControl, EngagementControlScope.scoped_control_id == ScopedControl.id)
-        .where(EngagementControlScope.engagement_id == engagement_id)
+        .where(EngagementControlScope.engagement_id == engagement_id, _not_retired())
     )
     rows = scope_result.fetchall()
 
@@ -739,7 +801,7 @@ async def get_engagement_presentation(
                 "owner": r[9],
             }
 
-    evidence_by_scf = await _fetch_evidence_by_scf(db, org_id, target_scf_ids)
+    evidence_by_scf, evidence_objects_by_scf = await _fetch_evidence_by_scf(db, org_id, target_scf_ids)
     queries_by_scf = await _fetch_queries_by_scf(db, engagement_id)
 
     tree = build_framework_presentation(
@@ -750,35 +812,74 @@ async def get_engagement_presentation(
         evidence_by_scf=evidence_by_scf,
         window=(engagement.start_date, engagement.end_date),
         queries_by_scf=queries_by_scf,
+        evidence_objects_by_scf=evidence_objects_by_scf,
     )
     tree["start_date"] = engagement.start_date
     tree["end_date"] = engagement.end_date
     return tree
 
 
-async def _fetch_evidence_by_scf(db: AsyncSession, org_id: UUID, scf_ids: set) -> dict:
-    """Map each requested scf_id to its live, non-deleted evidence artifacts.
+async def _fetch_evidence_by_scf(db: AsyncSession, org_id: UUID, scf_ids: set) -> tuple:
+    """Map each requested scf_id to its evidence objects and their artifacts.
 
     Linkage: EvidenceFile.evidence_id -> SCFCatalogEvidence.control_mappings
     (a flat JSONB array of scf_ids). One artifact mapped to several controls
-    appears under each. Returns {scf_id: [artifact dicts]}.
+    appears under each.
+
+    The control -> evidence relationship is read from both sides of the
+    catalog and unioned: the evidence row's ``control_mappings`` and the
+    control row's ``evidence_requests``. The two disagree in the SCF catalog
+    (2026.3: 257 links only on the control side, 44 only on the evidence
+    side), and the Control Library shows the control side, so reading one
+    side alone would leave the drawer contradicting the library.
+
+    Returns ``(evidence_by_scf, evidence_objects_by_scf)``:
+    ``{scf_id: [live, non-deleted artifact dicts]}`` and
+    ``{scf_id: [{evidence_id, artifact_title, area_of_focus}]}`` — every
+    catalog evidence object mapped to the control, with or without artifacts.
     """
     if not scf_ids:
-        return {}
+        return {}, {}
 
     # Reverse the catalog mapping: scf_id -> {evidence_ids} (272 ERL rows, cheap to scan).
     catalog_result = await db.execute(
-        select(SCFCatalogEvidence.evidence_id, SCFCatalogEvidence.control_mappings)
+        select(
+            SCFCatalogEvidence.evidence_id,
+            SCFCatalogEvidence.control_mappings,
+            SCFCatalogEvidence.artifact_title,
+            SCFCatalogEvidence.area_of_focus,
+        )
     )
     scf_to_evidence_ids: dict = {}
-    for evidence_id, mappings in catalog_result.fetchall():
+    evidence_meta: dict = {}
+    for evidence_id, mappings, artifact_title, area_of_focus in catalog_result.fetchall():
+        evidence_meta[evidence_id] = {
+            "evidence_id": evidence_id,
+            "artifact_title": artifact_title,
+            "area_of_focus": area_of_focus,
+        }
         for scf in (mappings or []):
             if scf in scf_ids:
                 scf_to_evidence_ids.setdefault(scf, set()).add(evidence_id)
 
+    # The control side of the same relationship (see docstring).
+    control_result = await db.execute(
+        select(SCFCatalogControl.scf_id, SCFCatalogControl.evidence_requests)
+        .where(SCFCatalogControl.scf_id.in_(scf_ids))
+    )
+    for scf, requested in control_result.fetchall():
+        for evidence_id in (requested or []):
+            if evidence_id in evidence_meta:  # ignore ids the ERL does not carry
+                scf_to_evidence_ids.setdefault(scf, set()).add(evidence_id)
+
+    evidence_objects_by_scf = {
+        scf: [evidence_meta[eid] for eid in sorted(eids)]
+        for scf, eids in scf_to_evidence_ids.items()
+    }
+
     all_evidence_ids = {eid for eids in scf_to_evidence_ids.values() for eid in eids}
     if not all_evidence_ids:
-        return {}
+        return {}, evidence_objects_by_scf
 
     file_result = await db.execute(
         select(
@@ -807,6 +908,7 @@ async def _fetch_evidence_by_scf(db: AsyncSession, org_id: UUID, scf_ids: set) -
     ) in file_result.fetchall():
         files_by_evidence_id.setdefault(evidence_id, []).append({
             "id": fid,
+            "evidence_id": evidence_id,
             "filename": filename,
             "uploaded_at": uploaded_at,
             "review_status": review_status,
@@ -821,15 +923,21 @@ async def _fetch_evidence_by_scf(db: AsyncSession, org_id: UUID, scf_ids: set) -
             artifacts.extend(files_by_evidence_id.get(eid, []))
         if artifacts:
             evidence_by_scf[scf] = artifacts
-    return evidence_by_scf
+    return evidence_by_scf, evidence_objects_by_scf
 
 
 async def _fetch_queries_by_scf(db: AsyncSession, engagement_id: UUID) -> dict:
     """Map each control (scf_id) to a lightweight summary of its queries, for the
-    presentation view. {scf_id: [{id, title, status}]}."""
+    presentation view. {scf_id: [{id, title, status}]}.
+
+    Evidence-targeted queries (scf_id NULL) belong to a card, not a control,
+    and are left out here."""
     result = await db.execute(
         select(EngagementQuery.scf_id, EngagementQuery.id, EngagementQuery.title, EngagementQuery.status)
-        .where(EngagementQuery.engagement_id == engagement_id)
+        .where(
+            EngagementQuery.engagement_id == engagement_id,
+            EngagementQuery.scf_id.isnot(None),
+        )
         .order_by(EngagementQuery.created_at.desc())
     )
     queries_by_scf: dict = {}
@@ -867,6 +975,7 @@ def _auditor_response(grant: EngagementAuditor, email: Optional[str]) -> Engagem
         engagement_id=grant.engagement_id,
         user_id=grant.user_id,
         email=email,
+        kind=grant.kind or EngagementAuditor.KIND_EXTERNAL,
         status=grant.status,
         invited_at=grant.invited_at,
         accepted_at=grant.accepted_at,
@@ -922,6 +1031,23 @@ async def grant_engagement_auditor(
     if user_row is None:
         raise HTTPException(status_code=404, detail="User not found")
 
+    # An internal auditor is one of the organisation's own people acting as
+    # the auditor; someone outside the organisation is an external auditor.
+    if payload.kind == EngagementAuditor.KIND_INTERNAL:
+        member_result = await db.execute(
+            select(OrganizationMember.id).where(
+                and_(
+                    OrganizationMember.organization_id == org_id,
+                    OrganizationMember.user_id == payload.user_id,
+                )
+            )
+        )
+        if member_result.scalar_one_or_none() is None:
+            raise HTTPException(
+                status_code=422,
+                detail="An internal auditor must be a member of this organisation.",
+            )
+
     granting_user = membership.user
     granter_id = UUID(granting_user.db_id) if granting_user and granting_user.db_id else None
     now = datetime.utcnow()
@@ -940,6 +1066,7 @@ async def grant_engagement_auditor(
         audit_fields = AUDITOR_GRANT_TRACKED_FIELDS
         old_values = {f: getattr(grant, f) for f in audit_fields}
         grant.status = EngagementAuditorStatus.ACTIVE.value
+        grant.kind = payload.kind
         grant.revoked_at = None
         grant.accepted_at = grant.accepted_at or now
     else:
@@ -949,6 +1076,7 @@ async def grant_engagement_auditor(
         grant = EngagementAuditor(
             engagement_id=engagement_id,
             user_id=payload.user_id,
+            kind=payload.kind,
             status=EngagementAuditorStatus.ACTIVE.value,
             invited_by_user_id=granter_id,
             accepted_at=now,
@@ -1062,9 +1190,17 @@ async def list_my_auditor_engagements(
 # Structured queries (Increment 4)
 #
 # Auditor raises a query on a control (open) -> owner responds (answered) ->
-# auditor closes (closed). Readable/writable by anyone with engagement access
-# (member or granted auditor); responses reuse the polymorphic Comment model.
+# auditor closes (closed). Readable, raisable and answerable by anyone with
+# engagement access (member or granted auditor); closing, and reopening a
+# closed query, needs an active auditor grant. Responses reuse the polymorphic
+# Comment model.
 # =============================================================================
+
+CLOSE_REOPEN_DENIED = "Only the engagement's auditor can close or reopen a query."
+SELF_CLOSE_DENIED = (
+    "Segregation of duties: an internal auditor cannot close a control query "
+    "they answered themselves. Another auditor must close it."
+)
 
 def _access_user_id(access: "EngagementAccess") -> Optional[UUID]:
     return UUID(access.user.db_id) if access.user and access.user.db_id else None
@@ -1095,6 +1231,7 @@ async def _response_counts(db: AsyncSession, query_ids: List[UUID]) -> dict:
                 Comment.commentable_type == EngagementQuery.COMMENTABLE_TYPE,
                 Comment.commentable_id.in_(query_ids),
                 Comment.is_deleted == False,  # noqa: E712
+                Comment.visibility == Comment.VISIBILITY_SHARED,
             )
         )
         .group_by(Comment.commentable_id)
@@ -1102,11 +1239,44 @@ async def _response_counts(db: AsyncSession, query_ids: List[UUID]) -> dict:
     return {row[0]: row[1] for row in result.fetchall()}
 
 
+UNNAMED_USER = "Unnamed user"
+
+
+async def _finish_query_items(db: AsyncSession, access: "EngagementAccess", items: list) -> list:
+    """Put names on query items and take emails off for an external auditor.
+
+    Queries and their responses are read by both sides. An external auditor is
+    not a member of the organisation and must not be handed its members' email
+    addresses, so they get display names only. One user lookup for the batch.
+    """
+    user_ids = {i.raised_by_user_id for i in items if i.raised_by_user_id}
+    user_ids |= {r.user_id for i in items for r in (i.responses or []) if r.user_id}
+    names: dict = {}
+    if user_ids:
+        rows = await db.execute(
+            select(DBUser.id, DBUser.display_name).where(DBUser.id.in_(user_ids))
+        )
+        names = {uid: (display_name or UNNAMED_USER) for uid, display_name in rows.all()}
+    hide_email = bool(access.is_auditor)
+    for item in items:
+        if item.raised_by_user_id:
+            item.raised_by_name = names.get(item.raised_by_user_id, UNNAMED_USER)
+        if hide_email:
+            item.raised_by_email = None
+        for response in item.responses or []:
+            if response.user_id:
+                response.name = names.get(response.user_id, UNNAMED_USER)
+            if hide_email:
+                response.email = None
+    return items
+
+
 def _query_item(query: EngagementQuery, email: Optional[str], response_count: int, responses=None) -> EngagementQueryItem:
     return EngagementQueryItem(
         id=query.id,
         engagement_id=query.engagement_id,
         scf_id=query.scf_id,
+        evidence_id=query.evidence_id,
         raised_by_user_id=query.raised_by_user_id,
         raised_by_email=email,
         title=query.title,
@@ -1128,6 +1298,7 @@ async def list_engagement_queries(
     org_id: UUID,
     engagement_id: UUID,
     scf_id: Optional[str] = Query(None, description="Filter to a single control"),
+    evidence_id: Optional[str] = Query(None, description="Filter to a single evidence object"),
     status: Optional[str] = Query(None, description="Filter by status"),
     access: EngagementAccess = Depends(require_engagement_read()),
     db: AsyncSession = Depends(get_db),
@@ -1136,6 +1307,8 @@ async def list_engagement_queries(
     conditions = [EngagementQuery.engagement_id == engagement_id]
     if scf_id:
         conditions.append(EngagementQuery.scf_id == scf_id)
+    if evidence_id:
+        conditions.append(EngagementQuery.evidence_id == evidence_id)
     if status:
         conditions.append(EngagementQuery.status == status)
 
@@ -1147,7 +1320,9 @@ async def list_engagement_queries(
     )
     rows = result.fetchall()
     counts = await _response_counts(db, [q.id for q, _ in rows])
-    return [_query_item(q, email, counts.get(q.id, 0)) for q, email in rows]
+    return await _finish_query_items(
+        db, access, [_query_item(q, email, counts.get(q.id, 0)) for q, email in rows]
+    )
 
 
 @router.post(
@@ -1163,10 +1338,45 @@ async def create_engagement_query(
     access: EngagementAccess = Depends(require_engagement_read()),
     db: AsyncSession = Depends(get_db),
 ):
-    """Raise a query on a control (member or granted auditor)."""
+    """Raise a query on a control or on an evidence object (member or granted auditor).
+
+    Raising a query never moves the evidence card; the UI prompts the auditor
+    to set Action required if that is what they mean.
+    """
+    if payload.evidence_id is not None:
+        review_result = await db.execute(
+            select(EngagementEvidenceReview.id).where(
+                and_(
+                    EngagementEvidenceReview.engagement_id == engagement_id,
+                    EngagementEvidenceReview.organization_id == org_id,
+                    EngagementEvidenceReview.evidence_id == payload.evidence_id,
+                )
+            )
+        )
+        if review_result.scalar_one_or_none() is None:
+            raise HTTPException(status_code=404, detail="Evidence object not found in this engagement")
+    else:
+        # The same controls the board lists: frozen scope, in scope, not retired.
+        scope_result = await db.execute(
+            select(EngagementControlScope.scf_id)
+            .outerjoin(SCFCatalogControl, EngagementControlScope.scf_id == SCFCatalogControl.scf_id)
+            .where(
+                EngagementControlScope.engagement_id == engagement_id,
+                EngagementControlScope.scf_id == payload.scf_id,
+                EngagementControlScope.scope_status == ScopeStatus.IN_SCOPE.value,
+                _not_retired(),
+            )
+        )
+        if scope_result.scalar_one_or_none() is None:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Control {payload.scf_id} is not in this engagement's scope.",
+            )
+
     query = EngagementQuery(
         engagement_id=engagement_id,
         scf_id=payload.scf_id,
+        evidence_id=payload.evidence_id,
         raised_by_user_id=_access_user_id(access),
         title=payload.title,
         body=payload.body,
@@ -1190,17 +1400,30 @@ async def create_engagement_query(
 
     await db.commit()
     await db.refresh(query)
-    logger.info("Query raised: engagement=%s scf=%s by=%s", engagement_id, payload.scf_id, _access_user_id(access))
-
-    await create_engagement_query_raised_notifications(
-        db,
-        organization_id=org_id,
-        query_id=query.id,
-        scf_id=payload.scf_id,
-        raised_by_user_id=_access_user_id(access),
+    logger.info(
+        "Query raised: engagement=%s scf=%s evidence=%s by=%s",
+        engagement_id, payload.scf_id, payload.evidence_id, _access_user_id(access),
     )
 
-    return _query_item(query, access.user.email if access.user else None, 0, responses=[])
+    if payload.evidence_id is not None:
+        await create_engagement_evidence_query_raised_notifications(
+            db,
+            organization_id=org_id,
+            engagement_id=engagement_id,
+            query_id=query.id,
+            evidence_id=payload.evidence_id,
+            raised_by_user_id=_access_user_id(access),
+        )
+    else:
+        await create_engagement_query_raised_notifications(
+            db,
+            organization_id=org_id,
+            query_id=query.id,
+            scf_id=payload.scf_id,
+            raised_by_user_id=_access_user_id(access),
+        )
+
+    return (await _finish_query_items(db, access, [_query_item(query, access.user.email if access.user else None, 0, responses=[])]))[0]
 
 
 @router.get(
@@ -1230,6 +1453,8 @@ async def get_engagement_query(
                 Comment.commentable_type == EngagementQuery.COMMENTABLE_TYPE,
                 Comment.commentable_id == query_id,
                 Comment.is_deleted == False,  # noqa: E712
+                # Query responses are always shared; never serve anything else.
+                Comment.visibility == Comment.VISIBILITY_SHARED,
             )
         )
         .order_by(Comment.created_at)
@@ -1239,7 +1464,7 @@ async def get_engagement_query(
         QueryResponseItem(id=c.id, user_id=c.user_id, email=email, content=c.content, created_at=c.created_at)
         for c, email in resp_rows
     ]
-    return _query_item(query, raiser_email, len(responses), responses=responses)
+    return (await _finish_query_items(db, access, [_query_item(query, raiser_email, len(responses), responses=responses)]))[0]
 
 
 @router.post(
@@ -1267,6 +1492,7 @@ async def respond_to_engagement_query(
         commentable_id=query_id,
         user_id=user_id,
         content=payload.content,
+        visibility=Comment.VISIBILITY_SHARED,  # a query response is always shared
     )
     db.add(comment)
 
@@ -1289,8 +1515,36 @@ async def respond_to_engagement_query(
     await db.commit()
     await db.refresh(query)
 
+    await create_engagement_query_answered_notifications(
+        db,
+        organization_id=org_id,
+        engagement_id=engagement_id,
+        query_id=query.id,
+        raised_by_user_id=query.raised_by_user_id,
+        responder_user_id=user_id,
+        scf_id=query.scf_id,
+        evidence_id=query.evidence_id,
+    )
+
     counts = await _response_counts(db, [query_id])
-    return _query_item(query, access.user.email if access.user else None, counts.get(query_id, 0))
+    return (await _finish_query_items(db, access, [_query_item(query, access.user.email if access.user else None, counts.get(query_id, 0))]))[0]
+
+
+async def _latest_response_author(db: AsyncSession, query_id: UUID) -> Optional[UUID]:
+    result = await db.execute(
+        select(Comment.user_id)
+        .where(
+            and_(
+                Comment.commentable_type == EngagementQuery.COMMENTABLE_TYPE,
+                Comment.commentable_id == query_id,
+                Comment.is_deleted == False,  # noqa: E712
+                Comment.visibility == Comment.VISIBILITY_SHARED,
+            )
+        )
+        .order_by(Comment.created_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
 
 
 @router.patch(
@@ -1306,7 +1560,14 @@ async def update_engagement_query_status(
     access: EngagementAccess = Depends(require_engagement_read()),
     db: AsyncSession = Depends(get_db),
 ):
-    """Change a query's status (e.g. close, or reopen). Enforces the lifecycle."""
+    """Change a query's status (e.g. close, or reopen). Enforces the lifecycle.
+
+    Org members answer; auditors decide. Closing, or reopening a closed query,
+    needs an active auditor grant (external or internal) on this engagement,
+    because a closed control query marks a no-evidence control Accepted. An
+    internal auditor may not close a control query whose latest response they
+    wrote. Answered -> open stays open to anyone with access.
+    """
     query = await _load_query_for_engagement(db, engagement_id, query_id)
 
     if payload.status not in EngagementQueryStatus.values():
@@ -1316,6 +1577,21 @@ async def update_engagement_query_status(
             status_code=409,
             detail=f"Cannot move query from '{query.status}' to '{payload.status}'.",
         )
+
+    closing = payload.status == EngagementQueryStatus.CLOSED.value
+    reopening = query.status == EngagementQueryStatus.CLOSED.value
+    if closing or reopening:
+        actor = _access_user_id(access)
+        grant_kind = await _active_grant_kind(db, engagement_id, actor)
+        if grant_kind is None:
+            raise HTTPException(status_code=403, detail=CLOSE_REOPEN_DENIED)
+        if (
+            closing
+            and grant_kind == EngagementAuditor.KIND_INTERNAL
+            and query.scf_id is not None
+            and await _latest_response_author(db, query.id) == actor
+        ):
+            raise HTTPException(status_code=403, detail=SELF_CLOSE_DENIED)
 
     old_values = {f: getattr(query, f) for f in QUERY_TRACKED_FIELDS}
     query.status = payload.status
@@ -1340,4 +1616,4 @@ async def update_engagement_query_status(
     await db.refresh(query)
 
     counts = await _response_counts(db, [query_id])
-    return _query_item(query, access.user.email if access.user else None, counts.get(query_id, 0))
+    return (await _finish_query_items(db, access, [_query_item(query, access.user.email if access.user else None, counts.get(query_id, 0))]))[0]

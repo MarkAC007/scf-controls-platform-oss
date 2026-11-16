@@ -189,3 +189,41 @@ async def test_obligation_basis_is_frozen_from_selections_and_overrides():
         "ctl-override": "dsr",
         "ctl-none": None,
     }
+
+
+@pytest.mark.asyncio
+async def test_retired_catalog_controls_are_never_snapshotted():
+    """A retired control's replacement maps to the same frameworks, so the
+    snapshot query must leave retired (deprecated) controls out."""
+
+    class _Capturing(_FakeAsyncSession):
+        statements = []
+
+        async def execute(self, stmt, params=None):
+            self.statements.append(str(stmt))
+            return await super().execute(stmt, params)
+
+    session = _Capturing([[("GOV-01", {"iso_27001_2022": ["5.1"]})], [], []])
+    await _materialise_scope(
+        db=session, engagement_id=ENG_ID, org_id=ORG_ID, frameworks=["iso_27001_2022"]
+    )
+    assert "status IS DISTINCT FROM 'deprecated'" in session.statements[0]
+
+
+def test_scope_readers_hide_retired_controls():
+    """Engagement counts, the scope list and the presentation all exclude
+    retired controls, so engagements snapshotted before the rule stop listing
+    a retired control beside its replacement."""
+    from sqlalchemy.dialects import postgresql
+
+    from api.audit_engagements import _not_retired, _scope_count_query
+
+    condition = str(_not_retired().compile(
+        dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}
+    ))
+    assert "scf_catalog_controls.status IS NULL" in condition
+    assert "scf_catalog_controls.status != 'deprecated'" in condition
+
+    count_sql = str(_scope_count_query(ENG_ID).compile(dialect=postgresql.dialect()))
+    assert "LEFT OUTER JOIN scf_catalog_controls" in count_sql
+    assert "scf_catalog_controls.status" in count_sql

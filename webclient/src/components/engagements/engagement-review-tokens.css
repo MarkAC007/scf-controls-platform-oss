@@ -1,0 +1,87 @@
+/*
+ * Tokens shared by the engagement review board and the engagement dashboard.
+ *
+ * One place for the five review-stage colours and the chip colours, so the
+ * board columns, the dashboard bars and the clause tiles can never drift
+ * apart. Light values under :root, dark values under [data-theme="dark"].
+ * Components use these through classes only — no colour literals in JSX.
+ */
+:root {
+  /* Review stages: solid (column border, bar segment, text) and tint (tile, pill) */
+  --erb-open: #6b7280;
+  --erb-open-bg: #f1f3f6;
+  --erb-progress: #2563eb;
+  --erb-progress-bg: #e8f0fe;
+  --erb-action: #c2410c;
+  --erb-action-bg: #fdeee6;
+  --erb-submitted: #7c3aed;
+  --erb-submitted-bg: #f1eafe;
+  --erb-accepted: #15803d;
+  --erb-accepted-bg: #e6f4ea;
+
+  /* Surfaces */
+  --erb-page-bg: #f4f6f9;
+  --erb-column-bg: #eaedf2;
+  --erb-card-bg: #ffffff;
+  --erb-card-border: #dfe3ea;
+  --erb-card-selected: #1d4ed8;
+  --erb-on-selected: #ffffff;
+  --erb-text: #172033;
+  --erb-muted: #4b5563;
+
+  /* Evidence object id, control chips, clause chips */
+  --erb-id: #1d4ed8;
+  --erb-control-chip: #0f5e57;
+  --erb-control-chip-bg: #e6f4f1;
+  --erb-control-chip-border: #b9e2da;
+  --erb-clause-chip: #3b2a86;
+  --erb-clause-chip-bg: #efeafe;
+  --erb-clause-chip-border: #d9cffb;
+  --erb-tab-active: #0f766e;
+
+  /* AI verdict text and collection warnings */
+  --erb-verdict-sufficient: #166534;
+  --erb-verdict-partial: #9a3412;
+  --erb-verdict-insufficient: #b91c1c;
+  --erb-verdict-none: #4b5563;
+  --erb-warn: #9a3412;
+  --erb-in-window: #166534;
+}
+
+[data-theme="dark"] {
+  --erb-open: #9aa4b2;
+  --erb-open-bg: rgba(154, 164, 178, 0.14);
+  --erb-progress: #7fb0ff;
+  --erb-progress-bg: rgba(127, 176, 255, 0.14);
+  --erb-action: #ff9a66;
+  --erb-action-bg: rgba(255, 154, 102, 0.14);
+  --erb-submitted: #b99cff;
+  --erb-submitted-bg: rgba(185, 156, 255, 0.14);
+  --erb-accepted: #5fd38a;
+  --erb-accepted-bg: rgba(95, 211, 138, 0.14);
+
+  --erb-page-bg: transparent;
+  --erb-column-bg: rgba(255, 255, 255, 0.04);
+  --erb-card-bg: var(--card);
+  --erb-card-border: var(--border-visible);
+  --erb-card-selected: #99cbff;
+  --erb-on-selected: #0b1326;
+  --erb-text: var(--text);
+  --erb-muted: var(--muted);
+
+  --erb-id: #99cbff;
+  --erb-control-chip: #7fe0d2;
+  --erb-control-chip-bg: rgba(127, 224, 210, 0.12);
+  --erb-control-chip-border: rgba(127, 224, 210, 0.3);
+  --erb-clause-chip: #c9b8ff;
+  --erb-clause-chip-bg: rgba(201, 184, 255, 0.12);
+  --erb-clause-chip-border: rgba(201, 184, 255, 0.3);
+  --erb-tab-active: #5fd3c6;
+
+  --erb-verdict-sufficient: #5fd38a;
+  --erb-verdict-partial: #ffb38a;
+  --erb-verdict-insufficient: #ff8f8f;
+  --erb-verdict-none: var(--muted);
+  --erb-warn: #ffb38a;
+  --erb-in-window: #5fd38a;
+}

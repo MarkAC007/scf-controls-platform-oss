@@ -13,6 +13,10 @@ from uuid import UUID
 from database import get_db
 from models import (
     AuditLog,
+    Comment,
+    EngagementAuditor,
+    EngagementAuditorStatus,
+    EngagementEvidenceReview,
     EvidenceCollectionTask,
     EvidenceTracking,
     RiskAssessment,
@@ -26,6 +30,34 @@ from auth import require_org_role, OrgMembership
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["audit_log"])
+
+
+def _internal_notes_hidden_from(user_id: Optional[UUID]):
+    """Audit rows this caller must not see: internal notes on an engagement
+    they hold an active auditor grant on.
+
+    An internal note is org-only, and a member with an internal-auditor grant
+    is on the auditor's side of that engagement. The note's text is never
+    written to the audit log; this also hides the row itself, so the log
+    cannot be used to count the notes or see who wrote them and when.
+    Returns a subquery of comment ids, or None when there is no caller id.
+    """
+    if user_id is None:
+        return None
+    return (
+        select(Comment.id)
+        .join(EngagementEvidenceReview, EngagementEvidenceReview.id == Comment.commentable_id)
+        .join(
+            EngagementAuditor,
+            EngagementAuditor.engagement_id == EngagementEvidenceReview.engagement_id,
+        )
+        .where(
+            Comment.commentable_type == EngagementEvidenceReview.COMMENTABLE_TYPE,
+            Comment.visibility == Comment.VISIBILITY_INTERNAL,
+            EngagementAuditor.user_id == user_id,
+            EngagementAuditor.status == EngagementAuditorStatus.ACTIVE.value,
+        )
+    )
 
 
 # entity_type -> (model, label column, ref column). The ref is whatever the
@@ -97,6 +129,13 @@ async def list_audit_log(
     # Build query with filters
     query = select(AuditLog).where(AuditLog.organization_id == org_id)
     count_query = select(func.count(AuditLog.id)).where(AuditLog.organization_id == org_id)
+
+    caller_id = getattr(membership.user, "db_id", None)
+    hidden_notes = _internal_notes_hidden_from(UUID(str(caller_id)) if caller_id else None)
+    if hidden_notes is not None:
+        not_hidden = or_(AuditLog.entity_type != "comment", AuditLog.entity_id.notin_(hidden_notes))
+        query = query.where(not_hidden)
+        count_query = count_query.where(not_hidden)
 
     if entity_type:
         query = query.where(AuditLog.entity_type == entity_type)
