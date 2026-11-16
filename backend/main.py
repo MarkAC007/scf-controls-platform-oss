@@ -67,6 +67,8 @@ from api import (
     evidence_window_assessment,
     control_composites,
     audit_engagements,
+    engagement_evidence_reviews,
+    engagement_comments,
     trust_portal,
     journey,
     catalog_admin,
@@ -459,6 +461,8 @@ app.include_router(evidence_assessment.router, prefix="/api")  # AI evidence ass
 app.include_router(evidence_window_assessment.router, prefix="/api")  # Windowed multi-artifact assessment (M1a)
 app.include_router(control_composites.router, prefix="/api")  # Control assessment composites read API (M3 PR 2, #575)
 app.include_router(audit_engagements.router, prefix="/api")  # Audit Engagement Workspaces (Issue #370 Phase D)
+app.include_router(engagement_evidence_reviews.router, prefix="/api")  # Engagement evidence review board + dashboard
+app.include_router(engagement_comments.router, prefix="/api")  # Evidence review discussion (shared / internal)
 app.include_router(trust_portal.router, prefix="/api")  # Public trust portal (unauthenticated)
 app.include_router(journey.router, prefix="/api")  # Organisational journey — staged path with practitioner attestation
 app.include_router(deficiencies.router, prefix="/api")  # Control deficiency record, POA&M (PIG R8)

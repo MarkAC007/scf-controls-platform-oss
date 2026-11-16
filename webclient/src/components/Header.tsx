@@ -25,6 +25,7 @@ interface HeaderProps {
   onTabChange: (tab: Tab) => void
   onNavigateToEvidence?: (evidenceId: string) => void
   onNavigateToRisk?: (riskCode: string) => void
+  onNavigateToEngagementReview?: (target: import('./NotificationBell').EngagementReviewTarget) => void
   /** Maps a scoped_controls row id to its SCF id, for a control notification the server sent no key for */
   resolveControlScfId?: (scopedControlId: string) => string | null | undefined
   isConsultant?: boolean
@@ -40,6 +41,7 @@ export default function Header({
   onTabChange,
   onNavigateToEvidence,
   onNavigateToRisk,
+  onNavigateToEngagementReview,
   resolveControlScfId,
   isConsultant,
   clientOrgIds,
@@ -132,6 +134,7 @@ export default function Header({
               onNavigateToTask={() => onTabChange('tasks')}
               onNavigateToChangelog={() => onTabChange('catalog-changelog')}
               onNavigateToRisk={onNavigateToRisk}
+              onNavigateToEngagementReview={onNavigateToEngagementReview}
               resolveControlScfId={resolveControlScfId}
               currentOrgId={currentOrg?.id ?? null}
             />

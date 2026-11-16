@@ -114,12 +114,54 @@ def _in_window(
     return True, WINDOW_BASIS_UPLOAD
 
 
+def _group_evidence_objects(
+    evidence: List[Dict[str, Any]],
+    mapped_objects: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Group a control's artifacts under the evidence objects they belong to.
+
+    The control -> evidence relationship is the catalog mapping, so every
+    mapped evidence object is listed, including ones with no artifact yet: an
+    auditor needs to see what is expected as well as what was collected. An
+    artifact whose evidence object is somehow absent from the mapping still
+    gets a group, so nothing in the flat ``evidence`` list is lost here.
+    Groups are ordered by evidence id; artifacts keep their input order.
+    """
+    groups: Dict[str, Dict[str, Any]] = {}
+    for obj in mapped_objects:
+        eid = obj.get("evidence_id")
+        if eid and eid not in groups:
+            groups[eid] = {
+                "evidence_id": eid,
+                "artifact_title": obj.get("artifact_title"),
+                "area_of_focus": obj.get("area_of_focus"),
+                "artifacts": [],
+                "in_window_count": 0,
+            }
+    for art in evidence:
+        eid = art.get("evidence_id")
+        if not eid:
+            continue
+        group = groups.setdefault(eid, {
+            "evidence_id": eid,
+            "artifact_title": None,
+            "area_of_focus": None,
+            "artifacts": [],
+            "in_window_count": 0,
+        })
+        group["artifacts"].append(art)
+        if art.get("in_window"):
+            group["in_window_count"] += 1
+    return [groups[k] for k in sorted(groups)]
+
+
 def _build_control_node(
     row: Dict[str, Any],
     live_by_scf: Dict[str, Dict[str, Any]],
     evidence_by_scf: Dict[str, List[Dict[str, Any]]],
     window: Tuple[Optional[date], Optional[date]],
     queries_by_scf: Dict[str, List[Dict[str, Any]]],
+    evidence_objects_by_scf: Dict[str, List[Dict[str, Any]]],
 ) -> Dict[str, Any]:
     scf_id = row["scf_id"]
     live = live_by_scf.get(scf_id) or {}
@@ -132,6 +174,7 @@ def _build_control_node(
             in_window_count += 1
         evidence.append({
             "id": art.get("id"),
+            "evidence_id": art.get("evidence_id"),
             "filename": art.get("filename"),
             "uploaded_at": art.get("uploaded_at"),
             "review_status": art.get("review_status"),
@@ -147,6 +190,9 @@ def _build_control_node(
     return {
         "scf_id": scf_id,
         "control_name": row.get("control_name"),
+        "evidence_objects": _group_evidence_objects(
+            evidence, evidence_objects_by_scf.get(scf_id, []),
+        ),
         "scope_status": row.get("scope_status"),
         "out_of_scope_justification": row.get("out_of_scope_justification"),
         "source_frameworks": row.get("source_frameworks") or [],
@@ -168,6 +214,7 @@ def build_framework_presentation(
     evidence_by_scf: Dict[str, List[Dict[str, Any]]],
     window: Tuple[Optional[date], Optional[date]],
     queries_by_scf: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    evidence_objects_by_scf: Optional[Dict[str, List[Dict[str, Any]]]] = None,
 ) -> Dict[str, Any]:
     """Assemble the clause-ordered presentation tree for one framework.
 
@@ -176,6 +223,7 @@ def build_framework_presentation(
     mapping to several clauses appears under each of them.
     """
     queries_by_scf = queries_by_scf or {}
+    evidence_objects_by_scf = evidence_objects_by_scf or {}
     # clause_id -> list of control nodes
     clauses: Dict[str, List[Dict[str, Any]]] = {}
 
@@ -184,7 +232,9 @@ def build_framework_presentation(
         clause_ids = (mappings_by_scf.get(scf_id) or {}).get(framework) or []
         if not clause_ids:
             continue  # not part of this framework's view
-        node = _build_control_node(row, live_by_scf, evidence_by_scf, window, queries_by_scf)
+        node = _build_control_node(
+            row, live_by_scf, evidence_by_scf, window, queries_by_scf, evidence_objects_by_scf,
+        )
         for clause_id in clause_ids:
             clauses.setdefault(clause_id, []).append(node)
 

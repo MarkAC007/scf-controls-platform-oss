@@ -1,0 +1,181 @@
+/* Shell around the engagement review board and dashboard. Colours come from
+   engagement-review-tokens.css and the app tokens; nothing is set in JSX. */
+.erw {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  padding: 20px 28px 32px;
+  background: var(--erb-page-bg);
+  color: var(--erb-text);
+}
+
+.erw-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.erw-header-main { min-width: 0; }
+
+.erw-back {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--erb-muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+.erw-back:hover,
+.erw-back:focus-visible { color: var(--erb-id); text-decoration: underline; }
+
+.erw-title-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+
+.erw-title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 650;
+  line-height: 1.25;
+  color: var(--erb-text);
+}
+
+.erw-status {
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--erb-open-bg);
+  color: var(--erb-open);
+}
+.erw-status-active { background: var(--erb-accepted-bg); color: var(--erb-accepted); }
+.erw-status-under_review { background: var(--erb-submitted-bg); color: var(--erb-submitted); }
+.erw-status-closed { background: var(--erb-open-bg); color: var(--erb-muted); }
+
+.erw-subline {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--erb-muted);
+}
+
+.erw-view-switch {
+  display: inline-flex;
+  padding: 3px;
+  border: 1px solid var(--erb-card-border);
+  border-radius: 9px;
+  background: var(--erb-card-bg);
+}
+
+.erw-view-btn {
+  padding: 6px 16px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--erb-muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.erw-view-btn:hover { color: var(--erb-text); }
+.erw-view-btn.is-active { background: var(--erb-text); color: var(--erb-card-bg); }
+[data-theme="dark"] .erw-view-btn.is-active { background: var(--erb-card-selected); color: var(--erb-on-selected); }
+.erw-view-btn:focus-visible,
+.erw-framework-tab:focus-visible,
+.erw-back:focus-visible { outline: 2px solid var(--erb-card-selected); outline-offset: 2px; }
+
+.erw-frameworks {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--erb-card-border);
+}
+
+.erw-framework-tab {
+  margin-bottom: -1px;
+  padding: 9px 14px;
+  border: none;
+  border-bottom: 3px solid transparent;
+  background: none;
+  color: var(--erb-muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.erw-framework-tab:hover { color: var(--erb-text); }
+.erw-framework-tab.is-active { border-bottom-color: var(--erb-tab-active); color: var(--erb-text); }
+
+.erw-panel { flex: 1; min-width: 0; }
+
+.erw-empty { color: var(--erb-muted); font-size: 14px; }
+
+@media (max-width: 900px) {
+  .erw { padding: 16px; }
+  .erw-header { align-items: flex-start; }
+}
+
+/* ---------------------------------------------------------------------------
+   Entry points on the Engagements list, and the auditor kind choice in its
+   Auditors drawer. They live here because this file is loaded wherever the
+   workspace can be opened from.
+   --------------------------------------------------------------------------- */
+.eng-review-entry {
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.eng-review-entry:hover { border-color: var(--primary); }
+
+.eng-review-entry.is-primary {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+
+.eng-review-entry:focus-visible,
+.eng-auditor-kind-option input:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.eng-auditor-kind {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.eng-auditor-kind-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.eng-auditor-kind-badge {
+  padding: 2px 10px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--erb-control-chip-bg);
+  color: var(--erb-control-chip);
+}
+
+.eng-auditor-kind-badge.is-internal {
+  background: var(--erb-clause-chip-bg);
+  color: var(--erb-clause-chip);
+}

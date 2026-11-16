@@ -1,0 +1,345 @@
+/* Engagement dashboard. Stage colours come from engagement-review-tokens.css
+   (--erb-*), surfaces and type from the app tokens. Nothing is set in JSX
+   except --erd-seg, the count that sizes a bar segment. */
+:root {
+  /* Text on a solid stage colour (bar segments, clause tiles). */
+  --erd-on-stage: #ffffff;
+  /* Track behind the bars and the divider between clause groups. */
+  --erd-track: #eef1f5;
+  /* Rows of evidence held by the organisation. */
+  --erd-action-row-bg: #fff7f2;
+  --erd-action-row-border: #f3d3c2;
+}
+
+[data-theme="dark"] {
+  --erd-on-stage: #0b1326;
+  --erd-track: rgba(255, 255, 255, 0.06);
+  --erd-action-row-bg: rgba(255, 154, 102, 0.08);
+  --erd-action-row-border: rgba(255, 154, 102, 0.35);
+}
+
+/* Stage → colour pair, read by bars, legend swatches and clause tiles. */
+.erd-stage-open { --erd-stage: var(--erb-open); --erd-stage-bg: var(--erb-open-bg); }
+.erd-stage-progress { --erd-stage: var(--erb-progress); --erd-stage-bg: var(--erb-progress-bg); }
+.erd-stage-action { --erd-stage: var(--erb-action); --erd-stage-bg: var(--erb-action-bg); }
+.erd-stage-submitted { --erd-stage: var(--erb-submitted); --erd-stage-bg: var(--erb-submitted-bg); }
+.erd-stage-accepted { --erd-stage: var(--erb-accepted); --erd-stage-bg: var(--erb-accepted-bg); }
+
+.erd {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0;
+  width: 100%;
+  max-width: 1376px;
+  margin: 0 auto;
+  color: var(--erb-text);
+}
+
+.erd-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Loading / error / empty */
+.erd-state {
+  margin: 0;
+  padding: 20px;
+  border: 1px solid var(--erb-card-border);
+  border-radius: 12px;
+  background: var(--erb-card-bg);
+  color: var(--erb-muted);
+  font-size: 14px;
+}
+.erd-state-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  border-color: var(--erb-action);
+  color: var(--erb-text);
+}
+.erd-state-message { margin: 0; }
+.erd-retry {
+  padding: 6px 16px;
+  border: 1px solid var(--erb-card-border);
+  border-radius: 8px;
+  background: var(--erb-card-bg);
+  color: var(--erb-text);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.erd-retry:hover { border-color: var(--erb-card-selected); }
+.erd-retry:disabled { cursor: default; color: var(--erb-muted); }
+
+.erd-empty-banner {
+  margin: 0;
+  padding: 12px 16px;
+  border: 1px dashed var(--erb-card-border);
+  border-radius: 10px;
+  background: var(--erb-card-bg);
+  color: var(--erb-muted);
+  font-size: 13px;
+}
+
+/* Tiles */
+.erd-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+.erd-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 16px;
+  border: 1px solid var(--erb-card-border);
+  border-top: 4px solid var(--erb-open);
+  border-radius: 12px;
+  background: var(--erb-card-bg);
+}
+.erd-tile-accepted { border-top-color: var(--erb-accepted); }
+.erd-tile-action { border-top-color: var(--erb-action); }
+.erd-tile-progress { border-top-color: var(--erb-progress); }
+.erd-tile-label { font-size: 13px; font-weight: 600; color: var(--erb-muted); }
+.erd-tile-value {
+  font-size: 30px;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--erb-text);
+  font-variant-numeric: tabular-nums;
+}
+.erd-tile-sub { font-size: 12px; color: var(--erb-muted); }
+
+/* Cards */
+.erd-card {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+  padding: 20px;
+  border: 1px solid var(--erb-card-border);
+  border-radius: 12px;
+  background: var(--erb-card-bg);
+}
+.erd-h2 { margin: 0; font-size: 16px; font-weight: 700; color: var(--erb-text); }
+.erd-intro { margin: 4px 0 0; font-size: 13px; line-height: 1.45; color: var(--erb-muted); }
+.erd-none { margin: 0; font-size: 13px; color: var(--erb-muted); }
+
+/* Stacked bars */
+.erd-bar-row { display: flex; flex-direction: column; gap: 6px; }
+.erd-bar-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+}
+.erd-bar-label { font-weight: 600; }
+.erd-bar-total { color: var(--erb-muted); white-space: nowrap; }
+.erd-bar {
+  display: flex;
+  gap: 2px;
+  height: 28px;
+  overflow: hidden;
+  border-radius: 6px;
+  background: var(--erd-track);
+}
+.erd-bar-seg {
+  display: flex;
+  flex: var(--erd-seg) 1 0;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--erd-stage);
+  color: var(--erd-on-stage);
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.erd-bar-empty {
+  display: flex;
+  align-items: center;
+  height: 28px;
+  margin: 0;
+  padding: 0 10px;
+  border-radius: 6px;
+  background: var(--erd-track);
+  color: var(--erb-muted);
+  font-size: 12px;
+}
+.erd-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  color: var(--erb-text);
+}
+.erd-legend-item { display: flex; align-items: center; gap: 6px; }
+.erd-legend-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  background: var(--erd-stage);
+}
+.erd-legend-count { font-weight: 700; font-variant-numeric: tabular-nums; }
+
+/* Two-column area */
+.erd-columns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  align-items: flex-start;
+}
+.erd-coverage { flex: 999 1 640px; }
+.erd-side {
+  display: flex;
+  flex: 1 1 360px;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0;
+}
+
+/* Clause grid */
+.erd-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-start;
+  padding-top: 12px;
+  border-top: 1px solid var(--erd-track);
+}
+.erd-group-head {
+  display: flex;
+  flex: 0 0 200px;
+  flex-direction: column;
+  gap: 2px;
+}
+.erd-group-label { font-size: 14px; font-weight: 700; }
+.erd-group-summary { font-size: 12px; color: var(--erb-muted); }
+.erd-clauses {
+  display: flex;
+  flex: 1 1 320px;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.erd-clause {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 104px;
+  padding: 8px;
+  border-radius: 8px;
+  background: var(--erd-stage);
+  color: var(--erd-on-stage);
+}
+.erd-clause-id {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.erd-clause-stage { font-size: 11px; font-weight: 600; }
+.erd-clause-counts { font-size: 11px; }
+
+/* Row lists (action required, controls with no evidence object) */
+.erd-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.erd-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--erb-card-border);
+  border-radius: 8px;
+  background: var(--erb-card-bg);
+  color: var(--erb-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.erd-row:hover { border-color: var(--erb-card-selected); }
+.erd-row:focus-visible,
+.erd-retry:focus-visible { outline: 2px solid var(--erb-card-selected); outline-offset: 2px; }
+.erd-row-action {
+  border-color: var(--erd-action-row-border);
+  background: var(--erd-action-row-bg);
+}
+.erd-row-action:hover { border-color: var(--erb-action); }
+.erd-row-head {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.erd-row-id {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--erb-id);
+}
+.erd-row-control { color: var(--erb-control-chip); }
+.erd-row-title { font-size: 13px; font-weight: 600; min-width: 0; }
+.erd-row-meta { font-size: 12px; color: var(--erb-muted); overflow-wrap: anywhere; }
+
+/* Timeline */
+.erd-timeline {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.erd-milestone {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding-bottom: 14px;
+}
+.erd-milestone:last-child { padding-bottom: 0; }
+.erd-milestone-dot {
+  flex: 0 0 14px;
+  width: 14px;
+  height: 14px;
+  margin-top: 2px;
+  box-sizing: border-box;
+  border: 2px solid var(--erb-open);
+  border-radius: 999px;
+  background: var(--erb-card-bg);
+}
+.erd-milestone.is-done .erd-milestone-dot {
+  border-color: var(--erb-accepted);
+  background: var(--erb-accepted);
+}
+.erd-milestone-text { display: flex; flex-direction: column; gap: 2px; }
+.erd-milestone-label { font-size: 13px; font-weight: 600; }
+.erd-milestone-sub { font-size: 12px; color: var(--erb-muted); }
+
+@media (max-width: 900px) {
+  .erd-group-head { flex-basis: 100%; }
+  .erd-coverage,
+  .erd-side { flex-basis: 100%; }
+}

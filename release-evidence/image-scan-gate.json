@@ -1423,6 +1423,50 @@
     },
     {
       "image": "scf-backend",
+      "id": "CVE-2026-125709",
+      "severity": "Medium",
+      "package": "gcc-14-base 14.2.0-19",
+      "fix_state": "not-fixed",
+      "fix_versions": [],
+      "vex": [],
+      "ignored": false,
+      "outcome": "reported"
+    },
+    {
+      "image": "scf-backend",
+      "id": "CVE-2026-125709",
+      "severity": "Medium",
+      "package": "libatomic1 14.2.0-19",
+      "fix_state": "not-fixed",
+      "fix_versions": [],
+      "vex": [],
+      "ignored": false,
+      "outcome": "reported"
+    },
+    {
+      "image": "scf-backend",
+      "id": "CVE-2026-125709",
+      "severity": "Medium",
+      "package": "libgcc-s1 14.2.0-19",
+      "fix_state": "not-fixed",
+      "fix_versions": [],
+      "vex": [],
+      "ignored": false,
+      "outcome": "reported"
+    },
+    {
+      "image": "scf-backend",
+      "id": "CVE-2026-125709",
+      "severity": "Medium",
+      "package": "libstdc++6 14.2.0-19",
+      "fix_state": "not-fixed",
+      "fix_versions": [],
+      "vex": [],
+      "ignored": false,
+      "outcome": "reported"
+    },
+    {
+      "image": "scf-backend",
       "id": "CVE-2026-119375",
       "severity": "Medium",
       "package": "libsqlite3-0 3.46.1-7+deb13u2",

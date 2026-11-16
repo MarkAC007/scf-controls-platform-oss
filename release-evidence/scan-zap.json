@@ -3,11 +3,11 @@
   "tool": "zap",
   "scanner": "ZAP baseline",
   "version": "2.17.0",
-  "commit": "923466004c87f6dfe8bcfae9f7f8acaaf1190aea",
+  "commit": "febe4662cb579c345b4debd49aa658725f35c65d",
   "workflow": "CI",
   "job": "Docker Build",
-  "run_id": 43762048269,
-  "run_attempt": 1,
+  "run_id": 43885359801,
+  "run_attempt": 2,
   "event": "push",
   "job_conclusion": "success",
   "outcome": "pass",
@@ -22,7 +22,7 @@
     "informational": 4
   },
   "totals": {
-    "instances": 34
+    "instances": 33
   },
   "reason": null
 }

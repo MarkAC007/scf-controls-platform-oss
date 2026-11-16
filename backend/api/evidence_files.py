@@ -23,9 +23,17 @@ from sqlalchemy import select, and_, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
-from auth import require_org_role, OrgMembership
+from auth import require_org_role, OrgMembership, _current_org_role
 from database import get_db
-from models import EvidenceFile, EvidenceTracking, EvidenceWindowAssessment
+from models import (
+    AuditEngagement,
+    EngagementAuditor,
+    EngagementAuditorStatus,
+    EngagementEvidenceReview,
+    EvidenceFile,
+    EvidenceTracking,
+    EvidenceWindowAssessment,
+)
 from schemas import (
     EvidenceFileUploadUrlRequest,
     EvidenceFileUploadUrlResponse,
@@ -472,7 +480,7 @@ async def download_evidence_file(
     # minted for, so a browser navigation is as attributable as an API call.
     if auth_method is None and token and expires is not None:
         token_user_id = verify_download_token(str(file_id), str(org_id), token, expires)
-        if token_user_id:
+        if token_user_id and await _auditor_link_still_valid(db, org_id, evidence_id, token_user_id):
             reader_user_id = token_user_id
             auth_method = "signed_url"
 
@@ -876,6 +884,51 @@ async def _log_download(
             await db.rollback()
         except Exception:  # noqa: BLE001
             pass
+
+
+async def _auditor_link_still_valid(db: AsyncSession, org_id: UUID, evidence_id: str, user_id) -> bool:
+    """A signed link minted for an engagement auditor dies with their grant.
+
+    The token proves who the link was minted for and that it has not expired;
+    it does not prove that person can still read the file. An external auditor
+    reads evidence only through an active grant on an engagement that reviews
+    it, so a link opened after the grant is revoked must fail at once, not
+    when the token runs out.
+
+    Only someone the organisation knows solely as an auditor is checked. A
+    member or consultant, and a caller with no auditor grant in this
+    organisation at all, keep the behaviour they had.
+    """
+    try:
+        uid = user_id if isinstance(user_id, UUID) else UUID(str(user_id))
+    except (TypeError, ValueError):
+        return True  # not a user id this rule can apply to; the token already verified
+
+    grants = (await db.execute(
+        select(EngagementAuditor.engagement_id, EngagementAuditor.status)
+        .join(AuditEngagement, AuditEngagement.id == EngagementAuditor.engagement_id)
+        .where(
+            AuditEngagement.organization_id == org_id,
+            EngagementAuditor.user_id == uid,
+        )
+    )).all()
+    if not grants:
+        return True
+    if await _current_org_role(db, uid, org_id) is not None:
+        return True
+
+    active = [eng_id for eng_id, grant_status in grants
+              if grant_status == EngagementAuditorStatus.ACTIVE.value]
+    if not active:
+        return False
+    covered = (await db.execute(
+        select(EngagementEvidenceReview.id).where(
+            EngagementEvidenceReview.organization_id == org_id,
+            EngagementEvidenceReview.evidence_id == evidence_id,
+            EngagementEvidenceReview.engagement_id.in_(active),
+        ).limit(1)
+    )).scalar_one_or_none()
+    return covered is not None
 
 
 def _proxy_download_url(

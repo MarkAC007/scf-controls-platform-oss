@@ -718,6 +718,9 @@ class Assignment(Base):
 class Comment(Base):
     """Comment model - polymorphic comments for controls, evidence, or tasks."""
     __tablename__ = "comments"
+    __table_args__ = (
+        CheckConstraint("visibility IN ('shared', 'internal')", name='ck_comments_visibility'),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     commentable_type = Column(String(50), nullable=False)  # 'control', 'evidence', or 'task'
@@ -731,6 +734,14 @@ class Comment(Base):
     is_deleted = Column(Boolean, default=False)
     deleted_at = Column(DateTime(timezone=False))
     created_at = Column(DateTime(timezone=False), server_default=func.now())
+    # 'shared' is visible to everyone who can see the thing commented on.
+    # 'internal' is an org-only note: on an engagement it is never returned to
+    # an auditor, through any endpoint, including counts and edit history.
+    # Only the engagement-scoped comment routes write 'internal' (engrev001).
+    visibility = Column(String(20), nullable=False, default='shared', server_default='shared')
+
+    VISIBILITY_SHARED = "shared"
+    VISIBILITY_INTERNAL = "internal"
 
     # Relationships
     user = relationship("User", back_populates="comments")
@@ -903,9 +914,24 @@ class Notification(Base):
     is_read = Column(Boolean, default=False)
     read_at = Column(DateTime(timezone=False))
     created_at = Column(DateTime(timezone=False), server_default=func.now())
+    # Set on engagement review events (engrev001). An external auditor is not a
+    # member of the organisation, so organization_id alone would hide every
+    # notification from them. With this set, the holder of an ACTIVE auditor
+    # grant on that engagement can read it — and nothing else in the org.
+    engagement_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("audit_engagements.id", ondelete="CASCADE", name="fk_notifications_engagement_id"),
+        nullable=True,
+    )
 
     # Relationships
     user = relationship("User", back_populates="notifications")
+
+    __table_args__ = (
+        # Matches engrev001, so autogenerate does not propose dropping it.
+        Index('ix_notifications_engagement_id', 'engagement_id',
+              postgresql_where=text('engagement_id IS NOT NULL')),
+    )
 
     def __repr__(self):
         return f"<Notification(user={self.user_id}, type={self.type}, read={self.is_read})>"
@@ -1494,12 +1520,21 @@ class EngagementAuditor(Base):
     __tablename__ = "engagement_auditors"
     __table_args__ = (
         UniqueConstraint('engagement_id', 'user_id', name='uq_engagement_auditor'),
+        CheckConstraint("kind IN ('external', 'internal')", name='ck_engagement_auditors_kind'),
     )
+
+    KIND_EXTERNAL = "external"
+    KIND_INTERNAL = "internal"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     engagement_id = Column(UUID(as_uuid=True), ForeignKey("audit_engagements.id", ondelete="CASCADE"), nullable=False)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     status = Column(String(20), nullable=False, default=EngagementAuditorStatus.ACTIVE.value)
+    # 'external' = an outside auditor, confined to this engagement.
+    # 'internal' = an org member acting as the auditor (engrev001). Makes every
+    # auditor move, but may not accept an evidence object they own or whose
+    # accountable team they belong to (segregation of duties).
+    kind = Column(String(20), nullable=False, default='external', server_default='external')
     invited_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     invited_at = Column(DateTime(timezone=False), server_default=func.now())
     accepted_at = Column(DateTime(timezone=False), nullable=True)
@@ -1538,10 +1573,19 @@ class EngagementQuery(Base):
     Comment model (commentable_type='engagement_query', commentable_id=query.id).
     """
     __tablename__ = "engagement_queries"
+    __table_args__ = (
+        # A query is about exactly one thing: a control or an evidence object.
+        CheckConstraint(
+            "(scf_id IS NOT NULL) <> (evidence_id IS NOT NULL)",
+            name='ck_engagement_queries_one_target',
+        ),
+        Index('ix_engagement_queries_engagement_evidence', 'engagement_id', 'evidence_id'),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     engagement_id = Column(UUID(as_uuid=True), ForeignKey("audit_engagements.id", ondelete="CASCADE"), nullable=False)
-    scf_id = Column(String(50), nullable=False)  # the control the query is about
+    scf_id = Column(String(50), nullable=True)  # the control the query is about, or
+    evidence_id = Column(String(50), nullable=True)  # the evidence object (ERL id) it is about
     raised_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     title = Column(String(255), nullable=False)
     body = Column(Text, nullable=False)
@@ -1559,6 +1603,127 @@ class EngagementQuery(Base):
 
     def __repr__(self):
         return f"<EngagementQuery(engagement={self.engagement_id}, scf_id={self.scf_id}, status={self.status})>"
+
+
+class EngagementEvidenceReviewStatus(str, Enum):
+    """Review stage of one evidence object within an engagement.
+
+        OPEN             - evidence not yet tested
+        IN_PROGRESS      - the auditor is testing the evidence
+        ACTION_REQUIRED  - the auditor needs more from the organisation
+        SUBMITTED        - the organisation responded; back with the auditor
+        ACCEPTED         - evidence passed testing
+
+    These are stages of the *review*. How collection is going (files, in-window
+    counts) is shown on the card and is never a stage. The permitted moves live
+    in services/engagement_evidence_review.py.
+    """
+    OPEN = "open"
+    IN_PROGRESS = "in_progress"
+    ACTION_REQUIRED = "action_required"
+    SUBMITTED = "submitted"
+    ACCEPTED = "accepted"
+
+    @classmethod
+    def values(cls) -> List[str]:
+        return [s.value for s in cls]
+
+
+class EngagementEvidenceReview(Base):
+    """The auditor's review of one evidence object (ERL id) in one engagement.
+
+    The card on the engagement review board. One row per (engagement,
+    evidence_id), materialised from the evidence objects that map to the
+    engagement's in-scope, non-retired controls. The controls and framework
+    clauses a card supports are derived on read from the catalog; only the
+    review state lives here.
+    """
+    __tablename__ = "engagement_evidence_reviews"
+    __table_args__ = (
+        UniqueConstraint('engagement_id', 'evidence_id', name='uq_engagement_evidence_review'),
+        CheckConstraint(
+            "status IN ('open', 'in_progress', 'action_required', 'submitted', 'accepted')",
+            name='ck_engagement_evidence_reviews_status',
+        ),
+        Index('ix_engagement_evidence_reviews_engagement_status', 'engagement_id', 'status'),
+        Index('ix_engagement_evidence_reviews_reviewer', 'assigned_reviewer_user_id'),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
+                server_default=text('gen_random_uuid()'))
+    engagement_id = Column(UUID(as_uuid=True), ForeignKey("audit_engagements.id", ondelete="CASCADE"), nullable=False)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    evidence_id = Column(String(50), nullable=False)  # SCF ERL id, e.g. E-IAC-07
+    status = Column(String(20), nullable=False, default=EngagementEvidenceReviewStatus.OPEN.value,
+                    server_default='open')
+    assigned_reviewer_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    last_decision_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    last_decision_at = Column(DateTime(timezone=False), nullable=True)
+    decision_note = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=False), nullable=False, server_default=func.now())
+    updated_at = Column(DateTime(timezone=False), nullable=False, server_default=func.now(), onupdate=func.now())
+
+    # Relationships
+    engagement = relationship("AuditEngagement")
+    assigned_reviewer = relationship("User", foreign_keys=[assigned_reviewer_user_id])
+    last_decision_by = relationship("User", foreign_keys=[last_decision_by_user_id])
+
+    # The discussion thread reuses the Comment table with this type. It is
+    # served ONLY by the engagement-scoped comment routes; the org-level
+    # /api/comments paths refuse it, so an auditor never reaches them.
+    COMMENTABLE_TYPE = "engagement_evidence_review"
+
+    def __repr__(self):
+        return f"<EngagementEvidenceReview(engagement={self.engagement_id}, evidence_id={self.evidence_id}, status={self.status})>"
+
+
+class EngagementEvidenceReviewEvent(Base):
+    """One recorded event in the life of an evidence review. Append-only.
+
+    Every status move writes one row (and an audit_log entry). A reviewer
+    assignment writes one too, with from_status == to_status. UPDATE and DELETE
+    are refused by database triggers (revision engrev001); rows go only when
+    the review, engagement or organisation they belong to goes.
+    """
+    __tablename__ = "engagement_evidence_review_events"
+    __table_args__ = (
+        CheckConstraint("actor_kind IN ('auditor', 'org')",
+                        name='ck_engagement_evidence_review_events_actor_kind'),
+        CheckConstraint("event_type IN ('transition', 'reviewer_assigned')",
+                        name='ck_engagement_evidence_review_events_event_type'),
+        CheckConstraint(
+            "from_status IN ('open', 'in_progress', 'action_required', 'submitted', 'accepted') "
+            "AND to_status IN ('open', 'in_progress', 'action_required', 'submitted', 'accepted')",
+            name='ck_engagement_evidence_review_events_statuses',
+        ),
+        Index('ix_engagement_evidence_review_events_review_created', 'review_id', 'created_at'),
+    )
+
+    EVENT_TRANSITION = "transition"
+    EVENT_REVIEWER_ASSIGNED = "reviewer_assigned"
+    ACTOR_AUDITOR = "auditor"
+    ACTOR_ORG = "org"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
+                server_default=text('gen_random_uuid()'))
+    review_id = Column(UUID(as_uuid=True), ForeignKey("engagement_evidence_reviews.id", ondelete="CASCADE"), nullable=False)
+    engagement_id = Column(UUID(as_uuid=True), ForeignKey("audit_engagements.id", ondelete="CASCADE"), nullable=False)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    evidence_id = Column(String(50), nullable=False)
+    event_type = Column(String(30), nullable=False, default='transition', server_default='transition')
+    from_status = Column(String(20), nullable=False)
+    to_status = Column(String(20), nullable=False)
+    actor_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    actor_kind = Column(String(10), nullable=False)
+    note = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=False), nullable=False, server_default=func.now())
+
+    # Relationships
+    review = relationship("EngagementEvidenceReview")
+    actor = relationship("User", foreign_keys=[actor_user_id])
+
+    def __repr__(self):
+        return f"<EngagementEvidenceReviewEvent(review={self.review_id}, {self.from_status}->{self.to_status})>"
 
 
 # =============================================================================

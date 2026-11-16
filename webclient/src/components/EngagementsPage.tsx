@@ -20,20 +20,91 @@ import {
   type EngagementScopeStatus,
   type FrameworkPresentation,
   type EngagementAuditor,
+  type EngagementAuditorKind,
   type EngagementQuery,
   type EngagementQueryStatus,
+  type PresentationControl,
+  type PresentationEvidenceItem,
+  getEvidenceFile,
+  getOrgMemberSummaries,
 } from '../data/apiClient'
 import { fetchFrameworks, type FrameworkInfo } from '../data/catalogApi'
 import { useConfirm } from '../contexts/ConfirmContext'
 import { useModalDismiss } from '../hooks/useModalDismiss'
 import { useFocusTrap } from '../hooks/useFocusTrap'
 import DeprecatedBadge, { getCatalogLifecycle } from './DeprecatedBadge'
+import EngagementReviewWorkspace, {
+  type ReviewFocus, type ReviewWorkspaceView,
+} from './engagements/EngagementReviewWorkspace'
+import type { OrgMemberSummary } from '../types'
 
 interface EngagementsPageProps {
   organizationId: string
+  /** Opens a control in the Control Library. */
+  onNavigateToControl?: (scfId: string, mode?: LibraryMode) => void
+  /** Opens an evidence object in the Evidence workspace. */
+  onNavigateToEvidence?: (evidenceId: string) => void
+  /**
+   * An engagement to open straight into its review workspace, e.g. from a
+   * notification: which engagement, which view, and the card to open.
+   */
+  openReview?: EngagementReviewRequest | null
+  /** Called once `openReview` has been acted on, so it is not acted on twice. */
+  onOpenReviewConsumed?: () => void
+}
+
+export interface EngagementReviewRequest {
+  engagementId: string
+  view?: ReviewWorkspaceView
+  focus?: ReviewFocus
 }
 
 type FrameworkNamer = (id: string) => string
+
+/**
+ * The Control Library mode a control opens in — the values of `LibraryMode`.
+ * Spelled out rather than imported: only the screens that own URL state import
+ * `data/appUrl` (guarded by EvidenceReview.deeplink.test.ts); this page hands
+ * App a value and App writes the URL.
+ */
+type LibraryMode = 'in-scope' | 'full-library'
+
+/** Navigation the drawers hand a click to. Either may be absent (tests, embeds). */
+interface DrawerNavigation {
+  onNavigateToControl?: (scfId: string, mode?: LibraryMode) => void
+  onNavigateToEvidence?: (evidenceId: string) => void
+}
+
+/**
+ * The Control Library mode a control opens in. Only an in-scope control is in
+ * the organisation's scoped list; an excluded or untracked one would not be
+ * found there, so it opens in the full library instead.
+ */
+function libraryModeFor(scopeStatus: EngagementScopeStatus): LibraryMode {
+  return scopeStatus === 'in_scope' ? 'in-scope' : 'full-library'
+}
+
+/** A control id that opens the control, or plain text when there is nowhere to go. */
+function ControlLink({ scfId, scopeStatus, onNavigateToControl }: {
+  scfId: string | null
+  scopeStatus: EngagementScopeStatus
+  onNavigateToControl?: DrawerNavigation['onNavigateToControl']
+}) {
+  if (!scfId || !onNavigateToControl) {
+    return <strong style={{ fontSize: 13, color: 'var(--text)' }}>{scfId}</strong>
+  }
+  return (
+    <button
+      type="button"
+      className="engagement-link"
+      style={{ fontSize: 13, fontWeight: 700 }}
+      title={`Open ${scfId} in the Control Library`}
+      onClick={() => onNavigateToControl(scfId, libraryModeFor(scopeStatus))}
+    >
+      {scfId}
+    </button>
+  )
+}
 
 const STATUS_LABELS: Record<string, string> = {
   draft: 'Draft',
@@ -356,14 +427,14 @@ function CreateEngagementDrawer({ organizationId, frameworks, onClose, onCreated
 // Scope Drawer — the tagged mapped-control comparison for an engagement
 // ---------------------------------------------------------------------------
 
-interface ScopeDrawerProps {
+interface ScopeDrawerProps extends DrawerNavigation {
   organizationId: string
   engagement: AuditEngagement
   frameworkName: FrameworkNamer
   onClose: () => void
 }
 
-function ScopeDrawer({ organizationId, engagement, frameworkName, onClose }: ScopeDrawerProps) {
+function ScopeDrawer({ organizationId, engagement, frameworkName, onClose, onNavigateToControl }: ScopeDrawerProps) {
   const [items, setItems] = useState<EngagementScopeItem[] | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -429,7 +500,7 @@ function ScopeDrawer({ organizationId, engagement, frameworkName, onClose }: Sco
                     {group.map(it => (
                       <div key={it.id} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: '10px 14px', background: 'var(--panel)' }}>
                         <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap' }}>
-                          <strong style={{ fontSize: 13, color: 'var(--text)' }}>{it.scf_id}</strong>
+                          <ControlLink scfId={it.scf_id} scopeStatus={it.scope_status} onNavigateToControl={onNavigateToControl} />
                           <DeprecatedBadge compact {...getCatalogLifecycle(it)} />
                           {it.control_name && <span style={{ fontSize: 13, color: 'var(--muted)' }}>{it.control_name}</span>}
                         </div>
@@ -458,22 +529,148 @@ function ScopeDrawer({ organizationId, engagement, frameworkName, onClose }: Sco
   )
 }
 
+/**
+ * A control's evidence as a tree: each evidence object the catalog maps to the
+ * control, and under it the artifacts collected for that object. Objects with
+ * nothing collected are listed too — what is expected matters as much as what
+ * arrived. Objects open in the Evidence workspace; artifacts open the file.
+ */
+function ControlEvidenceTree({ ctrl, onNavigateToEvidence, onOpenArtifact, openingFileId }: {
+  ctrl: PresentationControl
+  onNavigateToEvidence?: (evidenceId: string) => void
+  onOpenArtifact: (art: PresentationEvidenceItem) => void
+  openingFileId: string | null
+}) {
+  // A response from a backend older than the grouping has no evidence_objects:
+  // fall back to one group per evidence id found on the flat list.
+  const objects = ctrl.evidence_objects ?? Object.values(
+    ctrl.evidence.reduce<Record<string, { evidence_id: string; artifact_title: null; area_of_focus: null; artifacts: PresentationEvidenceItem[]; in_window_count: number }>>((acc, ev) => {
+      const key = ev.evidence_id ?? '—'
+      const g = acc[key] ??= { evidence_id: key, artifact_title: null, area_of_focus: null, artifacts: [], in_window_count: 0 }
+      g.artifacts.push(ev)
+      if (ev.in_window) g.in_window_count += 1
+      return acc
+    }, {}),
+  )
+
+  if (objects.length === 0) {
+    return <div style={{ marginTop: 8, fontSize: 11, color: 'var(--muted)' }}>No evidence objects map to this control.</div>
+  }
+
+  const collected = objects.filter(o => o.artifacts.length > 0).length
+  return (
+    <div style={{ marginTop: 8 }}>
+      <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 6 }}>
+        Evidence — {collected} of {objects.length} object{objects.length === 1 ? '' : 's'} collected ·{' '}
+        {ctrl.evidence_in_window_count} of {ctrl.evidence.length} artifact{ctrl.evidence.length === 1 ? '' : 's'} in window
+      </div>
+      <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {objects.map(obj => (
+          <li key={obj.evidence_id} style={{ borderLeft: '2px solid var(--border)', paddingLeft: 10 }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap', fontSize: 12 }}>
+              {onNavigateToEvidence ? (
+                <button
+                  type="button"
+                  className="engagement-link"
+                  style={{ fontSize: 12, fontWeight: 600 }}
+                  title={`Open ${obj.evidence_id} in the Evidence workspace`}
+                  onClick={() => onNavigateToEvidence(obj.evidence_id)}
+                >
+                  {obj.evidence_id}
+                </button>
+              ) : (
+                <span style={{ fontWeight: 600, color: 'var(--text)' }}>{obj.evidence_id}</span>
+              )}
+              {obj.artifact_title && <span style={{ color: 'var(--muted)', flex: 1, minWidth: 0 }}>{obj.artifact_title}</span>}
+              <span style={{ fontSize: 11, color: 'var(--muted)' }}>
+                {obj.artifacts.length === 0
+                  ? 'Not collected'
+                  : `${obj.in_window_count} of ${obj.artifacts.length} in window`}
+              </span>
+            </div>
+            {obj.artifacts.length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
+                {obj.artifacts.map(ev => {
+                  const opening = ev.id !== null && openingFileId === ev.id
+                  const chipStyle: React.CSSProperties = {
+                    display: 'inline-flex', alignItems: 'center', gap: 6, padding: '2px 8px', borderRadius: 6, fontSize: 11,
+                    border: '1px solid var(--border)',
+                    background: ev.in_window ? 'var(--success-bg)' : 'var(--secondary)',
+                    color: ev.in_window ? 'var(--success)' : 'var(--muted)',
+                  }
+                  const dot = <span style={{ width: 6, height: 6, borderRadius: '50%', background: ev.in_window ? 'var(--success)' : 'var(--muted)' }} />
+                  const windowNote = ev.in_window ? 'Uploaded within the audit window' : 'Uploaded outside the audit window'
+                  if (!ev.id || !ev.evidence_id) {
+                    return <span key={ev.id ?? ev.filename} title={windowNote} style={chipStyle}>{dot}{ev.filename}</span>
+                  }
+                  return (
+                    <button
+                      key={ev.id}
+                      type="button"
+                      className="engagement-artifact"
+                      style={chipStyle}
+                      title={`${windowNote}. Open ${ev.filename ?? 'the file'} in a new tab.`}
+                      disabled={opening}
+                      aria-busy={opening || undefined}
+                      onClick={() => onOpenArtifact(ev)}
+                    >
+                      {dot}{ev.filename}{opening ? ' — opening…' : ''}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Presentation Drawer — controls re-sequenced from a framework's perspective
 // ---------------------------------------------------------------------------
 
-interface PresentationDrawerProps {
+interface PresentationDrawerProps extends DrawerNavigation {
   organizationId: string
   engagement: AuditEngagement
   frameworkName: FrameworkNamer
   onClose: () => void
 }
 
-function PresentationDrawer({ organizationId, engagement, frameworkName, onClose }: PresentationDrawerProps) {
+function PresentationDrawer({
+  organizationId, engagement, frameworkName, onClose, onNavigateToControl, onNavigateToEvidence,
+}: PresentationDrawerProps) {
   const [framework, setFramework] = useState<string>(engagement.frameworks[0] ?? '')
   const [data, setData] = useState<FrameworkPresentation | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [openingFileId, setOpeningFileId] = useState<string | null>(null)
+  const [artifactError, setArtifactError] = useState<string | null>(null)
+
+  // Opens an artifact in a new tab. The tab is opened synchronously, inside
+  // the click, so a popup blocker lets it through; the signed download link
+  // (15-minute expiry) is fetched afterwards and the tab sent to it. Asking
+  // the API for a fresh link also means the download is recorded against the
+  // person who opened it, as it is from the Evidence workspace.
+  const openArtifact = async (art: PresentationEvidenceItem) => {
+    if (!art.id || !art.evidence_id) return
+    setArtifactError(null)
+    setOpeningFileId(art.id)
+    const tab = window.open('about:blank', '_blank')
+    if (tab) tab.opener = null
+    try {
+      const file = await getEvidenceFile(art.evidence_id, art.id, organizationId)
+      if (!file.download_url) throw new Error('No download link is available for this file.')
+      if (tab) tab.location.href = file.download_url
+      else window.open(file.download_url, '_blank', 'noopener,noreferrer')
+    } catch (err) {
+      tab?.close()
+      setArtifactError(`Could not open ${art.filename ?? 'the file'}: ${(err as Error)?.message ?? 'unknown error'}`)
+    } finally {
+      setOpeningFileId(null)
+    }
+  }
 
   useEffect(() => {
     if (!framework) return
@@ -520,9 +717,14 @@ function PresentationDrawer({ organizationId, engagement, frameworkName, onClose
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
             <HelpNote>
-              Controls are grouped under each framework clause they satisfy. Evidence chips are
+              Controls are grouped under each framework clause they satisfy. Under each control are the
+              evidence objects it maps to, and under each object the artifacts collected for it. Artifact chips are
               <span style={{ color: 'var(--success)' }}> green</span> when uploaded inside the audit window and muted when outside it.
+              Select a control, an evidence object or an artifact to open it.
             </HelpNote>
+            {artifactError && (
+              <div role="alert" style={{ padding: '10px 14px', background: 'var(--error-bg)', borderRadius: 8, color: 'var(--text)', fontSize: 13 }}>{artifactError}</div>
+            )}
             {data.clauses.map(clause => (
               <div key={clause.clause_id}>
                 <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 8, paddingBottom: 4, borderBottom: '1px solid var(--border)' }}>
@@ -534,7 +736,7 @@ function PresentationDrawer({ organizationId, engagement, frameworkName, onClose
                     return (
                       <div key={`${clause.clause_id}-${ctrl.scf_id}`} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: '10px 14px', background: 'var(--panel)' }}>
                         <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
-                          <strong style={{ fontSize: 13, color: 'var(--text)' }}>{ctrl.scf_id}</strong>
+                          <ControlLink scfId={ctrl.scf_id} scopeStatus={ctrl.scope_status} onNavigateToControl={onNavigateToControl} />
                           <DeprecatedBadge compact {...getCatalogLifecycle(ctrl)} />
                           {ctrl.control_name && <span style={{ fontSize: 13, color: 'var(--muted)', flex: 1, minWidth: 0 }}>{ctrl.control_name}</span>}
                           <span style={{ padding: '1px 8px', borderRadius: 10, fontSize: 11, fontWeight: 600, background: meta.bg, color: meta.color }}>{meta.label}</span>
@@ -552,28 +754,12 @@ function PresentationDrawer({ organizationId, engagement, frameworkName, onClose
                           </div>
                         )}
 
-                        {ctrl.evidence.length > 0 ? (
-                          <div style={{ marginTop: 8 }}>
-                            <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 4 }}>
-                              Evidence — {ctrl.evidence_in_window_count} of {ctrl.evidence.length} in window
-                            </div>
-                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                              {ctrl.evidence.map(ev => (
-                                <span key={ev.id ?? ev.filename} title={ev.in_window ? 'Uploaded within the audit window' : 'Uploaded outside the audit window'} style={{
-                                  display: 'inline-flex', alignItems: 'center', gap: 6, padding: '2px 8px', borderRadius: 6, fontSize: 11,
-                                  border: '1px solid var(--border)',
-                                  background: ev.in_window ? 'var(--success-bg)' : 'var(--secondary)',
-                                  color: ev.in_window ? 'var(--success)' : 'var(--muted)',
-                                }}>
-                                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: ev.in_window ? 'var(--success)' : 'var(--muted)' }} />
-                                  {ev.filename}
-                                </span>
-                              ))}
-                            </div>
-                          </div>
-                        ) : (
-                          <div style={{ marginTop: 8, fontSize: 11, color: 'var(--muted)' }}>No evidence collected.</div>
-                        )}
+                        <ControlEvidenceTree
+                          ctrl={ctrl}
+                          onNavigateToEvidence={onNavigateToEvidence}
+                          onOpenArtifact={openArtifact}
+                          openingFileId={openingFileId}
+                        />
                       </div>
                     )
                   })}
@@ -602,6 +788,8 @@ function AuditorsDrawer({ organizationId, engagement, onClose }: AuditorsDrawerP
   const [auditors, setAuditors] = useState<EngagementAuditor[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [userId, setUserId] = useState('')
+  const [kind, setKind] = useState<EngagementAuditorKind>('external')
+  const [members, setMembers] = useState<OrgMemberSummary[] | null>(null)
   const [busy, setBusy] = useState(false)
 
   const load = () => {
@@ -611,12 +799,23 @@ function AuditorsDrawer({ organizationId, engagement, onClose }: AuditorsDrawerP
   }
   useEffect(() => { load() }, [organizationId, engagement.id])
 
+  // An internal auditor is a member of this organisation, so they are picked
+  // from the member list rather than typed in by id.
+  useEffect(() => {
+    if (kind !== 'internal' || members !== null) return
+    getOrgMemberSummaries(organizationId)
+      .then(setMembers)
+      .catch(err => setError(err?.message ?? 'Could not load the organisation\'s members.'))
+  }, [kind, members, organizationId])
+
+  const chooseKind = (next: EngagementAuditorKind) => { setKind(next); setUserId('') }
+
   const handleGrant = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!userId.trim()) return
     setBusy(true); setError(null)
     try {
-      await grantEngagementAuditor(organizationId, engagement.id, userId.trim())
+      await grantEngagementAuditor(organizationId, engagement.id, userId.trim(), kind)
       setUserId(''); load()
     } catch (err: any) {
       setError(err?.message ?? 'Could not grant access.')
@@ -642,25 +841,49 @@ function AuditorsDrawer({ organizationId, engagement, onClose }: AuditorsDrawerP
   return (
     <Drawer width={520} onClose={onClose}>
       <DrawerHeader
-        title="External auditors"
+        title="Auditors"
         subtitle={<>{engagement.name}</>}
         onClose={onClose}
       />
 
       <div style={{ padding: 24, flex: 1, display: 'flex', flexDirection: 'column', gap: 20 }}>
         <HelpNote>
-          An auditor you add here gets <strong>read-only</strong> access to <strong>this engagement only</strong> — its
-          controls, evidence, and queries. They can't see anything else in your organisation. They reach it from their
-          own “My engagements” list after signing in.
+          An auditor you add here reviews <strong>this engagement only</strong>: they see its controls, evidence and
+          queries, move evidence through the review board, and raise queries. An <strong>external</strong> auditor
+          can't see anything else in your organisation and reaches the engagement from their own “My engagements”
+          list after signing in. An <strong>internal</strong> auditor is one of your own members; they cannot accept
+          evidence they own, evidence their team is accountable for, or a response they submitted themselves.
+          No auditor sees your organisation's internal notes.
         </HelpNote>
 
         {error && <div role="alert" style={{ padding: '10px 14px', background: 'var(--error-bg)', borderRadius: 8, color: 'var(--text)', fontSize: 13 }}>{error}</div>}
 
         <form onSubmit={handleGrant} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <label htmlFor="auditor-user" style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>Grant access</label>
+          <div className="eng-auditor-kind" role="radiogroup" aria-label="Kind of auditor">
+            <label className="eng-auditor-kind-option">
+              <input type="radio" name="auditor-kind" checked={kind === 'external'} onChange={() => chooseKind('external')} />
+              External auditor
+            </label>
+            <label className="eng-auditor-kind-option">
+              <input type="radio" name="auditor-kind" checked={kind === 'internal'} onChange={() => chooseKind('internal')} />
+              Internal auditor (a member of this organisation)
+            </label>
+          </div>
           <div style={{ display: 'flex', gap: 8 }}>
-            <input id="auditor-user" type="text" value={userId} onChange={e => setUserId(e.target.value)}
-              placeholder="Auditor's user ID" className={INPUT_CLASS} style={{ fontSize: 13 }} />
+            {kind === 'internal' ? (
+              <select id="auditor-user" value={userId} onChange={e => setUserId(e.target.value)} className={INPUT_CLASS}>
+                <option value="">{members === null ? 'Loading members…' : 'Choose a member'}</option>
+                {(members ?? []).map(m => (
+                  <option key={m.user_id} value={m.user_id}>
+                    {m.user?.display_name || m.user?.email || m.user_id} ({m.role})
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input id="auditor-user" type="text" value={userId} onChange={e => setUserId(e.target.value)}
+                placeholder="Auditor's user ID" className={INPUT_CLASS} />
+            )}
             <button type="submit" disabled={busy || !userId.trim()} style={{
               padding: '9px 16px', borderRadius: 8, border: 'none',
               background: busy || !userId.trim() ? 'var(--muted-bg)' : 'var(--primary)',
@@ -684,6 +907,7 @@ function AuditorsDrawer({ organizationId, engagement, onClose }: AuditorsDrawerP
               return (
                 <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 10, border: '1px solid var(--border)', borderRadius: 8, padding: '10px 14px', background: 'var(--panel)' }}>
                   <div style={{ flex: 1, minWidth: 0, fontSize: 13, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis' }}>{a.email ?? a.user_id}</div>
+                  <span className={`eng-auditor-kind-badge is-${a.kind ?? 'external'}`}>{a.kind === 'internal' ? 'Internal' : 'External'}</span>
                   <span style={{ padding: '2px 10px', borderRadius: 10, fontSize: 11, fontWeight: 600, background: meta.bg, color: meta.color }}>{meta.label}</span>
                   {a.status === 'active' && (
                     <button onClick={() => void handleRevoke(a)} disabled={busy} style={{
@@ -776,7 +1000,7 @@ function QueriesDrawer({ organizationId, engagement, onClose }: QueriesDrawerPro
       <DrawerHeader
         title={selected ? 'Query' : 'Auditor queries'}
         subtitle={selected
-          ? <>{selected.scf_id} · raised by {selected.raised_by_email ?? 'unknown'}</>
+          ? <>{selected.scf_id ?? selected.evidence_id} · raised by {selected.raised_by_name ?? selected.raised_by_email ?? 'unknown'}</>
           : <>{engagement.name}</>}
         onClose={onClose}
       />
@@ -802,7 +1026,7 @@ function QueriesDrawer({ organizationId, engagement, onClose }: QueriesDrawerPro
               ) : (
                 (selected.responses ?? []).map(r => (
                   <div key={r.id} style={{ border: '1px solid var(--border)', borderRadius: 8, padding: '10px 14px' }}>
-                    <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 4 }}>{r.email ?? r.user_id ?? 'unknown'} · {new Date(r.created_at).toLocaleString()}</div>
+                    <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 4 }}>{r.name ?? r.email ?? 'unknown'} · {new Date(r.created_at).toLocaleString()}</div>
                     <div style={{ fontSize: 13, color: 'var(--text)', whiteSpace: 'pre-wrap' }}>{r.content}</div>
                   </div>
                 ))
@@ -860,7 +1084,7 @@ function QueriesDrawer({ organizationId, engagement, onClose }: QueriesDrawerPro
                   return (
                     <button key={q.id} onClick={() => openQuery(q)} style={{ textAlign: 'left', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 14px', background: 'var(--panel)', cursor: 'pointer' }}>
                       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                        <strong style={{ fontSize: 12, color: 'var(--muted)' }}>{q.scf_id}</strong>
+                        <strong style={{ fontSize: 12, color: 'var(--muted)' }}>{q.scf_id ?? q.evidence_id}</strong>
                         <span style={{ fontSize: 13, color: 'var(--text)', flex: 1, minWidth: 0 }}>{q.title}</span>
                         <span style={{ padding: '1px 8px', borderRadius: 10, fontSize: 11, fontWeight: 600, background: meta.bg, color: meta.color }}>{meta.label}</span>
                         <span style={{ fontSize: 11, color: 'var(--muted)' }}>{q.response_count} repl{q.response_count === 1 ? 'y' : 'ies'}</span>
@@ -881,8 +1105,11 @@ function QueriesDrawer({ organizationId, engagement, onClose }: QueriesDrawerPro
 // Main Page
 // ---------------------------------------------------------------------------
 
-export default function EngagementsPage({ organizationId }: EngagementsPageProps) {
+export default function EngagementsPage({
+  organizationId, onNavigateToControl, onNavigateToEvidence, openReview, onOpenReviewConsumed,
+}: EngagementsPageProps) {
   const confirm = useConfirm()
+  const [review, setReview] = useState<{ engagement: AuditEngagement; view: ReviewWorkspaceView; focus: ReviewFocus | null } | null>(null)
   const [engagements, setEngagements] = useState<AuditEngagement[]>([])
   const [frameworks, setFrameworks] = useState<FrameworkInfo[]>([])
   const [loading, setLoading] = useState(true)
@@ -893,6 +1120,7 @@ export default function EngagementsPage({ organizationId }: EngagementsPageProps
   const [auditorsEngagement, setAuditorsEngagement] = useState<AuditEngagement | null>(null)
   const [queriesEngagement, setQueriesEngagement] = useState<AuditEngagement | null>(null)
   const [deleting, setDeleting] = useState<string | null>(null)
+  const [reviewNotice, setReviewNotice] = useState<string | null>(null)
 
   const load = async () => {
     setLoading(true)
@@ -910,6 +1138,21 @@ export default function EngagementsPage({ organizationId }: EngagementsPageProps
   useEffect(() => {
     fetchFrameworks(false).then(setFrameworks).catch(() => {})
   }, [])
+
+  // A notification (or any other caller) asked for one engagement's review
+  // workspace. Wait for the list, open it, then tell the caller it is done.
+  useEffect(() => {
+    if (!openReview || loading) return
+    const engagement = engagements.find(e => e.id === openReview.engagementId)
+    if (engagement) {
+      setReviewNotice(null)
+      setReview({ engagement, view: openReview.view ?? 'board', focus: openReview.focus ?? null })
+    } else {
+      setReview(null)
+      setReviewNotice('That engagement is not in your list. It may have been deleted, or you may no longer have access to it.')
+    }
+    onOpenReviewConsumed?.()
+  }, [openReview, loading, engagements, onOpenReviewConsumed])
 
   const nameById = useMemo(() => Object.fromEntries(frameworks.map(f => [f.id, f.name])), [frameworks])
   const frameworkName: FrameworkNamer = (id) => nameById[id] ?? id
@@ -952,6 +1195,24 @@ export default function EngagementsPage({ organizationId }: EngagementsPageProps
     background: 'var(--card)', color: 'var(--text)', fontSize: 12, cursor: 'pointer',
   }
 
+  if (review) {
+    return (
+      <EngagementReviewWorkspace
+        // A notification for another card of the engagement already open must
+        // reach the board as a new focus, so the focus is part of the key.
+        key={`${review.engagement.id}:${review.focus?.reviewId ?? review.focus?.evidenceId ?? review.focus?.controlScfId ?? ''}`}
+        organizationId={organizationId}
+        engagement={review.engagement}
+        frameworkName={frameworkName}
+        initialView={review.view}
+        initialFocus={review.focus}
+        onBack={() => { setReview(null); void load() }}
+        onNavigateToControl={onNavigateToControl}
+        onNavigateToEvidence={onNavigateToEvidence}
+      />
+    )
+  }
+
   return (
     <div style={{ padding: '24px 32px', maxWidth: 1100, margin: '0 auto' }}>
       {/* Page header */}
@@ -962,6 +1223,13 @@ export default function EngagementsPage({ organizationId }: EngagementsPageProps
           auditors a read-only workspace to review and raise queries.
         </p>
       </div>
+
+      {reviewNotice && (
+        <div className="erb-banner erb-banner-info" role="status">
+          <span>{reviewNotice}</span>
+          <button type="button" className="erb-icon-btn" aria-label="Dismiss" onClick={() => setReviewNotice(null)}>×</button>
+        </div>
+      )}
 
       {/* Explorer toolbar */}
       <ListToolbar
@@ -1025,6 +1293,14 @@ export default function EngagementsPage({ organizationId }: EngagementsPageProps
                 </div>
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flexShrink: 0 }}>
+                  <button
+                    type="button" className="eng-review-entry is-primary"
+                    onClick={() => setReview({ engagement: eng, view: 'board', focus: null })}
+                  >Review board</button>
+                  <button
+                    type="button" className="eng-review-entry"
+                    onClick={() => setReview({ engagement: eng, view: 'dashboard', focus: null })}
+                  >Dashboard</button>
                   <button onClick={() => setScopeEngagement(eng)} style={actionBtn}>View scope</button>
                   <button onClick={() => setPresentEngagement(eng)} style={actionBtn}>Present</button>
                   <button onClick={() => setAuditorsEngagement(eng)} style={actionBtn}>Auditors</button>
@@ -1046,10 +1322,11 @@ export default function EngagementsPage({ organizationId }: EngagementsPageProps
         <CreateEngagementDrawer organizationId={organizationId} frameworks={frameworks} onClose={() => setShowCreateDrawer(false)} onCreated={handleCreated} />
       )}
       {scopeEngagement && (
-        <ScopeDrawer organizationId={organizationId} engagement={scopeEngagement} frameworkName={frameworkName} onClose={() => setScopeEngagement(null)} />
+        <ScopeDrawer organizationId={organizationId} engagement={scopeEngagement} frameworkName={frameworkName} onClose={() => setScopeEngagement(null)} onNavigateToControl={onNavigateToControl} />
       )}
       {presentEngagement && (
-        <PresentationDrawer organizationId={organizationId} engagement={presentEngagement} frameworkName={frameworkName} onClose={() => setPresentEngagement(null)} />
+        <PresentationDrawer organizationId={organizationId} engagement={presentEngagement} frameworkName={frameworkName} onClose={() => setPresentEngagement(null)}
+          onNavigateToControl={onNavigateToControl} onNavigateToEvidence={onNavigateToEvidence} />
       )}
       {auditorsEngagement && (
         <AuditorsDrawer organizationId={organizationId} engagement={auditorsEngagement} onClose={() => setAuditorsEngagement(null)} />

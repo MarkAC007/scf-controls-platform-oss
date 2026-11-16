@@ -475,6 +475,8 @@ class TestTheRoutingTable:
         escalating = {key for key, e in EVENTS.items() if e.escalates}
         assert escalating == {
             "task_overdue", "evidence_rejected", "composite_insufficient",
+            # engrev001: an auditor waiting on the organisation is an escalation.
+            "engagement_evidence_action_required",
         }
 
     def test_an_unregistered_type_stays_narrow_rather_than_widening(self):

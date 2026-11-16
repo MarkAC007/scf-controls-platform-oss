@@ -344,3 +344,76 @@ def test_an_artifact_with_neither_a_period_nor_an_upload_date_is_out():
     ], Q1)
     assert ev["orphan.pdf"]["in_window"] is False
     assert ev["orphan.pdf"]["in_window_basis"] == "upload_date"
+
+
+# --- control -> evidence object -> artifact grouping ------------------------
+
+def _grouping_tree(evidence_by_scf, evidence_objects_by_scf):
+    return build_framework_presentation(
+        framework="iso_27001_2022",
+        scope_rows=[_scope_row("GOV-01")],
+        mappings_by_scf={"GOV-01": {"iso_27001_2022": ["5.1"]}},
+        live_by_scf={},
+        evidence_by_scf=evidence_by_scf,
+        window=(date(2026, 1, 1), date(2026, 12, 31)),
+        evidence_objects_by_scf=evidence_objects_by_scf,
+    )["clauses"][0]["controls"][0]
+
+
+def _artifact(fid, evidence_id, uploaded):
+    return {"id": fid, "evidence_id": evidence_id, "filename": f"{fid}.pdf", "uploaded_at": uploaded}
+
+
+def test_artifacts_are_grouped_under_their_evidence_object():
+    node = _grouping_tree(
+        {"GOV-01": [
+            _artifact("f1", "E-GOV-02", datetime(2026, 3, 1)),
+            _artifact("f2", "E-GOV-01", datetime(2025, 3, 1)),
+            _artifact("f3", "E-GOV-02", datetime(2026, 4, 1)),
+        ]},
+        {"GOV-01": [
+            {"evidence_id": "E-GOV-01", "artifact_title": "Policy", "area_of_focus": "Governance"},
+            {"evidence_id": "E-GOV-02", "artifact_title": "Charter", "area_of_focus": "Governance"},
+        ]},
+    )
+    objs = node["evidence_objects"]
+    assert [o["evidence_id"] for o in objs] == ["E-GOV-01", "E-GOV-02"]
+    assert objs[0]["artifact_title"] == "Policy"
+    assert [a["id"] for a in objs[0]["artifacts"]] == ["f2"]
+    assert [a["id"] for a in objs[1]["artifacts"]] == ["f1", "f3"]
+    # In-window counts are per object (f2 was uploaded before the window).
+    assert objs[0]["in_window_count"] == 0
+    assert objs[1]["in_window_count"] == 2
+    # The flat list is unchanged and now names each artifact's evidence object.
+    assert [e["evidence_id"] for e in node["evidence"]] == ["E-GOV-02", "E-GOV-01", "E-GOV-02"]
+
+
+def test_mapped_evidence_object_without_artifacts_is_still_listed():
+    node = _grouping_tree(
+        {},
+        {"GOV-01": [{"evidence_id": "E-GOV-01", "artifact_title": "Policy", "area_of_focus": "Governance"}]},
+    )
+    assert node["evidence"] == []
+    assert node["evidence_objects"] == [{
+        "evidence_id": "E-GOV-01", "artifact_title": "Policy", "area_of_focus": "Governance",
+        "artifacts": [], "in_window_count": 0,
+    }]
+
+
+def test_artifact_for_an_unmapped_evidence_object_still_gets_a_group():
+    node = _grouping_tree({"GOV-01": [_artifact("f1", "E-XYZ-01", datetime(2026, 3, 1))]}, {})
+    assert [o["evidence_id"] for o in node["evidence_objects"]] == ["E-XYZ-01"]
+    assert node["evidence_objects"][0]["artifact_title"] is None
+    assert [a["id"] for a in node["evidence_objects"][0]["artifacts"]] == ["f1"]
+
+
+def test_evidence_objects_default_to_empty_when_not_supplied():
+    tree = build_framework_presentation(
+        framework="iso_27001_2022",
+        scope_rows=[_scope_row("GOV-01")],
+        mappings_by_scf={"GOV-01": {"iso_27001_2022": ["5.1"]}},
+        live_by_scf={},
+        evidence_by_scf={},
+        window=(None, None),
+    )
+    assert tree["clauses"][0]["controls"][0]["evidence_objects"] == []

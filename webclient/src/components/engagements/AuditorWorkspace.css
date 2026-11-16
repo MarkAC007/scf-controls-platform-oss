@@ -1,0 +1,170 @@
+/* The external auditor's whole workspace: a bar, a list of engagements, and
+   the review workspace for the one that is open. Colours come from the app
+   tokens and engagement-review-tokens.css, so both themes follow. */
+.aw {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  background: var(--erb-page-bg);
+  color: var(--erb-text);
+}
+
+.aw-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 28px;
+  border-bottom: 1px solid var(--border);
+  background: var(--card);
+}
+
+.aw-brand {
+  font-weight: 700;
+  font-size: 15px;
+  color: var(--text);
+}
+
+.aw-role {
+  padding: 2px 10px;
+  border-radius: 10px;
+  background: var(--erb-clause-chip-bg);
+  color: var(--erb-clause-chip);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.aw-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+}
+
+.aw-user {
+  font-size: 13px;
+  color: var(--erb-muted);
+}
+
+.aw-signout,
+.aw-retry {
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.aw-signout:hover,
+.aw-retry:hover { border-color: var(--primary); }
+
+.aw-main {
+  width: 100%;
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 28px 28px 40px;
+}
+
+.aw-title {
+  margin: 0 0 6px;
+  font-size: 22px;
+  color: var(--text);
+}
+
+.aw-intro {
+  margin: 0 0 20px;
+  max-width: 640px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--erb-muted);
+}
+
+.aw-notice,
+.aw-error {
+  margin: 0 0 16px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.aw-notice { background: var(--erb-progress-bg); }
+.aw-error { background: var(--error-bg); }
+
+.aw-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.aw-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 20px;
+  border: 1px solid var(--erb-card-border);
+  border-radius: 12px;
+  background: var(--erb-card-bg);
+}
+
+.aw-card-main { flex: 1; min-width: 0; }
+
+.aw-card-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.aw-card-title {
+  margin: 0;
+  font-size: 16px;
+  color: var(--text);
+}
+
+.aw-card-meta {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: var(--erb-muted);
+}
+
+.aw-status {
+  padding: 2px 10px;
+  border-radius: 10px;
+  background: var(--erb-open-bg);
+  color: var(--erb-open);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.aw-status-active { background: var(--erb-accepted-bg); color: var(--erb-accepted); }
+.aw-status-under_review { background: var(--erb-progress-bg); color: var(--erb-progress); }
+
+.aw-open {
+  flex-shrink: 0;
+  padding: 8px 16px;
+  border: 1px solid var(--primary);
+  border-radius: 8px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.aw-signout:focus-visible,
+.aw-retry:focus-visible,
+.aw-open:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+@media (max-width: 900px) {
+  .aw-bar { padding: 10px 16px; flex-wrap: wrap; }
+  .aw-main { padding: 20px 16px 32px; }
+  .aw-card { flex-direction: column; align-items: stretch; }
+}

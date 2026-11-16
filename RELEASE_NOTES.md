@@ -1,25 +1,24 @@
-# v1.4.0
+# v1.5.0
 
-.
+Improvements to Audit Engagements Module
 
 ## What's new
 
-- Publish a summary of each source scan with the release (PR 1248)
+- Engagements: evidence review board and dashboard (PR 1252)
+- Bump @codemirror/commands from 6.10.4 to 6.11.1 in /webclient (PR 1202)
 
 ## Fixes and improvements
 
-- Gitleaks evidence from push runs only; preflight needs OSV and Workflow Lint (PR 1249)
-- Mask user emails in all backend log lines (PR 1241)
-- Remove the agent-triage and claude-code-review workflows (PR 1247)
-- Pin upload-pages-artifact to v4.0.0 so the docs deploy passes SHA pinning (PR 1246)
-- Close the open docs-site Dependabot alerts and scan docs-site (PR 1242)
-- A runbook for cutting a public release (PR 1240)
-- Remove the unused agent-worker workflow (PR 1239)
-- Drop unused system packages from the backend image (PR 1238)
-- Clear the fixable High/Critical findings the release gate reports (PR 1237)
-- Retire the scheduled OpenWiki workflow (PR 1232)
-- Scope the public-repo token to an oss-release environment (plan 2.3) (PR 1234)
+- Bump esbuild from 0.28.1 to 0.28.2 in /webclient (PR 1208)
+- Bump python-dotenv from 1.2.2 to 1.2.4 in /backend (PR 1215)
+- Engagements: clickable controls, control → evidence → artifact tree, no retired controls (PR 1251)
+
+## Migrations
+
+- `engrev001` — Engagement evidence review board: review state, events, and their supports.
+
+`scripts/upgrade.sh` runs these after its backup. A plain `docker compose up -d` refuses to migrate an existing database until `SCF_MIGRATE_ACK` is set, so read `UPGRADING.md` before upgrading a deployment you cannot restore.
 
 ## Upgrading
 
-- Run `scripts/upgrade.sh v1.4.0` (read `UPGRADING.md` first).
+- Run `scripts/upgrade.sh v1.5.0` (read `UPGRADING.md` first).

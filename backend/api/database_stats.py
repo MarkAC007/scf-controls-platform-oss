@@ -93,6 +93,13 @@ TENANT_SCOPED_EXCLUDED_TABLES: Dict[str, str] = {
     # the whole-DB dump in scripts/backup.sh, not this portable export.
     "audit_log": "append-only audit trail; captured by scripts/backup.sh",
     "audit_engagements": "audit trail; captured by scripts/backup.sh",
+    # The evidence review board of an engagement: the per-card review state and
+    # its append-only transition events. Both hang off audit_engagements, which
+    # is itself excluded, so carrying them would land review rows with no
+    # engagement to belong to. The events are an auditor's signed trail, the
+    # same kind as audit_log. Captured by the whole-DB dump instead.
+    "engagement_evidence_reviews": "engagement review state; child of audit_engagements, captured by scripts/backup.sh",
+    "engagement_evidence_review_events": "append-only engagement review trail; captured by scripts/backup.sh",
     # The guided journey. Excluded on two independent grounds, either of which
     # would be sufficient. First, a passed stage carries a named person's
     # attestation — the same kind of signed trail as audit_log, belonging to
