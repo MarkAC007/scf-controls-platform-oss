@@ -804,7 +804,7 @@ services:
   keycloak:
     # Keycloak 26.3.5. The tag is kept so the line stays readable; the digest is what
     # is pulled. Change the two together.
-    image: quay.io/keycloak/keycloak:26.3@sha256:357829ec7c4693397533035092ad13b0644bcc95ded311f33a3738c4d9e9bdba
+    image: quay.io/keycloak/keycloak:26.8@sha256:c68e286cacd87b942ac1939a0a1481461109d6acd3a57dc496969a319a76bbf0
     container_name: cg-scf-keycloak
     # Container hardening (#947). The KC 26 image is already USER 1000 with
     # group 0 write on /opt/keycloak, so it needs no capabilities at all.
@@ -903,7 +903,7 @@ services:
   # the first admin user with a random temp password printed once to these logs.
   idp-init:
     # Same image as the keycloak service above.
-    image: quay.io/keycloak/keycloak:26.3@sha256:357829ec7c4693397533035092ad13b0644bcc95ded311f33a3738c4d9e9bdba
+    image: quay.io/keycloak/keycloak:26.8@sha256:c68e286cacd87b942ac1939a0a1481461109d6acd3a57dc496969a319a76bbf0
     container_name: cg-scf-idp-init
     # Container hardening (#947). This one-shot only runs kcadm.sh, so unlike
     # the keycloak service it never re-augments and CAN run read-only.

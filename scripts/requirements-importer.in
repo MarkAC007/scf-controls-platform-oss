@@ -7,7 +7,7 @@
 # scripts/lock-python-deps.sh: it pins these and everything they depend on by
 # version and sha256, and it is what Dockerfile.importer installs. After editing
 # this file, run the script and commit both files.
-pandas==2.2.3
+pandas==3.1.1
 openpyxl==3.1.5
 
 # One version per package (backend/tests/test_python_lock.py). numpy comes with
