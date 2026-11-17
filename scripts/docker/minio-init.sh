@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: AGPL-3.0-only
 # =============================================================================
 # minio-init — create the evidence bucket, and the scoped account that reaches
 # only that bucket.

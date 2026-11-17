@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * TeamListFilters — narrow a list to the work one team, or one business
  * function, owns.

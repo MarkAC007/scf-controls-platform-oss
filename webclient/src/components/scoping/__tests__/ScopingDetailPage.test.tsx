@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * ScopingDetailPage.test.tsx — TDD tests for the full-width scoping detail page.
  *

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """The public-repo token lives in the ``oss-release`` environment (plan 2.3).
 
 Only ``cross_and_merge`` runs in that environment, and its first step refuses a

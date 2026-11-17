@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * Integrations is platform-wide, not org-scoped: a tenant admin must not see
  * the section or its nav entry at all (issue #947). The gate is

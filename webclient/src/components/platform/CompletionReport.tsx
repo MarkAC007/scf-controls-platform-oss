@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * CompletionReport — post-apply summary for an applied run.
  *

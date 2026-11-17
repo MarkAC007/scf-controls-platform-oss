@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Tests for materialising evidence reviews and recording review events.
 
 Scripted fake async session, no real Postgres, in the style of

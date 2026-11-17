@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * GraphView — a control's relationships: evidence → control → frameworks →
  * requirement IDs.

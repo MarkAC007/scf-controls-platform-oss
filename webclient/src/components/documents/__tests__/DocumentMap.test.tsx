@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * The document map: a control search names the documents it lands in, with
  * the generated copy openable and the rest marked not generated, and the map

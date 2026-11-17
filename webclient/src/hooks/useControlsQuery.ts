@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { useInfiniteQuery } from '@tanstack/react-query'
 import { fetchControlsPage, type PaginatedControlsResponse } from '../data/catalogApi'
 

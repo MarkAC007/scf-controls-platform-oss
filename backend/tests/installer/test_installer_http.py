@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """HTTP surface of the first-run wizard: token, lockout, and the four middlewares."""
 
 from __future__ import annotations

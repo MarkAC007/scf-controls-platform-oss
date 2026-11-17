@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * ScopingBulkBar.test.tsx — TDD tests for the scoping bulk-action bar.
  *

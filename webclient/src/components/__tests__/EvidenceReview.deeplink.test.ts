@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * The item half of the URL contract (#785), asserted against the source.
  *

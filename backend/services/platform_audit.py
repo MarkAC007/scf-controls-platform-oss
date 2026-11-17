@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Platform-scoped audit trail for actions with no organisation.
 
 Contract §3d. The existing `audit_log` table requires a non-null

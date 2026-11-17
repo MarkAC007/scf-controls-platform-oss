@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * MaturityRoadmap.test.tsx — two render variants.
  *

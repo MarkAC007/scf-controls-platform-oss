@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Vite config for the live dev demo (scripts/dev-demo.sh).
 // Port 7794 sits inside the host's allowed firewall range (7778-7799);
 // /api proxies to the demo backend on 7795.

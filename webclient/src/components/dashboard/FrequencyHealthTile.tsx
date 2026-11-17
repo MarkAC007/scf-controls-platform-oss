@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * FrequencyHealthTile — M4 (#574) dashboard tile.
  *

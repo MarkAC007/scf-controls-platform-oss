@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { useState, useEffect, useMemo, useRef, useId, createContext, useContext } from 'react'
 import ListToolbar from './explorer/ListToolbar'
 import {

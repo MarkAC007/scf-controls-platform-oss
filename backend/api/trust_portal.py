@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Trust Portal Public API — unauthenticated endpoint for trust portal consumers.
 

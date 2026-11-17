@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """An invited contractor arrives as a contractor, and the arrival is audited (#822 phase 2).
 
 ``organization_invites.member_type`` exists for one reason: an employment type

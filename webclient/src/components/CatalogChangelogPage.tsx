@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * CatalogChangelogPage — read-only org changelog of applied catalog changes
  * (GET /api/organizations/{org_id}/catalog-changelog, viewer-visible).

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * OrgReconciliationWizard flow (mocked fetch — backend routes are 501 stubs).
  *

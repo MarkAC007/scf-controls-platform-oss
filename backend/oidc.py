@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Generic OpenID Connect (OIDC) Relying Party (RP) helper for CG SCF (issue #699).
 
 This module is a *provider-agnostic* OIDC client. It performs discovery, JWKS

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Derived succession matching for catalogue frameworks.
 
 Controls declare their own predecessors: the workbook carries a ``Legacy SCF #``

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { forwardRef, useCallback, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { EnrichedControl, ScopedControlsFile, ImplementationStatus } from '../types'
 import AppLink from './AppLink'

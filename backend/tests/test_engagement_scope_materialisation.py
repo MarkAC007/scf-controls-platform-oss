@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Tests for the reworked ``_materialise_scope`` helper.
 
 Increment 1 of the framework-native audit-engagement design

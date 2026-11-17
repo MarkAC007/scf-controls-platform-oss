@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Unit tests for the collector registry (M2, #572, PR 1).
 
 Exercises the resolution chain (payload → registry → empty) and the feature

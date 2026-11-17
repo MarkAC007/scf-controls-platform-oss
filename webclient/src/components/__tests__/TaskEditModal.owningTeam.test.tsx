@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * TaskEditModal: the owning team has to reach the API, and "inherit" has to
  * be a value the API is told about (#822 §6).

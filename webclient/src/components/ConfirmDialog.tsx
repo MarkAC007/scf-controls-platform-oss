@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * ConfirmDialog — the in-app confirmation step (#1157).
  *

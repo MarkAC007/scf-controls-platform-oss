@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Tests for per-endpoint inbox rate limiting (Issue #216)."""
 import pytest
 from rate_limiting import (

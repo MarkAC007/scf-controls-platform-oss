@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-only
 # Scan the lockfiles for known vulnerabilities and apply the blocking policy.
 #
 #   scripts/osv-scan.sh               scan this checkout

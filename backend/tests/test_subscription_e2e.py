@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 End-to-end subscription enforcement tests (Issue #368).
 

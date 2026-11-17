@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """The API must say what timezone its timestamps are in.
 
 Most datetime columns are ``timestamp without time zone`` holding UTC instants

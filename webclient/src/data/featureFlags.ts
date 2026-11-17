@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * Build-time feature flags, and the parity check against the backend's
  * runtime view of the same flags (#787, ISC-80).

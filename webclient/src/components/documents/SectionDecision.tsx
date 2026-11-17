@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * The decision controls for a section the merge could not settle on its own.
  *

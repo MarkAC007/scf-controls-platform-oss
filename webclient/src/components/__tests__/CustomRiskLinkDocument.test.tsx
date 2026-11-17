@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * A custom risk's control link can carry the document that sets the standard
  * it is an exception against (PIG R7, backend #1138).

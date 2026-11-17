@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * targetMaturity.test.ts — the client twin of the backend resolver (PIG R5).
  *

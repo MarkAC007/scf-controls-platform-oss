@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import React, { useState, useEffect, useMemo } from 'react';
 import { apiClient } from '../data/apiClient';
 import { TaskCreationModal } from './TaskCreationModal';

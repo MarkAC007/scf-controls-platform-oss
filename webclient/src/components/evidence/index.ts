@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 export { RecipeCard } from './RecipeCard'
 export { RecipeConfidenceBadge } from './RecipeConfidenceBadge'
 export { CollectionGuidancePanel } from './CollectionGuidancePanel'

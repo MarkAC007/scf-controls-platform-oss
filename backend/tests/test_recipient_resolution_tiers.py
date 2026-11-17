@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Who gets notified: ``resolve_recipients`` at every tier (#822 phase 4).
 
 #822 replaces nine hand-rolled recipient expressions in

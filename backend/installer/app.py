@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """The wizard's HTTP surface.
 
 Threat model, in the order the middleware runs:

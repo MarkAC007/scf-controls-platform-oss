@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Validation for system catalog vendor seed files (backend/data/system_catalog/).
 

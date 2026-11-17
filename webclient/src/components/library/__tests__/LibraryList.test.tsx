@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * LibraryList.test.tsx — TDD tests for the full-width Explorer list view.
  *

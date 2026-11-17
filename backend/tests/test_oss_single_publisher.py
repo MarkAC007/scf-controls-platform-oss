@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """One workflow publishes to the public repository (plan 2.2).
 
 The legacy manual publisher, publish-oss.yml, was a second route to the public

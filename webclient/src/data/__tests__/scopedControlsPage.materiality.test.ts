@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * PIG R6: the paginated list's material filter and weighting order reach the
  * URL — a filter the request never carries would silently show everything.

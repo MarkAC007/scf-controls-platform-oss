@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * DetailSplitLayout — information on the left, inputs in a slide-out panel on
  * the right; open by default, closable, and the choice is remembered.

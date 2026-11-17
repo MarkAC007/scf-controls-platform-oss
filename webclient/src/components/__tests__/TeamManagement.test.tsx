@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * TeamManagement: health signals are advisory. A team with no primary — and a
  * team with nobody on it at all — must render, warn, and stay usable.

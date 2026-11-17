@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Short-lived signed download tokens for browser-accessible evidence file URLs.
 

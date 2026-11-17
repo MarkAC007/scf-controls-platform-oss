@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * AddSystemModal — PIG boundary & recovery fields (issue #1124, backend PR #1135)
  *

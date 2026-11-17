@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * Pinning suite for Task 7 — Consultant Portal restyle.
  *

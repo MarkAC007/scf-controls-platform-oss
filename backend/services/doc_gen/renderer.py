@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Export rendering — Markdown to HTML, and HTML to PDF or Word.
 

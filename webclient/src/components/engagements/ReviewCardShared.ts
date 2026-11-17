@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * Small helpers shared by the review card panel, its discussion thread and the
  * query list. Kept free of React so each piece formats dates and errors the

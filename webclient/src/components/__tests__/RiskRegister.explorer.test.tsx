@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * RiskRegister explorer chrome tests (Phase 3 Task 5)
  *

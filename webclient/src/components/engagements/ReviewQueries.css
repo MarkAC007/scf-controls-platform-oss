@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
 /* Query list for one review target (an evidence object or a control).
    Colours come from engagement-review-tokens.css (--erb-*) and the app
    tokens, both of which are redefined under [data-theme="dark"]. */

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """The OSS snapshot must ship every script that shipped files refer to.
 
 `scripts/prepare-oss.sh` publishes a path-exact allowlist of `scripts/` files

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Roll-up of evidence review status to controls and framework clauses.
 
 The engagement review board's card is the evidence object. A control is

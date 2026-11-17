@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { test } from '@playwright/test'
 
 // Diagnostic helper (not part of CI smoke): prints the widest offending

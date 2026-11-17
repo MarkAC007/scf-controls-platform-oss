@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * RiskAssessmentList Component - Explorer-chrome list view of risk assessments
  *

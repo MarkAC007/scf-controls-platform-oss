@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * Cover for UIP-018 — the Settings index rendered static links with no current
  * section, so a reader deep in Settings could not tell where they were.

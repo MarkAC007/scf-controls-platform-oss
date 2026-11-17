@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * WebhookManagement Component — Per-organisation webhook endpoint CRUD.
  *

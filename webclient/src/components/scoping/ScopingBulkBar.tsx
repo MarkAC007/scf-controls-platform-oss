@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * ScopingBulkBar — floating bulk-action bar for the Control Scoping list view.
  *

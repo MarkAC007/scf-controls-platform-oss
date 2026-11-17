@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Postgres-backed tests for team assignment of controls and evidence (#822 phase 3).
 
 Three things here can only be demonstrated against a real database, which is

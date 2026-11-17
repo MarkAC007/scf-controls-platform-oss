@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * TaskDetailPage — the real comment thread on a non-Scoping surface (#1154).
  *

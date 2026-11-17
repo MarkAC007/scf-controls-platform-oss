@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Unit tests for windowed evidence assessment service (M1a).
 
 Pure-function coverage for the private helpers. Full end-to-end tests (real DB,

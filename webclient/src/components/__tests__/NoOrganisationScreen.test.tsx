@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * NoOrganisationScreen — the screen a signed-in user with no organisation gets.
  *

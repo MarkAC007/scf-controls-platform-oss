@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Frozen contracts for the SCF catalog upgrade feature (WP-C).
 
 Pydantic models for the catalog upgrade + per-org reconciliation API surface

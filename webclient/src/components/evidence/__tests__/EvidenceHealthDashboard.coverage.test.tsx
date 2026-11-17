@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * The *other* health card reads coverage too (#789, ISC-66).
  *

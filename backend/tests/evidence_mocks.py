@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Shared helpers for tests that build mock evidence files.
 
 Three separate modules construct a ``MagicMock`` evidence file and hand it to

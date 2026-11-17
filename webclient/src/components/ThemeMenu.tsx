@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * ThemeMenu — the single look-and-feel control, in the header on every page.
  * Lists built-in and installed themes, and installs new ones from a JSON file.

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Scoped Controls API endpoints.
 Handles CRUD operations for control scoping.

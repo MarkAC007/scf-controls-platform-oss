@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Organisation Invite Service - Business logic for org member invitations.
 

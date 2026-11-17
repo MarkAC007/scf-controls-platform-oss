@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """The proof that an `internal` comment never reaches an auditor.
 
 For an external auditor and for an internal auditor (an org member holding an

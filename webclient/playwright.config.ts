@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { defineConfig, devices } from '@playwright/test'
 
 // Mobile/responsive smoke harness. Runs against the dev-demo stack

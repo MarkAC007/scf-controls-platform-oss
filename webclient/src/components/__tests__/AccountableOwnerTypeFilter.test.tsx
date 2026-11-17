@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * AccountableOwnerTypeFilter: reachable by clicking, and reports the value the
  * server expects (#822 phase 2, ISC-42).

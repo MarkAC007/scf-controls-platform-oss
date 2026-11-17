@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { useState, useEffect, useCallback } from 'react'
 import { apiClient, updateOrgMember } from '../data/apiClient'
 import type { MemberType } from '../types'

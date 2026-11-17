@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Review-workflow rules: constrained transitions and segregation of duties.
 
 Covers ISC-75..77 of the #789 audit lane. Pure functions, no DB — the

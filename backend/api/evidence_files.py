@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Evidence Files API endpoints (Issues #324, #325, #482).
 Handles pre-signed URL generation, file record tracking, lifecycle management,
@@ -1012,6 +1013,8 @@ _EXTENSION_CONTENT_TYPES = {
     ".txt": "text/plain",
     ".yml":  "text/yaml",
     ".yaml": "text/yaml",
+    ".md": "text/markdown",
+    ".markdown": "text/markdown",
 }
 
 

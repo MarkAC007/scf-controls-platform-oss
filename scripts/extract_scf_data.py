@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Extract SCF v4 data from Excel catalog and convert to JSON format.
 

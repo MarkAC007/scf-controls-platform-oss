@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """What a document summary claims about itself.
 
 A ``pending_retirement`` section is a ghost: content the generator has stopped

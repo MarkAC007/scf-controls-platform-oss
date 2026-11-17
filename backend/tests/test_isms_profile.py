@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """ISMS profile registers: validation, tolerant reads and starter rows."""
 from types import SimpleNamespace
 

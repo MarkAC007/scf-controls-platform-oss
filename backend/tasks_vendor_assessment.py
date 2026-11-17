@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Celery task for vendor AI assessments (unified persistence).
 

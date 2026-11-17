@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * WorkScopeContext.test.tsx — the header work scope (#1052).
  *

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Redis URL normalisation shared by the app and the beat healthcheck.
 
 This lived as `_fix_rediss_url` inside `celery_app.py`, which meant it applied

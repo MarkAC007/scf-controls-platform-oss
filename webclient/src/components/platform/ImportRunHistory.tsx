@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * ImportRunHistory — table of platform catalog import runs
  * (GET /api/admin/catalog/upgrade/runs), newest first per backend ordering.

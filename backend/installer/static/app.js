@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // First-run wizard. No inline script (the page ships a strict CSP), no
 // third-party assets, and no stored credential is ever rendered back.
 "use strict";

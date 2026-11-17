@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """The three assurance/KSI flags reach both containers (#787, ISC-78/79).
 
 `docker-compose.yml` uses an explicit environment allow-list with no

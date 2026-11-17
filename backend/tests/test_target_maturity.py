@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Target maturity per domain, with a per-control override (#1125, PIG R5).
 
 The playbook sets a target maturity for each domain, lets a control depart

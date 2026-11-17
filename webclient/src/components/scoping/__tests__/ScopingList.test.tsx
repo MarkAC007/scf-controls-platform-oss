@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * ScopingList.test.tsx — TDD tests for the full-width Explorer list view
  * for Control Scoping (Task 1, Phase 3).

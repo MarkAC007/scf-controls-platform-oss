@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Control Assessment Composite — rollup service.
 
 M3 (#575) — aggregates ``EvidenceWindowAssessment`` rows for a single

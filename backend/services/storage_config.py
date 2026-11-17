@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Resolved evidence-storage configuration.
 
 Phase 0 of the bring-your-own evidence storage work (#967).

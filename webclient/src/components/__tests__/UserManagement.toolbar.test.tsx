@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * UserManagement: toolbar + search + invite button in explorer chrome.
  *

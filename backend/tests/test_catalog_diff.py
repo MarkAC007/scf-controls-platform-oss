@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Tests for backend/services/catalog_diff.py (WP1a, plan §4.2.2-3, §4.7).
 
 Covers, without a live database (the repo's unit-test pattern — DB access is

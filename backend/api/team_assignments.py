@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Team assignment of controls and evidence (#822 phase 3).
 
 Three endpoints, one per verb, all dispatching through

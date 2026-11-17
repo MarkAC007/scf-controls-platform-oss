@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Contract tests for the functions/teams API surface (#822 phase 1).
 
 Deliberately database-free. Everything asserted here is read off the router's

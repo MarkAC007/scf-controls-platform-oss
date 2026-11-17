@@ -1,0 +1,31 @@
+SCF Controls Platform
+Copyright (C) 2025-present Ginga Ninja Holdings Limited, trading as ComplianceGenie.io
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as published
+by the Free Software Foundation, version 3 of the License only.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program, in the file LICENSE.  If not, see
+<https://www.gnu.org/licenses/>.
+
+SPDX-License-Identifier: AGPL-3.0-only
+
+Contributions from individual contributors remain their copyright and are
+licensed under the same terms; see the git history and CONTRIBUTING.md.
+
+Ginga Ninja Holdings Limited is a company registered in Scotland,
+company number SC639849.
+
+Secure Controls Framework (SCF) content is NOT part of this program and is
+not distributed with it. SCF content is (C) the Secure Controls Framework
+Council and is licensed separately under CC BY-ND 4.0; operators obtain the
+SCF workbook themselves.
+
+The AGPL grants no rights to the names "ComplianceGenie.io" or "SCF Controls
+Platform" or to any associated logos. See TRADEMARKS.md.

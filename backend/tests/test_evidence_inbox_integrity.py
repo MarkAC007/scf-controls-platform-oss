@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Tests for the webhook inbox half of evidence integrity (#57).
 

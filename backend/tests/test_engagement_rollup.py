@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Pure tests for services.engagement_rollup — the board -> dashboard roll-up."""
 from __future__ import annotations
 

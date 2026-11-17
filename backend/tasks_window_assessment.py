@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Celery tasks for windowed evidence assessment.
 
 Runs portfolio-level assessment of evidence in time windows derived from

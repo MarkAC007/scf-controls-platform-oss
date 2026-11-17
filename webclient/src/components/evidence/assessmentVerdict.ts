@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * How a verdict is allowed to be worded (#881 WS3).
  *

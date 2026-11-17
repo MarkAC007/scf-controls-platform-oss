@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * RiskMatrix Component - Interactive 5x5 Risk Matrix Visualisation
  *

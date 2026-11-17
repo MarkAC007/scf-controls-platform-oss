@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * Class-level guard: no screen offers a person as the unit of assignment for a
  * control or an evidence task.

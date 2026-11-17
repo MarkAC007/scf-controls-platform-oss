@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Framework succession: ingestion purity, the matcher, the diff, the gate.
 
 The behaviour under test is a heuristic sitting next to a declared crosswalk,

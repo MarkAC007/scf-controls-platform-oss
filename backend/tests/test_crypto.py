@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Crypto contract tests (Issue #947, contract §3a).
 
 Covers ISC-20..25, ISC-40 (no key configured) and ISC-23 (the encryption key is

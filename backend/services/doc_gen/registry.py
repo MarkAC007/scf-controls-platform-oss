@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Generator registry — loads ``templates/generators.yaml`` into typed records.
 

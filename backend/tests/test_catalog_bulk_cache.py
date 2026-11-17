@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Tests for bulk catalog export caching (ETag/304 + gzip)."""
 import inspect
 import os

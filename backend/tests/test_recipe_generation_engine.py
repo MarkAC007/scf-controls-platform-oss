@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Tests for the AI recipe generation engine (mock mode)."""
 import os
 import sys

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Unit tests for the frequency-health detection service (M4 PR 1, #574).
 
 Pure-function coverage for the cadence-detection algorithm. These tests

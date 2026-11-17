@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Tests for services/scoping_service.py (catalog upgrade WP2a).
 
 The bulk-scope/bulk-unscope endpoint bodies were extracted into

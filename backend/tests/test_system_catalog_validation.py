@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Tests for system catalog vendor-file validation."""
 import os
 import sys

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { createContext, useContext, useEffect, useMemo, useState, ReactNode } from 'react'
 import {
   ThemeDefinition,

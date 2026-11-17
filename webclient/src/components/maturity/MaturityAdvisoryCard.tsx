@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import type { EvidenceMaturityLevel } from './EvidenceMaturityTypes'
 import { getEvidenceMaturityInfo, getNextMaturityLevel } from './EvidenceMaturityTypes'
 import { MaturityBadge } from './MaturityBadge'

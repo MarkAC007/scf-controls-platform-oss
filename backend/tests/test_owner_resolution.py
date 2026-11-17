@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Unit tests for the owner-resolution fallback chain (#822 phase 3).
 
 No database. That is the point: the chain is the piece of #822 that replaces

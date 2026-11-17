@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { useState, useCallback, useEffect, useRef } from 'react'
 import type {
   EvidenceId,

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Behavioural contract for OIDC id_token verification (``oidc._decode_with_jwks``).
 
 ``backend/oidc.py`` is the only consumer of Authlib, through ``authlib.jose``.

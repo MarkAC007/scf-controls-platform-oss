@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * Integrations API client — the platform-admin credential surface behind
  * /api/admin/integrations (issue #947, CONTRACT.md §3e).

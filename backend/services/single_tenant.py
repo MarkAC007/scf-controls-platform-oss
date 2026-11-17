@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Single-tenant safety guard for OSS self-hosted deployments.
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import type { ScopedControlsFile, ScopedControl, EvidenceTracking, EvidenceId, UserSimple } from '../types'
 import * as api from './apiClient'
 

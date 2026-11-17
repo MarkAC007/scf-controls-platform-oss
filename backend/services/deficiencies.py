@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Control deficiency record, a plan of action and milestones (PIG R8).
 
 A deficiency is an organisation's action item with no vendor

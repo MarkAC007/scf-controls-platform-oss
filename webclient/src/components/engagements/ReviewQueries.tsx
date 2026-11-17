@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { reviewKeys, type ReviewViewer } from '../../data/engagementReviewApi'

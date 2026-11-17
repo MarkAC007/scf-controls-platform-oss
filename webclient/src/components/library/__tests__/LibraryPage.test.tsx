@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * LibraryPage.test.tsx — TDD tests for the library container.
  *

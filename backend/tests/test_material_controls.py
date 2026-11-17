@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Material controls, the approved procedure link and weighting order (#1126, PIG R6).
 
 The playbook treats some controls as material: they cannot leave scope, or

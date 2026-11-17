@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Behaviour of the evidence-review discussion thread (api/engagement_comments.py).
 
 Threading, edit with history, soft delete and moderation, mentions limited to

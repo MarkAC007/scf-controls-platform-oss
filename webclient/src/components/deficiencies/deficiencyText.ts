@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import type { ConfirmOptions } from '../../contexts/ConfirmContext'
 import type { ActionItemPriority, ActionItemStatus, Deficiency, UserSimple } from '../../types'
 

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Debounced window assessment on ingest (#569 parity, work-order item 6).
 
 Upload confirmation and webhook ingest must schedule `assess_window_task`

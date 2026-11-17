@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Windowed evidence assessment service.
 
 Assesses an evidence object over a time window derived from

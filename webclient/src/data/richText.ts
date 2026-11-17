@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * richText — one renderer for user-written descriptions (task descriptions,
  * system descriptions, and anything else a person types into a free-text
@@ -39,7 +40,7 @@ import DOMPurify from 'dompurify'
 // DOMPurify drops `target` and `rel` on anchors regardless of ALLOWED_ATTR, so
 // forcing them in an afterSanitizeAttributes hook is the documented way to
 // get new-tab links that cannot reach back into the opener.
-const purifier = typeof window !== 'undefined' ? DOMPurify(window) : DOMPurify
+export const purifier = typeof window !== 'undefined' ? DOMPurify(window) : DOMPurify
 if (purifier !== DOMPurify) {
   purifier.addHook('afterSanitizeAttributes', node => {
     if (node.tagName === 'A') {

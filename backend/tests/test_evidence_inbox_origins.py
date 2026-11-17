@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Unit tests for webhook intake declaration-origin computation (M2 PR 1.1, #572 §3).
 
 Exercises the pure helper that classifies where `artifact_type` / `collector_id`

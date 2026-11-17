@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { useLayoutEffect, useRef } from 'react'
 import { NotificationBell } from './NotificationBell'
 import RefreshControl from './RefreshControl'

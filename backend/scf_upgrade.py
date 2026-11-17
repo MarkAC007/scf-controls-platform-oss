@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Upgrade steps shared by every deployment target.
 
 ``migrate`` and ``verify`` have to behave identically whether the platform is

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Every third-party image the product builds on or runs is pinned by digest.
 
 A tag such as ``postgres:15-alpine`` resolves to whatever the registry serves

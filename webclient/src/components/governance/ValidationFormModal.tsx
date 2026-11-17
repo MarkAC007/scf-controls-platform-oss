@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * ValidationFormModal — record that a control has been validated (PIG R10).
  *

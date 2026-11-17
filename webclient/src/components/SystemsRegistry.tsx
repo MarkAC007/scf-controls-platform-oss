@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { getSystems, deleteSystem } from '../data/apiClient'
 import type { System, SystemType, SystemStatus, CollectionInterfacesFile, CollectionInterface } from '../types'

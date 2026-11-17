@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * TaskOwningTeamField — the team that owns one task, and whether it was
  * inherited or chosen (#822 phase 4).

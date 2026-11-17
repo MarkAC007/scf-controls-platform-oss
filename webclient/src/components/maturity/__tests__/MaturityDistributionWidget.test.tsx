@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * The dashboard maturity chart links to the advice it was hiding (#789).
  *

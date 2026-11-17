@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Control and evidence team assignments are policed by the DATABASE (#822 phase 3).
 
 Six of the phase-3 acceptance criteria are claims about PostgreSQL, not about

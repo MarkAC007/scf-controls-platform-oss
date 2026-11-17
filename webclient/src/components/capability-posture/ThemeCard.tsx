@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import type { CapabilityThemeResponse, CapabilityThemeEvidencePosture } from '../../types'
 import AxisDot from './AxisDot'
 import { bandToClass, formatAxisPercent } from './axisHelpers'

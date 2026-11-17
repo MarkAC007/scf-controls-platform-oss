@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Side doors an auditor could have used to reach what the engagement routes
 withhold. Each of these was found by review, not by the routes' own tests:
 

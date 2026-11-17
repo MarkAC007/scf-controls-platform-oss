@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Structural tests for system catalog models."""
 import os
 import sys

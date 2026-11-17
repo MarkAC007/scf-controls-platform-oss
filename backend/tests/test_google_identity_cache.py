@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Google access-token validation must not sign users out on a request burst.
 
 Prod runs Google auth, where every API request was validated with two live

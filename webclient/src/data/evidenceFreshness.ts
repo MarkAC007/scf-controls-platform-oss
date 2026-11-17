@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * Cadence and coverage, kept separately legible (#789 audit lane).
  *

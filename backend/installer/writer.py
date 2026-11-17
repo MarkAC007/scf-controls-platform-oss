@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Everything that touches the filesystem.
 
 Ordering matters and is part of the contract:

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Tests for the destructive-reseed guard and the import staging directory.
 
 Two defects are covered here, both in the path that a self-hosted operator

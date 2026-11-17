@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Audit Middleware - Baseline audit capture for every mutation endpoint.
 

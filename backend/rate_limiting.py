@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Rate limiting middleware for CG SCF Backend API.
 

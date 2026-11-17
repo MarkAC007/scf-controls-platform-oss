@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """The image publisher can push only an image built from the sanitized snapshot.
 
 ``publish-oss-images.yml`` has two build contexts: the OSS snapshot that

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * Turning the stored merged markdown back into per-section bodies.
  *

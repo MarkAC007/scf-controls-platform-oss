@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """The live framework registry: read it, and heal it when it is missing.
 
 ``catalog_framework_registries`` holds, per catalogue version, each framework's

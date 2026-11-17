@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * ScopingList — full-width Explorer list view for the Control Scoping tab.
  *

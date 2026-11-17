@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * useTaskTeamOwnership: who owns a task, inherited or overridden (#822 phase 4).
  *

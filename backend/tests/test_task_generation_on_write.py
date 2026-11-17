@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """A tracked evidence item gets its first collection task on write (#789).
 
 The gap this closes: #781 made assignment reach the columns the schedulers read,

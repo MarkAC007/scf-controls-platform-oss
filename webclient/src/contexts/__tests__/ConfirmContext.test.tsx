@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * #1157 — the in-app confirmation that replaces window.confirm / window.prompt.
  *

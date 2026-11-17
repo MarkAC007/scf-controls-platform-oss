@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * ConfirmContext — promise-returning confirmation, in the page (#1157).
  *

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import type { CSSProperties, JSX, KeyboardEvent, ReactNode } from 'react'
 
 export interface ExplorerListRowProps {

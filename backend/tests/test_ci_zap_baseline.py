@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """The ZAP baseline scan can fail, and only a written disposition quiets it (plan 8.2).
 
 The Docker Build job boots the stack and runs a passive ZAP baseline scan of

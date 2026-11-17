@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Deep mobile verification (not part of CI smoke): sub-tabs, detail panes,
 // modals/drawers at 390px against the dev-demo stack, plus PWA offline reload
 // against the vite preview build. Run: node e2e/deep-checks.mjs

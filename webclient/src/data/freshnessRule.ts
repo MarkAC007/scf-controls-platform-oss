@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * The wording of the evidence freshness rule, in one place.
  *

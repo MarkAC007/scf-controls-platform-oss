@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Celery tasks for CG SCF.
 Contains background job definitions for async processing.

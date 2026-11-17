@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Organizations API endpoints.
 Handles CRUD operations for organizations.

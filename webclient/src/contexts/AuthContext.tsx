@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react'
 import { GoogleOAuthProvider } from '@react-oauth/google'
 import { getConfig } from '../data/runtimeConfig'

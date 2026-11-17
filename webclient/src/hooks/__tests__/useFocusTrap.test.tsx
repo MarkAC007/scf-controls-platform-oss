@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * Cover for UIP-015 — Shift+Tab from the New engagement drawer's first field
  * moved focus to the "+ New Engagement" button behind the open overlay.

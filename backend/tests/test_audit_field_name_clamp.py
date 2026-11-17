@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """``field_name`` must fit its column, whatever a caller composes.
 
 ``AuditLog.field_name`` is a bounded ``varchar``, and several callers build the

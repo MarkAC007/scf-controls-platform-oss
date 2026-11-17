@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Evidence health measured from coverage, not from arrival (#789 audit lane).
 
 The dashboard and the upcoming-deadlines endpoint both anchored on

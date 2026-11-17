@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { useState, useMemo } from 'react'
 import { useCapabilityThemes, useCapabilityThemeEvidencePosture } from '../hooks/useCapabilityThemes'
 import { useScopedControlsStats } from '../hooks/useScopedControlsQuery'

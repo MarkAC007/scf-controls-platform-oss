@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Migration sanity tests for the six catalog-upgrade migrations (WP0).
 
 Follows the repo's migration-test pattern (test_composite_migration.py,

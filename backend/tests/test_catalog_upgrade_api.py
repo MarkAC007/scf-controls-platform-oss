@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Endpoint tests for the platform catalog-upgrade admin API (WP1c, plan §4.5).
 
 FastAPI TestClient + ``app.dependency_overrides`` (the in-process, scripted

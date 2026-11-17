@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * The Evidence page's domain filter lists only the domains present in the
  * evidence set, with counts, so it cannot take its options from

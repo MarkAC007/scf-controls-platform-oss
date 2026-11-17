@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-only
 """Report what the CDM retirement will drop — read-only, run BEFORE upgrading.
 
 CDM retirement, phase 5 (#907, design doc ``docs/plans/cdm-retirement.md``

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Staleness: has the organisation moved since this document was generated?
 
 The pipeline has always computed an input fingerprint and skipped a

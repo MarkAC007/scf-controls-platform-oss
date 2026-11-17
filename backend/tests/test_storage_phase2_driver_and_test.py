@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Phase 2 of bring-your-own evidence storage: one driver, four presets, and a
 real connection test.
 

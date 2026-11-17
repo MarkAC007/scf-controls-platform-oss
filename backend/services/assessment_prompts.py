@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Assessment Prompt Templates for Evidence AI Assessment.
 

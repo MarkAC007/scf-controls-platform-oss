@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { useState } from 'react'
 import type { ConsultantInvite } from '../../types'
 import { useModalDismiss } from '../../hooks/useModalDismiss'

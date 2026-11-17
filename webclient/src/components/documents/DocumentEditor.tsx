@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * Document editor — outline, section editing, lifecycle, export.
  *

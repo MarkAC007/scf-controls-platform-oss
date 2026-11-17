@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * CapabilityTestRow — one capability test in the list, and, opened, what was
  * run, what came of it and its findings (PIG R11).

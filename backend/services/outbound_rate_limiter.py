@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Thread-safe rate limiter for outbound API calls to external sources.
 

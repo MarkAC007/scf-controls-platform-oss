@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Human confirmation of an AI evidence assessment (#881 WS3, seam 3).
 
 The product rule these tests exist to hold: an AI verdict is a *suggestion*

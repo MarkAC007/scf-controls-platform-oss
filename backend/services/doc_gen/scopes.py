@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Document scopes — what one domain-scoped document covers under each profile.
 

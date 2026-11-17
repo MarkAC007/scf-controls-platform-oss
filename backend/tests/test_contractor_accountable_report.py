@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """The contractor report: items whose accountable team's primary owner is external (#822 phase 2).
 
 "Which of our controls does an outside party actually own?" is a question an

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * RiskDetailPage — full-width risk detail view with breadcrumb + prev/next pager.
  *

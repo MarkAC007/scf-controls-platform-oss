@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Tests for the system catalog seeder's file-loading layer."""
 import os
 import sys

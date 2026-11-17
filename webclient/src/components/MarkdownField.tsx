@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * MarkdownField — the editor half of RichText. A textarea with a small
  * toolbar (bold, italic, code, link, list) and a Write / Preview switch, so

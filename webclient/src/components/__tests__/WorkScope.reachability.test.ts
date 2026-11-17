@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * The work-scope wiring contract (#1052), asserted against the source.
  *

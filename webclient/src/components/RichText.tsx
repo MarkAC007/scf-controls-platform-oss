@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * RichText — renders a person-written description (task, system, …) with
  * clickable links, code and simple Markdown. See data/richText.ts for the

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * CompensatingControlFormModal — record a compensating control for a control,
  * or edit one (PIG R9).

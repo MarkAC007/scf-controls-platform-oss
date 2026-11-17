@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Platform-admin API for the five operator-settable integration credentials.
 
 Contract §3e. Every endpoint requires platform admin. No response body ever

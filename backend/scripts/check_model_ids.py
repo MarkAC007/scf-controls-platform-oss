@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-only
 """Fail if any Anthropic model in the registry no longer resolves (#782).
 
 The bug this exists to prevent

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """The image scan gate judges every Critical or High finding (plan 7.3).
 
 ``scripts/release/scan_gate.py`` reads the Grype reports scan-sbom.sh wrote:

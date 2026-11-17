@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Evidence Windowed Assessment API endpoints (M1a).
 

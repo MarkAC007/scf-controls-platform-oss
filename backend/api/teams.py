@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Functions and Teams API endpoints (#822 phase 1).
 

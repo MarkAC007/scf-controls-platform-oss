@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * richText — the one renderer for user-written descriptions.
  *

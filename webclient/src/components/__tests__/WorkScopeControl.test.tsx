@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * WorkScopeControl.test.tsx — the header control, and the thing it is for:
  * selecting "My teams" must put ``my_teams=true`` on the controls request.

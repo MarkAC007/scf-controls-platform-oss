@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * The live Control Library list (PIG R6): the material filter and the
  * weighting order reach the paginated query, and a material row says so.

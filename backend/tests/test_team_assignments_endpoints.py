@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Contract tests for the team-assignment API surface (#822 phases 3 and 4).
 
 Deliberately database-free, matching ``test_teams_api.py``. Everything here is

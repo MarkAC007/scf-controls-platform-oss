@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Celery observability — logging gate and beat liveness (#784).
 
 Two defects, one issue, because together they were silent:

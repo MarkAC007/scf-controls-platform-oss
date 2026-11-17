@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * DetailSplitLayout — reference information on the left, the organisation's
  * own inputs in a panel that slides out from the right.

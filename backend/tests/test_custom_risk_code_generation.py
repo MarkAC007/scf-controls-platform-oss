@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Regression for #1036: custom risk codes must advance past R-ORG-10.
 
 The generator used a string max over ``risk_code``; once R-ORG-1..R-ORG-10

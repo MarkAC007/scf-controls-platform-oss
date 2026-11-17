@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Contract test for the catalog upgrade API surface (WP-C, plan §4.5).
 
 Pins every §4.5 path, method, and response model. Downstream WPs fill the 501

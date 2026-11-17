@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """A task carries its tenant, and its team cannot be another tenant's (#822 phase 4).
 
 Five phase-4 acceptance criteria live in this file. Four of them are claims

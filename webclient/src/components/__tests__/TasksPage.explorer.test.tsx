@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * TasksPage — Explorer list conversion tests (Phase 3 Task 7).
  *

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """scripts/upgrade.sh checks a release's attestations before it upgrades.
 
 The public release workflow signs a build-provenance attestation for the two

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { useState, useEffect, useRef } from 'react'
 import { apiClient, type VersionInfo, type VersionUpdateInfo } from '../data/apiClient'
 import { useModalDismiss } from '../hooks/useModalDismiss'

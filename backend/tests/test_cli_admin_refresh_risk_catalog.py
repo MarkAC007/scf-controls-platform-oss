@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """`python -m cli.admin refresh-risk-catalog`: argument wiring + exit codes.
 
 The service is exercised in test_risk_catalog_service.py; here the session

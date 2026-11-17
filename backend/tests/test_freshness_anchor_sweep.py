@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Every remaining place a freshness date was anchored on arrival (#57, #789).
 
 The coverage-vs-arrival distinction was fixed at the two places it was most

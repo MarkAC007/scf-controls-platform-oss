@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Regression tests for GET /api/users/me under static master-key auth.
 

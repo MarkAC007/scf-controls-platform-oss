@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * Collection-frequency vocabulary — frontend half of the single source of
  * truth (#783).

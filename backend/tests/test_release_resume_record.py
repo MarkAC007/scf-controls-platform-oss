@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """A resumed release takes its image digests from the release, not from the tag.
 
 ``release-oss.yml`` can die half-done and be dispatched again. Before this file's

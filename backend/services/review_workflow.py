@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Review-workflow rules: state transitions and segregation of duties.
 
 Both rules are pure functions over plain values so they can be asserted

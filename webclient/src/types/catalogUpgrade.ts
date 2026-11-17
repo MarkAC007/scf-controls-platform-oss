@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * Catalog upgrade API shapes — frontend mirror of the frozen WP-C contracts
  * in ``backend/schemas_catalog_upgrade.py`` (platform-admin surface).

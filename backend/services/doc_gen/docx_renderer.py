@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Word (.docx) export — the HTML from :func:`markdown_to_html` walked into python-docx.
 
 **Why this re-parses HTML instead of reading the Markdown.** The obvious shape

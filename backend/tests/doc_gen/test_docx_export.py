@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Tests for the Word (.docx) export.
 
 Two halves. The first is pure: ``render_docx`` is a function from Markdown to

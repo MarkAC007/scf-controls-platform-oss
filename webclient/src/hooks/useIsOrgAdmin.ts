@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * useIsOrgAdmin — is the person looking at this screen an admin of this
  * organisation?

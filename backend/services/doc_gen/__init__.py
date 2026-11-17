@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Document generation -- in-platform ISMS documentation from scoped controls.
 

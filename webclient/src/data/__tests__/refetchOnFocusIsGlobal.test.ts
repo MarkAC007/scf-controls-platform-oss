@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * Focus refetch is a single global default, and stays that way (epic #921).
  *

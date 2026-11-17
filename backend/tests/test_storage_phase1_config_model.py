@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Phase 1 of bring-your-own evidence storage: the configuration model.
 
 ISA 20260912-0930, criteria 9 to 15.

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 AI recipe generation engine for the systems knowledge catalog.
 

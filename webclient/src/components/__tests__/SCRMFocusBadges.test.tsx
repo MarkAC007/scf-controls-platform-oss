@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * SCRMFocusBadges.test.tsx — two render variants over one tier table.
  *

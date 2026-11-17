@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """A task's owning team: what a write means, and what an omission means (#822 §6).
 
 ``owning_team_id`` is the override. ``NULL`` inherits the parent evidence

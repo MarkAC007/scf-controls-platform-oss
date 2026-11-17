@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * BusinessSizeGuidance.test.tsx — hover-only right-sizing pills.
  *

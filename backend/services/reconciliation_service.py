@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Per-org catalog reconciliation service (WP2b read side + WP2c apply/rollback,
 plan §4.3).
 

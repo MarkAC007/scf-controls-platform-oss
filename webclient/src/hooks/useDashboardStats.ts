@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { useMemo } from 'react'
 import type { EnrichedControl, ScopedControlsFile, ImplementationStatus, EvidenceMaturityLevel } from '../types'
 import { getScopedControl, getEvidenceTracking } from '../data/scopingService'

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """The one accessor for every credential the backend reads.
 
 Resolution order, per credential, evaluated on EVERY call:

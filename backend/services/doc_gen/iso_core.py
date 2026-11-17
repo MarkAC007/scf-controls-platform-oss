@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 ISO/IEC 27001 core pack — the clause documents and registers.
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { useState, useRef, useEffect } from 'react'
 import type { EvidenceMaturityLevel } from './EvidenceMaturityTypes'
 import { getEvidenceMaturityInfo } from './EvidenceMaturityTypes'

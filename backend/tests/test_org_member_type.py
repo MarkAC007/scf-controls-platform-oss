@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """``organization_members.member_type`` — default, who may write it, and what it is not (#822 phase 2).
 
 ``member_type`` records whether somebody is permanent staff or an external

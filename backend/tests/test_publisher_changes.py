@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """The publisher's own change declarations, read out of the 2026.3+ sheets.
 
 Three sheets are new in SCF 2026.3 and none of them existed before:

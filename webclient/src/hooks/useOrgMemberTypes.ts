@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * useOrgMemberTypes — is this person, in THIS organisation, staff or a
  * contractor? (#822 phase 2)

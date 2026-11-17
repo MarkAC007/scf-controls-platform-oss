@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Tests for in-process DSN composition (issue #947, Lane C).
 
 `DATABASE_URL` still wins byte-for-byte when it is set. When it is not, the DSN

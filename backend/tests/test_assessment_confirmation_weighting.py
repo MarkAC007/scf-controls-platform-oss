@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Confirmation weighting on the evidence-quality axis (#881 WS3, seam 4).
 
 An AI verdict nobody has looked at is not worth the same as one a person has

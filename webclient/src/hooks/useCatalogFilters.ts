@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { fetchCatalogDomains } from '../data/catalogApi'

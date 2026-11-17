@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """External auditors can read their engagement's notifications, and only those.
 
 An external auditor is not an org member, so the #852 org gate alone hides

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Honesty guard for the tenant export/import scope (#872).
 
 The app-level export at ``GET /database/backup`` is a PARTIAL tenant-migration

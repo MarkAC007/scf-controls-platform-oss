@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-only
 """Decide whether an OSV-Scanner result blocks.
 
 scripts/osv-scan.sh runs the scanner and hands its JSON output to this file.

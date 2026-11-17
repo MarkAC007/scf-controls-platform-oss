@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * FilterRadio: radio-group primitive for explorer filter sidebars.
  * Renders a radiogroup with labelled options; only one option active at a time.

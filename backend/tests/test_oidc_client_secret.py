@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Regression: oidc.get_client_secret() must resolve through services.secrets.
 
 The first live Keycloak login on a wizard-provisioned stack (#947) died with

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Phase 4 — the compose topology, the bundled row, and the one writer of it.
 
 ISA 20260912-0930, criteria 33, 34, 36 and 28. The installer package's own

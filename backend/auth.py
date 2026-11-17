@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Authentication module for CG SCF Backend.
 Provides dual-mode authentication: Google OAuth2 JWT or API Key fallback.

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Review state of evidence objects within an audit engagement.
 
 The card on the engagement review board is the evidence object (SCF ERL id,

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Backend-side migration guard (upgrade design Part E, §2.5).
 
 The canonical operator workflow *for an upgrade* is

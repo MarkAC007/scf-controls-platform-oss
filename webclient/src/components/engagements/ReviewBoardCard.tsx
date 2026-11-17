@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useRef, useState, type DragEvent, type KeyboardEvent } from 'react'
 import {
   AI_VERDICT_LABELS,

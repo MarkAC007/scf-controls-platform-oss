@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
 /* Shell around the engagement review board and dashboard. Colours come from
    engagement-review-tokens.css and the app tokens; nothing is set in JSX. */
 .erw {

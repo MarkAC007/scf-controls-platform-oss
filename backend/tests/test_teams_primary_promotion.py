@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Postgres-backed tests for exclusive team roles (#822 phase 1).
 
 ``uq_team_primary`` and ``uq_team_delegate`` are **non-deferrable** partial

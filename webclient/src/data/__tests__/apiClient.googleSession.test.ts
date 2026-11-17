@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * apiClient — in Google auth mode only a 401 may end the session.
  *

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * assessmentVerdict — the wording rule, tested as a rule (#881 WS3).
  *

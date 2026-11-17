@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * CatalogVersionCard: the upgrade-available banner shows only when the
  * platform catalog version is ahead of the org's reconciled version.

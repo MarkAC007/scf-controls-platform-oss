@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * EvidenceFileList — review gating, the unassessable state, and bulk assess (#881).
  *

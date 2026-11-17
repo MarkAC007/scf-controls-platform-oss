@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * The membership adapters carry ``member_type`` (#822 phase 2, ISC-42).
  *

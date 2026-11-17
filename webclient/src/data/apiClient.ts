@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * API Client for CG SCF Backend
  * Handles all HTTP communication with the FastAPI backend

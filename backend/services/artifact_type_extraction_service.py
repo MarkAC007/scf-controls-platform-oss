@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Artifact-type extraction service.
 
 One-shot per-control extraction of the concrete artifact types that satisfy an

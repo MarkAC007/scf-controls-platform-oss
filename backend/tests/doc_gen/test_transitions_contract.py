@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """The lifecycle-options contract between the service and the API.
 
 ``available_transitions()`` already returns UI-shaped dicts. The API used to

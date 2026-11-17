@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Pydantic schemas for request/response validation.
 These define the API contract and handle data validation.

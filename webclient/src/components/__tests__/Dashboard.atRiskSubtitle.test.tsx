@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { act, render } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { DashboardStats } from '../../hooks/useDashboardStats'

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """What switching document structure does to the documents already stored.
 
 The settings card shows this before the switch is confirmed. It is computed

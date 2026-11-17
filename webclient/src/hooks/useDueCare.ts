@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { useQuery, type QueryClient } from '@tanstack/react-query'
 import { listControlValidations, listPostureSnapshots } from '../data/apiClient'
 import type { ControlValidationFilters, ControlValidationList, PostureSnapshot } from '../types'

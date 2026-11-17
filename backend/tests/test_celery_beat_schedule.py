@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Tests for Celery beat wiring of scheduled GRC automation jobs."""
 from __future__ import annotations
 

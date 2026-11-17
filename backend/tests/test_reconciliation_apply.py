@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Tests for the WP2c side of backend/services/reconciliation_service.py
 (apply + rollback + cancel, plan §4.3, §4.7).
 

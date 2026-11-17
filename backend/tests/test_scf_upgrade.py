@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Unit tests for the shared upgrade verifier.
 
 ``verify`` is the one piece of upgrade logic that both scripts/upgrade.sh and

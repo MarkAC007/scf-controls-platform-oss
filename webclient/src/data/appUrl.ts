@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * The app's URL vocabulary — every query parameter that names a location.
  *

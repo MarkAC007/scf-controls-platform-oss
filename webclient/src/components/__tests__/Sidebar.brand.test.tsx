@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * Sidebar brand block and logo-fallback coverage (#807).
  *

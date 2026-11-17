@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Deprecated-catalog read-path tests for consumers 5 through 11 of the
 catalog-upgrade plan (docs/plans/scf-catalog-upgrade.md, section 4.4).

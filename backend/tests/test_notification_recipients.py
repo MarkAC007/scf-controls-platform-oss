@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Who gets notified, per event (#822 phase 4).
 
 Phase 3's ``tests/test_owner_resolution.py`` pins the 1-2-3 chain itself. This

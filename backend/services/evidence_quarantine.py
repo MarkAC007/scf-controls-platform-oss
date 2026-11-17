@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Quarantine, system-actor audit, and deferred-verification dispatch (#57).
 

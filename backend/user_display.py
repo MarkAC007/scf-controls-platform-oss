@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """One way to render a user as a label (#781).
 
 Free-text `owner` is gone from evidence tracking, so every surface that used to

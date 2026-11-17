@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * OwningTeams: which teams own a control or an evidence item.
  *

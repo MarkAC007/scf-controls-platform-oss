@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Every release image's SBOM is scanned with Grype and the repository's VEX.
 
 Plan 7.2. ``scan-sbom.sh`` downloads the vulnerability database once, scans

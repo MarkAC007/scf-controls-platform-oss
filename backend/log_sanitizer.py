@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Log-forging defence, shared by the API and the Celery workers.
 
 Lifted verbatim out of ``main.py`` (#784). It lived there as a private class

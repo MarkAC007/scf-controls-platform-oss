@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """The frontend installs from one lockfile, and no install can change it.
 
 ``webclient/package-lock.json`` is the frontend's lockfile. CI and both

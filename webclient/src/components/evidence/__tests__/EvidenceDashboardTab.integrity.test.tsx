@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * EvidenceDashboardTab — numeric and display integrity (#788).
  *

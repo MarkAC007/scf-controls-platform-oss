@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * DiffPreview — publisher-declared succession in the diff table.
  *

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * VendorManagement URL behaviour tests — Phase 4 Task 5
  *

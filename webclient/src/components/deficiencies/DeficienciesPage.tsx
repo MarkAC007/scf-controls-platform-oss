@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * DeficienciesPage — the organisation's plan of action and milestones (PIG R8).
  *

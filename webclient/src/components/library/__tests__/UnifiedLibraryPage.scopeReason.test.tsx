@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * #1157 — removing a control from scope asks for a reason in the in-app
  * dialog (it used to be a native prompt). Nothing is sent until a reason is

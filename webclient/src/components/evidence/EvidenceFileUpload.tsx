@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { useState, useRef, useCallback, DragEvent, ChangeEvent } from 'react'
 import {
   getEvidenceUploadUrl,
@@ -43,6 +44,7 @@ const DEFAULT_ACCEPTED_TYPES = [
   'image/jpeg',
   'application/json',
   'text/yaml',
+  'text/markdown',
 ]
 
 // ---- Helpers ----
@@ -65,12 +67,15 @@ function friendlyType(mimeType: string): string {
   if (mimeType.includes('image')) return 'image'
   if (mimeType === 'application/json') return 'JSON'
   if (mimeType === 'text/yaml') return 'YAML'
+  if (mimeType === 'text/markdown') return 'Markdown'
   return mimeType
 }
 
 function normalizeContentType(file: File): string {
   const ext = file.name.toLowerCase().split('.').pop()
   if (ext === 'yaml' || ext === 'yml') return 'text/yaml'
+  // Browsers report .md as '', text/x-markdown or text/markdown; store one name.
+  if (ext === 'md' || ext === 'markdown') return 'text/markdown'
   if (ext === 'json' && !file.type) return 'application/json'
   return file.type
 }
@@ -376,7 +381,7 @@ export function EvidenceFileUpload({
   const isError = state.phase === 'error'
   const isComplete = state.phase === 'complete'
 
-  const acceptAttr = [...acceptedTypes, '.yml', '.yaml', '.json'].join(',')
+  const acceptAttr = [...acceptedTypes, '.yml', '.yaml', '.json', '.md', '.markdown'].join(',')
 
   // ---- Render ----
 

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Tests for api.engagement_evidence_reviews — the evidence review board API.
 
 No real Postgres: loaders are monkeypatched with hand-built BoardData, and the

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Unit tests for tasks_vendor_assessment — unified persistence.
 
 Uses a recording fake sync session (no database) to verify that:

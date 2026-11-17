@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * VendorDetailPage — single-scroll vendor detail per VendorDetail.html spec.
  *

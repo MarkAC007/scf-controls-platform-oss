@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * Engagement notifications open the engagement's review board on the card.
  *

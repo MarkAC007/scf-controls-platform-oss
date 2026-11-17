@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Credential generation.
 
 Pure functions, no I/O.  Nothing here accepts an operator-chosen password for a

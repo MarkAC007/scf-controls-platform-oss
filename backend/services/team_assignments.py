@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """The team-assignment type registry (#822 phase 3).
 
 One table, one entry per assignable thing. Everything that differs between

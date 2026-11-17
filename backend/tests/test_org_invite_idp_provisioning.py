@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Invite-time identity provisioning against the bundled Keycloak (#984).
 
 Inviting someone to an organisation used to write a row and send an email. On a

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Document profiles and the scopes they resolve to (templates/bundles.yaml).
 
 The load-time checks matter most: a profile that drops a domain silently

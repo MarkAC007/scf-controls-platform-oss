@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * EvidenceDetailPage — full-width evidence detail view with breadcrumb + prev/next pager.
  *

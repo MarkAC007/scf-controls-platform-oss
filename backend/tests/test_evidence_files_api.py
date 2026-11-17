@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Unit tests for the Evidence Files API endpoints (Issue #325).
 Tests upload-url, confirm, list, and soft-delete endpoints.

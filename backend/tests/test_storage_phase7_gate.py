@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Phase 7 of bring-your-own evidence storage: the readiness gate and /health.
 
 ISA 20260912-0930, criteria 52, 53 and 54.

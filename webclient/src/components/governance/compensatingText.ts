@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import type { CompensatingControl, EffectivenessRating } from '../../types'
 
 export const EFFECTIVENESS_RATINGS: EffectivenessRating[] = ['full', 'partial', 'minimal']

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import type { MemberType, UserSimple } from '../../types'
 import { userLabel } from '../../data/userDisplay'
 import { ContractorBadge, withContractorSuffix } from '../ContractorBadge'

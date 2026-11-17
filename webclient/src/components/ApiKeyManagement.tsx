@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * ApiKeyManagement Component — Per-organisation API key CRUD.
  *

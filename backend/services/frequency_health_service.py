@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Frequency-health detection service.
 
 M4 PR 1 (#574) — pure compute layer for the Frequency Health UX. Detects

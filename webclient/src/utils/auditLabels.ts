@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * How audit-log rows read: field labels, entity type names and value
  * formatting, shared by the org-wide page and the per-control panel so the two

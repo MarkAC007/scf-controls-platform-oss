@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Offline guards on the LLM model inventory (#782).
 
 The liveness check in ``scripts/check_model_ids.py`` needs an API key and so

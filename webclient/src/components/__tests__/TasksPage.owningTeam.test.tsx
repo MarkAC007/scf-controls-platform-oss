@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * TasksPage: the work queue has to SHOW team-resolved work, and its team
  * filter must never lie about what it is showing (#822 phase 4).

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * The "Import journey file" control: an org admin uploads a practitioner's
  * artefact and it goes to the import endpoint as `template`. Non-admins never

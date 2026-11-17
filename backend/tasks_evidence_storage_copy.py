@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Celery task that copies an organisation's evidence objects between stores.
 
 An organisation that switches evidence store keeps every file it already had.

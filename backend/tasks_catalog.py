@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Celery tasks for catalogue imports and the catalog upgrade flow.
 
 Two families share this module:

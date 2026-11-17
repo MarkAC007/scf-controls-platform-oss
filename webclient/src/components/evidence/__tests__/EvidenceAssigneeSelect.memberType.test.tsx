@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * The contractor label on the one path a badge cannot take
  * (#822 phase 2, ISC-42).

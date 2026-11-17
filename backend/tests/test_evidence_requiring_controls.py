@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """GET /organizations/{org_id}/evidence/{evidence_id}/requiring-controls.
 
 The catalogue's ``control_mappings`` is the SCF's global mapping; the

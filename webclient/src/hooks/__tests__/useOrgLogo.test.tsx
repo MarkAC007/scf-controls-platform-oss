@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * Regression cover for #807 — the header logo rendered as a broken image.
  *

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * VendorActionItemsPanel -- Action items display for a vendor (assessment follow-up actions).
  *

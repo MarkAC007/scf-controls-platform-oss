@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Identifiers passed into the credential accessors must not look like secrets.
 
 `services.secrets` resolves every credential through `get_secret(name)` /

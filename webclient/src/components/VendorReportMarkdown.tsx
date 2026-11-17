@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * VendorReportMarkdown -- lightweight markdown renderer for vendor
  * assessment reports (no external markdown dependency).

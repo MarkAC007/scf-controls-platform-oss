@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Custom Risk Definitions API endpoints.
 Handles CRUD operations for organisation-defined custom risks.

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Gate vocabulary for imported journeys: ``scf_ids`` and ``generator`` (#1121).
 
 A practitioner's playbook names its own slices — a handful of controls for one

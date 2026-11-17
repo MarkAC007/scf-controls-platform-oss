@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """The beat scheduler that stamps a liveness heartbeat (#784).
 
 Split from ``celery_beat_heartbeat`` so that module stays free of Celery

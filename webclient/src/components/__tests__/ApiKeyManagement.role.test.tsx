@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * ApiKeyManagement — choosing a key's role at creation (#1117).
  *

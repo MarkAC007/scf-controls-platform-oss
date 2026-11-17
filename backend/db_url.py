@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Build the database DSN in-process instead of on the host.
 
 `DATABASE_URL` used to be assembled by docker compose, which meant the password

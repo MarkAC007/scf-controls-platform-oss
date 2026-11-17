@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * CapabilityTestsPage — the organisation's capability tests (PIG R11).
  *

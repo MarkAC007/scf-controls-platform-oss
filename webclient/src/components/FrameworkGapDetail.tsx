@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { useState, useCallback } from 'react'
 import type { ScopedControlsFile } from '../types'
 import { createOrUpdateScopedControl } from '../data/apiClient'

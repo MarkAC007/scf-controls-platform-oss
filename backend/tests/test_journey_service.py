@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Tests for the guided journey engine.
 
 The invariants worth defending here are the ones that protect a signature or

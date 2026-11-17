@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Every Anthropic client is built with a key resolved through `services.secrets`.
 
 Issue #1000. `anthropic.Anthropic()` with no `api_key=` does not fail — the SDK

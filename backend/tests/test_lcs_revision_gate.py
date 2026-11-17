@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """The approved Statement of Applicability is the Living Control Set revision (#1123, PIG R3).
 
 The playbook asks for an approved revision of the organisation's control set.

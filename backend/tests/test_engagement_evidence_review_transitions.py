@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Pure tests for the engagement evidence review transition table.
 
 No database. services.engagement_evidence_review.validate_transition is the

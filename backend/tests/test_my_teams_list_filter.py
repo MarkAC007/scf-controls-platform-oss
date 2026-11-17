@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """The ``my_teams`` filter on the controls and evidence lists (#1052).
 
 #822 built the machinery: ``team_assignment_filter`` is an EXISTS clause that

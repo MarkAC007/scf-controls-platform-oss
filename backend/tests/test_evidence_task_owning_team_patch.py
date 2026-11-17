@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """``PATCH /api/evidence-tasks/{task_id}`` and ``owning_team_id`` (#822 phase 4).
 
 The field is additive, but it is not an ordinary field, because **null is a

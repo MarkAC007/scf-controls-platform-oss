@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 CG SCF Backend API
 FastAPI application for managing compliance controls and evidence tracking.

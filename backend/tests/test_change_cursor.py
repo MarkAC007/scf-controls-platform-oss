@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Change cursor endpoint + middleware attribution, against a real Postgres.
 
 Epic #921 (data refresh), defect #922 (dead audit middleware).

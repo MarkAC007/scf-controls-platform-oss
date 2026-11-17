@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Celery application configuration for CG SCF.
 Provides background task processing capabilities.

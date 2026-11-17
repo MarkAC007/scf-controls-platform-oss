@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * apiClient — a structured refusal's `message` must reach the user.
  *

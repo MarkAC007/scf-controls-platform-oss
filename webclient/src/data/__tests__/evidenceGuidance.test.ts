@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * Evidence Guidance stops answering "GENERIC" for nine items in ten (#789).
  *

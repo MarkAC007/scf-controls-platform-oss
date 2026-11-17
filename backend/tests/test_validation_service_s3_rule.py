@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Unit tests for validation_service Rule 5: s3_object_exists (Issue #400).
 

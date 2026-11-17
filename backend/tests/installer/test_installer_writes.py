@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Generation properties, the sentinel, file modes, and the exact `.env` key set."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Text Extraction Service for Evidence AI Assessment.
 
@@ -26,7 +27,7 @@ MAX_TEXT_LENGTH = 50_000  # ~12,500 tokens
 class ExtractedContent:
     """Result of text extraction from an evidence file."""
     text: str
-    extraction_method: str  # pdf, docx, csv, json, txt, yaml, ocr, unsupported
+    extraction_method: str  # pdf, docx, csv, json, txt, yaml, markdown, ocr, unsupported
     page_count: Optional[int] = None
     word_count: int = 0
     truncated: bool = False
@@ -65,6 +66,8 @@ def extract_text_from_bytes(
             return _extract_json(data, max_length)
         elif "yaml" in ct or "yml" in ct:
             return _extract_text(data, "yaml", max_length)
+        elif "markdown" in ct or filename.lower().endswith((".md", ".markdown")):
+            return _extract_text(data, "markdown", max_length)
         elif "text/plain" in ct or filename.lower().endswith(".txt"):
             return _extract_text(data, "txt", max_length)
         elif ct.startswith("image/"):
@@ -228,7 +231,7 @@ def _extract_json(data: bytes, max_length: Optional[int]) -> ExtractedContent:
 # ---------------------------------------------------------------------------
 
 def _extract_text(data: bytes, method: str, max_length: Optional[int]) -> ExtractedContent:
-    """Extract plain text content (CSV, TXT, YAML)."""
+    """Extract plain text content (CSV, TXT, YAML, Markdown)."""
     try:
         # Try UTF-8 first, fall back to latin-1
         try:

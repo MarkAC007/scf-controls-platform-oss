@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * ModernCommentThread — bench restyle (#1154).
  *

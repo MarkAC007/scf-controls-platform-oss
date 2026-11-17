@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Lazy artifact-type extraction on first window assessment.
 
 Self-hosted installs ship the catalog with `required_artifact_types` empty.

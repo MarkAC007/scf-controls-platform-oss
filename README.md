@@ -4,7 +4,7 @@
 [![CodeQL](https://github.com/MarkAC007/scf-controls-platform-oss/actions/workflows/codeql.yml/badge.svg)](https://github.com/MarkAC007/scf-controls-platform-oss/actions/workflows/codeql.yml)
 [![Gitleaks](https://github.com/MarkAC007/scf-controls-platform-oss/actions/workflows/gitleaks.yml/badge.svg)](https://github.com/MarkAC007/scf-controls-platform-oss/actions/workflows/gitleaks.yml)
 [![Semgrep](https://github.com/MarkAC007/scf-controls-platform-oss/actions/workflows/semgrep.yml/badge.svg)](https://github.com/MarkAC007/scf-controls-platform-oss/actions/workflows/semgrep.yml)
-[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](LICENSE)
+[![License: AGPL-3.0-only](https://img.shields.io/badge/License-AGPL--3.0--only-blue.svg)](LICENSE)
 
 A self-hosted **Governance, Risk & Compliance (GRC)** platform for managing cybersecurity
 controls with the [Secure Controls Framework (SCF)](https://securecontrolsframework.com/).
@@ -131,8 +131,16 @@ done
 
 ## Licensing
 
-- **Software (this repository):** [GNU Affero General Public License v3.0](https://www.gnu.org/licenses/agpl-3.0.html)
-  — see [`LICENSE`](LICENSE).
+Copyright (C) 2025-present Ginga Ninja Holdings Limited, trading as ComplianceGenie.io.
+
+- **Software (this repository):** [GNU Affero General Public License, version 3 only](https://www.gnu.org/licenses/agpl-3.0.html)
+  (`SPDX-License-Identifier: AGPL-3.0-only`) — see [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).
+  If you run a modified version for users over a network, the AGPL requires you to offer
+  them its source.
+- **Names and logos:** the AGPL grants no rights to "ComplianceGenie.io", "SCF Controls
+  Platform" or their logos; forks must rebrand. See [`TRADEMARKS.md`](TRADEMARKS.md).
+- **Contributions:** licensed inbound under `AGPL-3.0-only`, the same terms as the project —
+  see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 - **SCF catalogue content:** [Creative Commons Attribution-NoDerivatives 4.0 (CC BY-ND 4.0)](https://creativecommons.org/licenses/by-nd/4.0/),
   © the Secure Controls Framework. **Not** included here — download your own workbook from
   [securecontrolsframework.com](https://securecontrolsframework.com/).

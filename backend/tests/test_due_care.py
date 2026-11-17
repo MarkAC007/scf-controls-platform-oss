@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Due-care pack (#1130, PIG R10).
 
 These tests pin:

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Application-layer encryption for credential-bearing columns.
 
 Contract §3a. The key is `SCF_SECRET_KEY`, resolved through

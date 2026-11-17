@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * CatalogVersionCard — org-visible catalog version section for Org Settings.
  *

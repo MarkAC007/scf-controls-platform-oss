@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Regression tests for the v0.26.0 ThinkingBlock production incident.
 
 Opus 5 runs adaptive thinking by default, so a Messages response leads with a

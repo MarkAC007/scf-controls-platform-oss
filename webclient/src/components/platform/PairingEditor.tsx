@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * PairingEditor — successor pairing for controls deprecated by a staged run.
  *

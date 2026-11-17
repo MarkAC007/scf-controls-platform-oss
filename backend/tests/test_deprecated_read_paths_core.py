@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Tests for the deprecated-control read-path consumers §4.4.1-4 (WP3a).
 
 One test class per consumer:

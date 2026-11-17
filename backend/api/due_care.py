@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Due-care pack (PIG R10): control validation and posture snapshots.
 
 * ``POST …/scoped-controls/{scf_id}/validation`` records that an in-scope

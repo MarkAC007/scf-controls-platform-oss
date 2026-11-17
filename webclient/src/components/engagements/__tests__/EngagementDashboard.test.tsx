@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * EngagementDashboard: every number comes from the review-dashboard response.
  *

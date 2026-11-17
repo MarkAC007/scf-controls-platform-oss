@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * OrgApplyProgress — in-flight state of an org reconciliation run while the
  * wizard polls the run detail (applying or rolling back).

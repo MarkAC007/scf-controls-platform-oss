@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Tenant isolation for teams is enforced by the DATABASE, not by Python (#822 phase 1).
 
 Four of the phase-1 acceptance criteria are claims about PostgreSQL:

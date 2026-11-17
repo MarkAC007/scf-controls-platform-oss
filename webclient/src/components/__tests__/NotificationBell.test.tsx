@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * NotificationBell 'catalog' branch: a catalog reconciliation notification
  * navigates to the catalog changelog and is marked read.

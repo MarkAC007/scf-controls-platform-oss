@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Engagement evidence review board and dashboard API.
 
 The card is the evidence object (SCF ERL id). It maps to the engagement's

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Escalation fires on crossings, not on state (#822 phase 4).
 
 The scheduler runs daily and asks "is this overdue?". That is a question about

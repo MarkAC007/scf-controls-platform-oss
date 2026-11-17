@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """The one HTTP client for TypeSafe's System One API (Jev).
 
 Jev is a *judgment* model, not a text generator: you hand it a ``state`` and a

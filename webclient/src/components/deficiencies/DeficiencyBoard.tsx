@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * DeficiencyBoard — the deficiencies as a Kanban board, one column per
  * status (#1155, PIG R8). The Deficiencies page shows it beside the list.

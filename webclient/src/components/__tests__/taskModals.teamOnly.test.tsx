@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * Neither task modal offers a person, and neither sends one.
  *

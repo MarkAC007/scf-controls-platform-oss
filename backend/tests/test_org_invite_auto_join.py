@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Sign-in acceptance of provisioned invites (#984 follow-up).
 
 On a bundled-Keycloak install the invite creates the invitee's Keycloak account

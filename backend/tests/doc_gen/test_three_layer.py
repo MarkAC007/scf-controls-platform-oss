@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Three-layer merge -- the engine the whole feature rests on.
 
 One test per cell of the decision matrix, plus the two structural outcomes.

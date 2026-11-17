@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Unit tests for artifact type extraction service (M1a).
 
 Covers the pure parsing behaviour used by the extraction CLI. DB + LLM paths

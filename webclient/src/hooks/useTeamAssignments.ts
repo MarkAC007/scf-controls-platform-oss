@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * useTeamAssignments — team ownership for a whole list, one request per page.
  *

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * Section identity: the mapping between a stored section row and the text in
  * the document that belongs to it.
