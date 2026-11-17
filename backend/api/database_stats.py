@@ -155,6 +155,11 @@ TENANT_SCOPED_EXCLUDED_TABLES: Dict[str, str] = {
     "consultant_client_relationships": "cross-tenant relationship; not portable",
     "consultant_invites": "invitation state; not portable",
     "organization_invites": "invitation state; not portable",
+    # External auditors invited across the email-domain rule. Each row points
+    # at a local users row and an identity-provider account id, neither of
+    # which exists on a destination deployment, and the engagements their
+    # grants open (audit_engagements) are excluded too. Re-invite instead.
+    "organization_auditors": "external auditor list; IdP account ids not portable, captured by scripts/backup.sh",
     "organization_reconciliation_runs": "run history; not required for a move",
     # Teams & team assignments — collaboration tables not yet in the export set.
     "teams": "not yet represented in the export set",

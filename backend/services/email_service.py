@@ -663,6 +663,77 @@ async def send_invitation_email(
         return None
 
 
+async def send_auditor_invitation_email(
+    to_email: str,
+    organization_name: str,
+    inviter_name: str,
+    custom_message: Optional[str] = None,
+    temporary_password: Optional[str] = None,
+):
+    """Tell an external auditor they can sign in to review engagements.
+
+    No accept link: an external auditor is not joining the organisation, so
+    there is nothing to accept. Signing in is enough -- the access an admin
+    assigned turns on at first sign-in. ``temporary_password`` is never logged.
+    """
+    logger.info("📧 AUDITOR INVITATION EMAIL REQUEST to %s", _mask_email(to_email))
+    if not resend_enabled():
+        logger.warning("⚠️  EMAIL SERVICE DISABLED - auditor invitation to %s will NOT be sent",
+                       _mask_email(to_email))
+        return None
+
+    try:
+        safe_org = html.escape(organization_name)
+        safe_inviter = html.escape(inviter_name)
+        subject = f"{organization_name} has invited you to review an audit on CG SCF"
+        custom_section = ""
+        if custom_message:
+            custom_section = f"""
+            <div style="background-color: #f8f9fa; padding: 16px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #1976d2;">
+                <p style="margin: 0; font-style: italic; color: #555;">"{html.escape(custom_message)}"</p>
+                <p style="margin: 8px 0 0 0; font-size: 13px; color: #888;">— {safe_inviter}</p>
+            </div>
+            """
+        if temporary_password:
+            credentials = f"""
+            <p style="font-size: 16px; line-height: 1.6;">An account has been created for you. Sign in with this email address and the temporary password below; you will be asked to set your own.</p>
+            <p><code style="font-family: ui-monospace, Menlo, monospace; font-size: 16px; padding: 8px 12px; border: 1px solid #e5e7eb; border-radius: 6px;">{html.escape(temporary_password)}</code></p>
+            """
+        else:
+            credentials = """
+            <p style="font-size: 16px; line-height: 1.6;">Sign in with the account you already use for this platform, or your organisation's identity provider.</p>
+            """
+        html_body = f"""
+        <html>
+        <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; color: #333;">
+            <h1 style="color: #1976d2; font-size: 22px;">You're invited to review an audit</h1>
+            <p style="font-size: 16px; line-height: 1.6;">
+                <strong>{safe_inviter}</strong> at <strong>{safe_org}</strong> has added you as an external auditor
+                on SCF Controls Platform. You will see only the audit engagements they assign to you.
+            </p>
+            {custom_section}
+            {credentials}
+            <div style="text-align: center; margin: 32px 0;">
+                <a href="{APP_URL}/" style="display: inline-block; background-color: #1976d2; color: white; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-weight: 500;">Sign in</a>
+            </div>
+            <p style="font-size: 13px; color: #888;">If you weren't expecting this email, you can ignore it.</p>
+        </body>
+        </html>
+        """
+        email = resend.Emails.send({
+            "from": RESEND_FROM_EMAIL,
+            "to": [to_email],
+            "subject": subject,
+            "html": html_body,
+            "tags": [{"name": "type", "value": "auditor_invitation"}],
+        })
+        logger.info("✅ Auditor invitation email sent to %s", _mask_email(to_email))
+        return email.get("id")
+    except Exception as e:
+        logger.error("❌ Auditor invitation email to %s failed: %s", _mask_email(to_email), type(e).__name__)
+        return None
+
+
 # Test function
 async def test_email_service():
     """Test the email service configuration."""

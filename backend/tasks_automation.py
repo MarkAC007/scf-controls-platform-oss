@@ -100,6 +100,17 @@ async def _run_risk_acceptance_expiry() -> Dict[str, Any]:
         await _dispose_async_engine()
 
 
+async def _run_auditor_grant_expiry() -> Dict[str, Any]:
+    from services.org_auditors import revoke_expired_grants
+
+    try:
+        async with AsyncSessionLocal() as db:
+            revoked = await revoke_expired_grants(db)
+        return {"status": "completed", "grants_revoked": int(revoked)}
+    finally:
+        await _dispose_async_engine()
+
+
 async def _run_control_validation_notices() -> Dict[str, Any]:
     try:
         async with AsyncSessionLocal() as db:
@@ -266,6 +277,29 @@ def notify_expired_risk_acceptances_task(self) -> Dict[str, Any]:
             "notify_expired_risk_acceptances_task[%s] failed: %s", task_id, exc, exc_info=True
         )
         raise
+
+
+# ---------------------------------------------------------------------------
+# External auditor access ends with the engagement
+# ---------------------------------------------------------------------------
+@shared_task(
+    bind=True,
+    name=f"{TASK_PREFIX}.revoke_expired_auditor_grants_task",
+    time_limit=600,
+    soft_time_limit=540,
+)
+def revoke_expired_auditor_grants_task(self) -> Dict[str, Any]:
+    """Revoke external auditor grants the day after an engagement's end date.
+
+    Not behind TASK_AUTOMATION_ENABLED: this is access control, not a
+    notification, and switching notifications off must not leave an outside
+    auditor's access open past the engagement.
+    """
+    task_id = self.request.id
+    logger.info("revoke_expired_auditor_grants_task[%s] starting", task_id)
+    result = asyncio.run(_run_auditor_grant_expiry())
+    logger.info("revoke_expired_auditor_grants_task[%s] revoked=%s", task_id, result["grants_revoked"])
+    return result
 
 
 # ---------------------------------------------------------------------------

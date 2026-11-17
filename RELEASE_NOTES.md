@@ -1,11 +1,18 @@
-# v1.5.2
+# v1.6.0
 
-licensing in code
+update to Auditor invite workflow
 
-## Fixes and improvements
+## What's new
 
-- AGPL-3.0-only, NOTICE, TRADEMARKS.md, SPDX headers (PR 1257)
+- Invite external auditors across the email-domain rule (PR 1260)
+- Accept Markdown uploads and render them in the preview (PR 1259)
+
+## Migrations
+
+- `orgaud001` — External auditor roster: ``organization_auditors``.
+
+`scripts/upgrade.sh` runs these after its backup. A plain `docker compose up -d` refuses to migrate an existing database until `SCF_MIGRATE_ACK` is set, so read `UPGRADING.md` before upgrading a deployment you cannot restore.
 
 ## Upgrading
 
-- Run `scripts/upgrade.sh v1.5.2` (read `UPGRADING.md` first).
+- Run `scripts/upgrade.sh v1.6.0` (read `UPGRADING.md` first).

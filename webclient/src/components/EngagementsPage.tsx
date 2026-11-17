@@ -28,6 +28,10 @@ import {
   type PresentationEvidenceItem,
   getEvidenceFile,
   getOrgMemberSummaries,
+  listOrgAuditors,
+  inviteOrgAuditor,
+  grantEngagementToOrgAuditor,
+  type OrgAuditor,
 } from '../data/apiClient'
 import { fetchFrameworks, type FrameworkInfo } from '../data/catalogApi'
 import { useConfirm } from '../contexts/ConfirmContext'
@@ -791,6 +795,10 @@ function AuditorsDrawer({ organizationId, engagement, onClose }: AuditorsDrawerP
   const [userId, setUserId] = useState('')
   const [kind, setKind] = useState<EngagementAuditorKind>('external')
   const [members, setMembers] = useState<OrgMemberSummary[] | null>(null)
+  const [roster, setRoster] = useState<OrgAuditor[] | null>(null)
+  const [inviting, setInviting] = useState(false)
+  const [invite, setInvite] = useState({ email: '', display_name: '', firm: '' })
+  const [tempPassword, setTempPassword] = useState<{ email: string; password: string } | null>(null)
   const [busy, setBusy] = useState(false)
 
   const load = () => {
@@ -809,14 +817,51 @@ function AuditorsDrawer({ organizationId, engagement, onClose }: AuditorsDrawerP
       .catch(err => setError(err?.message ?? 'Could not load the organisation\'s members.'))
   }, [kind, members, organizationId])
 
-  const chooseKind = (next: EngagementAuditorKind) => { setKind(next); setUserId('') }
+  // An external auditor is picked from the organisation's external auditor
+  // list (Users → External auditors). A disabled entry cannot be assigned.
+  const loadRoster = () => {
+    listOrgAuditors(organizationId)
+      .then(setRoster)
+      .catch(err => setError(err?.message ?? 'Could not load the external auditor list.'))
+  }
+  useEffect(() => { if (kind === 'external' && roster === null) loadRoster() }, [kind, roster, organizationId])
+  const assignable = (roster ?? []).filter(a => a.status !== 'disabled')
+
+  const chooseKind = (next: EngagementAuditorKind) => { setKind(next); setUserId(''); setInviting(false) }
+
+  const handleInvite = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!invite.email.trim()) return
+    setBusy(true); setError(null)
+    try {
+      const created = await inviteOrgAuditor(organizationId, {
+        email: invite.email.trim(),
+        display_name: invite.display_name.trim() || undefined,
+        firm: invite.firm.trim() || undefined,
+      })
+      setRoster(prev => [...(prev ?? []), created])
+      setUserId(created.id)
+      setInviting(false)
+      setInvite({ email: '', display_name: '', firm: '' })
+      if (created.idp_temporary_password) {
+        setTempPassword({ email: created.email, password: created.idp_temporary_password })
+      }
+    } catch (err: any) {
+      setError(err?.message ?? 'Could not invite the auditor.')
+    } finally { setBusy(false) }
+  }
 
   const handleGrant = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!userId.trim()) return
     setBusy(true); setError(null)
     try {
-      await grantEngagementAuditor(organizationId, engagement.id, userId.trim(), kind)
+      if (kind === 'external') {
+        await grantEngagementToOrgAuditor(organizationId, engagement.id, userId)
+        loadRoster()
+      } else {
+        await grantEngagementAuditor(organizationId, engagement.id, userId.trim(), kind)
+      }
       setUserId(''); load()
     } catch (err: any) {
       setError(err?.message ?? 'Could not grant access.')
@@ -882,8 +927,19 @@ function AuditorsDrawer({ organizationId, engagement, onClose }: AuditorsDrawerP
                 ))}
               </select>
             ) : (
-              <input id="auditor-user" type="text" value={userId} onChange={e => setUserId(e.target.value)}
-                placeholder="Auditor's user ID" className={INPUT_CLASS} />
+              <select id="auditor-user" value={userId} className={INPUT_CLASS}
+                onChange={e => {
+                  if (e.target.value === '__invite__') { setInviting(true); setUserId('') }
+                  else { setInviting(false); setUserId(e.target.value) }
+                }}>
+                <option value="">{roster === null ? 'Loading external auditors…' : assignable.length ? 'Choose an external auditor' : 'No external auditors yet'}</option>
+                {assignable.map(a => (
+                  <option key={a.id} value={a.id}>
+                    {a.display_name || a.email}{a.firm ? ` · ${a.firm}` : ''}{a.status === 'invited' ? ' (invited, not signed in yet)' : ''}
+                  </option>
+                ))}
+                <option value="__invite__">Invite a new auditor…</option>
+              </select>
             )}
             <button type="submit" disabled={busy || !userId.trim()} style={{
               padding: '9px 16px', borderRadius: 8, border: 'none',
@@ -892,10 +948,59 @@ function AuditorsDrawer({ organizationId, engagement, onClose }: AuditorsDrawerP
               cursor: busy || !userId.trim() ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap',
             }}>Grant</button>
           </div>
-          <p style={{ margin: 0, fontSize: 11, color: 'var(--muted)' }}>
-            The auditor must already have a platform account. Inviting brand-new auditors by email is coming later.
-          </p>
+          {kind === 'external' && (
+            <p style={{ margin: 0, fontSize: 11, color: 'var(--muted)' }}>
+              External auditors may use any company email domain, not only yours. Access to an engagement ends
+              automatically the day after its end date.
+            </p>
+          )}
         </form>
+
+        {kind === 'external' && inviting && (
+          <form onSubmit={handleInvite} aria-label="Invite a new external auditor" style={{
+            display: 'flex', flexDirection: 'column', gap: 8, border: '1px solid var(--border)',
+            borderRadius: 8, padding: 14, background: 'var(--panel)',
+          }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>Invite a new external auditor</div>
+            <input type="email" required aria-label="Auditor email" placeholder="lead.auditor@audit-firm.com"
+              value={invite.email} onChange={e => setInvite({ ...invite, email: e.target.value })} className={INPUT_CLASS} />
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input type="text" aria-label="Auditor name" placeholder="Name (optional)"
+                value={invite.display_name} onChange={e => setInvite({ ...invite, display_name: e.target.value })} className={INPUT_CLASS} />
+              <input type="text" aria-label="Audit firm" placeholder="Firm (optional)"
+                value={invite.firm} onChange={e => setInvite({ ...invite, firm: e.target.value })} className={INPUT_CLASS} />
+            </div>
+            <p style={{ margin: 0, fontSize: 11, color: 'var(--muted)' }}>
+              They get a sign-in email but do not join your organisation and take no seat. They see only the
+              engagements you assign them. Public mail addresses (Gmail, Outlook…) are refused.
+            </p>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button type="button" onClick={() => setInviting(false)} style={{
+                padding: '7px 14px', borderRadius: 8, border: '1px solid var(--border)',
+                background: 'var(--card)', color: 'var(--text)', fontSize: 13, cursor: 'pointer',
+              }}>Cancel</button>
+              <button type="submit" disabled={busy || !invite.email.trim()} style={{
+                padding: '7px 14px', borderRadius: 8, border: 'none',
+                background: busy || !invite.email.trim() ? 'var(--muted-bg)' : 'var(--primary)',
+                color: 'var(--primary-foreground)', fontSize: 13, fontWeight: 600,
+                cursor: busy || !invite.email.trim() ? 'not-allowed' : 'pointer',
+              }}>Send invite</button>
+            </div>
+          </form>
+        )}
+
+        {tempPassword && (
+          <div role="status" style={{ padding: '10px 14px', border: '1px solid var(--warning)', borderRadius: 8, fontSize: 13, color: 'var(--text)' }}>
+            Sign-in account created for <strong>{tempPassword.email}</strong>. Temporary password (shown once,
+            they must change it at first sign-in): <code>{tempPassword.password}</code>
+            <div style={{ marginTop: 6 }}>
+              <button type="button" onClick={() => setTempPassword(null)} style={{
+                padding: '3px 10px', borderRadius: 6, border: '1px solid var(--border)',
+                background: 'var(--card)', color: 'var(--text)', fontSize: 12, cursor: 'pointer',
+              }}>I've passed it on</button>
+            </div>
+          </div>
+        )}
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {auditors === null ? (
@@ -910,7 +1015,7 @@ function AuditorsDrawer({ organizationId, engagement, onClose }: AuditorsDrawerP
                   <div style={{ flex: 1, minWidth: 0, fontSize: 13, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis' }}>{a.email ?? a.user_id}</div>
                   <span className={`eng-auditor-kind-badge is-${a.kind ?? 'external'}`}>{a.kind === 'internal' ? 'Internal' : 'External'}</span>
                   <span style={{ padding: '2px 10px', borderRadius: 10, fontSize: 11, fontWeight: 600, background: meta.bg, color: meta.color }}>{meta.label}</span>
-                  {a.status === 'active' && (
+                  {a.status !== 'revoked' && (
                     <button onClick={() => void handleRevoke(a)} disabled={busy} style={{
                       padding: '4px 12px', borderRadius: 6, border: '1px solid var(--border)',
                       background: 'var(--card)', color: 'var(--error, #ef4444)', fontSize: 12,
