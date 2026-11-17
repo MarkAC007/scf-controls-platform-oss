@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { apiClient, updateOrgMember } from '../data/apiClient'
 import type { MemberType } from '../types'
 import InviteUserModal from './InviteUserModal'
+import ExternalAuditorsSection from './ExternalAuditorsSection'
 import { ContractorBadge } from './ContractorBadge'
 import { useConfirm } from '../contexts/ConfirmContext'
 import { useIsOrgAdmin } from '../hooks/useIsOrgAdmin'
@@ -104,6 +105,7 @@ export default function UserManagement({ organizationId }: UserManagementProps) 
   // off a viewer's screen; the API is the boundary and refuses the write
   // whatever this returns.
   const isOrgAdmin = useIsOrgAdmin(organizationId)
+  const [auditorRefresh, setAuditorRefresh] = useState(0)
 
   const handleCopyOrgId = useCallback(() => {
     navigator.clipboard.writeText(organizationId).then(() => {
@@ -462,13 +464,15 @@ export default function UserManagement({ organizationId }: UserManagementProps) 
         </table>
       </div>
 
+      <ExternalAuditorsSection organizationId={organizationId} isOrgAdmin={isOrgAdmin} refreshKey={auditorRefresh} />
+
       {showInviteModal && (
         <InviteUserModal
           organizationId={organizationId}
           onClose={() => setShowInviteModal(false)}
           onInviteSent={() => {
             setShowInviteModal(false)
-            // Optionally refresh members list
+            setAuditorRefresh(n => n + 1)
           }}
         />
       )}

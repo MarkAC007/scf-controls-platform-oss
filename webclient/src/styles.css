@@ -38670,3 +38670,9 @@ span.rich-text p { display: inline; margin: 0; }
 .doc-reader-title-badge { margin-left: 0.6rem; vertical-align: middle; font-size: 0.7rem; }
 /* Light text on the dark theme's bright red fails contrast; use near-black. */
 [data-theme="dark"] .doc-section-badge.status-superseded { color: #2b0a0a; }
+
+/* External auditors list (Users) */
+.auditor-status { padding: 2px 10px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+.auditor-status.is-active { background: var(--success-bg); color: var(--success); }
+.auditor-status.is-invited { background: var(--warning-bg); color: var(--warning); }
+.auditor-status.is-disabled { background: var(--secondary); color: var(--muted); }

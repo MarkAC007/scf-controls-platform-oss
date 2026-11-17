@@ -36,6 +36,9 @@ vi.mock('../../data/apiClient', () => ({
     delete: vi.fn(),
   },
   updateOrgMember: vi.fn(() => Promise.resolve()),
+  listOrgAuditors: vi.fn(() => Promise.resolve([])),
+  disableOrgAuditor: vi.fn(),
+  inviteOrgAuditor: vi.fn(),
   // Imported by InviteUserModal, which this component imports. Present so the
   // module graph resolves; the modal is not opened by these tests.
   getOrgInvites: vi.fn(() => Promise.resolve({ invites: [], total: 0 })),

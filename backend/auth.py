@@ -238,7 +238,9 @@ async def _persist_oidc_user(
                         (ConsultantInvite.status == ConsultantInviteStatus.PENDING.value)
                     )
                 )
-                pending_consultant_invite = pending_invite_result.scalar_one_or_none()
+                # .first(): one email may hold pending invites from several
+                # organisations; scalar_one_or_none() raised on the second.
+                pending_consultant_invite = pending_invite_result.scalars().first()
 
                 # Also check for pending org-member invites (e.g. consultant
                 # invited an admin to a client organisation via User Management)
@@ -248,7 +250,7 @@ async def _persist_oidc_user(
                         (OrganizationInvite.status == OrgInviteStatus.PENDING.value)
                     )
                 )
-                pending_org_invite = pending_org_invite_result.scalar_one_or_none()
+                pending_org_invite = pending_org_invite_result.scalars().first()
 
                 has_valid_invite = (
                     (pending_consultant_invite and not pending_consultant_invite.is_expired()) or
@@ -352,6 +354,20 @@ async def _persist_oidc_user(
             logger.warning(f"Provisioned-invite auto-join failed (login continues): {join_error}")
             await db.rollback()
 
+        # External auditors: an invited auditor's roster entry and engagement
+        # grants turn on at first sign-in. Bound on the user id the invite
+        # recorded. Its own transaction, so a failure leaves the login intact.
+        try:
+            from services.org_auditors import activate_on_sign_in
+
+            activated = await activate_on_sign_in(user_id=db_user.id, db=db)
+            if activated:
+                await db.commit()
+                logger.info(f"External auditor {_mask_email(email)} activated in {activated} organisation(s)")
+        except Exception as auditor_error:
+            logger.warning(f"External auditor activation failed (login continues): {auditor_error}")
+            await db.rollback()
+
         # WEBSITE-FIRST PROVISIONING: Organisation linking is handled by the website
         # The website sync API creates the user's organisation and membership.
         # We only need to check for pending consultant invites here for the invite flow.
@@ -365,7 +381,7 @@ async def _persist_oidc_user(
                     (ConsultantInvite.status == ConsultantInviteStatus.PENDING.value)
                 )
             )
-            pending_invite = pending_invite_result.scalar_one_or_none()
+            pending_invite = pending_invite_result.scalars().first()
             if pending_invite and not pending_invite.is_expired():
                 logger.info(f"User {_mask_email(email)} has pending consultant invite - they can accept it after login")
         except Exception as invite_check_error:

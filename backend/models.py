@@ -1550,6 +1550,63 @@ class EngagementAuditor(Base):
         return f"<EngagementAuditor(engagement={self.engagement_id}, user={self.user_id}, status={self.status})>"
 
 
+class OrganizationAuditorStatus(str, Enum):
+    """Lifecycle of an organisation's external auditor (roster entry)."""
+    INVITED = "invited"    # invited; has not signed in yet
+    ACTIVE = "active"      # has signed in at least once
+    DISABLED = "disabled"  # removed by an admin; every grant in this org revoked
+
+    @classmethod
+    def values(cls) -> List[str]:
+        return [s.value for s in cls]
+
+
+class OrganizationAuditor(Base):
+    """An organisation's roster of external auditors.
+
+    An external auditor is invited by email and is deliberately NOT an
+    ``OrganizationMember``: every org-scoped permission check treats a
+    membership row as "inside the organisation". Being on this roster grants
+    nothing by itself; access comes only from an ACTIVE ``EngagementAuditor``
+    grant, checked by ``api.audit_engagements.resolve_engagement_access``.
+
+    Because the auditor is not a member, the organisation's email-domain rule
+    (``services.domain_validation.validate_invite_domain``) does not apply to
+    this invite. Public mail domains are still refused.
+    """
+    __tablename__ = "organization_auditors"
+    __table_args__ = (
+        UniqueConstraint('organization_id', 'email', name='uq_organization_auditor_email'),
+        CheckConstraint(
+            "status IN ('invited', 'active', 'disabled')",
+            name='ck_organization_auditors_status',
+        ),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    # Set at invite time: an existing account is reused, otherwise a
+    # ``pending:{email}`` placeholder is created and linked at first sign-in.
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    email = Column(String(255), nullable=False)
+    display_name = Column(String(255), nullable=True)
+    firm = Column(String(255), nullable=True)
+    status = Column(String(20), nullable=False, default=OrganizationAuditorStatus.INVITED.value)
+    # Keycloak account this invite created (bundled IdP only). Null when the
+    # account already existed or the IdP is external: we own only what we made.
+    idp_user_id = Column(String(255), nullable=True)
+    invited_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now())
+    accepted_at = Column(DateTime(timezone=False), nullable=True)
+    disabled_at = Column(DateTime(timezone=False), nullable=True)
+
+    user = relationship("User", foreign_keys=[user_id])
+    invited_by = relationship("User", foreign_keys=[invited_by_user_id])
+
+    def __repr__(self):
+        return f"<OrganizationAuditor(org={self.organization_id}, email={self.email}, status={self.status})>"
+
+
 class EngagementQueryStatus(str, Enum):
     """Lifecycle of an auditor's query on a control within an engagement.
 

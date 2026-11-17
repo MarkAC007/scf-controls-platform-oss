@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useState, useEffect } from 'react'
-import { getOrgInvites, cancelOrgInvite } from '../data/apiClient'
+import { getOrgInvites, cancelOrgInvite, inviteOrgAuditor } from '../data/apiClient'
 import type { OrgInviteResponse, OrgInviteIdpStatus } from '../data/apiClient'
 import { apiClient } from '../data/apiClient'
 import { OIDC_ENABLED } from '../data/authToken'
@@ -61,7 +61,16 @@ export default function InviteUserModal({ organizationId, onClose, onInviteSent 
 
   const [email, setEmail] = useState('')
   const [message, setMessage] = useState('')
-  const [role, setRole] = useState<'admin' | 'editor' | 'viewer'>('viewer')
+  /**
+   * 'auditor' is not a membership role. It invites an external auditor onto
+   * the organisation's auditor list: any company email domain is allowed, the
+   * person never joins the organisation, takes no seat, and sees only the
+   * engagements an admin assigns them (Engagements → Auditors).
+   */
+  const [role, setRole] = useState<'admin' | 'editor' | 'viewer' | 'auditor'>('viewer')
+  const isAuditor = role === 'auditor'
+  const [displayName, setDisplayName] = useState('')
+  const [firm, setFirm] = useState('')
   /**
    * Employment type to record on the membership when the invite is accepted
    * (#822 phase 2).
@@ -133,6 +142,21 @@ export default function InviteUserModal({ organizationId, onClose, onInviteSent 
     setError(null)
 
     try {
+      if (isAuditor) {
+        const auditor = await inviteOrgAuditor(organizationId, {
+          email: email.trim(),
+          display_name: displayName.trim() || undefined,
+          firm: firm.trim() || undefined,
+          message: message.trim() || undefined,
+        })
+        const issued = auditor.idp_temporary_password ?? null
+        setTempPassword(issued)
+        setIdpStatus(null)
+        setPasswordCopied(false)
+        setSuccess(true)
+        if (!issued) setTimeout(() => { onInviteSent() }, 2000)
+        return
+      }
       const created = await apiClient.post<OrgInviteResponse>(
         `/organizations/${organizationId}/invite`,
         {
@@ -220,6 +244,8 @@ export default function InviteUserModal({ organizationId, onClose, onInviteSent 
     setSuccess(false)
     setEmail('')
     setMessage('')
+    setDisplayName('')
+    setFirm('')
     setError(null)
   }
 
@@ -261,9 +287,18 @@ export default function InviteUserModal({ organizationId, onClose, onInviteSent 
               passing on the password below.
             */}
             <p>
-              Invitation created for <strong>{email}</strong> as{' '}
-              <strong>{role}</strong>
-              {memberType === 'external_contractor' && <> (contractor)</>}.
+              {isAuditor ? (
+                <>
+                  <strong>{email}</strong> is on your external auditor list. Assign them to an engagement
+                  from Engagements → Auditors; until then they can see nothing.
+                </>
+              ) : (
+                <>
+                  Invitation created for <strong>{email}</strong> as{' '}
+                  <strong>{role}</strong>
+                  {memberType === 'external_contractor' && <> (contractor)</>}.
+                </>
+              )}
             </p>
 
             {tempPassword && (
@@ -332,8 +367,12 @@ export default function InviteUserModal({ organizationId, onClose, onInviteSent 
                 for a sign-in method the install does not have.
               */}
               <p className="modal-description">
-                Send an invitation email to add a new member to your organisation.{' '}
-                {OIDC_ENABLED
+                {isAuditor
+                  ? 'Invite an external auditor. They get a sign-in email but do not join your organisation; assign them to engagements from Engagements → Auditors. '
+                  : 'Send an invitation email to add a new member to your organisation. '}
+                {isAuditor
+                  ? (OIDC_ENABLED ? 'An account is created for them in the identity provider and a temporary password is shown here once.' : '')
+                  : OIDC_ENABLED
                   ? 'An account is created for them in the identity provider and a temporary password is shown here once. They sign in with it, set their own password, and join this organisation straight away.'
                   : "They'll be able to sign in using their Google account."}
               </p>
@@ -356,16 +395,35 @@ export default function InviteUserModal({ organizationId, onClose, onInviteSent 
                 <select
                   id="role"
                   value={role}
-                  onChange={(e) => setRole(e.target.value as 'admin' | 'editor' | 'viewer')}
+                  onChange={(e) => setRole(e.target.value as 'admin' | 'editor' | 'viewer' | 'auditor')}
                   disabled={loading}
                   className="role-select"
                 >
                   <option value="viewer">Viewer - Read-only access</option>
                   <option value="editor">Editor - Can edit controls and evidence</option>
                   <option value="admin">Admin - Full management access</option>
+                  <option value="auditor">External auditor - engagement access only</option>
                 </select>
+                {isAuditor && (
+                  <small className="form-text text-muted" data-testid="auditor-role-note">
+                    Not a member of your organisation and takes no seat. Any company email domain is
+                    allowed (public mail such as Gmail is refused). They see only the engagements you
+                    assign them, and access ends the day after each engagement's end date.
+                  </small>
+                )}
               </div>
 
+              {isAuditor ? (
+                <div className="form-group">
+                  <label htmlFor="auditor-name">Name and firm (optional)</label>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <input id="auditor-name" type="text" value={displayName} placeholder="Name"
+                      onChange={(e) => setDisplayName(e.target.value)} disabled={loading} />
+                    <input id="auditor-firm" aria-label="Audit firm" type="text" value={firm} placeholder="Audit firm"
+                      onChange={(e) => setFirm(e.target.value)} disabled={loading} />
+                  </div>
+                </div>
+              ) : (
               <div className="form-group">
                 <label htmlFor="member-type">Employment Type *</label>
                 <select
@@ -385,6 +443,7 @@ export default function InviteUserModal({ organizationId, onClose, onInviteSent 
                   restricts nothing — access comes from the role above.
                 </small>
               </div>
+              )}
 
               <div className="form-group">
                 <label htmlFor="message">Personal Message (optional)</label>

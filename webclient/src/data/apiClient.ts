@@ -4056,6 +4056,66 @@ export async function revokeEngagementAuditor(
   )
 }
 
+// --- External auditors (organisation list) --------------------------------
+//
+// An external auditor is invited by email from outside the organisation's
+// email domain. They are never a member: being on this list grants nothing
+// until an admin assigns them to an engagement.
+
+export type OrgAuditorStatus = 'invited' | 'active' | 'disabled'
+
+export interface OrgAuditor {
+  id: string
+  organization_id: string
+  user_id: string
+  email: string
+  display_name: string | null
+  firm: string | null
+  status: OrgAuditorStatus
+  active_engagements: number
+  created_at: string | null
+  accepted_at: string | null
+  disabled_at: string | null
+}
+
+export interface OrgAuditorInviteResult extends OrgAuditor {
+  /** Shown once when the bundled sign-in created the account; never stored. */
+  idp_temporary_password: string | null
+}
+
+export async function listOrgAuditors(orgId: string): Promise<OrgAuditor[]> {
+  return apiFetch<OrgAuditor[]>(`/organizations/${orgId}/auditors`)
+}
+
+export async function inviteOrgAuditor(
+  orgId: string,
+  data: { email: string; display_name?: string; firm?: string; message?: string }
+): Promise<OrgAuditorInviteResult> {
+  return apiFetch<OrgAuditorInviteResult>(`/organizations/${orgId}/auditors`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  })
+}
+
+export async function disableOrgAuditor(orgId: string, auditorId: string): Promise<OrgAuditor> {
+  return apiFetch<OrgAuditor>(`/organizations/${orgId}/auditors/${auditorId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status: 'disabled' }),
+  })
+}
+
+/** Assign someone on the organisation's external auditor list to an engagement. */
+export async function grantEngagementToOrgAuditor(
+  orgId: string,
+  engagementId: string,
+  auditorId: string
+): Promise<EngagementAuditor> {
+  return apiFetch<EngagementAuditor>(
+    `/organizations/${orgId}/engagements/${engagementId}/auditors`,
+    { method: 'POST', body: JSON.stringify({ auditor_id: auditorId, kind: 'external' }) }
+  )
+}
+
 export async function listMyEngagements(): Promise<AuditEngagement[]> {
   return apiFetch<AuditEngagement[]>(`/my-engagements`)
 }

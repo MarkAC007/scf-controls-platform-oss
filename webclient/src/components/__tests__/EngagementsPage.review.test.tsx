@@ -11,7 +11,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ConfirmProvider } from '../../__tests__/confirmDialog'
 import EngagementsPage from '../EngagementsPage'
 import {
-  getOrgMemberSummaries, grantEngagementAuditor, listEngagementAuditors, listEngagements,
+  getOrgMemberSummaries, listOrgAuditors, inviteOrgAuditor, grantEngagementToOrgAuditor, grantEngagementAuditor, listEngagementAuditors, listEngagements,
   type AuditEngagement,
 } from '../../data/apiClient'
 import { fetchFrameworks } from '../../data/catalogApi'
@@ -32,6 +32,9 @@ vi.mock('../../data/apiClient', () => ({
   updateEngagementQueryStatus: vi.fn(),
   getEvidenceFile: vi.fn(),
   getOrgMemberSummaries: vi.fn(),
+  listOrgAuditors: vi.fn(),
+  inviteOrgAuditor: vi.fn(),
+  grantEngagementToOrgAuditor: vi.fn(),
 }))
 vi.mock('../../data/catalogApi', () => ({ fetchFrameworks: vi.fn() }))
 vi.mock('../engagements/EngagementReviewWorkspace', () => ({
@@ -124,15 +127,42 @@ describe('EngagementsPage review workspace entry', () => {
 })
 
 describe('EngagementsPage auditors drawer', () => {
-  it('grants an external auditor by default', async () => {
-    vi.mocked(grantEngagementAuditor).mockResolvedValue({} as never)
+  it('assigns an external auditor picked from the organisation\'s auditor list', async () => {
+    vi.mocked(grantEngagementToOrgAuditor).mockResolvedValue({} as never)
+    vi.mocked(listOrgAuditors).mockResolvedValue([
+      { id: 'aud-1', user_id: 'user-7', email: 'lead@audit-firm.example', display_name: 'Lee Auditor',
+        firm: 'Audit Firm', status: 'active', active_engagements: 0 },
+      { id: 'aud-2', user_id: 'user-8', email: 'gone@audit-firm.example', display_name: 'Gone Auditor',
+        firm: null, status: 'disabled', active_engagements: 0 },
+    ] as never)
     renderPage()
     await userEvent.click(await screen.findByRole('button', { name: 'Auditors' }))
     const dialog = await screen.findByRole('dialog')
-    await userEvent.type(within(dialog).getByPlaceholderText("Auditor's user ID"), 'user-7')
+    const option = await within(dialog).findByRole('option', { name: 'Lee Auditor · Audit Firm' })
+    expect(within(dialog).queryByRole('option', { name: /Gone Auditor/ })).toBeNull()  // disabled: not assignable
+    await userEvent.selectOptions(within(dialog).getByRole('combobox'), option)
     await userEvent.click(within(dialog).getByRole('button', { name: 'Grant' }))
-    await waitFor(() => expect(grantEngagementAuditor).toHaveBeenCalledWith(ORG_ID, 'eng-1', 'user-7', 'external'))
+    await waitFor(() => expect(grantEngagementToOrgAuditor).toHaveBeenCalledWith(ORG_ID, 'eng-1', 'aud-1'))
+    expect(grantEngagementAuditor).not.toHaveBeenCalled()
     expect(getOrgMemberSummaries).not.toHaveBeenCalled()
+  })
+
+  it('invites a new external auditor from the drawer and selects them', async () => {
+    vi.mocked(listOrgAuditors).mockResolvedValue([] as never)
+    vi.mocked(inviteOrgAuditor).mockResolvedValue({
+      id: 'aud-9', user_id: 'user-9', email: 'new@audit-firm.example', display_name: null, firm: null,
+      status: 'invited', active_engagements: 0, idp_temporary_password: null,
+    } as never)
+    renderPage()
+    await userEvent.click(await screen.findByRole('button', { name: 'Auditors' }))
+    const dialog = await screen.findByRole('dialog')
+    await userEvent.selectOptions(within(dialog).getByRole('combobox'),
+      await within(dialog).findByRole('option', { name: 'Invite a new auditor…' }))
+    await userEvent.type(within(dialog).getByRole('textbox', { name: 'Auditor email' }), 'new@audit-firm.example')
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Send invite' }))
+    await waitFor(() => expect(inviteOrgAuditor).toHaveBeenCalledWith(ORG_ID, { email: 'new@audit-firm.example', display_name: undefined, firm: undefined }))
+    expect(await within(dialog).findByRole('option', { name: /new@audit-firm.example \(invited/ })).toBeInTheDocument()
+    expect((within(dialog).getByRole('combobox') as HTMLSelectElement).value).toBe('aud-9')
   })
 
   it('grants an internal auditor picked from the organisation members', async () => {

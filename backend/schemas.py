@@ -5449,10 +5449,58 @@ class FrameworkPresentation(BaseModel):
 # --- Engagement auditor grants (Increment 3) -------------------------------
 
 class EngagementAuditorCreate(BaseModel):
-    user_id: UUID  # existing user to grant read access to this engagement
+    # Exactly one of: `auditor_id`, an entry on the organisation's external
+    # auditor list (the dropdown); or `user_id`, an existing user (internal
+    # auditors, and API callers that predate the auditor list).
+    user_id: Optional[UUID] = None
+    auditor_id: Optional[UUID] = None
     # 'external' = an outside auditor; 'internal' = an org member acting as the
     # auditor (must already be a member of the organisation).
     kind: Literal['external', 'internal'] = 'external'
+
+    @model_validator(mode='after')
+    def _one_target(self):
+        if (self.user_id is None) == (self.auditor_id is None):
+            raise ValueError('Provide exactly one of user_id or auditor_id')
+        if self.auditor_id is not None and self.kind != 'external':
+            raise ValueError('auditor_id is for external auditors only')
+        return self
+
+
+# --- External auditor list (organisation roster) ----------------------------
+
+class OrgAuditorCreate(BaseModel):
+    """Invite an external auditor. Not limited to the organisation's domain."""
+    email: str = Field(..., min_length=5, max_length=255)
+    display_name: Optional[str] = Field(None, max_length=255)
+    firm: Optional[str] = Field(None, max_length=255)
+    message: Optional[str] = Field(None, max_length=1000)
+
+
+class OrgAuditorResponse(BaseModel):
+    id: UUID
+    organization_id: UUID
+    user_id: UUID
+    email: str
+    display_name: Optional[str] = None
+    firm: Optional[str] = None
+    status: Literal['invited', 'active', 'disabled']
+    active_engagements: int = 0
+    created_at: Optional[datetime] = None
+    accepted_at: Optional[datetime] = None
+    disabled_at: Optional[datetime] = None
+
+
+class OrgAuditorInviteResponse(OrgAuditorResponse):
+    #: One-time password for a newly created bundled-Keycloak account. Returned
+    #: here once and never stored.
+    idp_temporary_password: Optional[str] = None
+
+
+class OrgAuditorUpdate(BaseModel):
+    #: Disabling revokes every engagement grant the auditor holds here.
+    #: To bring a disabled auditor back, invite them again.
+    status: Literal['disabled']
 
 
 class EngagementAuditorResponse(BaseModel):

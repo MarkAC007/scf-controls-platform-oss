@@ -25,6 +25,8 @@ from models import (
     EngagementQuery,
     EngagementQueryStatus,
     EngagementEvidenceReview,
+    OrganizationAuditor,
+    OrganizationAuditorStatus,
     OrganizationMember,
     Comment,
     EvidenceFile,
@@ -1025,8 +1027,32 @@ async def grant_engagement_auditor(
     """
     await _load_engagement_for_org(db, org_id, engagement_id)
 
+    # An external auditor is normally picked from the organisation's auditor
+    # list. Until they first sign in their grant waits as 'invited' and turns
+    # on at sign-in (services.org_auditors.activate_on_sign_in).
+    roster_entry = None
+    if payload.auditor_id is not None:
+        roster_entry = (
+            await db.execute(
+                select(OrganizationAuditor).where(
+                    OrganizationAuditor.id == payload.auditor_id,
+                    OrganizationAuditor.organization_id == org_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if roster_entry is None:
+            raise HTTPException(status_code=404, detail="Auditor not found")
+        if roster_entry.status == OrganizationAuditorStatus.DISABLED.value:
+            raise HTTPException(
+                status_code=422,
+                detail="This auditor has been disabled. Invite them again to restore access.",
+            )
+        target_user_id = roster_entry.user_id
+    else:
+        target_user_id = payload.user_id
+
     user_result = await db.execute(
-        select(DBUser.id, DBUser.email).where(DBUser.id == payload.user_id)
+        select(DBUser.id, DBUser.email).where(DBUser.id == target_user_id)
     )
     user_row = user_result.first()
     if user_row is None:
@@ -1034,20 +1060,33 @@ async def grant_engagement_auditor(
 
     # An internal auditor is one of the organisation's own people acting as
     # the auditor; someone outside the organisation is an external auditor.
-    if payload.kind == EngagementAuditor.KIND_INTERNAL:
-        member_result = await db.execute(
-            select(OrganizationMember.id).where(
-                and_(
-                    OrganizationMember.organization_id == org_id,
-                    OrganizationMember.user_id == payload.user_id,
-                )
+    member_result = await db.execute(
+        select(OrganizationMember.id).where(
+            and_(
+                OrganizationMember.organization_id == org_id,
+                OrganizationMember.user_id == target_user_id,
             )
         )
-        if member_result.scalar_one_or_none() is None:
-            raise HTTPException(
-                status_code=422,
-                detail="An internal auditor must be a member of this organisation.",
-            )
+    )
+    is_member = member_result.scalar_one_or_none() is not None
+    if payload.kind == EngagementAuditor.KIND_INTERNAL and not is_member:
+        raise HTTPException(
+            status_code=422,
+            detail="An internal auditor must be a member of this organisation.",
+        )
+    if payload.kind == EngagementAuditor.KIND_EXTERNAL and is_member:
+        # A member keeps full organisation access whatever the grant says, so
+        # labelling them "external" would misdescribe what they can see.
+        raise HTTPException(
+            status_code=422,
+            detail="This person is a member of the organisation. Assign them as an internal auditor.",
+        )
+
+    grant_status = (
+        EngagementAuditorStatus.INVITED.value
+        if roster_entry is not None and roster_entry.status == OrganizationAuditorStatus.INVITED.value
+        else EngagementAuditorStatus.ACTIVE.value
+    )
 
     granting_user = membership.user
     granter_id = UUID(granting_user.db_id) if granting_user and granting_user.db_id else None
@@ -1057,7 +1096,7 @@ async def grant_engagement_auditor(
         select(EngagementAuditor).where(
             and_(
                 EngagementAuditor.engagement_id == engagement_id,
-                EngagementAuditor.user_id == payload.user_id,
+                EngagementAuditor.user_id == target_user_id,
             )
         )
     )
@@ -1066,21 +1105,21 @@ async def grant_engagement_auditor(
         audit_action = 'update'  # re-granting a revoked auditor reactivates the row
         audit_fields = AUDITOR_GRANT_TRACKED_FIELDS
         old_values = {f: getattr(grant, f) for f in audit_fields}
-        grant.status = EngagementAuditorStatus.ACTIVE.value
+        grant.status = grant_status
         grant.kind = payload.kind
         grant.revoked_at = None
-        grant.accepted_at = grant.accepted_at or now
+        grant.accepted_at = (grant.accepted_at or now) if grant_status == EngagementAuditorStatus.ACTIVE.value else None
     else:
         audit_action = 'create'
         audit_fields = AUDITOR_GRANT_CREATE_FIELDS
         old_values = {}
         grant = EngagementAuditor(
             engagement_id=engagement_id,
-            user_id=payload.user_id,
+            user_id=target_user_id,
             kind=payload.kind,
-            status=EngagementAuditorStatus.ACTIVE.value,
+            status=grant_status,
             invited_by_user_id=granter_id,
-            accepted_at=now,
+            accepted_at=now if grant_status == EngagementAuditorStatus.ACTIVE.value else None,
         )
         db.add(grant)
 
@@ -1102,7 +1141,7 @@ async def grant_engagement_auditor(
 
     await db.commit()
     await db.refresh(grant)
-    logger.info("Auditor granted: engagement=%s user=%s by=%s", engagement_id, payload.user_id, granter_id)
+    logger.info("Auditor granted: engagement=%s user=%s status=%s by=%s", engagement_id, target_user_id, grant_status, granter_id)
     return _auditor_response(grant, user_row[1])
 
 

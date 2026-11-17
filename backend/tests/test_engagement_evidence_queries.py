@@ -340,11 +340,14 @@ async def test_internal_grant_for_member_carries_kind(calls):
 
 
 @pytest.mark.asyncio
-async def test_default_grant_is_external_and_skips_membership_check(calls):
+async def test_default_grant_is_external_for_a_non_member(calls):
+    # An external grant now checks membership too: a member keeps full org
+    # access whatever the grant says, so they must be granted as internal.
     target = uuid4()
     db = _Session([
         _Result(value=SimpleNamespace(id=ENGAGEMENT_ID)),
         _Result(first=(target, "auditor@firm.example")),
+        _Result(value=None),          # not a member of the organisation
         _Result(value=None),          # no existing grant
     ])
     resp = await ae.grant_engagement_auditor(

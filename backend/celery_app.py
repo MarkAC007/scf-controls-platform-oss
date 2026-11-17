@@ -215,6 +215,7 @@ celery_app.conf.update(
         "tasks_automation.notify_expired_risk_acceptances_task": {"queue": "default"},
         "tasks_automation.notify_due_control_validations_task": {"queue": "default"},
         "tasks_automation.take_posture_snapshots_task": {"queue": "default"},
+        "tasks_automation.revoke_expired_auditor_grants_task": {"queue": "default"},
         # Document generation routes to default for the same reason as the
         # automation tasks above: a dedicated queue only works if every worker
         # launch command remembers to subscribe to it. A queue that works with
@@ -254,6 +255,12 @@ celery_app.conf.update(
         "cleanup-expired-cache-hourly": {
             "task": "tasks.cleanup_task",
             "schedule": 3600.0,  # 1 hour
+        },
+        # External auditor access ends the day after the engagement's end
+        # date. Always on: it is access control, not a notification.
+        "auditor-grant-expiry-daily": {
+            "task": "tasks_automation.revoke_expired_auditor_grants_task",
+            "schedule": crontab(hour=0, minute=15),
         },
         # Nightly window refresh — runs at 04:00 UTC, after daily collectors
         # (which run 07:00-08:40 UTC the previous day). Defaults ON; set
