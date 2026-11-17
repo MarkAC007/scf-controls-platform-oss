@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * DeleteOrganizationDialog + the consultant dashboard wiring behind it.
  *

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Platform-admin API for the SCF catalog upgrade (plan §4.2, §4.5 — WP1c).
 
 Implements the WP-C contract stubs over the WP1b services:

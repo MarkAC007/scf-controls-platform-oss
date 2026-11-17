@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { useQuery } from '@tanstack/react-query'
 import { getWorkQueue, type WorkQueueResponse } from '../data/apiClient'
 

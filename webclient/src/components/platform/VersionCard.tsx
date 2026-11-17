@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * VersionCard — current platform catalog version (GET /api/catalog/status).
  *

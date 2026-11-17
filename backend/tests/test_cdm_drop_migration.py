@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Offline tests for the CDM retirement data step (#907).
 
 Covers migration ``cdmdrop001`` (behaviour against a recording ``op`` and a

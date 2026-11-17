@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * The list half of team ownership: one batch read, then filtering.
  *

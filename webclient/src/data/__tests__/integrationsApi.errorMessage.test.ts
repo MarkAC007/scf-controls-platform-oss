@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * errorMessageFrom — a 409 whose detail is an object with a `message` must
  * render its text, not a bare status (ISA phase 5, frontend defect 2).

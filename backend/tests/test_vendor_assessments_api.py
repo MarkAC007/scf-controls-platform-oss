@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """API contract tests for the unified vendor assessment endpoints (Phase 3)
 and the deprecated /dpsia/* aliases.
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * EvidenceStorageMigrationPanel — Settings → Evidence storage → move existing
  * evidence (ISA phase 6).

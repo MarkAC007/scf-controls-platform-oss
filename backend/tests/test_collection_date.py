@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """When evidence was collected, versus when it happened to be uploaded (#789).
 
 Two defects sat in `EvidenceTracking.last_collection_date` before this:

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * Step 1 of the collection wizard stops being a dead end (#789).
  *

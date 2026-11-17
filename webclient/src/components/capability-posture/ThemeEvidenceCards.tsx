@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useMemo, useState } from 'react'
 import { getEvidenceHealth, type EvidenceHealthResponse } from '../../data/apiClient'
 import { HealthCard } from '../evidence/EvidenceDashboardTab'

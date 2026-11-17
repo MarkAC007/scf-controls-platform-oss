@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Task Generator Service - Auto-generate evidence collection tasks based on frequency.
 

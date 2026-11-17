@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Tests for the update-discovery Celery task (upgrade design Part B).
 
 The task is exercised locally via ``.apply()`` (synchronous, no broker) with

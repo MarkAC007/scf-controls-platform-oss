@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 SCF Catalog Seeder - Populates catalog tables from JSON files on application startup.
 

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Unit tests for the per-window review API endpoint (M4 PR 2, #574).
 

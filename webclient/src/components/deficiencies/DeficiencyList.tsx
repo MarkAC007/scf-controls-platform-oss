@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * DeficiencyList — deficiencies as rows, with what an editor may do to each
  * (PIG R8). Shared by the Deficiencies page and a control's governance tab.

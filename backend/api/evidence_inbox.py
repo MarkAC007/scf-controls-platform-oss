@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Evidence Inbox — webhook ingestion endpoint (Issue #214).
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * Evidence storage API client — an organisation's own object store, behind
  * /api/organizations/{org_id}/evidence-storage (ISA phases 2 to 5).

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * Moving a deficiency between statuses, under the lifecycle rules (PIG R8).
  *

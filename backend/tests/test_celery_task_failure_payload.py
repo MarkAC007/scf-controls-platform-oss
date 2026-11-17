@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """A task's RETURN VALUE decides how its completion is logged (#1001, #1018).
 
 A task that returns a failure must not be logged as a success (#1001), and a

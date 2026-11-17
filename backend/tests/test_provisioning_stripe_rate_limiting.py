@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Tests for rate limiting on provisioning/sync and webhooks/stripe (Issue #365)."""
 import pytest
 from rate_limiting import (

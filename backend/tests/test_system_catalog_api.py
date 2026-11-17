@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Tests for /system-catalog API schemas and endpoint contracts."""
 import inspect
 import os

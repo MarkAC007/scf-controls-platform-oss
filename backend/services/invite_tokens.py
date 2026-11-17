@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Deterministic lookup hash for invitation tokens.
 
 Contract §3c. The token column itself is encrypted, and Fernet ciphertext is

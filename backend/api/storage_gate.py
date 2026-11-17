@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """One refusal for "this organisation has no evidence store".
 
 Phase 7, ISC 53. Before this module the same condition was answered three

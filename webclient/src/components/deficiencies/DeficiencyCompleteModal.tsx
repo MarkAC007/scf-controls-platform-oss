@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * DeficiencyCompleteModal — close a deficiency as remediated (PIG R8).
  *

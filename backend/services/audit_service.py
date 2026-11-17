@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Audit Service - Create immutable audit log entries for SOC 2 Type II compliance.
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * The one place a section decision is sent, so the reader and the editor cannot
  * drift apart on what a decision invalidates.

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { useState, type JSX } from 'react'
 import { useIsOrgEditor } from '../../hooks/useHasOrgRole'
 import { isOpenDeficiency, isOverdue, useDeficiencies, useOrgMembersQuery } from '../../hooks/useDeficiencies'

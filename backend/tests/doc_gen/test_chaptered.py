@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Chaptered generation of bundled documents.
 
 Assembly is where a bundled document can quietly go wrong: a chapter heading

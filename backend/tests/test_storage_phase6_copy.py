@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Phase 6 of bring-your-own evidence storage: the copy between stores.
 
 ISA 20260912-0930, criteria 46 to 51.

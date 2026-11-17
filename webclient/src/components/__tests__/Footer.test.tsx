@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * Task 7: Footer restyle — behavioural parity + Explorer spec
  *

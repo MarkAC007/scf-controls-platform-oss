@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """check_vendor_limit must tolerate an organisation with more than one admin.
 
 Regression for the production 500 on POST /organizations/{org}/vendors:

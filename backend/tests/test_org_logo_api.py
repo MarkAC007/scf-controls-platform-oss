@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Unit tests for the Organization Logo API endpoints.
 Uses unittest.mock — no database required.

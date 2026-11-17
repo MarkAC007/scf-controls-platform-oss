@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Teams are accountability, not authorisation, and functions are platform-static (#822 phase 1).
 
 Two claims, each tested at the place it would actually be broken:

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Catalog diff engine for the SCF catalog upgrade feature (WP1a, plan §4.2.2-3).
 
 Stages a newly uploaded SCF workbook against the live catalog:

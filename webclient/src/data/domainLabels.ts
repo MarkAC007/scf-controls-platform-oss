@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * How the product names the stored codes of its domain enums. Pure data, so
  * that both the pages that edit these records and the audit log that reports

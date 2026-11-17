@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * useHasOrgRole — the courtesy gate at any rank.
  *

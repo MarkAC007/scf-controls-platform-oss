@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * Cadence vs coverage — the words themselves (#789, ISC-66).
  *

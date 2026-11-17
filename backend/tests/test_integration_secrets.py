@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Integration credential store, API and migration (Issue #947, contract §3d/§3e).
 
 DB-backed. Requires a throwaway Postgres reachable at DATABASE_URL with the

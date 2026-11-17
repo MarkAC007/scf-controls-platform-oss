@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Unit tests for services.dpsia_assessment (unified vendor_assessments).
 
 Covers assessment-type vocabulary mapping (API <-> engine <-> storage),

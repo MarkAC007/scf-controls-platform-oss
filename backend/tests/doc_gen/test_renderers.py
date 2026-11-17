@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Tests for the Tier 1 renderers, Tier 2 prompt assembly, and export.
 
 No database and no API key: everything here is a pure function over a context

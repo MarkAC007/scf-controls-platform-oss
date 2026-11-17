@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * UploadStage — pick a new SCF .xlsx and start an upgrade run
  * (multipart POST /api/admin/catalog/upgrade → 202, staging enqueued).

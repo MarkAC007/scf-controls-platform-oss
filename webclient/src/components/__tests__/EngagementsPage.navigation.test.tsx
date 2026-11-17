@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * EngagementsPage: the scope and presentation drawers make every SCF control,
  * evidence object and artifact they show clickable.

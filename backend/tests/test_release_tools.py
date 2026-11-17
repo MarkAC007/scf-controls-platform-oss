@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Release tools are pinned by SHA-256, and every release image gets an SBOM.
 
 Plan 7.1. ``scripts/release/tools.lock`` pins each tool the release uses

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Frequency vocabulary parity + regression tests (#783).
 
 These tests exist because the same concept was declared in four places that

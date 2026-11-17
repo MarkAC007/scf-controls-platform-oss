@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * WindowReviewPanel — M4 (#574) per-window review UI.
  *

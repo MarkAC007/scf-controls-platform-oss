@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """``GET /api/tasks/status/{id}`` must not answer SUCCESS for work that failed (#1013).
 
 Sibling of ``test_celery_task_failure_payload.py`` (#1001). That issue was about

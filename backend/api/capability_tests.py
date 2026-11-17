@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Capability test records (PIG R11).
 
 * ``GET …/capability-tests`` lists the organisation's tests, newest first

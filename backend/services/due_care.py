@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Due-care pack (PIG R10): control validation, posture snapshots, governance data.
 
 Three records the SCRMS-PIG due-care steps (27 to 30) ask the governing body

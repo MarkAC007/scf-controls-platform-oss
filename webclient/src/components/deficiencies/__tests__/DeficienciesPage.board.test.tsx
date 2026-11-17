@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * DeficienciesPage: the Board view beside the List (#1155).
  *

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Audit log rows resolve to the object they changed, inside one organisation.
 
 ``list_audit_log`` enriches each row with ``entity_label`` / ``entity_ref`` so

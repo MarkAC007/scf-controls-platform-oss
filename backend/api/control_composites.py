@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Control Assessment Composite API endpoints (M3, #575, PR 2).
 

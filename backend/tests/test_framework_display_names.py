@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Framework display names fall back to the live catalogue registry (UIP-022).
 
 ``frameworks.json`` is seeded once; after the 2026.3 upgrade renamed column

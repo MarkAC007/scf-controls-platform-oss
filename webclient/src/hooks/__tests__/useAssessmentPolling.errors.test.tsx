@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * useAssessmentPolling — failure is reported, never swallowed (#881).
  *

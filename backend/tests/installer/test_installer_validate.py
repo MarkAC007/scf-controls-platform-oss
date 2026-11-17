@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """DSN parse/rebuild and the reject matrix.
 
 The rule under test: an operator string is never handed to the driver.  It is

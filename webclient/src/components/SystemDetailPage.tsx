@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * SystemDetailPage — full-width system detail per SystemDetail.html spec.
  *

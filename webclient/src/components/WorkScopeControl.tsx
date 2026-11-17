@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * WorkScopeControl — the header's "Showing: Everything / My teams" switch.
  *

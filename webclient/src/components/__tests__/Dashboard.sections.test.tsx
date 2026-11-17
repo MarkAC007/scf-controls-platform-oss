@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * The dashboard is one page answering four questions — what needs doing,
  * where we are, who owns it, how it has changed — rather than tabs split by data source.

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Round-trip tests for GET /database/backup and POST /database/restore.
 
 These two endpoints had zero coverage despite being the most destructive pair

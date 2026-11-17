@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Transactional catalog apply/revert for the SCF catalog upgrade (WP1b, plan §4.2.4-7).
 
 Consumes a staged ``DiffDetail`` (produced by ``services/catalog_diff.py`` and

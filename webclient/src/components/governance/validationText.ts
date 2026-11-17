@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import type { ControlValidation, ValidationState } from '../../types'
 
 export const VALIDATION_STATE_LABELS: Record<ValidationState, string> = {

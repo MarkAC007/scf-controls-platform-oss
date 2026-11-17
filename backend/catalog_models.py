@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 SQLAlchemy ORM models for SCF Catalog tables.
 These are READ-ONLY reference tables seeded from JSON on application startup.

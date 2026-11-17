@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * TeamManagement — describe an organisation's teams and who sits on them.
  *

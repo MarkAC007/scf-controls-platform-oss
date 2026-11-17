@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Obligation basis on framework selection: MCR and DSR (#1122, PIG R2).
 
 Why a control is in scope decides what taking it out needs. A minimum

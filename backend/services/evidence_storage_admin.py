@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Writing and activating an evidence storage configuration.
 
 Phases 2 and 3 of the bring-your-own evidence storage work: Phase 2 added the

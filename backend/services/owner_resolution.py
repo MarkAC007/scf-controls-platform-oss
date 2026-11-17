@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """The owner-resolution fallback chain (#822 phase 3).
 
 Who is responsible for this item?

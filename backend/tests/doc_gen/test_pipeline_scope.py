@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """The post-generation scope check.
 
 ``build_context`` restricts every generator's input to controls with

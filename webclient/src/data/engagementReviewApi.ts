@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * Engagement evidence review board and dashboard — API client.
  *

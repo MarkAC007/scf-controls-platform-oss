@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
 /* The external auditor's whole workspace: a bar, a list of engagements, and
    the review workspace for the one that is open. Colours come from the app
    tokens and engagement-review-tokens.css, so both themes follow. */

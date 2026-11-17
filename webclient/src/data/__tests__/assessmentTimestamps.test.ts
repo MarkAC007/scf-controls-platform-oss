@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * Assessment timestamps are UTC instants, not local ones (#881).
  *

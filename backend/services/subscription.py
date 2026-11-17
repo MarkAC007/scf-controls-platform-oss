@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Subscription Service - Business logic for subscription tier management.
 

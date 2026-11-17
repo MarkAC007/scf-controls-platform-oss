@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * EvidenceFilePreviewModal — the PDF branch must render an iframe Chrome will
  * actually put a PDF in.

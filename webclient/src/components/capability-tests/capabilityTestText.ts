@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import type { CapabilityTestResult, CapabilityTestType } from '../../types'
 
 export { RESULT_LABELS, TEST_TYPE_LABELS } from '../../data/domainLabels'

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import type { AxisBand } from '../../types'
 import { AXIS_META, bandToClass, formatAxisDisplay } from './axisHelpers'
 import type { AxisKey } from './axisHelpers'

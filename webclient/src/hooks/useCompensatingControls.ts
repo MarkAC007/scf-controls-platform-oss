@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { useQueries, useQuery, type QueryClient } from '@tanstack/react-query'
 import {
   getCustomRiskControlLinks,

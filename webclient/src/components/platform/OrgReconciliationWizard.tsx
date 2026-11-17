@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * OrgReconciliationWizard — per-org preview → decide → apply → report flow
  * plus rollback (plan §4.3, §4.6), opened from the tenant reconciliation

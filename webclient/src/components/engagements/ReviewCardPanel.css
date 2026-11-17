@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
 /* Detail panel for one evidence object on the review board, its stage
    actions and its discussion thread. Colours come from
    engagement-review-tokens.css (--erb-*) and the app tokens; nothing is set

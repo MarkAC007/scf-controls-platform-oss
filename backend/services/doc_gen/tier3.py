@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Tier 3 generation — organisation-level documents written by a model.
 

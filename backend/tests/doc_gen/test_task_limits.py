@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Time limits, TTLs and interruption behaviour for ``doc_gen.generate``.
 
 These tests exist because of a production incident: a batch was SIGKILLed by

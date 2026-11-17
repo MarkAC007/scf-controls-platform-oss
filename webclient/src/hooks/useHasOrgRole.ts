@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * useHasOrgRole — does the person looking at this screen hold at least this
  * role in this organisation?

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-only
 # =============================================================================
 # backup.sh — scheduled, self-contained backup for a self-hosted SCF Controls
 # Platform. Takes a dual-store snapshot (Postgres + MinIO evidence volume),

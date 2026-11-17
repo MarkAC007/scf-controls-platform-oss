@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * The collapsed evidence task row answers ownership with a team, at every width.
  *

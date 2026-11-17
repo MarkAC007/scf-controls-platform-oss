@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Section parsing, ID normalisation, and control-ID extraction."""
 import pytest
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * ControlDetailPage — full-width control detail view with breadcrumb + prev/next pager.
  *

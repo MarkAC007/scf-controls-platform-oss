@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * The control search behind a custom risk's "Add control" (#1156).
  *

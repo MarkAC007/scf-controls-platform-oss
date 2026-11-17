@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Every VEX waiver is written, owned and in date (plan 7.4).
 
 ``scripts/release/check_vex.py`` checks every ``not_affected`` statement in

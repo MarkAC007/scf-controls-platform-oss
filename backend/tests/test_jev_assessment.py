@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Unit tests for services.jev_assessment — the Jev evidence-assessment engine.
 
 Pure functions throughout; the one call to the API goes through an injected

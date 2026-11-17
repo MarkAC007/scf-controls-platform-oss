@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Signed upload tickets binding a confirm call to the presign that authorised it (#57).
 

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Endpoint wiring for the review gates (#787, ISC-75..77).
 
 Two rules, two review paths. The per-file path is the one live by default,

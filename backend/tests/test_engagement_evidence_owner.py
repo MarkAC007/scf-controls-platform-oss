@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Evidence owner resolution for the engagement review board (engrev001).
 
 The owner of an evidence object is the org's EvidenceTracking row for it,

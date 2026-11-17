@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Unit tests for ENABLE_COMPOSITE_KSI flag + precedence (M3 PR 3, #575).
 
 Covers ISC-18..19 of the M3 design spec:

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * FindingFields — one finding of a capability test, as typed (PIG R11).
  *

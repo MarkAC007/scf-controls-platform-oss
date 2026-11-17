@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Delete an organisation and everything it owns — one implementation, two doors.
 
 Both ``DELETE /api/organizations/{org_id}`` (an organisation admin removing

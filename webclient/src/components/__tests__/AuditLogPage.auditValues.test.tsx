@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * AuditLogPage value rendering: the Change column must read the stored
  * encoding of an audit value rather than print it. Fixtures use the shapes the

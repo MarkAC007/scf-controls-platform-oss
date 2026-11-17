@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { useState, useEffect } from 'react'
 import type { AssessmentObjective, ControlId } from '../types'
 import { fetchControlAssessmentObjectives } from '../data/catalogApi'

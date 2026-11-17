@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Lifecycle state machine and its RBAC gate."""
 import pytest
 

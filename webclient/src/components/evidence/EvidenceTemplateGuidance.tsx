@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { useState, useCallback } from 'react'
 import type { EvidenceId, EvidenceTemplatesFile, ERLFile, EvidenceTracking } from '../../types'
 import { submitRecipeFeedback } from '../../data/apiClient'

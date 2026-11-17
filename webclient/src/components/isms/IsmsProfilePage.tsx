@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * ISMS Profile — the facts the ISO 27001 clause documents are written from.
  *

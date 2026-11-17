@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Download-token signing secret is resolved per call (issue #947, Lane C).
 
 Before this change `_get_secret()` memoised into a module global that nothing

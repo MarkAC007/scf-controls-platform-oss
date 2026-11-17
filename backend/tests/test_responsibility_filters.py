@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """The queue filter and the recipient rule are the same rule (#822 phase 4).
 
 Invariant 7 of #822: **the read path ships with the write path.** A column

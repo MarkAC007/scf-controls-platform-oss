@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Release images are pushed by digest; no tag exists until the release is public.
 
 Before this change each matrix leg of ``publish-oss-images.yml`` pushed

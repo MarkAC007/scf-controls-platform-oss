@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Alembic Environment Configuration for CG SCF Backend.
 

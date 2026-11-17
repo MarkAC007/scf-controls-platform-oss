@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Tests for `python -m cli.admin backfill-framework-registry`.
 
 No live database and no workbook: the extractor and the session factory are

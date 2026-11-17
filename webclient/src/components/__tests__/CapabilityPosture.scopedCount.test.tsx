@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * Capability Posture — the SCOPED CONTROLS headline is a DISTINCT count (#808).
  *

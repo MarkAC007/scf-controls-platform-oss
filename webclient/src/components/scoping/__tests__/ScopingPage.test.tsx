@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * ScopingPage.test.tsx — TDD tests for the ScopingPage container (Task 3).
  *

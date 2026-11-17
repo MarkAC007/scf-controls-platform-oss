@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Individual assignment is withdrawn; team assignment is the only assignment.
 
 Three write paths could still name a person as the owner of a control or an

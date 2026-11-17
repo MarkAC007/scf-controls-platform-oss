@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * Says what an upload to an untracked evidence item will and will not do.
  *

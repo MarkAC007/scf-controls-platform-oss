@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import type { ControlsMappingFile, ERLFile, EnrichedControl, ControlGuidance, ResolvedArtifact, FrameworkNameMap, CollectionInterfacesFile, EvidenceTemplatesFile } from '../types'
 import { fetchBulkControls, fetchBulkEvidence, buildFrameworkNameMap } from './catalogApi'
 

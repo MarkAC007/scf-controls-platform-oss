@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Capability test records (#1131, PIG R11).
 
 These tests pin:

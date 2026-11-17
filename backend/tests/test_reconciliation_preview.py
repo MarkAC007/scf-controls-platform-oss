@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Tests for backend/services/reconciliation_service.py (WP2b, plan §4.3, §4.7).
 
 Repo unit-test pattern (no live database — DB access faked at the session

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """The freshness rule the dashboard states must be the one the backend applies.
 
 `_calculate_status` in `api/evidence_health.py` grades an item green / amber /

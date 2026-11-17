@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import React, { useState, useEffect, useMemo } from 'react'
 import { fetchFrameworks, type FrameworkInfo } from '../data/catalogApi'
 import { useModalDismiss } from '../hooks/useModalDismiss'

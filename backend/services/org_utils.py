@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Organisation Utility Service - Shared helpers for organisation operations.
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * ReviewBoard: five review-stage columns of evidence-object cards, server-side
  * filters, the no-evidence strip, and moving a card (menu or drag) under the

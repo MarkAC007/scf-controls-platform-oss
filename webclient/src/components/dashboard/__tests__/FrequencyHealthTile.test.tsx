@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * FrequencyHealthTile — component tests (M4 #574 PR3, ISC-39 acceptance).
  *

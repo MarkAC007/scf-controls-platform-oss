@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Evidence Collection Tasks API endpoints - manage evidence collection tasks and dashboard.
 """

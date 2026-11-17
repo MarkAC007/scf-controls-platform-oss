@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { createOrUpdateScopedControl } from '../data/apiClient'
 import type { ScopedControl } from '../types'

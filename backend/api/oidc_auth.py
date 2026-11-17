@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Generic OIDC authorization-code login endpoints for CG SCF (issue #699).
 
 Router mounts under ``/api/auth`` and drives the browser-facing OIDC flow:

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """The daily schedulers, after #822 phase 4.
 
 Four acceptance criteria are about the schedulers rather than about the

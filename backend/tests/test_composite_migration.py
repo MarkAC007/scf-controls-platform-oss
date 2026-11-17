@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Migration sanity test for ``control_assessment_composites`` (M3, #575, PR 1).
 
 This suite is intentionally static — it inspects the migration module's

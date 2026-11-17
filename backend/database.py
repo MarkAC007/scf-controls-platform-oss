@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Database configuration and session management for CG SCF.
 Uses SQLAlchemy 2.0 with async support.

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Context assembly -- the three shapes that broke every generation.
 
 ``build_context`` sits between the ORM and every generator, so a wrong

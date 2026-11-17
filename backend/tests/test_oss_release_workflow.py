@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """The public release is published only with both assets, checked and attested.
 
 ``oss-release.yml`` ships in the OSS snapshot and runs in the public repository

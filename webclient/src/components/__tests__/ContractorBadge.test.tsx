@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * ContractorBadge: the badge appears when it should, and — the harder half —
  * does not appear when it should not (#822 phase 2, ISC-42).

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import type { AxisBand } from '../../types'
 
 export type AxisKey = 'IC' | 'M' | 'EC' | 'EQ'

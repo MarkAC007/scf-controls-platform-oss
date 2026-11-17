@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * SystemsManagement — the open detail page reloads after a successful edit.
  *

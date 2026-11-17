@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Data Migration Script - Migrate existing text-based owner/assigned_to fields to user FK relationships.
 

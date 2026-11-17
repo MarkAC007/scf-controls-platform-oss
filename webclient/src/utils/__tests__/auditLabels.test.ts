@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * Labels for what the PIG work writes to the audit log: new entity types, and
  * fields that printed as snake_case (last_validated_by, root_cause) with values

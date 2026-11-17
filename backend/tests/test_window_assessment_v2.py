@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Window assessment v2 — parity with the per-file #881 contract.
 
 Covers, without a database or a model:

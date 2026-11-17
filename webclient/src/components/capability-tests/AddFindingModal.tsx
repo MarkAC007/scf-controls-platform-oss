@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * AddFindingModal — add a finding found after a capability test was recorded
  * (PIG R11). It is recorded as a deficiency linked to the test.

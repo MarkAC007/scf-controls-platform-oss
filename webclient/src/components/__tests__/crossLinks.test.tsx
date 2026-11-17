@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * Cross-links between objects (2026-09-25 cross-link QA, docs/qa/).
  *

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Webhook endpoint management API (Issue #214 — Evidence Inbox).
 

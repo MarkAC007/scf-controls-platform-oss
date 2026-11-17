@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-only
 """Remove the retired Control Documents Mapper's uploads from object storage.
 
 CDM retirement, phase 5 (#907, design doc ``docs/plans/cdm-retirement.md``

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * TasksPage — CREATED column, sortable headers, won't-do status.
  *

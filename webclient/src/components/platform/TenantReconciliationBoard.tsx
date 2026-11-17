@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * TenantReconciliationBoard — Platform → Tenants (plan §4.6).
  *

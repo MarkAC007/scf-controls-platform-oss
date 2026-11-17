@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Document generation API.
 
 **Tenancy.** Every query filters on ``membership.organization_id`` — the value

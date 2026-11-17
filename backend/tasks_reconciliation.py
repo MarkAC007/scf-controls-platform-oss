@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Celery tasks driving per-org catalog reconciliation apply/rollback (WP2c,
 plan §4.3, §4.5).
 

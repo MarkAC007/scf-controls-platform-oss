@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * useModalDismiss — Escape closes the modal, and the page behind it stops
  * scrolling while it is open.

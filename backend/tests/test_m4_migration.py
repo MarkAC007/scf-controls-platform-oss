@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Migration sanity test for the M4 PR 1 per-window review columns (#574).
 
 Mirrors ``test_composite_migration.py`` from M3 — AST inspection of the

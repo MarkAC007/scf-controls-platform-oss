@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Server-side filtering on ``GET /api/evidence-tasks`` (#788).
 

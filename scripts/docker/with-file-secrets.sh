@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: AGPL-3.0-only
 # =============================================================================
 # with-file-secrets — export file-backed credentials into the environment, then
 # exec the real command. Used ONLY by docker-compose.secrets.yml (#947).

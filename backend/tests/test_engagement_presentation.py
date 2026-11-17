@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Tests for the framework-native presentation builder.
 
 Increment 2 of the framework-native audit-engagement design

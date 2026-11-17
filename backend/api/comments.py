@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Comments API endpoints - manage comments on controls and evidence with history tracking.
 """

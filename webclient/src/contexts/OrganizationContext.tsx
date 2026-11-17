@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * OrganizationContext - Multi-tenancy context for organization management
  *

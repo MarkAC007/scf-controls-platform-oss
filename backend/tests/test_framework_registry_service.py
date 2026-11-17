@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """services/framework_registry.py — read it, heal it, and refuse to lie.
 
 The production failure this module exists for: 2026.2 was applied by a build

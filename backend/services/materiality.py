@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Material controls (PIG R6).
 
 A material control is one the organisation cannot let fall away quietly: it

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Tests for the secret resolution chain (issue #947, Lane C).
 
 Contract: `backend/services/secrets.py` is the ONLY accessor. Precedence is

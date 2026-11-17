@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """The Docker Build job must not hand a git credential to the steps that build.
 
 The job's checkout used to pass the ``GH_PAT`` personal token (to fetch a

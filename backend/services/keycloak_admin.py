@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Keycloak Admin REST client — provisioning users in the *bundled* realm (#984).
 
 Inviting someone used to create an `organization_invites` row and send an email.

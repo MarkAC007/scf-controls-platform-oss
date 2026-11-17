@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * ISMS profile page: each section saves only itself, starter rows are a
  * draft until saved, and a viewer can read but not edit.

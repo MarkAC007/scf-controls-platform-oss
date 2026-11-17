@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 User Scope Preferences API - persistent per-user, per-org framework filter preferences.
 Issue #362: Audit Scope Filters

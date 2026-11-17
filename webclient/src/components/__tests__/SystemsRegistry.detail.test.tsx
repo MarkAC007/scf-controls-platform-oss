@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * SystemsRegistry → SystemDetailPage routing tests — Phase 4 Task 6
  *

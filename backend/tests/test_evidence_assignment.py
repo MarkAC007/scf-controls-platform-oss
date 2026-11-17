@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Evidence assignment reaches the columns the schedulers read (#781).
 
 Two things are pinned here, and they are different failures with the same cause.

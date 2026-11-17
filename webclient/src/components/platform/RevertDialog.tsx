@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * RevertDialog — platform revert of an applied run (POST .../revert).
  *

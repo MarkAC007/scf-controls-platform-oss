@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """The status a reader sees is the status the platform holds.
 
 The Document Control table was written once, at generation, and said "Draft"

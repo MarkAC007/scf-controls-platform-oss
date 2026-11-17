@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { useState, useEffect } from 'react'
 import { getAuditLog } from '../data/apiClient'
 import { useOrgMembersQuery } from '../hooks/useDeficiencies'

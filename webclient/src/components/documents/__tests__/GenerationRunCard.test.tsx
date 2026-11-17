@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * The run card: what a running batch and a finished one show, and that a
  * finished document's row opens it.

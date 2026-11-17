@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """First-ever tests for scripts/extract_scf_data.py (WP1a, plan §4.7).
 
 Synthetic openpyxl workbooks cover both sheet-name eras the extractor handles:

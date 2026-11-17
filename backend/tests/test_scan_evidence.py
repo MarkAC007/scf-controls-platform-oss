@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """The release carries a summary of each source scan that ran on the released commit.
 
 Two scripts in ``scripts/release`` do this:

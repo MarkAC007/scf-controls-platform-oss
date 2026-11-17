@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * DeprecatedBadge — shared lifecycle badge for catalog rows (plan §4.4.12).
  *

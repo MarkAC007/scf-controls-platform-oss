@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Input fingerprint computation for deterministic document regeneration.
 

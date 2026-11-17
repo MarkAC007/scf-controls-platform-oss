@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Tier 2 generation — prompt assembly and the language-model call.
 

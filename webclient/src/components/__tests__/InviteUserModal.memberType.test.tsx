@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * InviteUserModal: choosing an employment type for somebody who does not have
  * a membership yet (#822 phase 2, ISC-42).

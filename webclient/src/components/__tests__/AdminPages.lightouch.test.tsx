@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * Light-touch admin pages smoke tests (Task 8, ruling 7).
  *

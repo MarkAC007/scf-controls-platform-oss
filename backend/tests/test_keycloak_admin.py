@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Unit tests for the bundled-Keycloak admin client (#984).
 
 No Keycloak and no network: every call goes through an `httpx.MockTransport`

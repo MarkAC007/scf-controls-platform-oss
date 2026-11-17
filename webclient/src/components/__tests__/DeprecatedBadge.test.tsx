@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * DeprecatedBadge: renders only for deprecated rows, carries the retirement
  * hints, and getCatalogLifecycle survives rows without the badge fields

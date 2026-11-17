@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Org-level catalog reconciliation API (plan §4.3, §4.5).
 
 Read side (status, preview, runs, actions PUT, changelog) implemented by WP2b;

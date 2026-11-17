@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Who may mint and revoke API keys, and what a key may do once its owner changes.
 
 Editors could not create API keys: the endpoint required org admin, although

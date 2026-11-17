@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Tier 1 document renderers — deterministic, no language model involved.
 

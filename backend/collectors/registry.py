@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Collector registry: declarative (collector_id, source_label) -> artifact_types mapping.
 
 See epic #569 M2 design spec on issue #572 (2026-04-18). This module exists to

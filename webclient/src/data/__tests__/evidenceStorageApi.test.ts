@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * evidenceStorageApi — the org-scoped evidence storage client.
  *

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Preparer assertions on evidence files (#786, #802).
 

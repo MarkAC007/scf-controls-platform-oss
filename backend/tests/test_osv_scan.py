@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """The vulnerability scan blocks what it should, and cannot pass by not running.
 
 ``scripts/osv-scan.sh`` runs OSV-Scanner over the lockfiles in a container and

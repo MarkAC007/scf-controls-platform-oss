@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * TaskOwningTeamField: the tri-state that is the whole point of #822 §6.
  *

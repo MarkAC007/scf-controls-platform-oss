@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Tests for the declarative generator registry.
 
 The registry is where the licence classification lives, so the tests care most

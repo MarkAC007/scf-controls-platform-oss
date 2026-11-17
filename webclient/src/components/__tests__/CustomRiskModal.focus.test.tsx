@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * Add Custom Risk keeps keyboard focus inside the dialog: Title on open,
  * Tab/Shift+Tab wrap within it, and the opener gets focus back on close.

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Phase 4 — the storage choice, from the flag through to `.env`.
 
 Criteria 31, 32, 37 live here; 33, 34 and 36 are asserted in

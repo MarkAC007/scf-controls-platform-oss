@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * TaskDetailPage — full-width task detail per TaskDetail.html spec.
  *

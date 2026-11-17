@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Unit tests for services.jev_client — the TypeSafe System One HTTP client.
 
 No network. The transport is a fake ``httpx`` module installed for the test,

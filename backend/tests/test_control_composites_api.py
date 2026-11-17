@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """API tests for the ControlAssessmentComposite read endpoints (M3 PR 2, #575).
 
 Covers ISC-15..17 and §8a: single GET, list GET (cursor pagination, status

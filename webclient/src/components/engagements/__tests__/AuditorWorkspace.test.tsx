@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * AuditorWorkspace — what a signed-in person with no organisation sees.
  *

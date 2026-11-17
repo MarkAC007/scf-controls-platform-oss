@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Caching utilities for CG SCF.
 Provides decorators and helpers for Redis-based caching.

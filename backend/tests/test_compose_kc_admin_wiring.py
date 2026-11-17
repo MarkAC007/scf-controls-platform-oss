@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """The backend's Keycloak admin credentials must actually reach the containers (#984).
 
 `docker-compose.yml` has no `env_file:` for the Python services — every variable

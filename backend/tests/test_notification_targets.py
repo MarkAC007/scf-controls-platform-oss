@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Tests for resolving the navigable key of a notification.
 
 The defect: a notification names an evidence item in its own message

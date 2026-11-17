@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """prompt_version is recorded on every AI verdict (#787, ISC-74).
 
 ``prompt_hash`` already proved that *a* prompt produced a verdict. It could

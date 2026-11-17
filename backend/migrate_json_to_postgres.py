@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Data Migration Script: JSON to PostgreSQL
 Migrates scoped controls and evidence tracking data from JSON files to Postgres database.

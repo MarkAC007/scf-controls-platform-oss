@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """The resolve endpoint, the generated-section slice, and the edit-status rule.
 
 These three defects were one defect wearing three hats: a section's merge state

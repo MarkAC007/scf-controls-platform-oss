@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """The reader fragment.
 
 The in-app reader injects this into a React tree, so it must be a fragment and

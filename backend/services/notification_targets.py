@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Resolve the navigable key for a page of notifications.
 
 A notification stores `reference_type` + `reference_id`, and for evidence that

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * CapabilityTestFormModal — record a capability test with its findings, or
  * correct one (PIG R11).

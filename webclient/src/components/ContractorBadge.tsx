@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * ContractorBadge — says that this person works for this organisation under a
  * contract rather than on its payroll (#822 phase 2).

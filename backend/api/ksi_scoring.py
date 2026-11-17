@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 KSI multi-axis scoring helpers — issue #549, Phase 1.
 

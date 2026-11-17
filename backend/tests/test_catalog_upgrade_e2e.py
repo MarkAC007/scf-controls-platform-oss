@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Whole-feature E2E for the SCF catalog upgrade (WP6, plan §4.7).
 
 One coherent journey over the real service code — only the database session is

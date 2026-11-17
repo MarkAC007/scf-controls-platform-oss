@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Phase 3 of bring-your-own evidence storage: the credential in the database.
 
 ISA 20260912-0930, criteria 24 to 29, and 63.

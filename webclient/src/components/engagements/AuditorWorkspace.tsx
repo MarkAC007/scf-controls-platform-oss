@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { listMyEngagements, type AuditEngagement } from '../../data/apiClient'
 import { fetchFrameworks, type FrameworkInfo } from '../../data/catalogApi'

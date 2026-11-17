@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { useMemo, useRef, useState } from 'react'
 import { useAttestStage, useImportJourney, useJourney } from '../../hooks/useJourney'
 import { readFileText, readJourneyArtefact } from './journeyArtefact'

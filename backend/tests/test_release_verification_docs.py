@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """The release-verification instructions describe what a release really carries.
 
 Before this change the public README promised a source tarball with a

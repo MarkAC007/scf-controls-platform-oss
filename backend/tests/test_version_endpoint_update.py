@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """API tests for the tiered /api/version endpoint (upgrade design Part C / §8.6).
 
 Verifies the anonymous coarse response leaks no precise version, and that the

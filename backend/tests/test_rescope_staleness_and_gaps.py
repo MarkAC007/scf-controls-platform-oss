@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Re-scope staleness and scope-aware evidence gaps.
 
 Scope changes keep a control's implementation_status/maturity_level (Mark's

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * EvidenceFilePreviewModal — the AI panel tells the truth about itself (#881).
  *

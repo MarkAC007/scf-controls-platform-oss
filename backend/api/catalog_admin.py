@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Admin API for the OSS live SCF catalogue import ("bring your own SCF Excel").
 
 Lets a self-hosted operator upload their licensed SCF .xlsx through the UI and

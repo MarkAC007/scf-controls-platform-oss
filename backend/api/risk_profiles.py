@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Risk Profile API endpoints.
 Handles CRUD operations for per-organisation risk profile configuration.

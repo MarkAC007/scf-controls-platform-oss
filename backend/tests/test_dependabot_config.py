@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """The update automation keeps the rules the pins depend on.
 
 Pinned actions and images only stay current if something proposes the next

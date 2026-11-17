@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """The preparer assertion field set, named once (#786, #802).
 
 Twelve columns arrived together on `evidence_files`, and five places have to

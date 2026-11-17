@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * UserManagement: the Type column renders, and it is editable by an admin only
  * (#822 phase 2, ISC-42).

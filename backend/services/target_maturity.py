@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Target maturity: what level each control is meant to reach (PIG R5).
 
 Two sources, in precedence order:

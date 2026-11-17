@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """API layer of the SCF Risk Catalog feature (ISC-14..16, 26..28, 41, 42, 46).
 
 No database: each endpoint gets an AsyncMock session whose ``execute`` answers

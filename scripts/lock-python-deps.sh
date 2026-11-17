@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-only
 # Regenerate, or check, the hash-locked Python requirements.
 #
 #   scripts/lock-python-deps.sh                          recompile; pins already in a lock are kept

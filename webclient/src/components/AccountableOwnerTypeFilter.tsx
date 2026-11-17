@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * AccountableOwnerTypeFilter — narrow a list to the work whose accountable
  * team is led by an external contractor, or by permanent staff (#822 phase 2).

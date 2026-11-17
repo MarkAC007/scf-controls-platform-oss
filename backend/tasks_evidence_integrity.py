@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Celery tasks for server-side evidence integrity verification (#57).
 

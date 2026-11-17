@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * The accountable-owner-type filter, at the hook that runs it
  * (#822 phase 2, ISC-42).

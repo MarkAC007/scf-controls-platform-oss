@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
 /* Engagement dashboard. Stage colours come from engagement-review-tokens.css
    (--erb-*), surfaces and type from the app tokens. Nothing is set in JSX
    except --erd-seg, the count that sizes a bar segment. */

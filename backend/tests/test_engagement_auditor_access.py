@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Isolation tests for engagement-scoped auditor access — the security spine.
 
 Increment 3 of the framework-native audit-engagement design

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Deleting an evidence task, and the `wont_do` status.
 
 Two things are pinned:

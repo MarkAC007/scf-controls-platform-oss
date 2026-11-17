@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """``require_auth`` must publish the caller on ``request.state.user`` (#922).
 
 The audit middleware and ``detect_action_source`` read ``request.state.user``

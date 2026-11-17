@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Capability test records (PIG R11).
 
 A capability test is a test of whether the organisation can do what its

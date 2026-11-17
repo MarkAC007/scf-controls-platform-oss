@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Escalation thresholds, derived from the notifications already sent (#822 §Notifications).
 
 The scheduler runs once a day and asks each open item "are you overdue?". That

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Async service layer for AI-powered vendor research (Issue #59).
 

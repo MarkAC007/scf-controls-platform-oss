@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 S3 Evidence Storage Service.
 
@@ -66,6 +67,7 @@ ALLOWED_CONTENT_TYPES = {
     "application/json",
     "text/plain",
     "text/yaml",            # .yml / .yaml
+    "text/markdown",        # .md / .markdown
 }
 
 # ---------------------------------------------------------------------------

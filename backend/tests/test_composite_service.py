@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Unit tests for the ControlAssessmentComposite rollup service (M3, #575, PR 1).
 
 Covers ``_compute_composite`` (ISC-7..11), the dispatcher's terminal-status

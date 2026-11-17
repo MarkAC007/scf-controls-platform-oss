@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """API tests for the dashboard work-queue endpoint (R2).
 
 Covers the aggregate response shape and the ``assigned_to_me`` per-user

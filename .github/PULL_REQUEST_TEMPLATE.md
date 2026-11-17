@@ -25,4 +25,4 @@ release. Your pull request is the proposal and review record.
 - [ ] I have **updated documentation** where behaviour, configuration, or the API changed.
 - [ ] **CI passes**, and the **gitleaks** (secret scanning) and **semgrep** (static analysis) checks pass on my branch.
 - [ ] I have **not** committed any SCF catalogue content (CC BY-ND 4.0) or secrets.
-- [ ] I agree to **license my contribution under AGPL-3.0**.
+- [ ] This contribution is **my own work, or I have the right to submit it**, and I **license it under AGPL-3.0-only** (see [CONTRIBUTING.md](https://github.com/MarkAC007/scf-controls-platform-oss/blob/main/CONTRIBUTING.md#licensing-of-contributions)).

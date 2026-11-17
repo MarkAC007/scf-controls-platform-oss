@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """LLM model inventory — the single source of truth for model ids and prices (#782).
 
 Why this module exists

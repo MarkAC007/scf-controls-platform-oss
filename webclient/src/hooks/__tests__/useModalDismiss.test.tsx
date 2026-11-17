@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * Cover for D-09 — Escape closed no modal in this app, and the list behind the
  * users modal scrolled under the dialog.

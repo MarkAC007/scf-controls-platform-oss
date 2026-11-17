@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Evidence assessment on Jev (TypeSafe System One) — shadow or primary engine.
 
 The platform's evidence assessment asks a model, per SCF assessment objective,

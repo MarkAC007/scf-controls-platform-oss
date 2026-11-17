@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * Evidence storage migration panel — the Phase 6 copy, in the seam Phase 5
  * left for it (`EvidenceStorageSettings`'s `migrationPanel` prop).

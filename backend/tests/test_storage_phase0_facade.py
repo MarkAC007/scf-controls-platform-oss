@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Phase 0 of bring-your-own evidence storage: the facade is complete and no
 longer static (#967, ISC-1 … ISC-8).
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * PreviewSections — the non-decision sections of a per-org reconciliation
  * preview (plan §4.3): (a) scope additions per framework, (c) changed

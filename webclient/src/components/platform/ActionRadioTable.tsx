@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * ActionRadioTable — preview section (b): deprecated entities the org has
  * data on, with a per-row action decision (plan §4.3b).

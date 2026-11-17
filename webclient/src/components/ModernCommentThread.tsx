@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import React, { useState, useEffect, useRef } from 'react';
 import DOMPurify from 'dompurify';
 import { apiClient } from '../data/apiClient';

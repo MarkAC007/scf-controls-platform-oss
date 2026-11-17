@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * DeleteOrganizationDialog — the confirmation in front of deleting a client
  * organisation and ALL of its data.

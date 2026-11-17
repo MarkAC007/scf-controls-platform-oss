@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Phase 7: the backup script's two storage decisions, executed.
 
 ISA 20260912-0930, criteria 55 and 56, plus the two D46 carry-forwards.

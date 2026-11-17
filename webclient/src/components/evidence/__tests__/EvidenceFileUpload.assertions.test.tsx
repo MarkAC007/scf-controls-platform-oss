@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * EvidenceFileUpload — preparer assertions reach the confirm (#786, #802).
  *

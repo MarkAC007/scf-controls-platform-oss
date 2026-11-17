@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Extract the text answer from an Anthropic Messages API response.
 
 Models with adaptive thinking enabled — which Claude Opus 5 runs BY DEFAULT —

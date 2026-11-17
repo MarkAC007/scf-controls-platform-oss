@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Unit tests for the backend-side migration guard (upgrade design Part E).
 
 These exercise the pure decision logic (``evaluate_guard``) and the

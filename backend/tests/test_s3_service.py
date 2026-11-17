@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Unit tests for the S3 Evidence Storage Service (Issue #324).
 Uses unittest.mock to mock boto3 — no external dependencies required.

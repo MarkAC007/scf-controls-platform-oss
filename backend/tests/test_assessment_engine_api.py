@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """The evidence-assessment engine over HTTP: the setting and the two reads.
 
 - ``evidence_assessment_engine`` round-trips through the organisation

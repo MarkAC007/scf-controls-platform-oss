@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * AppearanceSettings — organization branding (logo upload).
  * Theme selection lives in the header ThemeMenu; this page holds only

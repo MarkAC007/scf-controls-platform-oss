@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Tests for DB-backed recipe resolution helpers in the capabilities API."""
 import os
 import sys

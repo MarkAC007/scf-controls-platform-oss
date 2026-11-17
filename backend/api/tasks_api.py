@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 API endpoints for background task management and cache operations.
 Provides task status checking and cache administration endpoints.

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 System Evidence Capability API endpoints.
 Handles CRUD operations for system-evidence capability mappings.

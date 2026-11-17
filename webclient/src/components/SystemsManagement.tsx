@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * SystemsManagement — orchestrates system list, detail, and modal views.
  *

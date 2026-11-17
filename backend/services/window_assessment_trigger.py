@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Debounced window assessment on ingest (#569 parity, work-order item 6).
 
 Until now a window assessment ran only from the nightly sweep or a manual

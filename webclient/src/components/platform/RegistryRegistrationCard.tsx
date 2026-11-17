@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * RegistryRegistrationCard — recover the live catalog's framework registry
  * from the UI (multipart POST /api/admin/catalog/framework-registry).

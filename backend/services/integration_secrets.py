@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Tier-3 credential store: the six values an operator may set in the app.
 
 Contract §3d. Precedence is fixed in `services.secrets.get_secret`: a value in

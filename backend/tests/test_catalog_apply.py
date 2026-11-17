@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Tests for backend/services/catalog_apply.py (WP1b, plan §4.2.4-7, §4.7).
 
 Repo unit-test pattern (no live database — DB access faked at the session

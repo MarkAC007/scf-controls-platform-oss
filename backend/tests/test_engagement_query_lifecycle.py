@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Tests for the engagement-query status lifecycle.
 
 Increment 4 of the framework-native audit-engagement design

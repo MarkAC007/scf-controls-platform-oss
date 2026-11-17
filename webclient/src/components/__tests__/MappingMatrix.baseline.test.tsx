@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * MappingMatrix — baseline test suite (Task 2, Phase 5 restyle).
  *

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * InviteUserModal: the identity-provider half of the invite (#984).
  *

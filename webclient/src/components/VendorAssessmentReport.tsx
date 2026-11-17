@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * VendorAssessmentReport -- structured report viewer for a completed AI
  * vendor assessment.

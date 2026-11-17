@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """The team-assignment API surface: authorisation, audit, atomicity, N+1 (#822 phase 3).
 
 Four API-level acceptance criteria:

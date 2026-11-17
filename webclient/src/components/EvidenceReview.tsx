@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import {
   pushSearch,

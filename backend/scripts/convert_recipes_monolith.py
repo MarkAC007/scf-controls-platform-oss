@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 One-off converter: split webclient/public/data/system_collection_recipes.json
 into per-vendor seed files under backend/data/system_catalog/.

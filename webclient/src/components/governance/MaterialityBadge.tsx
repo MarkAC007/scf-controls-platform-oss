@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import type { JSX } from 'react'
 
 /* PIG R6: a material control may not leave scope, or be marked not applicable,

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Assurance parity for window assessments (winparity PR2).
 
 What the per-file layer got in #881 WS3, the window layer gets here:

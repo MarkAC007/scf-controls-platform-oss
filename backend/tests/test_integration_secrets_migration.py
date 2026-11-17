@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """The migration must survive a database full of legacy plaintext (ISC-38/39).
 
 An existing installation has plaintext invite tokens and plaintext webhook

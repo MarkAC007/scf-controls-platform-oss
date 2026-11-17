@@ -24,9 +24,16 @@ This project is governed by our [Code of Conduct](CODE_OF_CONDUCT.md). By partic
 
 ## Licensing of contributions
 
-The software in this repository is licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0)** — see [LICENSE](LICENSE).
+The software in this repository is Copyright (C) 2025-present Ginga Ninja Holdings Limited, trading as ComplianceGenie.io, and is licensed under the **GNU Affero General Public License, version 3 only (`AGPL-3.0-only`)** — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
 
-By submitting a contribution, you agree that **your contribution is licensed under AGPL-3.0** on the same terms as the rest of the project.
+Contributions are accepted on an **inbound = outbound** basis. By submitting a contribution, you confirm that:
+
+1. the contribution is your own original work, or you otherwise have the right to submit it (for example, your employer has agreed, or it comes from a source under a licence compatible with `AGPL-3.0-only`, which you have identified in the pull request); and
+2. you license the contribution under **`AGPL-3.0-only`**, on the same terms as the rest of the project.
+
+You keep the copyright in your contribution. New source files should start with an `SPDX-License-Identifier: AGPL-3.0-only` comment, as existing files do.
+
+The names "ComplianceGenie.io" and "SCF Controls Platform" and their logos are not licensed under the AGPL; see [TRADEMARKS.md](TRADEMARKS.md).
 
 ### A note on SCF catalogue content
 
@@ -63,7 +70,7 @@ Please refer to the README for the authoritative, up-to-date instructions rather
 4. **Run the stack** via the README and verify your change works end to end.
 5. **Make sure checks pass.** Your branch must pass CI, and the **gitleaks** (secret scanning) and **semgrep** (static analysis) checks. Please run these locally or on your branch before requesting review.
 6. **Update documentation** if your change alters behaviour, configuration, or the API.
-7. **Open the pull request** using the pull request template and complete the checklist, including the statement that you agree to license your contribution under AGPL-3.0.
+7. **Open the pull request** using the pull request template and complete the checklist, including the statement that the contribution is yours to submit and that you license it under `AGPL-3.0-only`.
 
 A maintainer will review your pull request, discuss any changes, and — once accepted — carry it upstream for inclusion in the next release.
 

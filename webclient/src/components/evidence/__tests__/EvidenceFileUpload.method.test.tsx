@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * EvidenceFileUpload — the upload verb comes from the backend, not from a sniff.
  *

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * useFocusTrap — keeps Tab / Shift+Tab inside an open dialog and hands focus
  * back to whatever opened it when the dialog goes away.

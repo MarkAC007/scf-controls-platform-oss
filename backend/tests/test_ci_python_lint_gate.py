@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Every step in the Python Backend job's lint stage can fail (plan 8.3).
 
 The job used to run a second flake8 pass with ``--exit-zero`` and a

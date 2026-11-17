@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * VendorModal — PIG data location & responsibility fields (issue #1124, backend PR #1135)
  *

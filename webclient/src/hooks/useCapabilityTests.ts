@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { getCapabilityTest, listCapabilityTests } from '../data/apiClient'

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Tests for the licence gate.
 
 The gate is the reason this feature can ship without a licence renegotiation,

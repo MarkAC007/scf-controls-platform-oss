@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * InviteAcceptance on a Google install — the regression half of #984.
  *

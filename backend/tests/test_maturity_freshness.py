@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Maturity freshness judged against the configured cadence (#789 audit lane).
 
 The freshness ladder used to be a flat 7 / 30 / 90 days for every cadence, which

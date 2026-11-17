@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Beat liveness that observes the scheduler ticking (#784).
 
 The healthcheck this replaces was::

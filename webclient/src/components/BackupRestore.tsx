@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { useState, useRef } from 'react'
 import { apiClient } from '../data/apiClient'
 

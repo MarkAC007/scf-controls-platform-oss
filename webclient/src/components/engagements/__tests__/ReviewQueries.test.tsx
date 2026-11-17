@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * ReviewQueries: the query log for one target (an evidence object or a control).
  *

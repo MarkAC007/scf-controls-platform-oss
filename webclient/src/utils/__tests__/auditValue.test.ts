@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * auditValue: audit_log stores serialised before/after values as plain text,
  * and more than one writer feeds that column — most values arrive JSON-encoded

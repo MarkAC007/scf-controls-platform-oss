@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Server-side integrity classification for evidence files (#57).
 
 The platform has always stored a `sha256_hash` on `evidence_files`, and the

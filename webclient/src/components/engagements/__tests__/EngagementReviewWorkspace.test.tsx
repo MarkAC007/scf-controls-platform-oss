@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * EngagementReviewWorkspace: a deep link carries no framework, so when the
  * board cannot find the focus on one tab the workspace tries the next

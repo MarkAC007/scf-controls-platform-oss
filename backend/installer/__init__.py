@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """First-run provisioning wizard for the SCF Controls Platform.
 
 The package is deliberately self-contained: it runs from the backend image

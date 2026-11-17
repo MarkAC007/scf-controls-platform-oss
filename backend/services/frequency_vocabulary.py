@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Collection-frequency vocabulary — the single source of truth (#783).
 
 Before this module, "collection frequency" was declared independently in four

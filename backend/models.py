@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 SQLAlchemy ORM models for CG SCF database.
 Maps to PostgreSQL tables: organizations, users, scoped_controls, evidence_tracking,

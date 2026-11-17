@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """``python -m installer serve | unattended | import-env``.
 
 Exit codes (unattended and import-env): 0 ok, 2 validation failed,

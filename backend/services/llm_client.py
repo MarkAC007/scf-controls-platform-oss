@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """The one constructor for the Anthropic client.
 
 Every call site that talks to the Anthropic API builds its client here, so that

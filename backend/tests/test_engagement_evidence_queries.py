@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Queries that target an evidence object, internal-auditor grants, and review
 materialisation at engagement creation (api/audit_engagements.py).
 

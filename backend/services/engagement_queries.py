@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Status lifecycle for engagement auditor queries.
 
 Increment 4 of the framework-native audit-engagement design

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """The Python dependencies are installed from hash-locked files, and only from them.
 
 Each ``.in`` file says what the project asks for. The ``.txt`` beside it is

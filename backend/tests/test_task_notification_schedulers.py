@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """The two daily schedulers, end to end against a scripted session (#822 phase 4).
 
 ``tests/test_notification_recipients.py`` pins the recipient rule and

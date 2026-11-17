@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Per-org assurance policy resolution (#787, ISC-69/70).
 
 The absence of a policy row is the common case — every existing

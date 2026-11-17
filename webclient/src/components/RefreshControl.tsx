@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useState, type ReactElement } from 'react'
 import { useDataRefresh } from '../contexts/DataRefreshContext'
 

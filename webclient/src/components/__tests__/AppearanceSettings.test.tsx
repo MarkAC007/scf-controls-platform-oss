@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * AppearanceSettings.test.tsx — the organisation profile fields (PIG R4).
  *

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * The Journey is refreshed by writes it has never heard of.
  *

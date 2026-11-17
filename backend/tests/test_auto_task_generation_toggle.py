@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """The organisation-level automatic task generation switch.
 
 `settings.auto_task_generation_enabled` (default on) is honoured by the one

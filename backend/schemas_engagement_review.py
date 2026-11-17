@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Pydantic v2 request/response models for the engagement evidence review board
 and its dashboard (``api/engagement_evidence_reviews.py``).
 

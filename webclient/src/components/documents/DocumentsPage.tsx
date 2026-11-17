@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * Documents workspace — the library, the generate panel, and the editor.
  *

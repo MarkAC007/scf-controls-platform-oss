@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
 /* Controls and Evidence share a bounded workspace: the utility bar and
    breadcrumb remain reachable; titles and forms scroll together. */
 .app-layout { height: 100vh; height: 100dvh; min-height: 0; }

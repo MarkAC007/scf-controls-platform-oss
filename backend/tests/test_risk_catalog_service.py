@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """services.risk_catalog: upsert + control-mapping refresh (ISC-17, 18, 19, 45, 49).
 
 Reuses the transactional FakeSession from test_catalog_apply. Every code and

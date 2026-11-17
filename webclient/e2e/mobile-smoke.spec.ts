@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { test, expect, Page } from '@playwright/test'
 
 // Mobile/responsive smoke: visits every top-level tab and asserts the page

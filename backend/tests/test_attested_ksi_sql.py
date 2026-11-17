@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Attestation gate on the KSI evidence-metrics SQL (#787, ISC-69..73).
 
 The gate degrades an unattested AI verdict to ``unassessed`` rather than

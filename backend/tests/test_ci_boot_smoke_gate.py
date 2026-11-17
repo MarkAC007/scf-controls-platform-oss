@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """The Docker Build job's boot test must be able to fail.
 
 Until this gate the job ran ``docker compose up -d``, slept ten seconds and

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """API contract tests for the System <-> Vendor structural link.
 
 Covers the vendor-system cohesion feature: systems.vendor_id FK, the nested

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Every action a workflow uses is pinned to a full commit, with its version noted.
 
 A tag such as ``@v5`` is a pointer its publisher can move, so a workflow that

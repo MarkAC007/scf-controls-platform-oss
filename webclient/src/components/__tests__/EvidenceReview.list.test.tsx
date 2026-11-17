@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * Confirms the EvidenceReview evidence-list surface.
  *

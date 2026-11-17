@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Who owns an evidence object on the engagement review board.
 
 The board's card is the evidence object (an SCF ERL id such as ``E-IAC-07``).

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Audit rows name the record that changed, against a real Postgres.
 
 Every successful mutation gets a request-level baseline row from

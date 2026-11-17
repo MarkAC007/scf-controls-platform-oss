@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """The workflow lint stays wired the way it was introduced.
 
 ``ci.yml`` runs zizmor over every workflow in the repository and fails on any

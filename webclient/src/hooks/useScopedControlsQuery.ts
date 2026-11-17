@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import type { MemberType } from '../types'
 import {

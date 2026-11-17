@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Runtime feature-flag endpoint (#787, ISC-80).
 
 The webclient compiles ``VITE_ENABLE_PER_WINDOW_REVIEW`` in at build time;

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * EngagementsPage: the way into the review board and dashboard, and granting
  * an internal auditor.

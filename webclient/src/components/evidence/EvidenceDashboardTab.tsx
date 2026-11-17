@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import type {
   EnrichedControl,

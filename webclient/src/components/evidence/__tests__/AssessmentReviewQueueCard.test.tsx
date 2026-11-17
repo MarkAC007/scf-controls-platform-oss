@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * AssessmentReviewQueueCard — making unconfirmed AI output findable (#881 WS3).
  *

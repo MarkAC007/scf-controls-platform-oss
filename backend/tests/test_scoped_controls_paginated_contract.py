@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Response contract for ``GET /organizations/{org}/scoped-controls-paginated``.
 
 Why this file exists

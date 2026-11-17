@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-only
 """CLI: extract required_artifact_types for SCF controls.
 
 Populates SCFCatalogControl.required_artifact_types via LLM extraction for the

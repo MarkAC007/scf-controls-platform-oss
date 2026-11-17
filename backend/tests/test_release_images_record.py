@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """A release says which image bytes belong to it (release-images.json).
 
 ``release-oss.yml`` builds the images from the snapshot, checks that a stranger

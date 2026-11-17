@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Risk acceptance and standards exceptions (#1127, PIG R7).
 
 Accepting a risk is a decision someone answers for. These tests pin:

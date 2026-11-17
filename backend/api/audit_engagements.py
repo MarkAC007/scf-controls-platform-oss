@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Audit Engagement Workspaces API — Phase D Foundation.
 Handles CRUD for audit engagements and their materialised control scope.

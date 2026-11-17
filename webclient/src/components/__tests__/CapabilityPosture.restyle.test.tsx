@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * Capability Posture — restyle-pinning tests (Phase 5, Task 1).
  *

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * AssessmentReviewPanel — the human end of the assessment (#881 WS3).
  *

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Functional round-trip test for the vendor assessment consolidation migration
 (20260711_140000_consolidate_vendor_assessments).
 

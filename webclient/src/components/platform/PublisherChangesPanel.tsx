@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * PublisherChangesPanel — what SCF itself says changed in the new release.
  *

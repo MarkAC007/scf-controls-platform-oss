@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * CatalogChangelogPage: renders the org changelog with the deprecated-badge
  * explainer and doc links; empty and error states degrade gracefully.

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Applies the persisted (or system) theme to <html> before first paint, so the
 // page never flashes the wrong theme while the React bundle loads.
 //

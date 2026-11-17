@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * DiffPreview — paginated global diff for a staged run
  * (GET /api/admin/catalog/upgrade/runs/{id}/diff).

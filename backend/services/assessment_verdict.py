@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Parsing and verdict derivation for AO-grounded evidence assessment (#881).
 
 Two responsibilities, deliberately together because they are two halves of one

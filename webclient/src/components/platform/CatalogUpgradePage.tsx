@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * CatalogUpgradePage — Platform → Catalog (plan §4.6).
  *

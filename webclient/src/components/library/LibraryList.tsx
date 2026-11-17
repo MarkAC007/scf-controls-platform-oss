@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * LibraryList — full-width Explorer list view for the Control Library tab.
  *

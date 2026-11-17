@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """audit_log is append-only at the database level (#789, ISC-82..87).
 
 Two layers:

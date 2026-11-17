@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Organisation profile, system boundary record and vendor notes (#1124, PIG R4).
 
 The playbook asks which systems sit inside the boundary and how critical each

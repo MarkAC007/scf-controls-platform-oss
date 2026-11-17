@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """What a regeneration records about itself.
 
 Two records, two questions. The Change History table *inside* the document says

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * ControlGraphOverlay — the control's relationship graph over the whole
  * browser window.

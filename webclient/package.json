@@ -1,7 +1,8 @@
 {
   "name": "scf-controls-platform",
   "private": true,
-  "version": "1.5.1",
+  "license": "AGPL-3.0-only",
+  "version": "1.5.2",
   "type": "module",
   "scripts": {
     "predev": "node scripts/copy-data.js",

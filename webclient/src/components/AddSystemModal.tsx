@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import React, { useState, useEffect } from 'react'
 import MarkdownField from './MarkdownField';
 import { createSystem, updateSystem } from '../data/apiClient'

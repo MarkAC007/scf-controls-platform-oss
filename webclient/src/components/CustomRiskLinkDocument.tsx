@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { useState, type JSX } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { setCustomRiskControlDocument } from '../data/apiClient'

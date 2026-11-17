@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * Which document each in-scope control lands in, under the organisation's
  * document structure (Org Settings → document profile).

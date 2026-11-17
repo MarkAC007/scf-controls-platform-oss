@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * WorkScopeContext — the header-level answer to "whose work am I looking at?"
  *

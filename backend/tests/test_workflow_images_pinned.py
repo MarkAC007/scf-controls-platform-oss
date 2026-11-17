@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Every container image a workflow runs is pinned by digest.
 
 A tag such as ``postgres:16``, or no tag at all, resolves to whatever the

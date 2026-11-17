@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import React, { useState, useEffect } from 'react'
 import type { Vendor, VendorInput, VendorStatus, VendorCriticality, DataClassification } from '../types'
 import { VENDOR_STATUS_LABELS, VENDOR_CRITICALITY_LABELS, DATA_CLASSIFICATION_LABELS } from '../types'

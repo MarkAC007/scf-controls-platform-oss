@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Contract tests for a team serving multiple business functions."""
 from uuid import uuid4
 

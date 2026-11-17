@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """When evidence was collected, as distinct from when it was uploaded (#789).
 
 ``EvidenceTracking.last_collection_date`` drives two things that matter: the

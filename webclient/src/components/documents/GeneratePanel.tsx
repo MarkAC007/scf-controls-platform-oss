@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * Generation panel — pick generators, pick what they cover, queue the run.
  *

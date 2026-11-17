@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Evidence storage configuration API.
 
 Phases 2 and 3 of the bring-your-own evidence storage work. Everything an

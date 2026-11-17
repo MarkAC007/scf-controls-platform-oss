@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Phase 5 — the presign response says which verb it signed (ISC 43, ISC 44).
 
 The browser used to choose between a presigned POST and a raw PUT by asking

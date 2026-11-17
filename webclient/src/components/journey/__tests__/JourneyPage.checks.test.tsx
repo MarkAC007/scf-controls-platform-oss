@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * A stage's checks say, in words, whether each is met, and show the server's
  * `detail` beside it. The glyph alone was the only met/unmet signal (an

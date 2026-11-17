@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Provision over HTTP, unattended, import-env, and the launcher's own guarantees."""
 
 from __future__ import annotations

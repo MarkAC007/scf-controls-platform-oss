@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { useState, useEffect, useRef, useCallback } from 'react'
 import {
   listEvidenceFiles,
@@ -69,6 +70,7 @@ export function fileTypeIcon(contentType: string): string {
   if (contentType.includes('image')) return '\uD83D\uDDBC\uFE0F'
   if (contentType.includes('json')) return '\uD83D\uDCCB'
   if (contentType.includes('yaml') || contentType.includes('yml')) return '\u2699\uFE0F'
+  if (contentType.includes('markdown')) return '\uD83D\uDCD1'
   return '\uD83D\uDCCE'
 }
 

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Server-side team and function filters on the controls and evidence lists (#822 phase 3).
 
 These filters cannot live in the client. ``list_scoped_controls_paginated`` is

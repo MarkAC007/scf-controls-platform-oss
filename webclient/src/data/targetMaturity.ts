@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * Target maturity resolution (PIG R5) — the client twin of
  * backend/services/target_maturity.py `resolve_target`.

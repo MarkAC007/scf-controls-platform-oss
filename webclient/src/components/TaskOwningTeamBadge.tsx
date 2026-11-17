@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * TaskOwningTeamBadge — one task row's answer to "who owns this?" (#822 phase 4).
  *

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Systems Registry API endpoints.
 Handles CRUD operations for systems that provide evidence.

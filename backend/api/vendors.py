@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Vendor Management API endpoints.
 Handles CRUD operations for vendors, assessments, and certifications (TPRM).

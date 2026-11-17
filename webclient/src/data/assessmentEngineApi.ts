@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * Assessment engine API client — which engine judges an organisation's
  * evidence, and what the Jev shadow has said alongside Claude.

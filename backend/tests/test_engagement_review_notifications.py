@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Engagement evidence review notifications (engrev001).
 
 Each creator routes as the board needs, excludes the actor, stamps

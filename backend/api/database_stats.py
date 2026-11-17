@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Database Statistics API endpoint.
 Provides health check, statistics, backup, restore, and version info for the database.

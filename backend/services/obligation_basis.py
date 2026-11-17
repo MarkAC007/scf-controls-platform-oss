@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Obligation basis: why a control is in scope (PIG R2).
 
 A control is in scope because some obligation put it there. Either it is a

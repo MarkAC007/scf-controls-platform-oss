@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * Risk acceptance (PIG R7, backend #1138): an admin accepts a risk with a
  * rationale and an expiry, renews it or withdraws it; everyone sees who

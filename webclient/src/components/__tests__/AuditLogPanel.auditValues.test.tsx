@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * AuditLogPanel value rendering: the per-control change history reads the same
  * audit values as the org-wide page and must decode them the same way. These

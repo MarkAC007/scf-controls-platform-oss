@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Organisation compensating controls (PIG R9).
 
 Compensating controls with no vendor, recorded against the organisation's

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * useTaskTeamOwnership — who owns each task in a list, resolved once for the
  * whole list rather than once per row (#822 phase 4).

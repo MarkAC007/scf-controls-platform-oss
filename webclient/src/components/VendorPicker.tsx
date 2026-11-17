@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import React, { useState, useEffect, useMemo, useRef } from 'react'
 import toast from 'react-hot-toast'
 import { getVendors, createVendor } from '../data/apiClient'

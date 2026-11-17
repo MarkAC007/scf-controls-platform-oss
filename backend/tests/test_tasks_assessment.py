@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Unit tests for tasks_assessment — foundation repair and AO grounding (#881).
 
 Uses a recording fake sync session (no database), following the pattern in

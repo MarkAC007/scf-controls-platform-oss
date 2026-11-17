@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Reading an organisation's assurance policy (#787, #803).
 
 One resolver, because two call sites need the same answer and the interesting

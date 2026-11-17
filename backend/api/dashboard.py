@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 GRC Dashboard API endpoints - work queue and operational overview.
 """

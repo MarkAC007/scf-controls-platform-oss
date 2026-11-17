@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * Catalog API Client
  * Fetches SCF catalog reference data from backend API instead of static JSON files.

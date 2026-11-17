@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * Document generation settings — the feature toggle and the SCF licence
  * acknowledgement.

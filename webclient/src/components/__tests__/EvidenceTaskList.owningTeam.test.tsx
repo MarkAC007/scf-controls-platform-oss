@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * EvidenceTaskList: the task panel on an evidence item (#822 phase 4).
  *

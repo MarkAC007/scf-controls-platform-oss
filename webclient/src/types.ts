@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 export type EvidenceId = string
 export type ControlId = string
 export type SystemId = string

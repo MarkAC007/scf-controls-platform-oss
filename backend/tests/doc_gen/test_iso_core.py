@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """The ISO/IEC 27001 core pack (services/doc_gen/iso_core.py) and the Tier 3
 Information Security Policy prompt.
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { useEffect, useState } from 'react'
 import {
   type EvidenceFileResponse,
@@ -10,6 +11,7 @@ import { PreparerAssertionPanel } from './PreparerAssertionPanel'
 import { AssessmentReviewPanel } from './AssessmentReviewPanel'
 import { ShadowVerdictPanel } from './ShadowVerdictPanel'
 import { verdictPresentation } from './assessmentVerdict'
+import { renderMarkdownDocument } from '../../data/markdownDocument'
 
 // ---- Props ----
 
@@ -216,6 +218,13 @@ export function EvidenceFilePreviewModal({
     file.filename.toLowerCase().endsWith('.yml') ||
     file.filename.toLowerCase().endsWith('.yaml')
   const isCodeFile = isJson || isYaml
+  const isMarkdown =
+    contentType === 'text/markdown' ||
+    contentType === 'text/x-markdown' ||
+    file.filename.toLowerCase().endsWith('.md') ||
+    file.filename.toLowerCase().endsWith('.markdown')
+  // Both are fetched as text and shown inline; only the presentation differs.
+  const isTextPreview = isCodeFile || isMarkdown
 
   // Reset state when switching files
   useEffect(() => {
@@ -225,9 +234,9 @@ export function EvidenceFilePreviewModal({
     setConfirmDelete(false)
   }, [file.id])
 
-  // Fetch code content for JSON/YAML files
+  // Fetch text content for JSON/YAML/Markdown files
   useEffect(() => {
-    if (!isCodeFile || !file.download_url) return
+    if (!isTextPreview || !file.download_url) return
     if (file.file_size_bytes > 512 * 1024) return
 
     let cancelled = false
@@ -236,7 +245,10 @@ export function EvidenceFilePreviewModal({
     setCodeContent(null)
 
     fetch(file.download_url)
-      .then(r => r.text())
+      .then(r => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+        return r.text()
+      })
       .then(text => {
         if (cancelled) return
         if (isJson) {
@@ -257,7 +269,7 @@ export function EvidenceFilePreviewModal({
       })
 
     return () => { cancelled = true }
-  }, [file.id, file.download_url, file.file_size_bytes, isCodeFile, isJson])
+  }, [file.id, file.download_url, file.file_size_bytes, isTextPreview, isJson])
 
   function handleDialogClick(e: { stopPropagation(): void }) {
     e.stopPropagation()
@@ -282,7 +294,7 @@ export function EvidenceFilePreviewModal({
       )
     }
 
-    if (isCodeFile) {
+    if (isTextPreview) {
       if (file.file_size_bytes > 512 * 1024) {
         return (
           <div className="evidence-preview-body evidence-preview-body--unsupported">
@@ -290,6 +302,27 @@ export function EvidenceFilePreviewModal({
             <span className="evidence-preview-unsupported-label">
               File too large to preview inline (&gt;512 KB) — use Download
             </span>
+          </div>
+        )
+      }
+      if (isMarkdown) {
+        return (
+          <div className="evidence-preview-body evidence-preview-body--markdown">
+            {codeLoading && (
+              <span className="evidence-preview-code-loading">Loading…</span>
+            )}
+            {codeError && (
+              <span className="evidence-preview-unsupported-label">{codeError}</span>
+            )}
+            {codeContent !== null && (
+              <div
+                className="evidence-preview-markdown"
+                data-testid="evidence-preview-markdown"
+                // Uploaded evidence is untrusted: the renderer escapes the
+                // source before parsing and sanitises the result.
+                dangerouslySetInnerHTML={{ __html: renderMarkdownDocument(codeContent) }}
+              />
+            )}
           </div>
         )
       }

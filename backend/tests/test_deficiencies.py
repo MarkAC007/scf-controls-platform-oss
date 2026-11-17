@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Control deficiency record (#1128, PIG R8).
 
 A deficiency is an organisation's action item with no vendor. These tests pin:

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Audit Log API endpoints.
 Read-only endpoints for querying the immutable audit trail.

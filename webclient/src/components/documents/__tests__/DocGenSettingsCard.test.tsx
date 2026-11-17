@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * Changing the document structure asks first when it would supersede current
  * policies, standards or procedures, and says how many and how many approved.

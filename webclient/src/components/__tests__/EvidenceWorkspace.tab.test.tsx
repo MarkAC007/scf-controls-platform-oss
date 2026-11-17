@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * Confirms the sub-tab strip in EvidenceWorkspace is rendered via the
  * Phase-1 TabRow component. URL semantics are covered by the deeplink suite;

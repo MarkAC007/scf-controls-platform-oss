@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import type { JSX } from 'react'
 import type { ObligationBasis } from '../../data/apiClient'
 

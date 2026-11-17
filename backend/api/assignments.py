@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Assignments API endpoints - manage user assignments to controls and evidence.
 """

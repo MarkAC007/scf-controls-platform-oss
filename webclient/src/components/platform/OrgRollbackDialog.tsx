@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * OrgRollbackDialog — typed confirmation before rolling back the latest
  * applied reconciliation run (POST .../rollback with {confirm_text}).

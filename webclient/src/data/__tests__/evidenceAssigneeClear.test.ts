@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 /**
  * evidenceAssigneeClear.test.ts — the wire half of the evidence detail page's
  * "Clear" action (item C3).

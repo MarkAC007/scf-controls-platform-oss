@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Celery task for platform update discovery (upgrade design Part B, §2.2).
 
 Polls the public GitHub Releases API for the OSS repo on a daily beat schedule,
