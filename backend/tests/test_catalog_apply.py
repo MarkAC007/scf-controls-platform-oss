@@ -1306,3 +1306,173 @@ async def test_risks_and_threats_apply_from_the_stored_diff():
     assert risk.status == "active" and risk.catalog_version == TO_V
     assert live_threat.status == "deprecated" and live_threat.retired_in_version == TO_V
     assert live_threat.title == "Old threat"
+
+
+# ---------------------------------------------------------------------------
+# Theme mappings across the 2026.3 NIST key rename, and the start-up repair
+# ---------------------------------------------------------------------------
+
+
+class RepairSession(FakeSession):
+    """FakeSession that can also answer the repair's two aggregate reads, from
+    the in-memory tables rather than from a canned value."""
+
+    async def execute(self, stmt, params=None):
+        if isinstance(stmt, Select):
+            name = stmt.column_descriptions[0]["name"]
+            controls = self.tables[SCFCatalogControl]
+            active = {c.scf_id for c in controls if c.status == "active"}
+            if name == "active_mapped":
+                self.events.append("probe")
+                reached = sum(
+                    1 for m in self.tables[CapabilityThemeMapping] if m.scf_id in active
+                )
+                return _FakeResult([reached])
+            if name == "catalog_version":
+                versions = [c.catalog_version for c in controls if c.status == "active"]
+                top = max(set(versions), key=versions.count) if versions else None
+                return _FakeResult([top] if top is not None else [])
+        return await super().execute(stmt, params)
+
+
+def _repair_session(controls=(), themes=(), mappings=()):
+    return RepairSession(
+        {
+            SCFCatalogControl: list(controls),
+            CapabilityTheme: list(themes),
+            CapabilityThemeMapping: list(mappings),
+        }
+    )
+
+
+def _mapping_pairs(session):
+    return sorted((m.theme_id, m.scf_id) for m in session.tables[CapabilityThemeMapping])
+
+
+@pytest.fixture
+def themes_file(monkeypatch):
+    monkeypatch.setattr(ca, "_load_capability_themes_json", lambda: THEMES_JSON)
+
+
+@pytest.mark.asyncio
+async def test_a_2026_3_control_is_mapped_through_the_renamed_nist_key():
+    """The bug. 2026.3 controls carry ``nist_800_53_r5_2``; reading only the
+    old spelling mapped none of them and every capability theme read zero."""
+    current = _control_row("GOV-A2", "Current",
+                           framework_mappings={"nist_800_53_r5_2": ["AC-02(01)"]})
+    retired = _control_row("GOV-A1", "Retired", status="deprecated",
+                           framework_mappings={"nist_800_53_r5": ["AC-1"]})
+    session = _session(controls=[current, retired], themes=[_theme_row(7, "IAM")])
+    report = await ca.apply_catalog_run(session, _run(), _controls_diff(), themes_json=THEMES_JSON)
+
+    # Retired controls stay mapped (drill-downs still resolve them); the
+    # current one is no longer left out.
+    assert _mapping_pairs(session) == [(7, "GOV-A1"), (7, "GOV-A2")]
+    assert report.mappings_recomputed == 2
+
+
+@pytest.mark.asyncio
+async def test_an_apply_that_maps_no_active_control_says_so(caplog):
+    unmapped = _control_row("GOV-A2", "Current",
+                            framework_mappings={"some_future_nist_column": ["AC-02"]})
+    session = _session(controls=[unmapped], themes=[_theme_row(7, "IAM")])
+    with caplog.at_level("ERROR", logger=ca.logger.name):
+        await ca.apply_catalog_run(session, _run(), _controls_diff(), themes_json=THEMES_JSON)
+    assert "none of the 1 active controls maps to a theme" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_repair_rebuilds_mappings_that_only_reach_retired_controls(themes_file):
+    """An install upgraded to 2026.3 before the rename was handled."""
+    current = _control_row("GOV-A2", "Current", catalog_version=TO_V,
+                           framework_mappings={"nist_800_53_r5_2": ["AC-02"]})
+    retired = _control_row("GOV-A1", "Retired", status="deprecated", catalog_version=TO_V,
+                           framework_mappings={"nist_800_53_r5": ["AC-1"]})
+    stale = SimpleNamespace(theme_id=7, scf_id="GOV-A1", relevance="primary")
+    session = _repair_session([current, retired], [_theme_row(7, "IAM")], [stale])
+
+    result = await ca.repair_theme_mappings_if_uncovered(session)
+
+    assert result == {"status": "seeded", "count": 2}
+    assert _mapping_pairs(session) == [(7, "GOV-A1"), (7, "GOV-A2")]
+    assert {m.catalog_version for m in session.tables[CapabilityThemeMapping]} == {TO_V}
+    # Lock first, then the one permitted delete, then a single commit.
+    assert session.events.index("lock") < session.events.index(
+        ("delete", "capability_theme_mappings")
+    )
+    assert session.commits == 1
+    assert session.deleted_tables == {"capability_theme_mappings"}
+
+
+@pytest.mark.asyncio
+async def test_repair_rebuilds_an_empty_mapping_table(themes_file):
+    """A fresh install seeded from a 2026.3 file by the old code: themes, no mappings."""
+    current = _control_row("GOV-A2", "Current",
+                           framework_mappings={"nist_800_53_r5_2": ["AC-02"]})
+    session = _repair_session([current], [_theme_row(7, "IAM")], [])
+    result = await ca.repair_theme_mappings_if_uncovered(session)
+    assert result == {"status": "seeded", "count": 1}
+    assert _mapping_pairs(session) == [(7, "GOV-A2")]
+
+
+@pytest.mark.asyncio
+async def test_repair_leaves_a_healthy_install_alone(themes_file):
+    current = _control_row("GOV-A2", "Current",
+                           framework_mappings={"nist_800_53_r5_2": ["AC-02"]})
+    good = SimpleNamespace(theme_id=7, scf_id="GOV-A2", relevance="primary")
+    session = _repair_session([current], [_theme_row(7, "IAM")], [good])
+
+    result = await ca.repair_theme_mappings_if_uncovered(session)
+
+    assert result == {"status": "skipped", "existing": 1}
+    assert session.tables[CapabilityThemeMapping] == [good]
+    assert session.events == ["probe"]          # no lock, no delete, no commit
+    assert session.commits == 0
+
+
+@pytest.mark.asyncio
+async def test_repair_does_not_rewrite_when_no_active_control_can_be_mapped(themes_file):
+    """Nothing to gain from a rebuild, so the table is not rewritten on every start."""
+    unmappable = _control_row("GOV-A2", "Current", framework_mappings={})
+    retired = _control_row("GOV-A1", "Retired", status="deprecated",
+                           framework_mappings={"nist_800_53_r5": ["AC-1"]})
+    stale = SimpleNamespace(theme_id=7, scf_id="GOV-A1", relevance="primary")
+    session = _repair_session([unmappable, retired], [_theme_row(7, "IAM")], [stale])
+
+    result = await ca.repair_theme_mappings_if_uncovered(session)
+
+    assert result == {"status": "skipped", "existing": 0}
+    assert session.tables[CapabilityThemeMapping] == [stale]   # rolled back
+    assert session.commits == 0
+    assert session.events[-1] == "rollback"
+
+
+@pytest.mark.asyncio
+async def test_repair_with_no_active_controls_touches_nothing(themes_file):
+    retired = _control_row("GOV-A1", "Retired", status="deprecated",
+                           framework_mappings={"nist_800_53_r5": ["AC-1"]})
+    stale = SimpleNamespace(theme_id=7, scf_id="GOV-A1", relevance="primary")
+    session = _repair_session([retired], [_theme_row(7, "IAM")], [stale])
+    result = await ca.repair_theme_mappings_if_uncovered(session)
+    assert result == {"status": "skipped", "existing": 0}
+    assert session.tables[CapabilityThemeMapping] == [stale]
+    assert session.deleted_tables == set()
+
+
+@pytest.mark.asyncio
+async def test_repair_reports_a_missing_themes_file_without_touching_rows(monkeypatch):
+    def _missing():
+        raise ca.ApplyConsistencyError("capability_themes.json not found: /nowhere")
+
+    monkeypatch.setattr(ca, "_load_capability_themes_json", _missing)
+    stale = SimpleNamespace(theme_id=7, scf_id="GOV-A1", relevance="primary")
+    session = _repair_session(
+        [_control_row("GOV-A2", "Current",
+                      framework_mappings={"nist_800_53_r5_2": ["AC-02"]})],
+        [_theme_row(7, "IAM")],
+        [stale],
+    )
+    result = await ca.repair_theme_mappings_if_uncovered(session)
+    assert result["status"] == "error" and "not found" in result["message"]
+    assert session.tables[CapabilityThemeMapping] == [stale]
+    assert session.deleted_tables == set()

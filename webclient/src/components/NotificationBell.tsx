@@ -119,6 +119,24 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
           }
         }
 
+      } else if (notification.reference_type === 'security_objective') {
+        // Checked before the evidence branch below, which would take any row
+        // with a reference_key. The server sends reference_key (the objective's
+        // id) only while the objective is live, so without it the objective is
+        // archived or gone. It opens only in its own organisation.
+        const orgId = notification.organization_id || currentOrgId;
+        const objectiveId = notification.reference_key;
+        if (currentOrgId && orgId !== currentOrgId) {
+          setNavigationError(
+            `That objective is in ${notification.organization_name || 'another organisation'}. Switch to it to open the objective.`
+          );
+        } else if (objectiveId) {
+          navigateToDestination({ kind: 'isms-metric', id: objectiveId });
+          setShowDropdown(false);
+        } else {
+          setNavigationError('That objective no longer exists.');
+        }
+
       } else if (notification.reference_key) {
         // The server resolves the evidence key (E-HRS-16) for evidence and task
         // references and returns it as reference_key. Before this existed the

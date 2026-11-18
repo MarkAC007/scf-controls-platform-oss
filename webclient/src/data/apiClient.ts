@@ -309,6 +309,10 @@ export interface OrganizationSettingsResponse {
   mission_statement?: string | null
   /** PIG R5: target maturity per SCF domain code; controls inherit their domain's. */
   maturity_targets?: Record<string, import('../types').MaturityLevel>
+  /** When the owner of an objective with a logged metric is reminded that the
+   *  period's value is not in: once at most this many days of the period
+   *  remain. 366 means from the first day of the period. Absent means 14. */
+  isms_measurement_reminder_days?: number
 }
 
 export async function fetchOrganizationSettings(
@@ -3362,7 +3366,12 @@ export async function getCapabilityThemes(orgId?: string): Promise<CapabilityThe
 
 export async function getCapabilityThemeControls(
   themeCode: string,
-  params?: { limit?: number; offset?: number },
+  params?: {
+    limit?: number
+    offset?: number
+    /** The server lists in-scope controls only unless told otherwise. */
+    scope_status?: 'in_scope' | 'out_of_scope' | 'all'
+  },
   orgId?: string
 ): Promise<CapabilityThemeControlsResponse> {
   if (!orgId) {
@@ -3372,6 +3381,7 @@ export async function getCapabilityThemeControls(
   const searchParams = new URLSearchParams()
   if (params?.limit) searchParams.set('limit', String(params.limit))
   if (params?.offset) searchParams.set('offset', String(params.offset))
+  if (params?.scope_status) searchParams.set('scope_status', params.scope_status)
   const qs = searchParams.toString()
   return apiFetch<CapabilityThemeControlsResponse>(
     `/organizations/${orgId}/capability-themes/${encodeURIComponent(themeCode)}/controls${qs ? `?${qs}` : ''}`

@@ -13,11 +13,17 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from typing import Any, Dict
+from datetime import date
+from typing import Any, Dict, List
+from uuid import UUID
 
 from celery import shared_task
+from celery.exceptions import SoftTimeLimitExceeded
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import AsyncSessionLocal, engine
+from models import Organization
 from services.due_care import take_monthly_snapshots
 from services.notifications import (
     check_and_notify_due_control_validations,
@@ -128,6 +134,49 @@ async def _run_posture_snapshots() -> Dict[str, Any]:
         async with AsyncSessionLocal() as db:
             taken = await take_monthly_snapshots(db)
         return {"status": "completed", "snapshots_taken": int(taken)}
+    finally:
+        await _dispose_async_engine()
+
+
+async def _organization_ids(db: AsyncSession) -> List[UUID]:
+    return list((await db.execute(select(Organization.id).order_by(Organization.id))).scalars().all())
+
+
+async def record_isms_metric_results(db: AsyncSession, today: date) -> Dict[str, int]:
+    """Write today's computed ISMS metric results for every organisation.
+
+    Each organisation is committed on its own: one that fails is rolled back
+    and logged, and the rest still run. A second run on the same day writes
+    nothing (the service skips a metric already recorded today).
+    """
+    from services.isms_metrics import service as isms_metrics
+
+    written = organisations = failed = 0
+    for org_id in await _organization_ids(db):
+        try:
+            count = await isms_metrics.record_nightly_results(db, org_id, today)
+            await db.commit()
+            written += int(count)
+            organisations += 1
+        except SoftTimeLimitExceeded:  # the worker is stopping the task: not one organisation's failure
+            await db.rollback()
+            raise
+        except Exception as exc:  # one organisation must not stop the rest
+            logger.error("isms metric results failed for org %s: %s", org_id, exc, exc_info=True)
+            await db.rollback()
+            failed += 1
+    logger.info(
+        "isms metric results for %s: %s row(s) written across %s organisation(s), %s failed",
+        today, written, organisations, failed,
+    )
+    return {"results_written": written, "organisations": organisations, "organisations_failed": failed}
+
+
+async def _run_isms_metric_results() -> Dict[str, Any]:
+    try:
+        async with AsyncSessionLocal() as db:
+            counts = await record_isms_metric_results(db, date.today())
+        return {"status": "completed", **counts}
     finally:
         await _dispose_async_engine()
 
@@ -369,4 +418,88 @@ def take_posture_snapshots_task(self) -> Dict[str, Any]:
         return result
     except Exception as exc:
         logger.error("take_posture_snapshots_task[%s] failed: %s", task_id, exc, exc_info=True)
+        raise
+
+
+# ---------------------------------------------------------------------------
+# Nightly ISMS metric results (clause 9.1)
+# ---------------------------------------------------------------------------
+@shared_task(
+    bind=True,
+    name=f"{TASK_PREFIX}.record_isms_metric_results_task",
+    time_limit=1800,
+    soft_time_limit=1500,
+)
+def record_isms_metric_results_task(self) -> Dict[str, Any]:
+    """Record today's value of every live ISMS metric, for every organisation."""
+    task_id = self.request.id
+    if not _automation_enabled():
+        logger.info(
+            "record_isms_metric_results_task[%s] skipped: %s disabled",
+            task_id,
+            AUTOMATION_FLAG,
+        )
+        return _disabled_result("record_isms_metric_results_task")
+
+    logger.info("record_isms_metric_results_task[%s] starting", task_id)
+    try:
+        result = asyncio.run(_run_isms_metric_results())
+        logger.info(
+            "record_isms_metric_results_task[%s] completed results=%s organisations=%s failed=%s",
+            task_id,
+            result["results_written"],
+            result["organisations"],
+            result["organisations_failed"],
+        )
+        return result
+    except Exception as exc:
+        logger.error("record_isms_metric_results_task[%s] failed: %s", task_id, exc, exc_info=True)
+        raise
+
+
+# ---------------------------------------------------------------------------
+# Security objective reminders (clauses 6.2, 9.1)
+# ---------------------------------------------------------------------------
+async def _run_objective_reminders() -> Dict[str, Any]:
+    from services.isms_metrics.reminders import check_and_notify_objectives
+
+    try:
+        async with AsyncSessionLocal() as db:
+            notifications_created = await check_and_notify_objectives(db)
+        return {
+            "status": "completed",
+            "notifications_created": int(notifications_created),
+        }
+    finally:
+        await _dispose_async_engine()
+
+
+@shared_task(
+    bind=True,
+    name=f"{TASK_PREFIX}.notify_objectives_task",
+    time_limit=1800,
+    soft_time_limit=1500,
+)
+def notify_objectives_task(self) -> Dict[str, Any]:
+    """Remind owners of objectives whose measurement, due date or review date is due."""
+    task_id = self.request.id
+    if not _automation_enabled():
+        logger.info(
+            "notify_objectives_task[%s] skipped: %s disabled",
+            task_id,
+            AUTOMATION_FLAG,
+        )
+        return _disabled_result("notify_objectives_task")
+
+    logger.info("notify_objectives_task[%s] starting", task_id)
+    try:
+        result = asyncio.run(_run_objective_reminders())
+        logger.info(
+            "notify_objectives_task[%s] completed notifications=%s",
+            task_id,
+            result["notifications_created"],
+        )
+        return result
+    except Exception as exc:
+        logger.error("notify_objectives_task[%s] failed: %s", task_id, exc, exc_info=True)
         raise

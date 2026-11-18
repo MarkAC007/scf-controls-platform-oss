@@ -138,6 +138,9 @@ describe('no other screen was quietly made URL-aware', () => {
   // #1155 added DeficienciesPage: it owns `view` (List or Board) on the
   // deficiencies tab, as EvidenceWorkspace owns `view` on the evidence tab,
   // and replaces it in place; App still owns `tab`.
+  // ISMS objectives and metrics, phase 1, added AnalyticsPage (owns `view` on
+  // the Analytics tab) and IsmsProfilePage (owns `section` and `objective` on
+  // the ISMS tab), each on the same terms; cross-links still go through AppLink.
   it('only the intended components import the URL module', () => {
     const importers = PRODUCTION.filter(([, source]) => /from '.*data\/appUrl'/.test(source))
       .map(([key]) => underSrc(key))
@@ -148,7 +151,9 @@ describe('no other screen was quietly made URL-aware', () => {
       'components/EvidenceReview.tsx',
       'components/EvidenceWorkspace.tsx',
       'components/Header.tsx',
+      'components/analytics/AnalyticsPage.tsx',
       'components/deficiencies/DeficienciesPage.tsx',
+      'components/isms/IsmsProfilePage.tsx',
       'components/library/UnifiedLibraryList.tsx',
       'components/library/UnifiedLibraryPage.tsx',
     ])

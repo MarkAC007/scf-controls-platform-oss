@@ -1657,6 +1657,10 @@ export interface DeficiencyCreate {
   scf_id?: string
   risk_code?: string
   root_cause?: string
+  /** Where it was raised from, e.g. `security_objective`; set only when raised from another screen. */
+  source?: 'security_objective'
+  /** That screen's record id, e.g. the objective's id. */
+  source_ref?: string
 }
 
 /** What a deficiency is raised against does not change. Null clears a field. */

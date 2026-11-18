@@ -107,6 +107,21 @@ describe('AppLink', () => {
     expect(destinationSearch('invite_type=org', { kind: 'evidence', id: EVIDENCE }))
       .toBe(`invite_type=org&tab=evidence&view=workspace&item=${EVIDENCE}`)
   })
+
+  it('opens the objectives register on one objective', () => {
+    expect(destinationSearch('tab=capability-posture&view=isms-metrics', { kind: 'objective', id: 'obj-1' }))
+      .toBe('tab=isms&section=objectives&objective=obj-1')
+  })
+
+  it('opens the objectives register with nothing focused', () => {
+    expect(destinationSearch('tab=isms&section=objectives&objective=obj-1', { kind: 'objectives-register' }))
+      .toBe('tab=isms&section=objectives')
+  })
+
+  it('opens the ISMS metrics dashboard, keeping session parameters', () => {
+    expect(destinationSearch('invite_type=org&tab=isms&section=objectives', { kind: 'isms-metrics' }))
+      .toBe('invite_type=org&tab=capability-posture&view=isms-metrics')
+  })
 })
 
 describe('deprecated successor', () => {

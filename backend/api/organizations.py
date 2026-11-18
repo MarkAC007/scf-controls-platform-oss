@@ -43,6 +43,7 @@ from services.subscription import get_user_subscription, can_create_organisation
 from services.audit_service import log_entity_changes, detect_action_source, get_request_id, ORGANIZATION_TRACKED_FIELDS
 from services.jev_assessment import ENGINE_SETTING_KEY, resolve_engine
 from services.task_generator import AUTO_TASK_GENERATION_SETTING_KEY, resolve_auto_task_generation
+from services.isms_metrics.reminders import MEASUREMENT_REMINDER_DAYS_KEY, resolve_measurement_reminder_days
 from services.target_maturity import (
     SETTINGS_KEY as MATURITY_TARGETS_KEY,
     stored_domain_targets,
@@ -377,6 +378,7 @@ async def get_organization_settings(
         business_size=_business_size(settings),
         mission_statement=_mission_statement(settings),
         maturity_targets=stored_domain_targets(settings),
+        isms_measurement_reminder_days=resolve_measurement_reminder_days(settings),
     )
 
 
@@ -432,6 +434,8 @@ async def update_organization_settings(
         current_settings[ENGINE_SETTING_KEY] = update["evidence_assessment_engine"]
     if update.get("auto_task_generation_enabled") is not None:
         current_settings[AUTO_TASK_GENERATION_SETTING_KEY] = bool(update["auto_task_generation_enabled"])
+    if update.get("isms_measurement_reminder_days") is not None:
+        current_settings[MEASUREMENT_REMINDER_DAYS_KEY] = update["isms_measurement_reminder_days"]
 
     organization.settings = current_settings
 
@@ -470,6 +474,7 @@ async def update_organization_settings(
         business_size=_business_size(current_settings),
         mission_statement=_mission_statement(current_settings),
         maturity_targets=stored_domain_targets(current_settings),
+        isms_measurement_reminder_days=resolve_measurement_reminder_days(current_settings),
     )
 
 

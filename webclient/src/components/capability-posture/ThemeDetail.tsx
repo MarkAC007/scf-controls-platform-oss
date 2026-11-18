@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useState } from 'react'
-import { useCapabilityThemeControls } from '../../hooks/useCapabilityThemes'
+import type React from 'react'
+import { useAllCapabilityThemeControls } from '../../hooks/useCapabilityThemes'
 import type {
   CapabilityThemeResponse,
   CapabilityThemeEvidencePosture,
@@ -12,10 +13,6 @@ import ThemeEvidenceCards from './ThemeEvidenceCards'
 import { bandToClass, formatAxisPercent } from './axisHelpers'
 import DeprecatedBadge, { getCatalogLifecycle } from '../DeprecatedBadge'
 import AppLink from '../AppLink'
-
-// Raised from 50 to 200 so the maturity histogram has the full picture for
-// typical themes (issue #549 Phase 2). Server caps the upper bound.
-const PAGE_SIZE = 200
 
 type TabKey = 'in_scope' | 'catalog' | 'evidence'
 
@@ -74,10 +71,10 @@ interface ThemeDetailProps {
 
 export default function ThemeDetail({ theme, evidencePosture, organizationId, onBack }: ThemeDetailProps) {
   const [activeTab, setActiveTab] = useState<TabKey>('in_scope')
-  const { data, isLoading } = useCapabilityThemeControls(
-    theme.theme_code,
-    { limit: PAGE_SIZE, offset: 0 }
-  )
+  // Every control of the theme, scoped or not: the In Scope tab filters this
+  // list and the Catalog tab shows all of it. Read in full, however many
+  // pages that takes, so the maturity histogram and both counts are complete.
+  const { data, isLoading } = useAllCapabilityThemeControls(theme.theme_code)
 
   const posture = theme.posture
   const statusEntries = Object.entries(posture).filter(([, v]) => v > 0)
@@ -201,7 +198,7 @@ export default function ThemeDetail({ theme, evidencePosture, organizationId, on
             theme={theme}
             evidencePosture={evidencePosture}
             organizationId={organizationId}
-            themeScfIds={allControls.map(c => c.scf_id)}
+            themeScfIds={inScopeControls.map(c => c.scf_id)}
           />
         )}
       </div>
@@ -406,8 +403,8 @@ function ControlsTable({
                   <span
                     className="cp-status-badge"
                     style={{
-                      backgroundColor: STATUS_COLORS[ctrl.implementation_status] || '#94a3b8',
-                    }}
+                      '--cp-status-color': STATUS_COLORS[ctrl.implementation_status] || 'var(--muted)',
+                    } as React.CSSProperties}
                   >
                     {STATUS_LABELS[ctrl.implementation_status] || ctrl.implementation_status}
                   </span>

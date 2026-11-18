@@ -237,6 +237,9 @@ def _build_per_file_sql(attested_only: bool = False) -> "text":
         WHERE ce.status = 'active'
           AND jsonb_array_length(COALESCE(ce.control_mappings, '[]'::jsonb)) > 0
     ),
+    -- Evidence counts toward a theme only through controls the organisation
+    -- has in scope: the coverage axis divides by the scoped controls, so a
+    -- control outside scope must not add to the numerator.
     evidence_theme_map AS (
         SELECT DISTINCT
             ecm.evidence_id,
@@ -244,6 +247,8 @@ def _build_per_file_sql(attested_only: bool = False) -> "text":
             ct.theme_code
         FROM evidence_control_map ecm
         JOIN scf_catalog_controls c ON ecm.scf_id = c.scf_id AND c.status = 'active'
+        JOIN scoped_controls sc ON sc.scf_id = ecm.scf_id
+            AND sc.organization_id = :org_id AND sc.selected = true
         JOIN capability_theme_mappings ctm ON ecm.scf_id = ctm.scf_id
         JOIN capability_themes ct ON ctm.theme_id = ct.id
     ),
@@ -330,6 +335,8 @@ def _build_window_aware_sql(attested_only: bool = False) -> "text":
             ct.theme_code
         FROM evidence_control_map ecm
         JOIN scf_catalog_controls c ON ecm.scf_id = c.scf_id AND c.status = 'active'
+        JOIN scoped_controls sc ON sc.scf_id = ecm.scf_id
+            AND sc.organization_id = :org_id AND sc.selected = true
         JOIN capability_theme_mappings ctm ON ecm.scf_id = ctm.scf_id
         JOIN capability_themes ct ON ctm.theme_id = ct.id
     ),
@@ -567,6 +574,8 @@ def _build_composite_aware_sql(
                 ct.theme_code
             FROM evidence_control_map ecm
             JOIN scf_catalog_controls c ON ecm.scf_id = c.scf_id AND c.status = 'active'
+            JOIN scoped_controls sc ON sc.scf_id = ecm.scf_id
+                AND sc.organization_id = :org_id AND sc.selected = true
             JOIN capability_theme_mappings ctm ON ecm.scf_id = ctm.scf_id
             JOIN capability_themes ct ON ctm.theme_id = ct.id
         ),
@@ -594,6 +603,8 @@ def _build_composite_aware_sql(
                 cs.assessment_confirmed
             FROM composite_status cs
             JOIN scf_catalog_controls c ON c.scf_id = cs.scf_id AND c.status = 'active'
+            JOIN scoped_controls sc ON sc.scf_id = cs.scf_id
+                AND sc.organization_id = :org_id AND sc.selected = true
             JOIN capability_theme_mappings ctm ON ctm.scf_id = cs.scf_id
             JOIN capability_themes ct ON ct.id = ctm.theme_id
         ),
@@ -605,7 +616,11 @@ def _build_composite_aware_sql(
             SELECT
                 etm.theme_code,
                 etm.scf_id,
-                etm.evidence_id,
+                -- From the organisation's side of the LEFT JOIN, so it is
+                -- NULL when nothing was uploaded. The catalogue's own
+                -- evidence id is never NULL: reading that one counted every
+                -- control with a catalogue evidence item as covered.
+                fu.evidence_id,
                 fu.file_id,
                 fu.assessment_status,
                 fu.relevance_score,

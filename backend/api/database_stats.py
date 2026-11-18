@@ -190,6 +190,19 @@ TENANT_SCOPED_EXCLUDED_TABLES: Dict[str, str] = {
         "not yet represented in the export set; capability test records, whose "
         "findings are deficiencies in vendor_action_items, which a tenant move does not carry yet"
     ),
+    # Security objectives and ISMS metrics (clause 6.2 / 9.1).
+    "security_objectives": (
+        "not yet represented in the export set; clause 6.2 objectives, which replaced "
+        "isms_profiles.objectives and which a tenant move does not carry yet"
+    ),
+    "objective_metrics": (
+        "not yet represented in the export set; versioned measure and target of each "
+        "security objective, which a tenant move does not carry yet"
+    ),
+    "isms_metric_results": (
+        "not yet represented in the export set; computed and logged ISMS metric readings "
+        "of the source deployment, which a tenant move does not carry yet"
+    ),
 }
 
 

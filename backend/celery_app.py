@@ -214,7 +214,9 @@ celery_app.conf.update(
         "tasks_automation.notify_overdue_tasks_task": {"queue": "default"},
         "tasks_automation.notify_expired_risk_acceptances_task": {"queue": "default"},
         "tasks_automation.notify_due_control_validations_task": {"queue": "default"},
+        "tasks_automation.notify_objectives_task": {"queue": "default"},
         "tasks_automation.take_posture_snapshots_task": {"queue": "default"},
+        "tasks_automation.record_isms_metric_results_task": {"queue": "default"},
         "tasks_automation.revoke_expired_auditor_grants_task": {"queue": "default"},
         # Document generation routes to default for the same reason as the
         # automation tasks above: a dedicated queue only works if every worker
@@ -305,9 +307,23 @@ celery_app.conf.update(
                     "task": "tasks_automation.notify_due_control_validations_task",
                     "schedule": crontab(hour=7, minute=45),
                 },
+                # Clauses 6.2 and 9.1: an objective's measurement, due date
+                # or review date coming due is announced to its owner, in the
+                # same slot as the control validation notices.
+                "objective-reminders-daily": {
+                    "task": "tasks_automation.notify_objectives_task",
+                    "schedule": crontab(hour=7, minute=45),
+                },
                 "posture-snapshot-monthly": {
                     "task": "tasks_automation.take_posture_snapshots_task",
                     "schedule": crontab(day_of_month=1, hour=2, minute=0),
+                },
+                # Clauses 6.2 and 9.1: each live ISMS metric's value is stored
+                # once a night, after the 04:00 window refresh, so the
+                # dashboard and documents have a history to show.
+                "isms-metric-results-nightly": {
+                    "task": "tasks_automation.record_isms_metric_results_task",
+                    "schedule": crontab(hour=4, minute=30),
                 },
             }
             if _flag_enabled("TASK_AUTOMATION_ENABLED", "true")

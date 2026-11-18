@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useMemo, useState } from 'react'
-import type { EvidenceMaturityLevel } from './EvidenceMaturityTypes'
+import type { EvidenceMaturityInfo, EvidenceMaturityLevel } from './EvidenceMaturityTypes'
 import {
   EVIDENCE_MATURITY_LEVELS,
   calculateMaturityScore,
@@ -11,6 +11,16 @@ import { interactiveRowProps } from '../../data/interactiveRow'
 interface MaturityDistributionWidgetProps {
   distribution: Record<EvidenceMaturityLevel, number>
   title?: string
+  /**
+   * Printed under the score in place of the A to F grade and its word. The
+   * grade bands were set for evidence collection; a scale with its own
+   * targets says what the figure is and leaves the judging to the target.
+   */
+  scoreLabel?: string
+  /** What the total counts, printed after it. */
+  totalLabel?: string
+  /** Each level's name, colour and guidance. Evidence collection maturity when omitted. */
+  levelInfo?: Record<EvidenceMaturityLevel, EvidenceMaturityInfo>
   showScore?: boolean
   showLegend?: boolean
   compact?: boolean
@@ -42,6 +52,9 @@ interface MaturityDistributionWidgetProps {
 export function MaturityDistributionWidget({
   distribution,
   title = 'Evidence Collection Maturity',
+  totalLabel = 'evidence items assessed',
+  levelInfo = EVIDENCE_MATURITY_LEVELS,
+  scoreLabel,
   showScore = true,
   showLegend = true,
   compact = false,
@@ -100,12 +113,14 @@ export function MaturityDistributionWidget({
         <h3>{title}</h3>
         {showScore && (
           <div className="maturity-distribution-score">
-            <span className={`maturity-grade maturity-grade-${grade.grade.toLowerCase()}`}>
-              {grade.grade}
-            </span>
+            {scoreLabel === undefined && (
+              <span className={`maturity-grade maturity-grade-${grade.grade.toLowerCase()}`}>
+                {grade.grade}
+              </span>
+            )}
             <div className="maturity-score-details">
               <span className="maturity-score-value">{maturityScore.toFixed(1)}</span>
-              <span className="maturity-score-label">{grade.label}</span>
+              <span className="maturity-score-label">{scoreLabel ?? grade.label}</span>
             </div>
           </div>
         )}
@@ -113,12 +128,12 @@ export function MaturityDistributionWidget({
 
       <div className="maturity-distribution-summary">
         <span className="maturity-distribution-total">{totalItems}</span>
-        <span className="maturity-distribution-total-label">evidence items assessed</span>
+        <span className="maturity-distribution-total-label">{totalLabel}</span>
       </div>
 
       <div className="maturity-distribution-chart">
         {levels.map((level) => {
-          const info = EVIDENCE_MATURITY_LEVELS[level]
+          const info = levelInfo[level]
           const count = distribution[level] || 0
           const percentage = totalItems > 0 ? (count / totalItems) * 100 : 0
           const barWidth = maxCount > 0 ? (count / maxCount) * 100 : 0
@@ -169,16 +184,18 @@ export function MaturityDistributionWidget({
                     {info.description}
                   </p>
 
-                  <div className="maturity-distribution-guidance-section">
-                    <div className="maturity-distribution-guidance-label">
-                      What {level} looks like
+                  {info.characteristics.length > 0 && (
+                    <div className="maturity-distribution-guidance-section">
+                      <div className="maturity-distribution-guidance-label">
+                        What {level} looks like
+                      </div>
+                      <ul>
+                        {info.characteristics.map((c, i) => (
+                          <li key={i}>{c}</li>
+                        ))}
+                      </ul>
                     </div>
-                    <ul>
-                      {info.characteristics.map((c, i) => (
-                        <li key={i}>{c}</li>
-                      ))}
-                    </ul>
-                  </div>
+                  )}
 
                   {info.upgradeActions.length > 0 && (
                     <div className="maturity-distribution-guidance-section">
@@ -219,7 +236,7 @@ export function MaturityDistributionWidget({
           <div className="maturity-distribution-legend-title">Maturity Levels</div>
           <div className="maturity-distribution-legend-grid">
             {legendLevels.map((level) => {
-              const info = EVIDENCE_MATURITY_LEVELS[level]
+              const info = levelInfo[level]
               return (
                 <div key={level} className="maturity-distribution-legend-item">
                   <span

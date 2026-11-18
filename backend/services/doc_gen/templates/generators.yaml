@@ -271,6 +271,24 @@ generators:
       risks: true
       systems: false
 
+  - name: monitoring-measurement
+    display_name: Monitoring, Measurement, Analysis and Evaluation
+    tier: 1
+    document_type: isms
+    is_derivative: false
+    domain_scoped: false
+    renderer: iso_core.render_monitoring_measurement
+    filename: monitoring-measurement-analysis-evaluation.md
+    description: >-
+      What is monitored and measured, the method, how often, who measures, and
+      the stored results with who evaluated them and when (clause 9.1).
+    requires:
+      controls: true
+      evidence: false
+      risks: false
+      systems: false
+      isms: true
+
   - name: internal-audit-programme
     display_name: Internal Audit Programme
     tier: 1

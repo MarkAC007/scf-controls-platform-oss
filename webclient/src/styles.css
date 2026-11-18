@@ -37008,34 +37008,6 @@ span.rich-text p { display: inline; margin: 0; }
   gap:20px;
   min-width:0;
 }
-.dashboard-status-grid{
-  display:grid;
-  grid-template-columns:repeat(2,minmax(0,1fr));
-  gap:20px;
-  align-items:start;
-}
-.dashboard-overview{
-  display:grid;
-  grid-template-columns:minmax(0,2fr) minmax(0,1fr);
-  gap:20px;
-  align-items:start;
-  margin-bottom:32px;
-}
-.dashboard-overview-main{
-  min-width:0;
-}
-.dashboard-overview-main .dashboard-section:first-child{
-  margin-top:0;
-}
-.dashboard-overview-main .dashboard-section:last-child{
-  margin-bottom:0;
-}
-/* Section title height (18px line + 14px margin), so the card lines up with
-   the "Where we are" cards beside it. */
-.dashboard-overview-side{
-  padding-top:32px;
-  min-width:0;
-}
 .dashboard-owner-grid{
   display:grid;
   grid-template-columns:repeat(2,minmax(0,1fr));
@@ -37153,27 +37125,6 @@ span.rich-text p { display: inline; margin: 0; }
   color:var(--text);
   font-variant-numeric:tabular-nums;
 }
-.dashboard-maturity-levels{
-  display:grid;
-  grid-template-columns:repeat(6,1fr);
-  gap:6px;
-  margin-top:4px;
-}
-.dashboard-maturity-levels span{
-  display:flex;
-  flex-direction:column;
-  align-items:center;
-  padding:6px 0;
-  border-radius:6px;
-  background:var(--muted-bg);
-  font-size:11px;
-  color:var(--text-secondary);
-}
-.dashboard-maturity-levels strong{
-  font-size:15px;
-  color:var(--text);
-  font-variant-numeric:tabular-nums;
-}
 .dashboard-owner-list{
   list-style:none;
   margin:0;
@@ -37224,13 +37175,9 @@ span.rich-text p { display: inline; margin: 0; }
 }
 @media (max-width:1100px){
   .dashboard-attention-grid,
-  .dashboard-overview,
-  .dashboard-status-grid,
+  .dashboard-maturity-grid,
   .dashboard-owner-grid{
     grid-template-columns:minmax(0,1fr);
-  }
-  .dashboard-overview-side{
-    padding-top:0;
   }
 }
 
@@ -38676,3 +38623,1288 @@ span.rich-text p { display: inline; margin: 0; }
 .auditor-status.is-active { background: var(--success-bg); color: var(--success); }
 .auditor-status.is-invited { background: var(--warning-bg); color: var(--warning); }
 .auditor-status.is-disabled { background: var(--secondary); color: var(--muted); }
+
+/* ============================================================
+   ISMS objectives and metrics, phase 1
+   obj-*  register, form and small modals · ismsm-*  dashboard · analytics-page  wrapper
+   Tokens only. Light and dark come from the tokens; the few dark rules below
+   exist because --border is a 15% ghost in dark and these surfaces need a line.
+   ============================================================ */
+
+/* ── Shared: reference, clause chips, status chip, gaps, tags ── */
+.obj-ref { font: 500 11px var(--font-mono); color: var(--muted); }
+.obj-clauses { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.obj-clause {
+  display: inline-flex; align-items: center; gap: 3px;
+  font: 500 10.5px var(--font-mono); color: var(--muted);
+  border: 1px solid var(--border-visible); border-radius: 4px; padding: 1px 5px;
+}
+.obj-clause-remove {
+  border: 0; background: transparent; padding: 0 1px; cursor: pointer;
+  font: inherit; line-height: 1; color: var(--muted);
+}
+.obj-clause-remove:hover { color: var(--text); }
+.obj-status {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 12px; font-weight: 600; line-height: 1.4;
+  padding: 2px 9px; border-radius: 999px; white-space: nowrap;
+  border: 1px solid transparent;
+}
+.obj-status svg { width: 12px; height: 12px; flex: none; }
+.obj-status--on_track { background: var(--success-bg); color: var(--success-ink); }
+.obj-status--at_risk { background: var(--warning-bg); color: var(--warning-ink); }
+.obj-status--off_track { background: var(--error-bg); color: var(--danger); }
+.obj-status--in_progress { background: var(--secondary); color: var(--text); }
+.obj-status--proposed { background: transparent; color: var(--muted); border: 1px dashed var(--muted); }
+.obj-status--insufficient_data,
+.obj-status--not_measured { background: var(--secondary); color: var(--muted); }
+.obj-status--first_measurement_due,
+.obj-status--measurement_overdue { background: var(--secondary); color: var(--warning-ink); }
+.obj-gap { color: var(--warning-ink); font-weight: 500; }
+.obj-tag {
+  display: inline-block; margin: 2px 0 4px;
+  font: 500 10.5px var(--font-mono); background: var(--secondary); color: var(--muted);
+  border-radius: 4px; padding: 1px 6px;
+}
+
+/* ── Register ── */
+.isms-page--wide { max-width: 1500px; }
+.obj-register { display: flex; flex-direction: column; gap: 14px; }
+.obj-toolbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.obj-toolbar-summary { margin: 0; font-size: 12.5px; color: var(--muted); }
+.obj-toolbar-summary strong { color: var(--text); }
+.obj-show-archived { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); }
+.obj-toolbar-actions { margin-left: auto; display: flex; gap: 8px; }
+.obj-toolbar-actions .btn-small,
+.ismsm-head-actions .btn-small { flex: 0 0 auto; }
+.obj-table-wrap { overflow-x: auto; }
+.obj-table {
+  width: 100%; min-width: 1100px; border-collapse: separate; border-spacing: 0;
+  table-layout: fixed; font-size: 12.5px;
+}
+.obj-table th {
+  background: var(--secondary); color: var(--muted); text-align: left; vertical-align: bottom;
+  padding: 10px 12px; font-size: 10.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em;
+}
+.obj-table th:first-child { border-radius: 8px 0 0 0; }
+.obj-table th:last-child { border-radius: 0 8px 0 0; }
+.obj-table td {
+  padding: 12px; border-bottom: 1px solid var(--border); vertical-align: top;
+  line-height: 1.45; color: var(--text); overflow-wrap: anywhere;
+}
+.obj-col-ref { width: 5.5%; }
+.obj-col-name { width: 13%; }
+.obj-col-actions { width: 13.5%; }
+.obj-col-resources { width: 11%; }
+.obj-col-team { width: 10%; }
+.obj-col-complete { width: 8%; }
+.obj-col-evaluation { width: 14.5%; }
+.obj-col-metric { width: 11.5%; }
+.obj-col-now { width: 13%; }
+.obj-cell-name strong { font-weight: 600; display: block; margin-bottom: 4px; }
+.obj-cell-sub { display: block; color: var(--muted); }
+/* A long status wraps inside the Now column instead of widening the table. */
+.obj-table .obj-status { white-space: normal; border-radius: 12px; align-items: flex-start; }
+.obj-table .obj-status svg { margin-top: 2px; }
+.obj-now-value { display: block; font-size: 16px; font-weight: 700; line-height: 1.25; margin-bottom: 4px; white-space: nowrap; }
+.obj-row-actions { display: flex; flex-wrap: wrap; gap: 2px 10px; margin-top: 8px; }
+.obj-row-actions .btn-link { font-size: 12px; }
+.obj-row--proposed td { color: var(--muted); }
+.obj-row--proposed td.obj-cell-name { color: var(--text); }
+.obj-row--archived td { opacity: .6; }
+.obj-row--focus td { background: var(--primary-bg); }
+.obj-row--focus td:first-child { box-shadow: inset 3px 0 0 var(--primary); }
+.obj-band {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 12px 16px; margin-top: 4px; font-size: 13px;
+  background: var(--muted-bg); border: 1px dashed var(--border-visible); border-radius: 12px;
+}
+.obj-band p { margin: 0; }
+.obj-band-items { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; flex: 1; }
+.obj-band-item {
+  display: inline-flex; align-items: center; gap: 8px;
+  background: var(--card); border: var(--card-border); border-radius: 8px; padding: 5px 10px; font-size: 12px;
+}
+.obj-band-item b { margin-left: 2px; }
+
+/* ── Form and small modals ── */
+.obj-modal { max-width: 1080px; max-height: calc(100dvh - 40px); overflow-y: auto; }
+.obj-modal--small { max-width: 520px; }
+.obj-modal .modal-header { gap: 10px; }
+.obj-modal-clause { margin-left: auto; font-size: 12px; color: var(--muted); }
+.obj-modal .obj-form { padding: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); }
+.obj-form-col { padding: 16px 20px; min-width: 0; }
+.obj-form-col + .obj-form-col { border-left: 1px solid var(--border); background: var(--muted-bg); }
+.obj-form-heading {
+  margin: 0 0 10px; font-size: 11px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
+}
+.obj-modal .form-group { margin-bottom: 10px; }
+.obj-modal .form-group label { font-size: 12px; font-weight: 600; margin-bottom: 4px; }
+.obj-modal .form-group input,
+.obj-modal .form-group textarea,
+.obj-modal .form-group select { padding: 7px 10px; font-size: 13px; }
+.obj-field { margin-bottom: 10px; }
+.obj-label-note { font: 400 10px var(--font-mono); color: var(--primary); margin-left: 6px; }
+.obj-summary { margin: 0 0 12px; font-size: 13px; line-height: 1.5; }
+.obj-summary dt { color: var(--muted); font-size: 11.5px; }
+.obj-summary dd { margin: 0 0 6px; }
+.obj-clause-add { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.obj-clause-input { width: 7em; }
+.obj-measure-list { display: grid; gap: 8px; max-height: 320px; overflow-y: auto; margin-bottom: 8px; }
+.obj-measure {
+  display: grid; grid-template-columns: 18px 1fr auto; gap: 4px 10px; align-items: start;
+  padding: 10px 12px; border: var(--card-border); border-radius: 10px; background: var(--card); cursor: pointer;
+}
+.obj-measure.is-selected { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary); }
+.obj-measure-radio { margin: 3px 0 0; accent-color: var(--primary); }
+.obj-measure-main h4 { margin: 0; font-size: 13.5px; }
+.obj-measure-main p { margin: 2px 0 0; font-size: 12px; color: var(--muted); }
+.obj-measure-best {
+  font: 500 10px var(--font-mono); background: var(--success-bg); color: var(--success-ink);
+  padding: 1px 6px; border-radius: 4px; margin-left: 6px;
+}
+.obj-measure-today { text-align: right; font-size: 11px; color: var(--muted); min-width: 92px; }
+.obj-measure-today b { display: block; font-size: 20px; line-height: 1.15; color: var(--text); }
+.obj-measure-params { grid-column: 2 / 4; display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+.obj-param {
+  display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px;
+  border: 1px solid var(--border-visible); border-radius: 6px; padding: 2px 7px; background: var(--muted-bg);
+}
+.obj-param input,
+.obj-param select { border: 0; background: transparent; font: inherit; color: var(--text); width: 4.5em; }
+.obj-param select { width: auto; }
+.obj-measure-alt { font-size: 12.5px; color: var(--muted); margin: 0 0 10px; display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; }
+.obj-target-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12.5px; margin: 10px 0; }
+.obj-target-row .obj-target-label { font-weight: 600; }
+.obj-target-input { width: auto; }
+input.obj-target-input { width: 72px; text-align: right; }
+.obj-modal .modal-footer { align-items: center; }
+.obj-footer-note { margin: 0 auto 0 0; font-size: 12px; color: var(--muted); }
+.obj-confirm-now { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text); }
+/* The metric pane: a fieldset so one `disabled` locks it; no fieldset chrome. */
+.obj-measure-fieldset { border: 0; margin: 0; padding: 0; min-inline-size: 0; }
+.obj-modal .modal-footer .btn-secondary { flex: 0 0 auto; }
+
+/* ── Analytics wrapper and ISMS metrics dashboard ── */
+.analytics-page { max-width: 1600px; margin: 0 auto; width: 100%; }
+.analytics-page > .explorer-tabs { padding: 0 28px; }
+.ismsm-head { display: flex; align-items: flex-end; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
+.ismsm-head .page-subtitle { margin: 0; }
+.ismsm-head-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.ismsm-measured { font-size: 12px; color: var(--muted); }
+.kpi-row.ismsm-strip { grid-template-columns: repeat(5, minmax(0, 1fr)); margin-bottom: 16px; }
+.ismsm-strip .kpi-card { background: var(--card); border: var(--card-border); padding: 16px 18px; }
+.ismsm-strip .kpi-card-header { margin-bottom: 4px; }
+.ismsm-strip .kpi-label { display: inline-flex; align-items: center; gap: 5px; font-weight: 600; }
+.ismsm-strip .kpi-label svg { width: 11px; height: 11px; }
+.ismsm-kpi-sub { margin: 8px 0 0; font-size: 12px; color: var(--muted); }
+.ismsm-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 16px; }
+.ismsm-tile {
+  display: block; background: var(--card); border: var(--card-border); border-radius: 12px;
+  padding: 14px 16px 12px; color: var(--text); text-decoration: none;
+}
+.ismsm-tile:hover { border-color: var(--primary); }
+.ismsm-tile:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.ismsm-tile--proposed { border-style: dashed; }
+.ismsm-tile-top { display: flex; justify-content: space-between; align-items: center; }
+.ismsm-kind {
+  font: 500 10.5px var(--font-mono); padding: 1px 6px; border-radius: 4px;
+  background: var(--secondary); color: var(--muted);
+}
+.ismsm-tile-name { margin: 4px 0 6px; font-size: 14.5px; font-weight: 600; min-height: 22px; }
+.ismsm-tile-value {
+  font-size: 30px; font-weight: 700; line-height: 1.1; letter-spacing: -.01em;
+  min-height: 44px; display: flex; align-items: flex-end;
+}
+.ismsm-tile-value small { font-size: 15px; font-weight: 600; margin-left: 2px; color: var(--muted); }
+.ismsm-tile-value--text { font-size: 18px; line-height: 1.3; }
+.ismsm-tile-value--dim { color: var(--muted); }
+.ismsm-meter { position: relative; height: 6px; border-radius: 3px; background: var(--secondary); margin: 8px 0 6px; }
+.ismsm-meter i { position: absolute; inset: 0 auto 0 0; width: var(--ismsm-fill, 0%); border-radius: 3px; background: var(--muted); }
+.ismsm-meter b {
+  position: absolute; top: -3px; left: var(--ismsm-target, 100%); width: 2px; height: 12px;
+  margin-left: -1px; border-radius: 1px; background: var(--text);
+}
+.ismsm-tile--on_track .ismsm-meter i { background: var(--success); }
+.ismsm-tile--at_risk .ismsm-meter i { background: var(--warning); }
+.ismsm-tile--off_track .ismsm-meter i { background: var(--destructive); }
+.ismsm-tile--in_progress .ismsm-meter i { background: var(--primary); }
+.ismsm-tile-target { margin: 6px 0 0; font-size: 12px; color: var(--muted); }
+.ismsm-tile-status { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 8px; font-size: 12px; color: var(--muted); }
+.ismsm-tile-foot {
+  display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--border); font-size: 12px; color: var(--muted);
+}
+
+[data-theme="dark"] .obj-table td,
+[data-theme="dark"] .ismsm-tile-foot,
+[data-theme="dark"] .obj-form-col + .obj-form-col { border-color: var(--secondary); }
+
+@media (max-width: 1100px) {
+  .kpi-row.ismsm-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 900px) {
+  .obj-modal .obj-form { grid-template-columns: minmax(0, 1fr); }
+  .obj-form-col + .obj-form-col { border-left: 0; border-top: 1px solid var(--border); }
+}
+@media (max-width: 560px) {
+  .kpi-row.ismsm-strip { grid-template-columns: minmax(0, 1fr); }
+}
+/* ── end ISMS objectives and metrics, phase 1 ── */
+
+/* ── ISMS objectives: closed objectives (achieved, missed) ──
+   Tokens only, so light and dark both come from the theme. A closed chip is
+   outlined, not filled: it records how the objective ended rather than
+   judging a live reading. The tile's meter stays the neutral grey. */
+.obj-status--achieved { background: transparent; color: var(--success-ink); border-color: var(--success-ink); }
+.obj-status--missed { background: transparent; color: var(--danger); border-color: var(--danger); }
+/* ── end closed objectives ── */
+
+/* ── ISMS metrics, phase 2: tile link, filters, metric detail, trend chart ──
+   Tokens only; dark overrides at the end of the block. The tile's title link
+   stretches over the tile, so the whole tile still opens the detail screen. */
+.ismsm-tile { position: relative; }
+.ismsm-tile-link { color: inherit; text-decoration: none; }
+.ismsm-tile-link::after { content: ''; position: absolute; inset: 0; border-radius: 12px; }
+.ismsm-tile-link:focus-visible { outline: none; }
+.ismsm-tile-link:focus-visible::after { outline: 2px solid var(--primary); outline-offset: 2px; }
+.ismsm-tile:hover .ismsm-tile-link { text-decoration: underline; }
+
+.ismsm-filters { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 16px; margin-bottom: 14px; }
+.ismsm-filter { display: grid; gap: 3px; font-size: 11.5px; color: var(--muted); }
+.ismsm-filter select {
+  min-width: 170px; padding: 5px 8px; border: 1px solid var(--border-visible); border-radius: 6px;
+  background: var(--card); color: var(--text); font: inherit; font-size: 13px;
+}
+.ismsm-filter-clear { font-size: 13px; padding-bottom: 6px; }
+
+.ismsm-back { display: inline-block; margin-bottom: 10px; font-size: 13px; color: var(--primary); text-decoration: none; }
+.ismsm-back:hover { text-decoration: underline; }
+.ismsm-detail-head { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 12px 20px; margin-bottom: 16px; }
+.ismsm-detail-title { flex: 1 1 420px; min-width: 0; }
+.ismsm-detail-title h2 { margin: 0 0 6px; font-size: 22px; line-height: 1.25; }
+.ismsm-detail-title h2 .obj-ref { font-size: 12px; vertical-align: middle; margin-right: 4px; }
+.ismsm-detail-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: 13px; color: var(--muted); }
+.ismsm-detail-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+.ismsm-detail-actions a.btn-secondary { text-decoration: none; }
+.ismsm-raised { flex-basis: 100%; margin: 0; text-align: right; font-size: 12.5px; color: var(--muted); }
+.ismsm-detail-grid { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 16px; align-items: start; }
+.ismsm-card { background: var(--card); border: var(--card-border); border-radius: 12px; padding: 16px 18px; min-width: 0; }
+.ismsm-card-title { margin: 0 0 10px; font-size: 14px; font-weight: 600; }
+.ismsm-card-sub { font-weight: 400; color: var(--muted); }
+.ismsm-card-foot { margin: 10px 0 0; font-size: 13px; color: var(--muted); }
+.ismsm-value-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; }
+.ismsm-value-big { font-size: 40px; font-weight: 700; line-height: 1.05; letter-spacing: -.01em; }
+.ismsm-value-pop { font-size: 14px; }
+.ismsm-value-change { font-size: 12.5px; color: var(--muted); }
+.ismsm-value-target { margin: 8px 0 4px; font-size: 12.5px; color: var(--muted); }
+
+.ismsm-segbar { display: flex; height: 8px; margin: 12px 0 6px; border-radius: 4px; overflow: hidden; background: var(--secondary); }
+.ismsm-seg { display: block; width: var(--seg, 0%); }
+.ismsm-seg--value, .ismsm-swatch--value { background: var(--muted); }
+.ismsm-seglegend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 0; padding: 0; list-style: none; font-size: 12px; color: var(--muted); }
+.ismsm-seglegend li { display: inline-flex; align-items: center; gap: 5px; }
+.ismsm-swatch { display: inline-block; width: 9px; height: 9px; border-radius: 2px; }
+
+.ismsm-trend { position: relative; margin-top: 10px; }
+.ismsm-trend-svg { display: block; width: 100%; height: auto; overflow: visible; }
+.ismsm-trend-grid { stroke: var(--border); stroke-width: 1; }
+.ismsm-trend-axis { fill: var(--muted); font-size: 10.5px; }
+.ismsm-trend-label { fill: var(--muted); font-size: 10.5px; }
+.ismsm-trend-value { fill: var(--text); font-size: 11.5px; font-weight: 600; }
+.ismsm-trend-target { fill: none; stroke: var(--text); stroke-width: 1.5; stroke-dasharray: 5 4; }
+.ismsm-trend-warn { fill: none; stroke: var(--warning); stroke-width: 1.5; stroke-dasharray: 2 3; }
+.ismsm-trend-line { fill: none; stroke: var(--primary); stroke-width: 2; stroke-linejoin: round; }
+.ismsm-trend-point { cursor: pointer; outline: none; }
+.ismsm-trend-hit { fill: transparent; }
+.ismsm-trend-dot { fill: var(--primary); stroke: var(--card); stroke-width: 1.5; }
+.ismsm-trend-point.is-active .ismsm-trend-dot { r: 5.5; }
+.ismsm-trend-point:focus-visible .ismsm-trend-hit { stroke: var(--primary); stroke-width: 2; }
+.ismsm-trend-tip {
+  position: absolute; left: var(--tip-x, 0); top: var(--tip-y, 0); transform: translate(-50%, calc(-100% - 12px));
+  display: grid; gap: 2px; padding: 6px 9px; border: 1px solid var(--border-visible); border-radius: 6px;
+  background: var(--card); color: var(--text); font-size: 12px; white-space: nowrap; pointer-events: none;
+}
+.ismsm-trend-tip span { color: var(--muted); }
+.ismsm-trend-empty {
+  margin-top: 12px; padding: 22px 16px; border: 1px dashed var(--border-visible); border-radius: 8px;
+  text-align: center; font-size: 13px;
+}
+.ismsm-trend-empty p { margin: 0; }
+.ismsm-trend-empty-sub { margin-top: 4px; color: var(--muted); font-size: 12px; }
+
+.ismsm-formula { padding: 10px 12px; border-radius: 8px; background: var(--muted-bg); font-size: 13px; line-height: 1.5; }
+.ismsm-formula p { margin: 0; }
+.ismsm-formula-sub { margin-top: 4px; color: var(--muted); font-size: 12px; }
+.ismsm-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 16px; margin: 12px 0 0; font-size: 13px; }
+.ismsm-facts dt { color: var(--muted); }
+.ismsm-facts dd { margin: 0; }
+.ismsm-quote { display: block; margin-top: 2px; color: var(--muted); }
+.ismsm-plan-title { margin: 14px 0 4px; font-size: 13px; }
+.ismsm-plan { margin: 0 0 4px; font-size: 13px; line-height: 1.5; }
+.ismsm-plan--muted { color: var(--muted); }
+
+.ismsm-table-wrap { overflow-x: auto; }
+.ismsm-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.ismsm-table th {
+  padding: 8px 10px; text-align: left; font: 600 10.5px var(--font-mono); letter-spacing: .04em;
+  text-transform: uppercase; color: var(--muted); background: var(--muted-bg);
+}
+.ismsm-table td { padding: 9px 10px; border-top: 1px solid var(--border); vertical-align: top; }
+.ismsm-table td a { color: var(--primary); text-decoration: none; }
+.ismsm-table td a:hover { text-decoration: underline; }
+.ismsm-table-group { color: var(--muted); white-space: nowrap; }
+.ismsm-log-note { display: block; color: var(--muted); font-size: 12px; }
+
+.obj-measure-group { margin: 8px 0 0; font-size: 12px; font-weight: 600; color: var(--muted); }
+
+[data-theme="dark"] .ismsm-trend-grid { stroke: var(--secondary); }
+[data-theme="dark"] .ismsm-table td { border-color: var(--secondary); }
+[data-theme="dark"] .ismsm-trend-tip { background: var(--secondary); }
+
+@media (max-width: 1100px) {
+  .ismsm-detail-grid { grid-template-columns: minmax(0, 1fr); }
+  .ismsm-detail-actions { justify-content: flex-start; }
+  .ismsm-raised { text-align: left; }
+}
+/* Review fixes: the chart summary is read, not shown; a note when other-measure results are left out. */
+.ismsm-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.ismsm-trend-note { margin: 8px 0 0; font-size: 12px; color: var(--muted); }
+/* ── end ISMS metrics, phase 2 ── */
+
+/* ── ISMS metrics, phase 3 ── */
+/* Tile value row: value on the left, trend line top right (as the mock-up). */
+.ismsm-tile-mid { display: flex; align-items: flex-end; justify-content: space-between; gap: 10px; min-height: 44px; }
+.ismsm-spark-wrap { flex: none; margin-left: auto; align-self: flex-start; line-height: 0; }
+.ismsm-spark { display: block; overflow: visible; }
+.ismsm-spark-line { fill: none; stroke: var(--primary); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.ismsm-spark-dot { fill: var(--primary); stroke: var(--card); stroke-width: 2; }
+.ismsm-spark-target { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; opacity: .7; }
+
+/* Pace beside the status chip and under the detail chart. */
+.ismsm-pace--behind { color: var(--warning-ink); font-weight: 600; }
+.ismsm-pace--on_pace { color: var(--text); }
+.ismsm-pace-line { margin: 8px 0 0; font-size: 12.5px; color: var(--muted); }
+.ismsm-trend-pace { fill: none; stroke: var(--muted); stroke-width: 1.5; stroke-dasharray: 4 4; }
+.ismsm-trend-legend {
+  display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 6px 0 0; padding: 0;
+  list-style: none; font-size: 12px; color: var(--muted);
+}
+.ismsm-trend-key { display: inline-block; width: 16px; height: 0; margin-right: 6px; vertical-align: middle; border-top: 2px solid var(--primary); }
+.ismsm-trend-key--target { border-top: 2px dashed var(--text); }
+.ismsm-trend-key--pace { border-top: 2px dashed var(--muted); }
+
+/* Filter row under the summary strip: labels inline, clause and status as pills. */
+.ismsm-filters { align-items: center; gap: 8px 14px; margin: 0 0 16px; font-size: 12.5px; }
+.ismsm-filter { display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
+.ismsm-filter select { min-width: 0; }
+.ismsm-filter-clear { padding-bottom: 0; }
+.ismsm-pills { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.ismsm-pills-label { color: var(--muted); }
+.ismsm-pill {
+  display: inline-flex; align-items: center; padding: 4px 10px;
+  border: 1px solid var(--border); border-radius: 999px; background: var(--card);
+  color: var(--text); font: inherit; font-size: 12px; line-height: 1.4; cursor: pointer;
+}
+.ismsm-pill:hover { border-color: var(--border-visible); }
+.ismsm-pill:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.ismsm-pill[aria-pressed="true"] { background: var(--text); color: var(--bg); border-color: var(--text); }
+[data-theme="dark"] .ismsm-pill { border-color: var(--border-visible); }
+[data-theme="dark"] .ismsm-pill[aria-pressed="true"] { border-color: var(--text); }
+/* Design review (design-qa.md) fixes, by row. */
+/* Row 10: an error ink matched to the off-track meter, in both themes. */
+:root { --error-ink: hsl(0, 72%, 40%); }
+[data-theme="dark"] { --error-ink: #ffb4ab; }
+.obj-status--off_track { color: var(--error-ink); }
+.obj-status--missed { color: var(--error-ink); border-color: var(--error-ink); }
+
+/* Row 35: the tile's stretched link stays over the sparkline, so a click on the line opens the
+   detail like the rest of the tile. There is no hover tooltip on the tile; the detail chart has one per point. */
+
+/* Row 8: long names clamp to two lines. */
+.ismsm-tile-name { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+/* Row 9: the team stays on one line; clause chips sit right. */
+.ismsm-tile-foot > span:first-child { white-space: nowrap; }
+.ismsm-tile-foot .obj-clauses { justify-content: flex-end; }
+
+/* Row 18: the aside wraps beside the chip, not under it. */
+.ismsm-tile-status { flex-wrap: nowrap; }
+.ismsm-tile-status > span:last-child { min-width: 0; }
+
+/* Row 24: KPI spacing. */
+.ismsm-kpi-sub { margin: 2px 0 0; }
+.ismsm-strip .kpi-value { margin-top: 4px; line-height: 1.2; }
+
+/* Rows 3 and 6: the detail bar as the mock-up's composition bar. Good, bad and unknown are parts with 2px gaps;
+   the status colour is the chip's alone. A bar of one part keeps the track for the rest. */
+.ismsm-segbar { gap: 2px; height: 10px; border-radius: 2px; }
+.ismsm-segbar--parts { background: none; }
+.ismsm-seg { flex: 0 1 var(--seg, 0%); border-radius: 2px; }
+.ismsm-seg--value, .ismsm-swatch--value { background: var(--success); }
+.ismsm-seg--bad, .ismsm-swatch--bad { background: var(--destructive); }
+.ismsm-seg--unknown, .ismsm-swatch--unknown { background: var(--muted); opacity: .4; }
+.ismsm-swatch--overlap { background: var(--primary); }
+/* Review F1: an at_most numerator is the count to keep down, drawn in the data ink, never green. */
+.ismsm-seg--count, .ismsm-swatch--count { background: var(--primary); }
+.ismsm-swatch--other { background: none; box-shadow: inset 0 0 0 1px var(--muted); }
+
+/* Row 5: residual level pills, from tokens in both themes. */
+.ismsm-lv { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.ismsm-lv--critical { background: var(--error-bg); color: var(--error-ink); }
+.ismsm-lv--high { background: var(--warning-bg); color: var(--warning-ink); }
+.ismsm-lv--medium { background: var(--secondary); color: var(--text); }
+.ismsm-lv--low { background: var(--success-bg); color: var(--success-ink); }
+
+/* Row 7: detail cards stretch to their row. Row 20: value and card titles. */
+.ismsm-detail-grid { align-items: stretch; }
+.ismsm-value-big { font-size: 44px; line-height: 1; }
+.ismsm-card-title { font-size: 13px; }
+
+/* Row 14: detail tables, sans header on --secondary, 12.5px cells. */
+.ismsm-table { font-size: 12.5px; }
+.ismsm-table th { font: 600 10.5px var(--font-sans); background: var(--secondary); }
+.ismsm-table td { padding: 8px 10px; border-top: 0; border-bottom: 1px solid var(--border); }
+[data-theme="dark"] .ismsm-table td { border-color: var(--secondary); }
+
+/* Row 19: chart dots r 4, the last r 5 (in the markup), stroke 2; axis 11px; light grid --secondary. */
+.ismsm-trend-dot { stroke-width: 2; }
+.ismsm-trend-axis { font-size: 11px; }
+.ismsm-trend-grid { stroke: var(--secondary); }
+
+/* Rows 15, 25, 28: create form label size, plain notes, target input width. */
+.obj-form-label { font-size: 12px; margin-bottom: 4px; }
+.obj-label-note--plain { font: 400 11px var(--font-sans); color: var(--muted); }
+input.obj-target-input { width: 58px; }
+
+/* Row 11: register toolbar filters (row 30: only the count is bold, in the markup). */
+.obj-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; font-size: 12.5px; }
+.obj-toolbar-summary { font-weight: 400; }
+/* Part B, B3: the "All organisations" table. Inks are the phase 3 status inks, defined for both themes. */
+.ismsm-pf-state { margin: 16px 0; }
+.ismsm-pf-caption { caption-side: top; text-align: left; padding: 0 0 8px; font-size: 13px; color: var(--muted); }
+/* An organisation's name is a row header, not a column label: sentence case, the row's own ground. */
+.ismsm-pf-table th[scope="row"] {
+  font: 600 12.5px var(--font-sans); letter-spacing: 0; text-transform: none; color: var(--text); white-space: nowrap;
+  background: transparent; border-bottom: 1px solid var(--border);
+}
+.ismsm-pf-table th[scope="row"],
+.ismsm-pf-table td { vertical-align: middle; }
+.ismsm-pf-num { font-variant-numeric: tabular-nums; }
+.ismsm-pf-count--on_track { color: var(--success-ink); font-weight: 600; }
+.ismsm-pf-count--at_risk,
+.ismsm-pf-count--needs_attention { color: var(--warning-ink); font-weight: 600; }
+.ismsm-pf-count--off_track { color: var(--error-ink); font-weight: 600; }
+.ismsm-pf-current th[scope="row"],
+.ismsm-pf-current td { background: var(--secondary); }
+.ismsm-pf-tag {
+  margin-left: 8px; padding: 1px 6px; border: 1px solid var(--border-visible); border-radius: 999px;
+  font: 500 11px var(--font-sans); color: var(--muted);
+}
+.ismsm-pf-open { white-space: nowrap; }
+/* Part B, B2: measurement rows on the Tasks page. */
+.task-badge.task-type-measurement { background: var(--secondary); color: var(--text); }
+/* The title is a link, not the evidence rows' button: same size and weight, no resting underline. */
+.tasks-row--measurement .tasks-row-title { text-decoration: none; }
+.tasks-row--measurement .tasks-row-title:hover { text-decoration: underline; }
+/* "MEASUREMENT" is wider than the 96px type column: tighter side padding keeps it off the status badge. */
+.task-badge.task-type-measurement { padding-inline: 4px; }
+.tasks-measure-sub { display: block; margin-top: 2px; font-size: 12px; color: var(--muted); }
+.tasks-measure-first { color: var(--warning-ink); font-weight: 600; }
+.tasks-measure-log { margin-top: 4px; }
+/* ── end ISMS metrics, phase 3 ── */
+
+/* ==========================================================================
+   Dashboard — tighter frame. One tile style for the posture figures and the
+   ISMS metrics summary, flat lists in the attention row, and cards that share
+   one padding and gap. Tokens only, so both themes follow.
+   ========================================================================== */
+.dashboard{
+  padding:20px 28px 28px;
+}
+.dashboard .dashboard-header{
+  margin-bottom:14px;
+}
+.dashboard .dashboard-header .page-subtitle{
+  margin:0;
+}
+.dashboard .dashboard-section{
+  margin-bottom:24px;
+}
+.dashboard .dashboard-section .dashboard-section-title{
+  margin-bottom:10px;
+  font-size:12px;
+}
+.dashboard-section-head{
+  display:flex;
+  align-items:baseline;
+  flex-wrap:wrap;
+  gap:4px 16px;
+  margin-bottom:10px;
+}
+.dashboard .dashboard-section-head .dashboard-section-title{
+  margin:0;
+}
+.dashboard-section-meta{
+  margin-left:auto;
+  font-size:12px;
+  color:var(--text-secondary);
+}
+.dashboard-section-link{
+  font-size:13px;
+  font-weight:500;
+  color:var(--primary);
+  text-decoration:none;
+}
+.dashboard-section-link:hover{
+  text-decoration:underline;
+}
+
+/* Both strips: bordered tiles, the figure close under its label. */
+.kpi-row.dashboard-kpis{
+  grid-template-columns:repeat(4,minmax(0,1fr));
+  gap:12px;
+  margin-bottom:24px;
+}
+.dashboard .kpi-row.ismsm-strip{
+  gap:12px;
+  margin-bottom:0;
+}
+.dashboard-kpis .kpi-card,
+.dashboard .ismsm-strip .kpi-card{
+  background:var(--card);
+  border:1px solid var(--border);
+  border-radius:12px;
+  padding:14px 16px;
+  min-width:0;
+}
+.dashboard-kpis .kpi-card-header{
+  align-items:center;
+  margin-bottom:6px;
+}
+.dashboard-kpis .kpi-icon svg{
+  width:16px;
+  height:16px;
+}
+.dashboard-kpis .kpi-value,
+.dashboard .ismsm-strip .kpi-value{
+  font-size:26px;
+  line-height:1.15;
+  font-variant-numeric:tabular-nums;
+}
+.dashboard-kpis .kpi-secondary{
+  margin-top:4px;
+  color:var(--text-secondary);
+}
+.ismsm-kpi-link{
+  color:inherit;
+  text-decoration:none;
+  transition:border-color 0.15s, background 0.15s;
+}
+.dashboard .ismsm-strip .ismsm-kpi-link:hover{
+  border-color:var(--primary);
+  background:var(--surface-hover);
+}
+.ismsm-kpi-link:focus-visible{
+  outline:2px solid var(--primary);
+  outline-offset:2px;
+}
+
+/* Needs attention: the queue is as tall as the cards beside it. */
+.dashboard .dashboard-attention-grid{
+  gap:16px;
+  align-items:stretch;
+}
+.dashboard-attention-main{
+  position:relative;
+  min-width:0;
+  min-height:420px;
+}
+.dashboard-attention-main .work-queue-panel{
+  position:absolute;
+  inset:0;
+  max-height:none;
+  box-shadow:none;
+}
+.dashboard .dashboard-attention-side{
+  gap:16px;
+}
+.dashboard .wq-header{
+  padding:12px 18px;
+}
+.dashboard .wq-header h3{
+  font-size:15px;
+}
+.dashboard .wq-badge{
+  padding:2px 9px;
+}
+.dashboard .wq-body{
+  padding:0 18px 10px;
+}
+.dashboard .wq-section{
+  margin-bottom:6px;
+}
+.dashboard .wq-section-title{
+  position:sticky;
+  top:0;
+  z-index:1;
+  margin:0;
+  padding:10px 0 6px;
+  font-size:11px;
+  background:var(--card);
+}
+.dashboard .wq-item{
+  margin:0;
+  padding:7px 8px;
+  gap:12px;
+  background:none;
+  border-radius:0;
+  border-bottom:1px solid var(--border);
+}
+.dashboard .wq-item:last-child{
+  border-bottom:none;
+}
+.dashboard .wq-item:hover{
+  background:var(--surface-hover);
+  box-shadow:none;
+}
+.dashboard .wq-item-left{
+  flex-direction:row;
+  align-items:baseline;
+  gap:10px;
+}
+.dashboard .wq-item-id{
+  flex-shrink:0;
+}
+.dashboard .wq-item-days,
+.dashboard .wq-item-days.wq-days-overdue,
+.dashboard .wq-item-days.wq-days-stale{
+  padding:0;
+  background:none;
+  font-weight:500;
+  font-variant-numeric:tabular-nums;
+}
+
+/* Cards: one padding, one gap. */
+.dashboard .dashboard-card{
+  padding:16px 18px;
+  gap:10px;
+}
+.dashboard .dashboard-owner-grid{
+  gap:16px;
+}
+
+/* Implementation: one slim card, the bar across the full width. */
+.dashboard .dashboard-implementation{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto;
+  gap:10px 24px;
+  align-items:center;
+}
+.dashboard-implementation .dashboard-card-header,
+.dashboard-implementation .dashboard-status-bar{
+  grid-column:1 / -1;
+}
+.dashboard-implementation .dashboard-status-legend{
+  display:flex;
+  flex-wrap:wrap;
+  gap:4px 28px;
+}
+.dashboard-implementation .dashboard-status-legend strong{
+  margin-left:0;
+}
+
+/* Control maturity and evidence collection maturity: the same card, twice. */
+.dashboard-maturity-grid{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:16px;
+  align-items:stretch;
+  margin-top:16px;
+}
+.dashboard-maturity-grid > *{
+  min-width:0;
+}
+.dashboard .maturity-distribution-widget{
+  padding:16px 18px;
+}
+.dashboard .maturity-distribution-header{
+  margin-bottom:10px;
+}
+.dashboard .maturity-distribution-header h3{
+  font-size:15px;
+}
+.dashboard .maturity-distribution-summary{
+  margin-bottom:12px;
+  padding-bottom:10px;
+}
+.dashboard .maturity-distribution-total{
+  font-size:26px;
+  line-height:1.15;
+  font-variant-numeric:tabular-nums;
+}
+.dashboard .maturity-distribution-chart{
+  gap:8px;
+}
+.dashboard .maturity-distribution-label{
+  width:208px;
+}
+.dashboard .maturity-distribution-bar-track{
+  height:14px;
+}
+.dashboard .maturity-distribution-value{
+  font-variant-numeric:tabular-nums;
+}
+
+/* Evidence not yet tracked: one line a row, five rows with no scroll. */
+.dashboard .evidence-gaps-card{
+  gap:8px;
+  padding-bottom:8px;
+}
+.dashboard .evidence-gaps-card .gaps-list{
+  margin:0 -18px;
+  max-height:none;
+  overflow:visible;
+}
+.dashboard .evidence-gaps-card .gaps-list--all{
+  max-height:320px;
+  overflow-y:auto;
+}
+.dashboard .evidence-gaps-card .gap-item{
+  padding:7px 18px;
+  background:none;
+  border:none;
+  border-bottom:1px solid var(--border);
+  border-radius:0;
+}
+.dashboard .evidence-gaps-card .gap-item:last-child{
+  border-bottom:none;
+}
+.dashboard .evidence-gaps-card .gap-item:hover{
+  background:var(--surface-hover);
+}
+.dashboard .evidence-gaps-card .gap-item-main{
+  display:flex;
+  flex-wrap:wrap;
+  align-items:baseline;
+  gap:2px 10px;
+}
+.dashboard .evidence-gaps-card .gap-item-id{
+  font-family:inherit;
+  color:var(--text);
+}
+.dashboard .evidence-gaps-card .gap-item-title{
+  flex:1 1 120px;
+  min-width:0;
+  margin:0;
+  font-size:13px;
+  color:var(--text-secondary);
+}
+.dashboard .evidence-gaps-card .gap-item-meta{
+  margin:0 0 0 auto;
+}
+.dashboard .evidence-gaps-card .gap-controls-count,
+.dashboard .evidence-gaps-card .gap-systems{
+  color:var(--text-secondary);
+}
+.dashboard .evidence-gaps-card .gap-meta-divider{
+  color:var(--border);
+}
+.dashboard .evidence-gaps-card .gaps-view-all{
+  align-self:flex-start;
+  padding:2px 0;
+  color:var(--primary);
+}
+.dashboard .evidence-gaps-card .gaps-view-all:hover{
+  text-decoration:underline;
+}
+
+/* Frequency health: a card like its neighbours (it had no rules of its own). */
+.frequency-health-tile{
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+  min-width:0;
+  padding:16px 18px;
+  background:var(--card);
+  border:1px solid var(--border);
+  border-radius:12px;
+}
+.frequency-health-tile .container-header{
+  padding:0;
+  /* The dark theme paints every container header with !important. */
+  background:none !important;
+  border-radius:0;
+  align-items:baseline;
+}
+.frequency-health-tile .container-icon{
+  display:none;
+}
+.frequency-health-tile .container-title{
+  font-size:15px;
+  font-weight:600;
+  letter-spacing:0;
+  text-transform:none;
+  color:var(--text);
+}
+.frequency-health-tile .container-content{
+  padding:0;
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+}
+.frequency-health-tile .container-content p{
+  margin:0;
+  font-size:13px;
+  line-height:1.45;
+  color:var(--text-secondary);
+}
+.frequency-health-count{
+  font-size:12px;
+  font-weight:600;
+  color:var(--warning-ink, var(--warning));
+  white-space:nowrap;
+}
+.frequency-health-tile .frequency-health-error{
+  color:var(--destructive);
+}
+.frequency-health-toggle,
+.frequency-health-retry-btn,
+.frequency-health-apply-btn{
+  align-self:flex-start;
+  padding:4px 10px;
+  font:inherit;
+  font-size:12px;
+  font-weight:500;
+  color:var(--text);
+  background:var(--card);
+  border:1px solid var(--border);
+  border-radius:6px;
+  cursor:pointer;
+}
+.frequency-health-toggle:hover,
+.frequency-health-retry-btn:hover,
+.frequency-health-apply-btn:hover:not(:disabled){
+  background:var(--surface-hover);
+}
+.frequency-health-apply-btn:disabled{
+  opacity:0.55;
+  cursor:default;
+}
+.frequency-health-list{
+  list-style:none;
+  margin:4px 0 0;
+  padding:0;
+  max-height:260px;
+  overflow-y:auto;
+}
+.frequency-health-row{
+  display:flex;
+  flex-direction:column;
+  gap:4px;
+  padding:8px 0;
+  border-top:1px solid var(--border);
+  font-size:13px;
+  color:var(--text-secondary);
+}
+.frequency-health-row-header{
+  display:flex;
+  align-items:baseline;
+  justify-content:space-between;
+  gap:10px;
+}
+.frequency-health-evidence-id{
+  font-weight:600;
+  color:var(--text);
+}
+.frequency-health-confidence{
+  font-size:12px;
+}
+
+@media (max-width:900px){
+  .dashboard{
+    padding:16px;
+  }
+  .kpi-row.dashboard-kpis{
+    grid-template-columns:repeat(2,minmax(0,1fr));
+  }
+}
+
+/* Control maturity against target: one bullet per domain on the L0 to L5 scale.
+   The band is the target, the bar inside it the average level reached. */
+.dashboard .mtarget{
+  --mtarget-domain:minmax(0,1.2fr);
+  --mtarget-figures:72px;
+  --mtarget-count:72px;
+  margin-top:16px;
+}
+.mtarget-head{
+  flex-wrap:wrap;
+  gap:4px 16px;
+}
+.mtarget-headline{
+  font-size:13px;
+  color:var(--text-secondary);
+}
+.mtarget-headline strong{
+  color:var(--text);
+  font-variant-numeric:tabular-nums;
+}
+.mtarget-key{
+  display:flex;
+  flex-wrap:wrap;
+  gap:4px 16px;
+  font-size:12px;
+  color:var(--text-secondary);
+}
+.mtarget-key-item{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+}
+.mtarget-key-swatch{
+  width:14px;
+  height:6px;
+  border-radius:2px;
+}
+.mtarget-key-swatch--shadow{
+  height:12px;
+  background:color-mix(in srgb,var(--text) 18%,transparent);
+  border-right:2px solid var(--text);
+}
+.mtarget-key-swatch--met{ background:var(--success-ink); }
+.mtarget-key-swatch--below{ background:var(--warning-ink); }
+.mtarget-scale,
+.mtarget-row{
+  display:grid;
+  grid-template-columns:var(--mtarget-domain) minmax(0,3fr) var(--mtarget-figures) var(--mtarget-count);
+  align-items:center;
+  gap:0 16px;
+}
+.mtarget-scale{
+  font-size:11px;
+  color:var(--text-secondary);
+}
+.mtarget-scale-ticks{
+  grid-column:2;
+  display:flex;
+  justify-content:space-between;
+  /* Each label is centred on its level's point of the track. */
+  margin:0 -8px;
+}
+.mtarget-scale-ticks span{
+  width:16px;
+  text-align:center;
+}
+.mtarget-scale-count{
+  grid-column:4;
+  text-align:right;
+}
+.mtarget-rows{
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+  margin:0;
+  padding:0;
+  list-style:none;
+}
+.mtarget-domain{
+  display:flex;
+  align-items:baseline;
+  gap:6px;
+  min-width:0;
+  font-size:13px;
+  color:var(--text);
+}
+.mtarget-domain-name{
+  min-width:0;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  font-size:12px;
+  color:var(--text-secondary);
+}
+.mtarget-track{
+  position:relative;
+  height:18px;
+  border-radius:3px;
+  /* A hairline at every level, so the bar can be read off the scale above. */
+  background:
+    repeating-linear-gradient(to right,var(--border) 0 1px,transparent 1px 20%) 0 0 / calc(100% - 1px) 100% no-repeat,
+    linear-gradient(to left,var(--border) 0 1px,transparent 1px) 0 0 / 100% 100% no-repeat;
+}
+.mtarget-shadow,
+.mtarget-fill,
+.mtarget-mark{
+  position:absolute;
+  left:0;
+}
+.mtarget-shadow{
+  top:0;
+  bottom:0;
+  width:var(--mtarget-target);
+  border-radius:3px 0 0 3px;
+  background:color-mix(in srgb,var(--text) 18%,transparent);
+}
+.mtarget-fill{
+  top:5px;
+  bottom:5px;
+  width:var(--mtarget-actual);
+  min-width:2px;
+  border-radius:0 3px 3px 0;
+  /* The ink tokens, not --warning and --success: an amber or green bar on
+     the grey band is under 1.5:1 in the light themes. */
+  background:var(--warning-ink);
+}
+.mtarget-row--met .mtarget-fill{
+  background:var(--success-ink);
+}
+.mtarget-mark{
+  top:-2px;
+  bottom:-2px;
+  left:var(--mtarget-target);
+  width:2px;
+  margin-left:-1px;
+  border-radius:1px;
+  background:var(--text);
+}
+.mtarget-figures{
+  display:flex;
+  align-items:baseline;
+  justify-content:flex-end;
+  gap:4px;
+  font-size:13px;
+  color:var(--text);
+  font-variant-numeric:tabular-nums;
+  white-space:nowrap;
+}
+.mtarget-figures-target{
+  font-size:12px;
+  color:var(--text-secondary);
+}
+.mtarget-count{
+  font-size:13px;
+  text-align:right;
+  color:var(--text);
+  font-variant-numeric:tabular-nums;
+  white-space:nowrap;
+}
+.mtarget-row--below .mtarget-count{
+  font-weight:600;
+}
+.mtarget-note{
+  margin:0;
+  font-size:12px;
+  line-height:1.5;
+  color:var(--text-secondary);
+}
+@media (max-width:560px){
+  .dashboard .mtarget{
+    --mtarget-domain:44px;
+  }
+  .mtarget-domain-name{
+    display:none;
+  }
+}
+
+/* Marks that were too faint to read in some themes (measured in all 17). */
+.dashboard .dashboard-status-segment--not_started{
+  opacity:1;
+}
+.dashboard .dashboard-status-segment--implemented{
+  background:var(--success-ink);
+}
+.dashboard .dashboard-owner-list li.is-unassigned .dashboard-owner-bar span{
+  background:var(--warning-ink);
+}
+/* The level colours are fixed, and yellow or lime on a light track is under
+   2:1. A hairline in the text colour marks where each bar ends in any theme. */
+.dashboard .maturity-distribution-bar-fill{
+  box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--text) 45%,transparent);
+}
+.dashboard .maturity-distribution-dot{
+  box-shadow:0 0 0 1px color-mix(in srgb,var(--text) 55%,transparent);
+}
+.dashboard .wq-badge:not(.wq-badge-zero),
+.dashboard .wq-section-title.wq-overdue,
+.dashboard .wq-item-days.wq-days-overdue{
+  color:var(--error-ink);
+}
+.dashboard .wq-section-title.wq-blocking{
+  color:var(--warning-ink);
+}
+/* The empty part of a bar was within 1.1:1 of its card in most themes, and
+   gone in some. A tint of the text colour holds in every one. */
+.dashboard .dashboard-status-bar,
+.dashboard .dashboard-owner-bar,
+.dashboard .maturity-distribution-bar-track{
+  background:color-mix(in srgb,var(--text) 10%,transparent);
+}
+/* The grade badge colours are fixed, and white on them is 1.9:1 to 2.9:1 for
+   A to D. A fixed dark ink reads on all four; F keeps white on red. */
+.maturity-grade-a,
+.maturity-grade-b,
+.maturity-grade-c,
+.maturity-grade-d{
+  color:#111827;
+}
+/* A card-coloured gap between the parts of the implementation bar: in themes
+   whose primary is close to green or red, two neighbours ran together. */
+.dashboard .dashboard-status-segment + .dashboard-status-segment{
+  box-shadow:-2px 0 0 var(--card);
+}
+/* ISMS metrics, measured in all 17 themes. The sparkline's target line was
+   2.7:1 in the light themes at 70% opacity; the grey chips' text was 4.3:1. */
+.ismsm-spark-target{
+  opacity:1;
+}
+.ismsm-kind,
+.ismsm-table th,
+.obj-status--insufficient_data,
+.obj-status--not_measured{
+  color:color-mix(in srgb,var(--muted) 65%,var(--text));
+}
+.ismsm-meter{
+  background:color-mix(in srgb,var(--text) 10%,transparent);
+}
+/* Amber and green lines on a light card were about 2:1. The ink tokens hold
+   in both bases. */
+.ismsm-trend-warn{
+  stroke:var(--warning-ink);
+}
+.ismsm-tile--on_track .ismsm-meter i{
+  background:var(--success-ink);
+}
+.ismsm-tile--at_risk .ismsm-meter i{
+  background:var(--warning-ink);
+}
+.ismsm-tile--off_track .ismsm-meter i{
+  background:var(--error-ink);
+}
+/* The two maturity cards stack before their bars run out of room. This sits
+   after the two-column rule on purpose: the earlier narrow-width rule comes
+   before it in the file and so could not win. */
+@media (max-width:1280px){
+  .dashboard-maturity-grid{
+    grid-template-columns:minmax(0,1fr);
+  }
+}
+/* Where the widget itself hides the level names, the dashboard gives the
+   space back to the bars. */
+@media (max-width:768px){
+  .dashboard .maturity-distribution-label{
+    width:56px;
+  }
+}
+
+/* ═══ Capability posture: text readable in every colour theme ═══════════
+   Band, badge and count text took the raw status colours (--warning,
+   --destructive, --success, --primary) or a fixed white. Those are fill
+   colours: pale in the dark themes and bright in the light ones, so as text
+   they fell under 4.5:1 (amber on a light card 2:1, white on a pale green
+   pill 1.4:1). Text takes the ink tokens instead; fills keep the colour. */
+:root {
+  /* Secondary text that follows the theme's own text colour, so it holds its
+     contrast on any theme's surface. */
+  --cp-quiet-ink: color-mix(in srgb, var(--text) 78%, transparent);
+  /* The theme's own primary, pulled toward its text colour until it reads as
+     text. Follows a theme that changes --primary, which --primary-ink does
+     not. */
+  --cp-primary-ink: color-mix(in srgb, var(--primary) 62%, var(--text));
+}
+
+.cp-axis-band-strong { --cp-axis-color: var(--success-ink); }
+.cp-axis-band-moderate { --cp-axis-color: var(--warning-ink); }
+.cp-axis-band-developing { --cp-axis-color: var(--error-ink); }
+.cp-axis-band-unknown { --cp-axis-color: var(--cp-quiet-ink); }
+
+/* Status and maturity in the control table: a tinted pill with the colour
+   on a dot or an edge, and the words in the theme's text colour. */
+.cp-status-badge {
+  --cp-status-color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: color-mix(in srgb, var(--cp-status-color) 16%, transparent);
+  color: var(--text);
+}
+.cp-status-badge::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--cp-status-color);
+}
+.cp-status-badge.cp-status-unset { color: var(--cp-quiet-ink); }
+
+.cp-maturity-badge[data-level] {
+  background: color-mix(in srgb, var(--cp-level-color, var(--muted)) 18%, transparent);
+  border: 1px solid color-mix(in srgb, var(--cp-level-color, var(--muted)) 60%, transparent);
+  color: var(--text);
+}
+.cp-maturity-badge[data-level="L0"] { --cp-level-color: var(--maturity-l0); }
+.cp-maturity-badge[data-level="L1"] { --cp-level-color: var(--maturity-l1); }
+.cp-maturity-badge[data-level="L2"] { --cp-level-color: var(--maturity-l2); }
+.cp-maturity-badge[data-level="L3"] { --cp-level-color: var(--maturity-l3); }
+.cp-maturity-badge[data-level="L4"] { --cp-level-color: var(--maturity-l4); }
+.cp-maturity-badge[data-level="L5"] { --cp-level-color: var(--maturity-l5); }
+
+.cp-at-risk-badge,
+.cp-evidence-weak { color: var(--error-ink) !important; }
+.cp-evidence-moderate { color: var(--warning-ink) !important; }
+.cp-evidence-strong { color: var(--success-ink) !important; }
+.cp-evidence-none,
+.cp-ksi-badge,
+.cp-axis-dot-label,
+.cp-control-count { color: var(--cp-quiet-ink) !important; }
+
+.cp-relevance-primary { color: var(--cp-primary-ink); }
+.cp-relevance-supporting { color: var(--success-ink); }
+.cp-relevance-related { color: var(--warning-ink); }
+
+.cp-back-btn,
+a.cp-controls-id-link,
+.cp-controls-id-link { color: var(--cp-primary-ink); }
+.cp-controls-table th { color: var(--cp-quiet-ink); }
+
+.cp-tab-count {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  color: var(--cp-quiet-ink);
+}
+.cp-tab:hover .cp-tab-count,
+.cp-tab-active .cp-tab-count {
+  background: color-mix(in srgb, var(--primary) 16%, transparent);
+  border-color: transparent;
+  color: var(--text);
+}
+.cp-selected-yes {
+  background: color-mix(in srgb, var(--primary) 16%, transparent);
+  color: var(--cp-primary-ink);
+}
+
+.cp-theme-detail .ehd-card-system,
+.cp-theme-detail .ehd-card-freq,
+.cp-theme-detail .ehd-card-files { color: var(--cp-quiet-ink); }
+
+/* The evidence cards' verdict pill (shared with the Evidence dashboard): the
+   light themes used fixed mid-tone hex on a tint (red 3.7:1, amber 2.6:1). */
+.ehd-assessment-sufficient .ehd-assessment-pill { color: var(--success-ink); }
+.ehd-assessment-partial .ehd-assessment-pill { color: var(--warning-ink); }
+.ehd-assessment-insufficient .ehd-assessment-pill { color: var(--error-ink); }
+/* The non-verdict states stay grey, in a grey that follows the theme. */
+.ehd-assessment-pending .ehd-assessment-pill,
+.ehd-assessment-processing .ehd-assessment-pill,
+.ehd-assessment-error .ehd-assessment-pill,
+.ehd-assessment-unassessable .ehd-assessment-pill { color: var(--cp-quiet-ink); }

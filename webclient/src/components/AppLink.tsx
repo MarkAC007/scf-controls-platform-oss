@@ -19,10 +19,17 @@ import {
   evidenceItemSearch,
   navigateToSearch,
   toSearchString,
+  withAnalyticsView,
   withCapabilityTestItem,
+  withEvidenceView,
+  withIsmsFilters,
+  withIsmsMetric,
+  withIsmsObjective,
+  withIsmsSection,
   withLibraryMode,
   withRiskItem,
   withSystemItem,
+  withTab,
   withTaskItem,
   withVendorItem,
   type LibraryMode,
@@ -34,6 +41,18 @@ export type AppDestination =
   | { kind: 'evidence' | 'risk' | 'vendor' | 'system' | 'task' | 'capability-test'; id: string }
   /** The library list, with no control selected. */
   | { kind: 'library'; mode?: LibraryMode }
+  /** One security objective, focused in the ISMS profile's register. */
+  | { kind: 'objective'; id: string }
+  /** The objectives register with nothing focused. */
+  | { kind: 'objectives-register' }
+  /** The ISMS metrics dashboard on the Analytics tab; `status` opens it on that status pill alone. */
+  | { kind: 'isms-metrics'; status?: string }
+  /** One objective's metric detail screen on the Analytics tab. */
+  | { kind: 'isms-metric'; id: string }
+  /** A register's list, with nothing selected. Deficiencies and the audit programme have no per-record link. */
+  | { kind: 'register'; of: RegisterName }
+
+export type RegisterName = 'risk' | 'vendor' | 'evidence' | 'library' | 'capability-test' | 'deficiencies' | 'audit-programme'
 
 /** The destination's query string, built on top of the current one. */
 export function destinationSearch(search: string, to: AppDestination): string {
@@ -54,6 +73,37 @@ export function destinationSearch(search: string, to: AppDestination): string {
       return withCapabilityTestItem(search, to.id)
     case 'library':
       return withLibraryMode(search, to.mode ?? 'in-scope')
+    case 'objective':
+      return withIsmsObjective(search, to.id)
+    case 'objectives-register':
+      return withIsmsObjective(search, null)
+    case 'isms-metrics': {
+      const list = withAnalyticsView(search, 'isms-metrics')
+      return to.status ? withIsmsFilters(list, { team: '', clause: '', status: to.status }) : list
+    }
+    case 'isms-metric':
+      return withIsmsMetric(search, to.id)
+    case 'register':
+      return registerSearch(search, to.of)
+  }
+}
+
+function registerSearch(search: string, of: RegisterName): string {
+  switch (of) {
+    case 'risk':
+      return withRiskItem(search, null)
+    case 'vendor':
+      return withVendorItem(search, null)
+    case 'evidence':
+      return withEvidenceView(withTab(search, 'evidence'), 'workspace')
+    case 'library':
+      return withLibraryMode(search, 'in-scope')
+    case 'capability-test':
+      return withCapabilityTestItem(search, null)
+    case 'deficiencies':
+      return withTab(search, 'deficiencies')
+    case 'audit-programme':
+      return withIsmsSection(search, 'audit_programme')
   }
 }
 

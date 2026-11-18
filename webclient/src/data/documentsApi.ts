@@ -691,6 +691,8 @@ export interface IsmsAuditEntry {
   area: string
   criteria: string
   planned_period: string
+  /** `YYYY-MM-DD`; null or absent when not dated. The audit measure leaves out an audit dated after today. */
+  planned_date?: string | null
   auditor: string
   status: 'planned' | 'in_progress' | 'completed' | 'cancelled'
   findings: string

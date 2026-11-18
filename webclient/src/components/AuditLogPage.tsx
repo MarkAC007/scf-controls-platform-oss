@@ -38,7 +38,7 @@ export function auditEntityDestination(
 }
 
 // Audit entity types whose objects have a page, keyed as the API resolves them.
-const AUDIT_ENTITY_KINDS: Record<string, Exclude<AppDestination['kind'], 'control' | 'library'>> = {
+const AUDIT_ENTITY_KINDS: Record<string, Exclude<AppDestination['kind'], 'control' | 'library' | 'register'>> = {
   risk_assessment: 'risk',
   evidence_tracking: 'evidence',
   vendor: 'vendor',

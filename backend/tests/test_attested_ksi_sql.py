@@ -58,11 +58,25 @@ from services.assurance_policy import (  # noqa: E402
 # expressions (a `window_confirmed` / `assessment_confirmed` flag carried
 # through the CTEs); FROM/WHERE and the coverage columns are unchanged. The
 # per-file hash did not move.
+#
+# Re-pinned a third time on 2026-11-18, and this one is NOT additive: the row
+# set moved on purpose, so evidence coverage (and with it the KSI score) reads
+# lower for an organisation than it did before. Two corrections, both pinned
+# by tests/test_ksi_evidence_population.py:
+#   1. Every variant: evidence reaches a theme only through controls the
+#      organisation has in scope (a join to scoped_controls). The coverage
+#      axis divides by the scoped controls, and the numerator used to count
+#      controls outside scope ("177 of 108 controls with evidence").
+#   2. Composite variants: "has evidence" is read from the organisation's
+#      side of the LEFT JOIN (fu.evidence_id), not from the catalogue's
+#      evidence id, which is never NULL. Since #590 that reported every
+#      control with a catalogue evidence item as covered, uploaded or not:
+#      evidence coverage 100% on every theme.
 SHIPPED_HASHES = {
-    "per_file": "af1ce345428aea2d4edaa3b2db1da708751eca772cede7db5ab4189ab76f5e43",
-    "window": "5ea1a57d7ac9fb722d54e94e9afa8698f096bdc2a70b661717f0c3806df68ad1",
-    "composite": "c9d52f99a6ff5bbdda4647a4bafdc548f2c642cc9f3e9f104e1baa0be0a107f2",
-    "composite_window": "94d9c5626118bc399c8c5264fa01750847413f64acd8cc57b4fadf96e49e3204",
+    "per_file": "2817c9a9e0a465f41042dfdd67ee2454db4fb3740f8da2f8563792f39ab9f0f7",
+    "window": "c4d81a4f55a6aab5c16465d1f1888c327d0a0ea56d4c26661a68c80b27413d68",
+    "composite": "53c7ba69a2480acb0d4d0edd59948e1fa07690afa285f92128cc1904aa54c315",
+    "composite_window": "89972aecdf3b1aa23544d529e7ea75a72a00e33b8a10662da3cf0292a3758b4d",
 }
 
 OPEN_VARIANTS = {

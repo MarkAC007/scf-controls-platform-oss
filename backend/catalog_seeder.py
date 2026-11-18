@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.dialects.postgresql import insert
 
 from database import AsyncSessionLocal
+from services.theme_mapping import nist_800_53_refs, nist_families as families_of
 from services.risk_catalog import (
     risk_to_columns as _risk_to_columns,
     threat_to_columns as _threat_to_columns,
@@ -171,12 +172,26 @@ async def seed_catalog_if_empty() -> dict:
             "evidence": await seed_evidence_if_empty(session),
             "assessment_objectives": await seed_assessment_objectives_if_empty(session),
             "capability_themes": await seed_capability_themes_if_empty(session),
+            "capability_theme_mappings": await repair_capability_theme_mappings(session),
             "framework_registry": await seed_framework_registry_if_empty(session),
             "risks": await seed_risks_if_empty(session),
             "threats": await seed_threats_if_empty(session),
             "system_catalog": await seed_system_catalog(session),
         }
         return results
+
+
+async def repair_capability_theme_mappings(session: AsyncSession) -> dict:
+    """Rebuild theme mappings that reach no active control (an install upgraded
+    to 2026.3 before the NIST key rename was handled). A no-op otherwise."""
+    # Imported here: catalog_apply reads DATA_DIR from this module.
+    from services.catalog_apply import repair_theme_mappings_if_uncovered
+
+    try:
+        return await repair_theme_mappings_if_uncovered(session)
+    except Exception as exc:
+        logger.error(f"Could not check capability theme mappings: {exc}")
+        return {"status": "error", "message": str(exc)}
 
 
 async def _seed_code_catalog_if_empty(
@@ -720,16 +735,14 @@ async def seed_capability_themes_if_empty(session: AsyncSession) -> dict:
         if not scf_id:
             continue
 
-        nist_controls = ctrl.get("framework_mappings", {}).get("nist_800_53_r5", [])
+        # Whichever edition key this catalogue carries ("nist_800_53_r5" up to
+        # 2026.2, "nist_800_53_r5_2" from 2026.3): services/theme_mapping.py.
+        nist_controls = nist_800_53_refs(ctrl.get("framework_mappings"))
         if not nist_controls:
             continue
 
-        # Extract unique NIST families from this control's mappings
-        nist_families = set()
-        for nist_ctrl in nist_controls:
-            # NIST control format: "AC-1", "IA-2.1", "PM-1", etc.
-            family = nist_ctrl.split("-")[0] if "-" in nist_ctrl else nist_ctrl
-            nist_families.add(family)
+        # Unique NIST families ("AC-1", "CM-08(01)", "PM-05" -> AC, CM, PM)
+        nist_families = families_of(nist_controls)
 
         # Map each NIST family to capability themes
         for family in nist_families:

@@ -84,6 +84,7 @@ from api import (
     compensating_controls,
     due_care,
     capability_tests,
+    security_objectives,
 )
 
 # Configure logging
@@ -472,6 +473,7 @@ app.include_router(deficiencies.router, prefix="/api")  # Control deficiency rec
 app.include_router(compensating_controls.router, prefix="/api")  # Organisation compensating controls (PIG R9)
 app.include_router(due_care.router, prefix="/api")  # Control validation and posture snapshots (PIG R10)
 app.include_router(capability_tests.router, prefix="/api")  # Capability test records (PIG R11)
+app.include_router(security_objectives.router, prefix="/api")  # Security objectives and ISMS metrics (clauses 6.2, 9.1)
 # OIDC login / callback endpoints. The router self-prefixes /api/auth, so it is
 # included WITHOUT an extra prefix here (a "/api" prefix would double to /api/api/auth).
 app.include_router(oidc_auth.router)

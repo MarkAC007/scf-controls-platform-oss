@@ -52,6 +52,16 @@ AUTOMATION_TASKS = {
         "minute": 0,
         "day_of_month": 1,
     },
+    "isms-metric-results-nightly": {
+        "task": "tasks_automation.record_isms_metric_results_task",
+        "hour": 4,
+        "minute": 30,
+    },
+    "objective-reminders-daily": {
+        "task": "tasks_automation.notify_objectives_task",
+        "hour": 7,
+        "minute": 45,
+    },
 }
 
 
@@ -152,6 +162,8 @@ def test_flag_enabled_truthy_and_other_values(
             "notify_due_control_validations_task",
         ),
         (tasks_automation.take_posture_snapshots_task, "take_posture_snapshots_task"),
+        (tasks_automation.record_isms_metric_results_task, "record_isms_metric_results_task"),
+        (tasks_automation.notify_objectives_task, "notify_objectives_task"),
     ],
 )
 def test_automation_tasks_noop_when_runtime_flag_disabled(
