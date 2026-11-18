@@ -4,7 +4,10 @@ import type { EnrichedControl, ScopedControlsFile, EvidenceGapsResponse } from '
 import { getEvidenceGaps } from '../data/apiClient'
 import { useDashboardStats } from '../hooks/useDashboardStats'
 import { MaturityDistributionWidget } from './maturity'
+import { CONTROL_MATURITY_LEVELS } from './maturity/ControlMaturityLevels'
+import ControlTargetStanding from './dashboard/ControlTargetStanding'
 import { FrequencyHealthTile } from './dashboard/FrequencyHealthTile'
+import IsmsSummaryPanel from './dashboard/IsmsSummaryPanel'
 import WorkQueuePanel from './dashboard/WorkQueuePanel'
 import PostureHistoryPanel from './dashboard/PostureHistoryPanel'
 
@@ -65,11 +68,16 @@ export default function Dashboard({ controls, scopingData, onNavigateToScoping, 
     { key: 'not_started', label: 'Not started', count: stats.statusCounts.not_started },
   ] as const
 
-  const maturityLabel =
-    stats.averageMaturity >= 4 ? 'Excellent' :
-    stats.averageMaturity >= 3 ? 'Good' :
-    stats.averageMaturity >= 2 ? 'Developing' :
-    stats.averageMaturity > 0 ? 'Initial' : null
+  // Controls per maturity level, in the shape the evidence distribution already has.
+  const controlMaturityDistribution = {
+    L0: stats.maturityCounts.L0 ?? 0,
+    L1: stats.maturityCounts.L1 ?? 0,
+    L2: stats.maturityCounts.L2 ?? 0,
+    L3: stats.maturityCounts.L3 ?? 0,
+    L4: stats.maturityCounts.L4 ?? 0,
+    L5: stats.maturityCounts.L5 ?? 0,
+  }
+  const hasControlMaturity = Object.values(controlMaturityDistribution).some(count => count > 0)
 
   const hasEvidenceMaturity = Object.values(stats.evidenceMaturityDistribution).some(count => count > 0)
 
@@ -83,7 +91,7 @@ export default function Dashboard({ controls, scopingData, onNavigateToScoping, 
       </div>
 
       {/* KPI Summary Row */}
-      <div className="kpi-row">
+      <div className="kpi-row dashboard-kpis">
         <div className="kpi-card">
           <div className="kpi-card-header">
             <span className="kpi-label">Controls in Scope</span>
@@ -93,7 +101,6 @@ export default function Dashboard({ controls, scopingData, onNavigateToScoping, 
           </div>
           <div className="kpi-value">{stats.selectedCount}</div>
           <div className="kpi-secondary">{stats.totalEvidence > 0 ? `${stats.selectedCount} scoped` : 'Scope controls to begin'}</div>
-          <div className="kpi-glow"></div>
         </div>
         <div className="kpi-card">
           <div className="kpi-card-header">
@@ -104,9 +111,8 @@ export default function Dashboard({ controls, scopingData, onNavigateToScoping, 
           </div>
           <div className="kpi-value">{stats.implementedPercentage}%</div>
           <div className="kpi-secondary">{stats.statusCounts.implemented} of {stats.selectedCount} controls completed</div>
-          <div className="kpi-glow"></div>
         </div>
-        <div className="kpi-card">
+        <div className={stats.statusCounts.at_risk > 0 ? 'kpi-card kpi-risk' : 'kpi-card'}>
           <div className="kpi-card-header">
             <span className="kpi-label">At Risk</span>
             <span className="kpi-icon">
@@ -115,7 +121,6 @@ export default function Dashboard({ controls, scopingData, onNavigateToScoping, 
           </div>
           <div className="kpi-value">{stats.statusCounts.at_risk}</div>
           <div className="kpi-secondary">{stats.statusCounts.at_risk > 0 ? 'Immediate action required' : 'No controls at risk'}</div>
-          <div className="kpi-glow"></div>
         </div>
         <div className="kpi-card">
           <div className="kpi-card-header">
@@ -126,9 +131,11 @@ export default function Dashboard({ controls, scopingData, onNavigateToScoping, 
           </div>
           <div className="kpi-value">{stats.evidencePercentage}%</div>
           <div className="kpi-secondary">{stats.trackedEvidence} of {stats.totalEvidence} evidence items</div>
-          <div className="kpi-glow"></div>
         </div>
       </div>
+
+      {/* Are the security objectives being met: the head of Analytics › ISMS metrics, as links into it. */}
+      {scopingData.organizationId && <IsmsSummaryPanel organizationId={scopingData.organizationId} />}
 
       {/*
         One page, three questions — what needs doing, where we are, who owns
@@ -140,12 +147,15 @@ export default function Dashboard({ controls, scopingData, onNavigateToScoping, 
       <section className="dashboard-section" aria-labelledby="dashboard-attention">
         <h2 id="dashboard-attention" className="dashboard-section-title">Needs attention</h2>
         <div className="dashboard-attention-grid">
+          {/* The queue takes the height of the cards beside it and scrolls inside. */}
           {scopingData.organizationId && (
-            <WorkQueuePanel
-              orgId={scopingData.organizationId}
-              onNavigateToEvidence={onNavigateToEvidence}
-              onNavigateToControl={onNavigateToControl}
-            />
+            <div className="dashboard-attention-main">
+              <WorkQueuePanel
+                orgId={scopingData.organizationId}
+                onNavigateToEvidence={onNavigateToEvidence}
+                onNavigateToControl={onNavigateToControl}
+              />
+            </div>
           )}
           <div className="dashboard-attention-side">
             <div className="dashboard-card evidence-gaps-card">
@@ -168,7 +178,7 @@ export default function Dashboard({ controls, scopingData, onNavigateToScoping, 
                   <p className="dashboard-card-note">
                     A registered system can collect these, but nobody tracks them yet.
                   </p>
-                  <div className="gaps-list">
+                  <div className={showAllGaps ? 'gaps-list gaps-list--all' : 'gaps-list'}>
                     {(showAllGaps ? evidenceGaps.gaps : evidenceGaps.gaps.slice(0, 5)).map((gap) => (
                       <div
                         key={gap.evidence_id}
@@ -225,104 +235,76 @@ export default function Dashboard({ controls, scopingData, onNavigateToScoping, 
       </section>
 
       {/*
-        Status and ownership stack on the left; evidence maturity, the tallest
-        card, runs beside both so neither section leaves a gap under it.
+        Implementation runs the full width. Under it, control maturity and
+        evidence collection maturity are the same card twice: a score, a count
+        and the spread over L5 to L0, so the two read against each other.
+        Controls alone have a target, so a third card sets them against it.
       */}
-      <div className="dashboard-overview">
-        <div className="dashboard-overview-main">
-          <section className="dashboard-section" aria-labelledby="dashboard-status">
-            <h2 id="dashboard-status" className="dashboard-section-title">Where we are</h2>
-            <div className="dashboard-status-grid">
-              <div className="dashboard-card">
-                <div className="dashboard-card-header">
-                  <h3>Implementation</h3>
-                  <span className="dashboard-card-count">{stats.selectedCount} controls</span>
-                </div>
-                <div
-                  className="dashboard-status-bar"
-                  role="img"
-                  aria-label={statusSegments.map(seg => `${seg.count} ${seg.label.toLowerCase()}`).join(', ')}
-                >
-                  {statusSegments.map(seg =>
-                    seg.count > 0 && stats.selectedCount > 0 ? (
-                      <span
-                        key={seg.key}
-                        className={`dashboard-status-segment dashboard-status-segment--${seg.key}`}
-                        style={{ width: `${(seg.count / stats.selectedCount) * 100}%` }}
-                      />
-                    ) : null,
-                  )}
-                </div>
-                <ul className="dashboard-status-legend">
-                  {statusSegments.map(seg => (
-                    <li key={seg.key}>
-                      <i className={`dashboard-status-segment--${seg.key}`} />
-                      <span>{seg.label}</span>
-                      <strong>{seg.count}</strong>
-                    </li>
-                  ))}
-                </ul>
-                {onNavigateToScoping && (
-                  <button type="button" className="dashboard-card-link" onClick={() => onNavigateToScoping()}>
-                    By framework →
-                  </button>
-                )}
-              </div>
-
-              <div className="dashboard-card">
-                <div className="dashboard-card-header">
-                  <h3>Control maturity</h3>
-                  {maturityLabel && <span className="dashboard-card-count">{maturityLabel}</span>}
-                </div>
-                {maturityLabel ? (
-                  <>
-                    <div className="dashboard-card-figure">{stats.averageMaturity.toFixed(1)}</div>
-                    <div className="dashboard-card-note">Average maturity level</div>
-                    <div className="dashboard-maturity-levels" role="img" aria-label="Controls per maturity level">
-                      {(['L0', 'L1', 'L2', 'L3', 'L4', 'L5'] as const).map(level => (
-                        <span key={level} title={`${level}: ${stats.maturityCounts[level]} controls`}>
-                          <strong>{stats.maturityCounts[level]}</strong>
-                          {level}
-                        </span>
-                      ))}
-                    </div>
-                  </>
-                ) : (
-                  <p className="dashboard-card-empty">
-                    No control has a maturity level yet. Set one on a control's implementation record.
-                  </p>
-                )}
-              </div>
-            </div>
-          </section>
-
-          <section className="dashboard-section" aria-labelledby="dashboard-owners">
-            <h2 id="dashboard-owners" className="dashboard-section-title">Who owns it</h2>
-            <div className="dashboard-owner-grid">
-              <OwnerList
-                title="Controls by owner"
-                rows={controlOwners.map(([owner, count]) => ({ owner, value: count, share: stats.selectedCount ? count / stats.selectedCount : 0, detail: `${count}` }))}
-              />
-              <OwnerList
-                title="Evidence by owner"
-                rows={evidenceOwners.map(([owner, data]) => ({
-                  owner,
-                  value: data.total,
-                  share: data.total ? data.tracked / data.total : 0,
-                  detail: `${data.tracked}/${data.total} tracked`,
-                }))}
-              />
-            </div>
-          </section>
+      <section className="dashboard-section" aria-labelledby="dashboard-status">
+        <h2 id="dashboard-status" className="dashboard-section-title">Where we are</h2>
+        <div className="dashboard-card dashboard-implementation">
+          <div className="dashboard-card-header">
+            <h3>Implementation</h3>
+            <span className="dashboard-card-count">{stats.selectedCount} controls</span>
+          </div>
+          <div
+            className="dashboard-status-bar"
+            role="img"
+            aria-label={statusSegments.map(seg => `${seg.count} ${seg.label.toLowerCase()}`).join(', ')}
+          >
+            {statusSegments.map(seg =>
+              seg.count > 0 && stats.selectedCount > 0 ? (
+                <span
+                  key={seg.key}
+                  className={`dashboard-status-segment dashboard-status-segment--${seg.key}`}
+                  style={{ width: `${(seg.count / stats.selectedCount) * 100}%` }}
+                />
+              ) : null,
+            )}
+          </div>
+          <ul className="dashboard-status-legend">
+            {statusSegments.map(seg => (
+              <li key={seg.key}>
+                <i className={`dashboard-status-segment--${seg.key}`} />
+                <span>{seg.label}</span>
+                <strong>{seg.count}</strong>
+              </li>
+            ))}
+          </ul>
+          {onNavigateToScoping && (
+            <button type="button" className="dashboard-card-link" onClick={() => onNavigateToScoping()}>
+              By framework →
+            </button>
+          )}
         </div>
-        {/* Part of "Where we are"; offset so its top lines up with that section's cards. */}
-        <div className="dashboard-overview-side">
+        <div className="dashboard-maturity-grid">
+          {hasControlMaturity ? (
+            <MaturityDistributionWidget
+              distribution={controlMaturityDistribution}
+              levelInfo={CONTROL_MATURITY_LEVELS}
+              title="Control maturity"
+              totalLabel="controls assessed"
+              scoreLabel="average level"
+              showScore={true}
+              showLegend={false}
+            />
+          ) : (
+            <div className="dashboard-card">
+              <div className="dashboard-card-header">
+                <h3>Control maturity</h3>
+              </div>
+              <p className="dashboard-card-empty">
+                No control has a maturity level yet. Set one on a control's implementation record.
+              </p>
+            </div>
+          )}
           {hasEvidenceMaturity ? (
             <MaturityDistributionWidget
               distribution={stats.evidenceMaturityDistribution}
               title="Evidence collection maturity"
+              totalLabel="evidence items assessed"
               showScore={true}
-              showLegend={true}
+              showLegend={false}
             />
           ) : (
             <div className="dashboard-card">
@@ -333,7 +315,27 @@ export default function Dashboard({ controls, scopingData, onNavigateToScoping, 
             </div>
           )}
         </div>
-      </div>
+        {hasControlMaturity && <ControlTargetStanding controls={controls} scopingData={scopingData} />}
+      </section>
+
+      <section className="dashboard-section" aria-labelledby="dashboard-owners">
+        <h2 id="dashboard-owners" className="dashboard-section-title">Who owns it</h2>
+        <div className="dashboard-owner-grid">
+          <OwnerList
+            title="Controls by owner"
+            rows={controlOwners.map(([owner, count]) => ({ owner, value: count, share: stats.selectedCount ? count / stats.selectedCount : 0, detail: `${count}` }))}
+          />
+          <OwnerList
+            title="Evidence by owner"
+            rows={evidenceOwners.map(([owner, data]) => ({
+              owner,
+              value: data.total,
+              share: data.total ? data.tracked / data.total : 0,
+              detail: `${data.tracked}/${data.total} tracked`,
+            }))}
+          />
+        </div>
+      </section>
 
       {/*
         The fourth question, for whoever oversees the programme: what moved

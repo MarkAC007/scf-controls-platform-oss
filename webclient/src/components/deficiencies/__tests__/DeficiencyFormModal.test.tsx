@@ -11,6 +11,9 @@ const api = vi.hoisted(() => ({
   updateDeficiency: vi.fn(),
   getOrgMembers: vi.fn(),
   getRiskAssessments: vi.fn(),
+  // No names unless a test supplies them: the risk list then shows codes alone.
+  getRiskCatalog: vi.fn(async (): Promise<unknown> => ({ categories: {}, codes: {} })),
+  getCustomRiskDefinitions: vi.fn(async (): Promise<unknown> => []),
   fetchScopedControlsPage: vi.fn(),
 }))
 
@@ -282,5 +285,181 @@ describe('DeficiencyFormModal — closing (review MED-3, QA Escape)', () => {
     expect(onClose).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
     expect(onClose).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('DeficiencyFormModal — prefill (raised from an off-track objective)', () => {
+  const PREFILL = {
+    title: 'Objective OBJ-01 off track: Keep risk within appetite',
+    description: 'Risks within appetite reads 14% (9 of 66 risks), against a target of at least 100%.',
+    priority: 'high' as const,
+    source: 'security_objective' as const,
+    source_ref: 'obj-1',
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    api.getOrgMembers.mockResolvedValue(MEMBERS)
+    api.getRiskAssessments.mockResolvedValue(RISKS)
+    api.fetchScopedControlsPage.mockResolvedValue({ controls: [], total: 0, offset: 0 })
+  })
+
+  it('opens pre-filled and saves nothing until Raise is pressed', async () => {
+    api.createDeficiency.mockResolvedValue({ ...existing, id: 'def-new' })
+    const { onClose } = renderModal({ prefill: PREFILL })
+    expect(screen.getByLabelText('Title')).toHaveValue(PREFILL.title)
+    expect(screen.getByLabelText('Description')).toHaveValue(PREFILL.description)
+    expect(screen.getByLabelText('Priority')).toHaveValue('high')
+    await screen.findByRole('option', { name: 'R-TEST-1' })
+    expect(api.createDeficiency).not.toHaveBeenCalled()
+
+    fireEvent.change(screen.getByLabelText('Risk'), { target: { value: 'R-TEST-1' } })
+    expect(api.createDeficiency).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Raise deficiency' }))
+    await waitFor(() => expect(onClose).toHaveBeenCalled())
+    expect(api.createDeficiency).toHaveBeenCalledTimes(1)
+    expect(api.createDeficiency).toHaveBeenCalledWith('org-one', {
+      title: PREFILL.title,
+      priority: 'high',
+      risk_code: 'R-TEST-1',
+      description: PREFILL.description,
+      source: 'security_objective' as const,
+      source_ref: 'obj-1',
+    })
+  })
+
+  it('needs no control or risk when raised from an objective, and sends none', async () => {
+    api.createDeficiency.mockResolvedValue({ ...existing, id: 'def-new' })
+    const { onClose } = renderModal({ prefill: PREFILL })
+    const raise = screen.getByRole('button', { name: 'Raise deficiency' })
+    expect(raise).toBeEnabled()
+    fireEvent.click(raise)
+    await waitFor(() => expect(onClose).toHaveBeenCalled())
+    expect(api.createDeficiency).toHaveBeenCalledWith('org-one', {
+      title: PREFILL.title,
+      priority: 'high',
+      description: PREFILL.description,
+      source: 'security_objective' as const,
+      source_ref: 'obj-1',
+    })
+  })
+
+  it('still needs a control or risk when the prefill carries no source', () => {
+    renderModal({ prefill: { title: 'Gap' } })
+    expect(screen.getByRole('button', { name: 'Raise deficiency' })).toBeDisabled()
+  })
+
+  it('closes on Escape while untouched, as an empty form does', () => {
+    const { onClose } = renderModal({ prefill: PREFILL })
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(onClose).toHaveBeenCalled()
+  })
+
+  it('leaves existing callers unchanged: blank title, medium priority, no source sent', async () => {
+    api.createDeficiency.mockResolvedValue({ ...existing, id: 'def-new' })
+    renderModal({ fixedScfId: 'TESTCONTROL-01' })
+    expect(screen.getByLabelText('Title')).toHaveValue('')
+    expect(screen.getByLabelText('Description')).toHaveValue('')
+    expect(screen.getByLabelText('Priority')).toHaveValue('medium')
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Gap' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Raise deficiency' }))
+    await waitFor(() => expect(api.createDeficiency).toHaveBeenCalled())
+    const body = api.createDeficiency.mock.calls[0][1]
+    expect(body).toEqual({ title: 'Gap', priority: 'medium', scf_id: 'TESTCONTROL-01' })
+    expect(body).not.toHaveProperty('source')
+    expect(body).not.toHaveProperty('source_ref')
+  })
+
+  it('ignores a prefill when editing', () => {
+    renderModal({ deficiency: existing, prefill: PREFILL })
+    expect(screen.getByLabelText('Title')).toHaveValue('Backups untested')
+  })
+})
+
+describe('DeficiencyFormModal — risk names in the Risk list', () => {
+  const info = (title: string, extra: Record<string, unknown> = {}) => ({
+    category: 'TEST',
+    title,
+    description: '',
+    ...extra,
+  })
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    api.getOrgMembers.mockResolvedValue(MEMBERS)
+    api.getRiskAssessments.mockResolvedValue(RISKS)
+    api.fetchScopedControlsPage.mockResolvedValue({ controls: [], total: 0, offset: 0 })
+    api.getRiskCatalog.mockResolvedValue({ categories: {}, codes: {} })
+    api.getCustomRiskDefinitions.mockResolvedValue([])
+  })
+
+  it('names a catalogue risk and a custom risk beside the code, and still sends the code alone', async () => {
+    api.getRiskCatalog.mockResolvedValue({ categories: {}, codes: { 'R-TEST-1': info('Loss of accountability') } })
+    api.getCustomRiskDefinitions.mockResolvedValue([{ risk_code: 'R-TEST-2', title: 'Key supplier fails' }])
+    api.createDeficiency.mockResolvedValue({ ...existing, scf_id: null, risk_code: 'R-TEST-2' })
+    renderModal()
+    expect(await screen.findByRole('option', { name: 'R-TEST-1 · Loss of accountability' })).toBeInTheDocument()
+    expect(await screen.findByRole('option', { name: 'R-TEST-2 · Key supplier fails' })).toBeInTheDocument()
+    expect(api.getCustomRiskDefinitions).toHaveBeenCalledWith('org-one')
+
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Supplier gap' } })
+    fireEvent.change(screen.getByLabelText('Risk'), { target: { value: 'R-TEST-2' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Raise deficiency' }))
+    await waitFor(() => expect(api.createDeficiency).toHaveBeenCalled())
+    expect(api.createDeficiency).toHaveBeenCalledWith('org-one', {
+      title: 'Supplier gap',
+      priority: 'medium',
+      risk_code: 'R-TEST-2',
+    })
+  })
+
+  it('names a risk that still carries the code it had before the catalogue renumbered it', async () => {
+    api.getRiskCatalog.mockResolvedValue({
+      categories: {},
+      codes: { 'R-NEW-9': info('Renumbered risk', { old_code: 'R-TEST-1' }) },
+    })
+    renderModal()
+    expect(await screen.findByRole('option', { name: 'R-TEST-1 · Renumbered risk' })).toBeInTheDocument()
+  })
+
+  it("says, in the register's words, when the catalogue no longer defines a risk's code", async () => {
+    api.getRiskCatalog.mockResolvedValue({
+      categories: {},
+      codes: { 'R-TEST-1': info('Loss of accountability') },
+      catalog_version: '2026.3',
+    })
+    renderModal()
+    expect(await screen.findByRole('option', { name: 'R-TEST-2 · not in 2026.3' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Risk')).toHaveValue('')
+    fireEvent.change(screen.getByLabelText('Risk'), { target: { value: 'R-TEST-2' } })
+    expect(screen.getByLabelText('Risk')).toHaveValue('R-TEST-2')
+  })
+
+  it('does not call a custom risk missing while its definition cannot be read', async () => {
+    api.getRiskAssessments.mockResolvedValue([{ risk_code: 'R-ORG-1' }])
+    api.getRiskCatalog.mockResolvedValue({ categories: {}, codes: { 'R-TEST-1': info('Loss of accountability') } })
+    api.getCustomRiskDefinitions.mockRejectedValue(new Error('custom risks down'))
+    renderModal()
+    expect(await screen.findByRole('option', { name: 'R-ORG-1' })).toBeInTheDocument()
+    await waitFor(() => expect(api.getCustomRiskDefinitions).toHaveBeenCalled())
+    expect(screen.queryByRole('option', { name: /R-ORG-1 · / })).not.toBeInTheDocument()
+  })
+
+  it('lists the codes alone, and stays usable, when the names cannot be loaded', async () => {
+    api.getRiskCatalog.mockRejectedValue(new Error('catalogue down'))
+    api.getCustomRiskDefinitions.mockRejectedValue(new Error('custom risks down'))
+    renderModal()
+    expect(await screen.findByRole('option', { name: 'R-TEST-1' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'R-TEST-2' })).toBeInTheDocument()
+    await waitFor(() => expect(api.getRiskCatalog).toHaveBeenCalled())
+    expect(screen.getByLabelText('Risk')).toBeEnabled()
+    expect(screen.queryByText(/catalogue down|custom risks down/)).not.toBeInTheDocument()
+  })
+
+  it('reads no names when editing, where the risk cannot be changed', async () => {
+    renderModal({ deficiency: existing })
+    await screen.findByDisplayValue('Backups untested')
+    expect(api.getRiskCatalog).not.toHaveBeenCalled()
+    expect(api.getCustomRiskDefinitions).not.toHaveBeenCalled()
   })
 })

@@ -470,6 +470,10 @@ class OrganizationSettingsResponse(BaseModel):
     # PIG R5: target maturity per SCF domain, keyed by domain code. A control
     # inherits its domain's target unless it carries its own override.
     maturity_targets: Dict[str, MaturityLevel] = Field(default_factory=dict)
+    # When the owner of an objective with a logged metric is reminded that the
+    # period's value is still to be entered: once at most this many days of the
+    # period remain. 366 means from the first day of every period.
+    isms_measurement_reminder_days: int = 14
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -491,6 +495,8 @@ class OrganizationSettingsUpdate(BaseModel):
     # Replaces the whole map when present; ``{}`` clears every domain target.
     # Each key must be a domain code in the SCF catalogue (checked in the API).
     maturity_targets: Optional[Dict[str, MaturityLevel]] = None
+    # See OrganizationSettingsResponse. A whole number of days, 1 to 366.
+    isms_measurement_reminder_days: Optional[int] = Field(default=None, ge=1, le=366, strict=True)
 
     @field_validator("name")
     @classmethod
@@ -1081,9 +1087,13 @@ class NotificationBase(BaseModel):
         "|evidence_rejected|control_ready_for_review|composite_insufficient"
         "|engagement_query_raised|catalog_reconciliation_applied"
         "|catalog_reconciliation_rolled_back|team_assignment"
-        "|risk_acceptance_expired|control_validation_due)$"
+        "|risk_acceptance_expired|control_validation_due"
+        "|objective_measurement_due|objective_due|objective_review_due)$"
     ))
-    reference_type: str = Field(..., pattern="^(control|evidence|comment|task|engagement_query|catalog|team|risk)$")
+    reference_type: str = Field(
+        ...,
+        pattern="^(control|evidence|comment|task|engagement_query|catalog|team|risk|security_objective)$",
+    )
     reference_id: UUID
     message: str
 

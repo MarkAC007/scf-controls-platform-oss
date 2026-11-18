@@ -4774,3 +4774,217 @@ class IsmsProfile(Base):
     updated_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now())
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now())
+
+
+# =============================================================================
+# Security objectives and ISMS metrics (ISO/IEC 27001 clause 6.2 and 9.1)
+# =============================================================================
+
+OBJECTIVE_TYPES = ("maintain", "achieve")
+OBJECTIVE_LIFECYCLES = ("proposed", "active", "achieved", "missed")
+METRIC_KINDS = ("live", "logged", "milestone", "unset")
+METRIC_UNITS = ("percent", "count")
+METRIC_DIRECTIONS = ("at_least", "at_most")
+METRIC_FREQUENCIES = ("nightly", "monthly", "quarterly", "annually")
+METRIC_RESULT_SOURCES = ("computed", "logged")
+#: Copy of ``services.isms_metrics.status.STATUSES`` (models cannot import the
+#: service package). ``tests/test_isms_objectives_migration.py`` pins the two,
+#: and the migration's copy, together.
+METRIC_RESULT_STATUSES = (
+    "on_track", "at_risk", "off_track", "in_progress", "proposed",
+    "insufficient_data", "first_measurement_due", "measurement_overdue", "not_measured",
+)
+#: Every source the code writes. A new source needs a migration, and that
+#: migration then meets ismsobj001's downgrade guard.
+OBJECTIVE_SOURCE_CHECK = "source IN ('custom', 'migrated') OR source LIKE 'starter:%'"
+
+
+def _sql_list(values) -> str:
+    return ", ".join(f"'{v}'" for v in values)
+
+
+class SecurityObjective(Base):
+    """One information security objective (clause 6.2), a row of its own.
+
+    Replaces the free-form ``isms_profiles.objectives`` JSON list. An
+    objective is archived, never deleted. Starters are seeded ``proposed``:
+    nothing is judged until an admin confirms the team and the target. The
+    measure and target live in ``objective_metrics`` so a change opens a new
+    version instead of rewriting history.
+    """
+    __tablename__ = "security_objectives"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "ref", name="uq_security_objectives_org_ref"),
+        UniqueConstraint("organization_id", "id", name="uq_security_objectives_org_id"),
+        CheckConstraint(f"objective_type IN ({_sql_list(OBJECTIVE_TYPES)})", name="ck_security_objectives_type"),
+        CheckConstraint(
+            f"lifecycle_status IN ({_sql_list(OBJECTIVE_LIFECYCLES)})", name="ck_security_objectives_lifecycle"
+        ),
+        CheckConstraint(OBJECTIVE_SOURCE_CHECK, name="ck_security_objectives_source"),
+        #: The team belongs to the objective's organisation. The live constraint
+        #: carries ``ON DELETE SET NULL (owning_team_id)`` (the PostgreSQL 15
+        #: column list), so deleting a team clears only the team and never the
+        #: NOT NULL ``organization_id``. SQLAlchemy rejects that column list, so
+        #: the migration emits it as raw DDL and this declaration, without the
+        #: action, exists for the ORM, as on ``evidence_collection_tasks``.
+        ForeignKeyConstraint(
+            ["organization_id", "owning_team_id"],
+            ["teams.organization_id", "teams.id"],
+            name="fk_security_objectives_team_org",
+        ),
+        Index("ix_security_objectives_organization_id", "organization_id"),
+        Index("ix_security_objectives_owning_team_id", "owning_team_id"),
+        Index(
+            "uq_security_objectives_org_starter", "organization_id", "source", unique=True,
+            postgresql_where=text("source LIKE 'starter:%'"),
+        ),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, server_default=text("gen_random_uuid()"))
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
+    #: ``OBJ-01``; handed out one at a time under an advisory lock.
+    ref = Column(String(16), nullable=False)
+    #: The 12-hex id of the row in the old JSON list, kept for documents.
+    legacy_row_id = Column(String(64), nullable=True)
+    name = Column(Text, nullable=False)
+    #: "What will be done".
+    planned_actions = Column(Text, nullable=False, default="", server_default="")
+    resources = Column(Text, nullable=False, default="", server_default="")
+    #: "How results are evaluated".
+    evaluation_method = Column(Text, nullable=False, default="", server_default="")
+    objective_type = Column(String(16), nullable=False, default="maintain", server_default="maintain")
+    #: Constrained by fk_security_objectives_team_org above (same organisation),
+    #: not by a single-column key.
+    owning_team_id = Column(UUID(as_uuid=True), nullable=True)
+    owner_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    #: The old free-text owner, kept until a team is chosen.
+    owner_text = Column(Text, nullable=True)
+    due_date = Column(Date, nullable=True)
+    review_date = Column(Date, nullable=True)
+    lifecycle_status = Column(String(16), nullable=False, default="proposed", server_default="proposed")
+    iso_clauses = Column(ARRAY(String), nullable=False, default=list, server_default="{}")
+    #: ``starter:<key>``, ``custom`` or ``migrated``.
+    source = Column(String(80), nullable=False, default="custom", server_default="custom")
+    last_evaluated_at = Column(DateTime(timezone=False), nullable=True)
+    last_evaluated_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    last_evaluation_note = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=False), nullable=False, server_default=func.now())
+    #: Deliberately no ``onupdate``: the service sets it from the same Python
+    #: clock as ``created_at``, and ismsobj001's downgrade guard reads
+    #: ``updated_at > created_at`` as "edited since creation". A database-clock
+    #: ``onupdate=func.now()`` would put two clocks on one comparison.
+    updated_at = Column(DateTime(timezone=False), nullable=False, server_default=func.now())
+    created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    updated_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    #: Archive, never delete.
+    archived_at = Column(DateTime(timezone=False), nullable=True)
+
+    def __repr__(self):
+        return f"<SecurityObjective(org={self.organization_id}, ref={self.ref})>"
+
+
+class ObjectiveMetric(Base):
+    """The measure and target in force for an objective, versioned.
+
+    A change closes the active row (``active_to``) and opens a new one, so a
+    stored result always points at the measure and target it was judged
+    against. At most one row per objective is active. ``kind = 'unset'``
+    carries the old list's measure and target text until a measure is chosen.
+    """
+    __tablename__ = "objective_metrics"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "objective_id"],
+            ["security_objectives.organization_id", "security_objectives.id"],
+            name="fk_objective_metrics_objective_org", ondelete="CASCADE",
+        ),
+        UniqueConstraint("organization_id", "id", name="uq_objective_metrics_org_id"),
+        CheckConstraint(f"kind IN ({_sql_list(METRIC_KINDS)})", name="ck_objective_metrics_kind"),
+        CheckConstraint("kind <> 'live' OR measure_key IS NOT NULL", name="ck_objective_metrics_live_measure"),
+        CheckConstraint(f"unit IS NULL OR unit IN ({_sql_list(METRIC_UNITS)})", name="ck_objective_metrics_unit"),
+        CheckConstraint(
+            f"direction IS NULL OR direction IN ({_sql_list(METRIC_DIRECTIONS)})",
+            name="ck_objective_metrics_direction",
+        ),
+        CheckConstraint(
+            f"frequency IS NULL OR frequency IN ({_sql_list(METRIC_FREQUENCIES)})",
+            name="ck_objective_metrics_frequency",
+        ),
+        Index("uq_objective_metrics_one_active", "objective_id", unique=True, postgresql_where=text("active_to IS NULL")),
+        #: Every version of an objective (closed rows too): the version join
+        #: and the metric detail. The partial index above covers active rows only.
+        Index("ix_objective_metrics_objective_id", "objective_id"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, server_default=text("gen_random_uuid()"))
+    organization_id = Column(UUID(as_uuid=True), nullable=False)
+    objective_id = Column(UUID(as_uuid=True), nullable=False)
+    kind = Column(String(16), nullable=False)
+    measure_key = Column(String(64), nullable=True)
+    params = Column(JSONB, nullable=False, default=dict, server_default="{}")
+    #: "Supporting ISMS metric" title.
+    name = Column(Text, nullable=False, default="", server_default="")
+    #: For ``unset`` rows: the old ``measure`` text.
+    description = Column(Text, nullable=False, default="", server_default="")
+    unit = Column(String(16), nullable=True)
+    direction = Column(String(16), nullable=True)
+    target_value = Column(Numeric(12, 2), nullable=True)
+    warn_value = Column(Numeric(12, 2), nullable=True)
+    #: Target in words; for ``unset`` rows: the old ``target`` text.
+    target_text = Column(Text, nullable=False, default="", server_default="")
+    min_population = Column(Integer, nullable=True)
+    frequency = Column(String(16), nullable=True)
+    target_set_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    target_set_at = Column(DateTime(timezone=False), nullable=True)
+    active_from = Column(DateTime(timezone=False), nullable=False, server_default=func.now())
+    active_to = Column(DateTime(timezone=False), nullable=True)
+    created_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    def __repr__(self):
+        return f"<ObjectiveMetric(objective={self.objective_id}, kind={self.kind})>"
+
+
+class IsmsMetricResult(Base):
+    """One reading of a metric: computed nightly, or logged by the team.
+
+    Never updated, never deleted. A logged correction is a new row for the
+    same period; the newest row for a period is the one that counts. At most
+    one computed row per metric per day.
+    """
+    __tablename__ = "isms_metric_results"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["organization_id", "objective_metric_id"],
+            ["objective_metrics.organization_id", "objective_metrics.id"],
+            name="fk_isms_metric_results_metric_org", ondelete="CASCADE",
+        ),
+        CheckConstraint(f"source IN ({_sql_list(METRIC_RESULT_SOURCES)})", name="ck_isms_metric_results_source"),
+        CheckConstraint(f"status IN ({_sql_list(METRIC_RESULT_STATUSES)})", name="ck_isms_metric_results_status"),
+        Index(
+            "uq_isms_metric_results_computed_day", "objective_metric_id", "measured_on", unique=True,
+            postgresql_where=text("source = 'computed'"),
+        ),
+        Index("ix_isms_metric_results_metric_period", "objective_metric_id", "period_start"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, server_default=text("gen_random_uuid()"))
+    organization_id = Column(UUID(as_uuid=True), nullable=False)
+    objective_metric_id = Column(UUID(as_uuid=True), nullable=False)
+    #: The day the row was written.
+    measured_on = Column(Date, nullable=False)
+    #: Logged rows only: first day of the period the entry is for.
+    period_start = Column(Date, nullable=True)
+    value = Column(Numeric(14, 4), nullable=True)
+    numerator = Column(Integer, nullable=True)
+    denominator = Column(Integer, nullable=True)
+    #: Performance status at the time.
+    status = Column(String(32), nullable=False)
+    #: ``{"population": "...", "segments": [...]}``.
+    detail = Column(JSONB, nullable=False, default=dict, server_default="{}")
+    source = Column(String(16), nullable=False)
+    entered_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    note = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=False), nullable=False, server_default=func.now())
+
+    def __repr__(self):
+        return f"<IsmsMetricResult(metric={self.objective_metric_id}, on={self.measured_on})>"

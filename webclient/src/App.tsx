@@ -35,7 +35,7 @@ import Footer from './components/Footer'
 import { ConsultantDashboard } from './components/consultant'
 import RiskDashboard from './components/RiskDashboard'
 import VendorManagement from './components/VendorManagement'
-import CapabilityPosture from './components/CapabilityPosture'
+import AnalyticsPage from './components/analytics/AnalyticsPage'
 import JourneyPage from './components/journey/JourneyPage'
 import RiskProfileSettings from './components/RiskProfileSettings'
 import SettingsSectionNav from './components/SettingsSectionNav'
@@ -47,6 +47,7 @@ import IntegrationsSettings from './components/IntegrationsSettings'
 import EvidenceStorageSettings from './components/EvidenceStorageSettings'
 import AssessmentEngineSettings from './components/AssessmentEngineSettings'
 import TaskAutomationSettings from './components/TaskAutomationSettings'
+import MeasurementReminderSettings from './components/MeasurementReminderSettings'
 import MaturityTargetsSettings from './components/MaturityTargetsSettings'
 import EvidenceStorageMigrationPanel from './components/EvidenceStorageMigrationPanel'
 import AuditLogPage from './components/AuditLogPage'
@@ -116,7 +117,7 @@ type Tab = 'dashboard' | 'journey' | 'capability-posture' | 'library' | 'scoping
 
 function AppContent() {
   const { isAuthenticated, authReady, user, isPlatformAdmin, canManageIntegrations } = useAuth()
-  const { currentOrg, isLoading: orgLoading, switchOrganization, refreshOrganizations } = useOrganization()
+  const { currentOrg, availableOrgs, isLoading: orgLoading, switchOrganization, refreshOrganizations } = useOrganization()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [controls, setControls] = useState<EnrichedControl[]>([])
@@ -845,7 +846,11 @@ function AppContent() {
             />
           )}
           {activeTab === 'capability-posture' && scopingData && (
-            <CapabilityPosture organizationId={scopingData.organizationId!} />
+            <AnalyticsPage
+              organizationId={scopingData.organizationId!}
+              organizations={availableOrgs}
+              onSwitchOrganization={switchOrganization}
+            />
           )}
           {activeTab === 'library' && (
             <LibraryPage
@@ -1024,6 +1029,7 @@ function AppContent() {
                   { id: 'settings-docgen', label: 'DOCUMENT GENERATION' },
                   { id: 'settings-assessment-engine', label: 'AI ASSESSMENT ENGINE' },
                   { id: 'settings-task-automation', label: 'TASK AUTOMATION' },
+                  { id: 'settings-objective-reminders', label: 'OBJECTIVE REMINDERS' },
                   { id: 'settings-backups', label: 'BACKUPS' },
                   { id: 'settings-evidence-storage', label: 'EVIDENCE STORAGE' },
                   ...(canManageIntegrations ? [{ id: 'settings-integrations', label: 'INTEGRATIONS' }] : []),
@@ -1073,6 +1079,13 @@ function AppContent() {
                     the Save behind it admin-only. */}
                 <div id="settings-task-automation">
                   <TaskAutomationSettings
+                    organizationId={scopingData.organizationId!}
+                  />
+                </div>
+                {/* When owners are reminded to log a measurement for a security
+                    objective. Same shape as the card above. */}
+                <div id="settings-objective-reminders">
+                  <MeasurementReminderSettings
                     organizationId={scopingData.organizationId!}
                   />
                 </div>

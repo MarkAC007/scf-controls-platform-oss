@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef, type ReactNode } from 'react';
+import { toast } from 'react-hot-toast';
 import { apiClient } from '../data/apiClient';
+import { listMeasurementTasks, type MeasurementTask } from '../data/securityObjectivesApi';
+import { useIsOrgEditor } from '../hooks/useHasOrgRole';
+import { useIsmsMetrics } from '../hooks/useSecurityObjectives';
+import AppLink from './AppLink';
+import LogValueModal from './isms/objectives/LogValueModal';
 import { ModernCommentThread } from './ModernCommentThread';
 import { frequencyLabel } from '../data/frequencyVocabulary'
 import { useOrgMemberTypes } from '../hooks/useOrgMemberTypes';
@@ -73,6 +79,12 @@ const TYPE_OPTIONS = [
   { value: 'issue', label: 'Issue' },
 ];
 
+/**
+ * "Measurement" is a client-side type (phase 3 B2): the rows come from the ISMS metrics
+ * measurement-tasks call, and the evidence-tasks endpoint rejects it as `task_type`.
+ */
+const MEASUREMENT_TYPE = 'measurement';
+
 const TASK_TYPE_LABELS: Record<string, string> = {
   feasibility: 'Feasibility',
   setup: 'Setup',
@@ -80,6 +92,7 @@ const TASK_TYPE_LABELS: Record<string, string> = {
   review: 'Review',
   documentation: 'Documentation',
   issue: 'Issue',
+  [MEASUREMENT_TYPE]: 'Measurement',
 };
 
 const STATUS_LABELS: Record<string, string> = {
@@ -194,6 +207,168 @@ function matchesSearch(task: Task, query: string): boolean {
   return false;
 }
 
+/** A row of the list: an evidence task, or a measurement task carried in a task's shape for sorting. */
+type ListRow = Task & { measurement?: MeasurementTask };
+
+function measurementAsRow(m: MeasurementTask): ListRow {
+  return {
+    id: m.id,
+    evidence_tracking_id: '',
+    evidence_id: m.ref,
+    task_type: MEASUREMENT_TYPE,
+    title: m.title,
+    priority: '',
+    due_date: m.due_date,
+    status: m.status,
+    owning_team_id: m.owning_team_id,
+    created_at: null,
+    completed_date: m.completed_date ?? undefined,
+    measurement: m,
+  };
+}
+
+/**
+ * Measurement rows into the server's due-date order, without reordering the evidence tasks.
+ * A measurement row goes before the first evidence task due later, or with no due date.
+ */
+export function mergeByDueDate(evidence: Task[], measures: MeasurementTask[]): ListRow[] {
+  const queue = [...measures].sort((a, b) => a.due_date.localeCompare(b.due_date));
+  const out: ListRow[] = [];
+  let j = 0;
+  for (const task of evidence) {
+    while (j < queue.length && (!task.due_date || queue[j].due_date < task.due_date.slice(0, 10))) {
+      out.push(measurementAsRow(queue[j++]));
+    }
+    out.push(task);
+  }
+  while (j < queue.length) out.push(measurementAsRow(queue[j++]));
+  return out;
+}
+
+function matchesMeasurementSearch(m: MeasurementTask, query: string): boolean {
+  if (!query.trim()) return true;
+  const q = query.toLowerCase();
+  return [m.title, m.ref, m.metric_name].some(text => text.toLowerCase().includes(q));
+}
+
+/**
+ * The role check the objectives register uses for logging a value, asked once for the list and
+ * only when a measurement row is shown (evidence rows never needed it).
+ */
+function EditorRole({ organizationId, children }: { organizationId: string; children: (canEdit: boolean) => ReactNode }) {
+  return <>{children(useIsOrgEditor(organizationId))}</>;
+}
+
+function WithEditorRole({ organizationId, ask, children }: {
+  organizationId: string;
+  ask: boolean;
+  children: (canEdit: boolean) => ReactNode;
+}) {
+  return ask ? <EditorRole organizationId={organizationId}>{children}</EditorRole> : <>{children(false)}</>;
+}
+
+/** The objectives register's log-value form, for the task's objective and period. */
+function MeasurementLogValue({ organizationId, task, onClose, onLogged }: {
+  organizationId: string;
+  task: MeasurementTask;
+  onClose: () => void;
+  onLogged: () => void;
+}) {
+  const metrics = useIsmsMetrics(organizationId);
+  const objective = metrics.data?.items.find(o => o.id === task.objective_id);
+  const missing = metrics.isError || (metrics.isSuccess && !objective);
+  useEffect(() => {
+    if (missing) {
+      toast.error(`${task.ref} could not be opened.`);
+      onClose();
+    }
+  }, [missing, task.ref, onClose]);
+  if (!objective) return null;
+  return (
+    <LogValueModal
+      organizationId={organizationId}
+      objective={objective}
+      periodStart={task.period_start}
+      onLogged={onLogged}
+      onClose={onClose}
+    />
+  );
+}
+
+/** A date as the evidence rows print it (Nov 30, 2026), so one list has one date style. */
+const taskDate = (iso: string) =>
+  new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
+/**
+ * A measurement task's row. It lines up with the evidence rows' columns and has one action,
+ * "Log value": no edit, status, assign or delete control.
+ */
+function MeasurementTaskRow({ task, canLog, onLog }: { task: MeasurementTask; canLog: boolean; onLog: () => void }) {
+  const done = task.status === 'completed';
+  const daysUntilDue = getDaysUntilDue(task.due_date);
+  const isOverdue = daysUntilDue < 0 && !done;
+  const dueInfo = getDueDateText(daysUntilDue, done);
+  return (
+    <div
+      className={`tasks-row tasks-row--measurement${isOverdue ? ' tasks-row--overdue' : ''}`}
+      role="listitem"
+      data-testid={`measurement-row-${task.id}`}
+    >
+      <div className="tasks-row-main">
+        <div className={`tasks-row-tick ${tickBarClass(task.status, isOverdue)}`} aria-hidden="true" />
+        <div className="tasks-col-evidence">
+          <span className="tasks-evidence-id">{task.ref}</span>
+        </div>
+        <div className="tasks-col-task">
+          <AppLink to={{ kind: 'isms-metric', id: task.objective_id }} className="tasks-row-title tasks-row-title-btn">
+            <span className="tasks-row-title-text">{task.title}</span>
+          </AppLink>
+          <span className="tasks-measure-sub">
+            {task.metric_name}
+            {task.first && <> · <span className="tasks-measure-first">First measurement</span></>}
+          </span>
+          {done && task.value_text && (
+            <span className="tasks-measure-sub">
+              Logged {task.value_text}{task.completed_date ? ` on ${taskDate(task.completed_date)}` : ''}
+            </span>
+          )}
+          {!done && canLog && (
+            <button type="button" className="btn-secondary tasks-measure-log" onClick={onLog}>
+              Log value
+            </button>
+          )}
+        </div>
+        <div className="tasks-col-type">
+          <span className={typeClass(MEASUREMENT_TYPE)}>{TASK_TYPE_LABELS[MEASUREMENT_TYPE]}</span>
+        </div>
+        <div className="tasks-col-status">
+          <span className={statusBadgeClass(task.status)}>{STATUS_LABELS[task.status]}</span>
+          {isOverdue && <span className="task-badge task-overdue-badge">OVERDUE</span>}
+        </div>
+        <div className="tasks-col-priority" />
+        <div className="tasks-col-due">
+          <div className="tasks-due-date">
+            {taskDate(task.due_date)}
+          </div>
+          {dueInfo.text && <div className={`tasks-due-countdown ${dueInfo.cls}`}>{dueInfo.text}</div>}
+        </div>
+        <div className="tasks-col-created">
+          <span className="tasks-created-date tasks-created-date--missing">—</span>
+        </div>
+        <div className="tasks-col-team">
+          {task.owning_team_name || task.owner_name ? (
+            <span className="task-owning-team-name">
+              {task.owning_team_name ? 'Owning team: ' : 'Owner: '}
+              {task.owning_team_name || task.owner_name}
+            </span>
+          ) : '—'}
+        </div>
+        <div className="tasks-col-expand" aria-hidden="true" />
+      </div>
+    </div>
+  );
+}
+
 export const TasksPage: React.FC<TasksPageProps> = ({
   onNavigateToEvidence,
   organizationId,
@@ -202,6 +377,9 @@ export const TasksPage: React.FC<TasksPageProps> = ({
 }) => {
   const [view, setView] = useState<'my-tasks' | 'all-tasks'>('my-tasks');
   const [tasks, setTasks] = useState<Task[]>([]);
+  // This period's measurement tasks (phase 3 B2); empty when the call fails, as on an older server.
+  const [measurements, setMeasurements] = useState<MeasurementTask[]>([]);
+  const [logging, setLogging] = useState<MeasurementTask | null>(null);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [taskTypeFilter, setTaskTypeFilter] = useState<string>('all');
@@ -239,13 +417,44 @@ export const TasksPage: React.FC<TasksPageProps> = ({
   // slower response for the previous org must not render under the new one.
   const loadSeq = useRef(0);
 
+  /**
+   * The measurement tasks the filters can show, never rejecting. "My Tasks" is
+   * `assigned_to_me`; a measurement task is only ever not started or completed, so the
+   * status filter asks for done ones (`include_done`) under All and Completed, keeps
+   * Completed to the done ones, and asks for nothing under In progress or Won't do. A
+   * failed call (an older server answers 404) shows no measurement row and says nothing.
+   */
+  const fetchMeasurements = async (): Promise<MeasurementTask[]> => {
+    const typeShows = taskTypeFilter === 'all' || taskTypeFilter === MEASUREMENT_TYPE;
+    const statusShows = statusFilter === 'all' || statusFilter === 'not_started' || statusFilter === 'completed';
+    if (!organizationId || !typeShows || !statusShows) return [];
+    try {
+      const rows = await listMeasurementTasks(organizationId, {
+        assignedToMe: view === 'my-tasks',
+        includeDone: statusFilter !== 'not_started',
+      });
+      return statusFilter === 'completed' ? rows.filter(r => r.status === 'completed') : rows;
+    } catch {
+      return [];
+    }
+  };
+
+  /** After a value is logged: the measurement rows again, without the list's loading state. */
+  const refreshMeasurements = async () => {
+    const seq = loadSeq.current;
+    const rows = await fetchMeasurements();
+    if (seq === loadSeq.current) setMeasurements(rows);
+  };
+
   const loadTasks = async () => {
     const seq = ++loadSeq.current;
+    const measured = fetchMeasurements();
     // Fail closed: without an org there is nothing this page may show.
     // (URLSearchParams would stringify undefined into "undefined" and the
     // backend would 422 the whole request.)
     if (!organizationId) {
       setTasks([]);
+      setMeasurements([]);
       setLoading(false);
       return;
     }
@@ -265,8 +474,11 @@ export const TasksPage: React.FC<TasksPageProps> = ({
       if (statusFilter !== 'all') params.set('status_filter', statusFilter);
       if (taskTypeFilter !== 'all') params.set('task_type', taskTypeFilter);
       // No bare-/evidence-tasks arm: the un-scoped URL is exactly the
-      // cross-org fetch this page must never make again.
-      const allTasks = await apiClient.get(`/evidence-tasks?${params.toString()}`);
+      // cross-org fetch this page must never make again. "Measurement" is
+      // never sent as a type: it names no evidence task.
+      const allTasks = taskTypeFilter === MEASUREMENT_TYPE
+        ? []
+        : await apiClient.get(`/evidence-tasks?${params.toString()}`);
 
       if (seq !== loadSeq.current) return;
       setTasks(allTasks);
@@ -275,7 +487,11 @@ export const TasksPage: React.FC<TasksPageProps> = ({
       // A failed fetch must not leave the previous org's tasks on screen.
       if (seq === loadSeq.current) setTasks([]);
     } finally {
-      if (seq === loadSeq.current) setLoading(false);
+      const rows = await measured;
+      if (seq === loadSeq.current) {
+        setMeasurements(rows);
+        setLoading(false);
+      }
     }
   };
 
@@ -358,6 +574,23 @@ export const TasksPage: React.FC<TasksPageProps> = ({
     return sortTasks(searched, sortKey, sortDir, teamNameOf);
   }, [teamFilteredTasks, searchQuery, sortKey, sortDir, ownershipFor]);
 
+  /** The measurement rows after the team filter and the search. */
+  const visibleMeasurements = useMemo(() => measurements.filter(m =>
+    (owningTeamFilter === 'all' || m.owning_team_id === owningTeamFilter) && matchesMeasurementSearch(m, searchQuery),
+  ), [measurements, owningTeamFilter, searchQuery]);
+
+  /** What the list shows: the evidence tasks with the measurement rows merged by due date, or both sorted. */
+  const visibleRows: ListRow[] | null = useMemo(() => {
+    if (visibleTasks === null) return null;
+    if (visibleMeasurements.length === 0) return visibleTasks;
+    if (!sortKey) return mergeByDueDate(visibleTasks, visibleMeasurements);
+    const teamNameOf: TeamNameOf = (task: ListRow) =>
+      task.measurement ? (task.measurement.owning_team_name || task.measurement.owner_name || '') : ownershipFor(task).team?.name ?? '';
+    return sortTasks([...visibleTasks, ...visibleMeasurements.map(measurementAsRow)], sortKey, sortDir, teamNameOf);
+  }, [visibleTasks, visibleMeasurements, sortKey, sortDir, ownershipFor]);
+
+  const closeLogging = useCallback(() => setLogging(null), []);
+
   /** Drop a task the detail page has just deleted, without a refetch. */
   const handleTaskDeleted = useCallback((taskId: string) => {
     setTasks(prev => prev.filter(t => t.id !== taskId));
@@ -365,13 +598,13 @@ export const TasksPage: React.FC<TasksPageProps> = ({
   }, []);
 
   const stats = useMemo(() => ({
-    total: visibleTasks?.length,
-    not_started: visibleTasks?.filter(t => t.status === 'not_started').length,
-    in_progress: visibleTasks?.filter(t => t.status === 'in_progress').length,
-    completed: visibleTasks?.filter(t => t.status === 'completed').length,
-    wont_do: visibleTasks?.filter(t => t.status === 'wont_do').length,
-    overdue: visibleTasks?.filter(t => new Date(t.due_date) < new Date() && !isClosedStatus(t.status)).length,
-  }), [visibleTasks]);
+    total: visibleRows?.length,
+    not_started: visibleRows?.filter(t => t.status === 'not_started').length,
+    in_progress: visibleRows?.filter(t => t.status === 'in_progress').length,
+    completed: visibleRows?.filter(t => t.status === 'completed').length,
+    wont_do: visibleRows?.filter(t => t.status === 'wont_do').length,
+    overdue: visibleRows?.filter(t => new Date(t.due_date) < new Date() && !isClosedStatus(t.status)).length,
+  }), [visibleRows]);
 
   /** An unanswered count is a dash, not a zero. Zero is a claim. */
   const statValue = (value: number | undefined) => (value === undefined ? '—' : value);
@@ -485,6 +718,7 @@ export const TasksPage: React.FC<TasksPageProps> = ({
                 { value: 'review', label: 'Review' },
                 { value: 'documentation', label: 'Documentation' },
                 { value: 'issue', label: 'Issue' },
+                { value: MEASUREMENT_TYPE, label: 'Measurement' },
               ]}
               value={taskTypeFilter}
               onChange={setTaskTypeFilter}
@@ -536,8 +770,8 @@ export const TasksPage: React.FC<TasksPageProps> = ({
             onSearchChange={setSearchQuery}
             searchPlaceholder="Search tasks — title, evidence id, description…"
             count={
-              visibleTasks !== null
-                ? `${visibleTasks.length} task${visibleTasks.length !== 1 ? 's' : ''}`
+              visibleRows !== null
+                ? `${visibleRows.length} task${visibleRows.length !== 1 ? 's' : ''}`
                 : undefined
             }
           />
@@ -590,13 +824,13 @@ export const TasksPage: React.FC<TasksPageProps> = ({
           {/* Task rows */}
           {loading ? (
             <div className="tasks-loading">Loading tasks...</div>
-          ) : visibleTasks === null ? (
+          ) : visibleRows === null ? (
             /* A team filter is active and ownership has not been resolved. Neither
                the unfiltered list nor an empty one is honest here — the first
                shows other teams' work under this team's name, the second says
                this team has none. Say what is actually true instead. */
             <div className="tasks-loading">Resolving team ownership…</div>
-          ) : visibleTasks.length === 0 ? (
+          ) : visibleRows.length === 0 ? (
             <div className="tasks-empty-state">
               <div className="tasks-empty-icon">📋</div>
               <h3>No Tasks Found</h3>
@@ -611,8 +845,14 @@ export const TasksPage: React.FC<TasksPageProps> = ({
               </p>
             </div>
           ) : (
+            <WithEditorRole organizationId={organizationId} ask={visibleMeasurements.length > 0}>
+            {canLog => (
             <div className="tasks-row-list" role="list">
-              {visibleTasks.map((task) => {
+              {visibleRows.map((task) => {
+                if (task.measurement) {
+                  const m = task.measurement;
+                  return <MeasurementTaskRow key={task.id} task={m} canLog={canLog} onLog={() => setLogging(m)} />;
+                }
                 const daysUntilDue = getDaysUntilDue(task.due_date);
                 const isCompleted = isClosedStatus(task.status);
                 const isOverdue = daysUntilDue < 0 && !isCompleted;
@@ -908,9 +1148,19 @@ export const TasksPage: React.FC<TasksPageProps> = ({
                 );
               })}
             </div>
+            )}
+            </WithEditorRole>
           )}
         </div>
       </div>
+      {logging && (
+        <MeasurementLogValue
+          organizationId={organizationId}
+          task={logging}
+          onClose={closeLogging}
+          onLogged={() => void refreshMeasurements()}
+        />
+      )}
     </div>
   );
 };

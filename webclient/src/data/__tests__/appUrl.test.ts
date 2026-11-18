@@ -174,6 +174,11 @@ describe('writers', () => {
       taskItem: null,
       capabilityTestItem: null,
       deficiencyView: null,
+      analyticsView: 'isms-metrics',
+      ismsSection: null,
+      ismsObjective: null,
+      ismsMetric: null,
+      ismsFilters: { team: '', clause: '', status: '' },
     })
   })
 

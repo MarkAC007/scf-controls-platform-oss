@@ -34,7 +34,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models import EvidenceCollectionTask, EvidenceTracking, ScopedControl
+from models import EvidenceCollectionTask, EvidenceTracking, ScopedControl, SecurityObjective
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +46,11 @@ TASK_REFERENCE_TYPES = frozenset({"task"})
 
 #: reference_type values whose reference_id is a scoped_controls row id.
 CONTROL_REFERENCE_TYPES = frozenset({"control"})
+
+#: reference_type values whose reference_id is a security_objectives row id.
+#: The key is the id itself (the detail screen opens by it), served only
+#: while the objective exists and is not archived.
+OBJECTIVE_REFERENCE_TYPES = frozenset({"security_objective"})
 
 
 def _log_unresolved(kind: str) -> None:
@@ -81,6 +86,7 @@ async def resolve_reference_keys(
     tracking_ids: List[UUID] = []
     task_ids: List[UUID] = []
     control_ids: List[UUID] = []
+    objective_ids: List[UUID] = []
     for n in rows:
         if n.reference_id is None:
             continue
@@ -90,13 +96,16 @@ async def resolve_reference_keys(
             task_ids.append(n.reference_id)
         elif n.reference_type in CONTROL_REFERENCE_TYPES:
             control_ids.append(n.reference_id)
+        elif n.reference_type in OBJECTIVE_REFERENCE_TYPES:
+            objective_ids.append(n.reference_id)
 
-    if not tracking_ids and not task_ids and not control_ids:
+    if not tracking_ids and not task_ids and not control_ids and not objective_ids:
         return {}
 
     tracking_to_key: Dict[UUID, str] = {}
     task_to_key: Dict[UUID, str] = {}
     control_to_key: Dict[UUID, str] = {}
+    objective_to_key: Dict[UUID, str] = {}
 
     # Each kind fails alone: a failing control lookup must not cost the
     # evidence keys too, or the bell calls a live evidence item gone.
@@ -141,6 +150,18 @@ async def resolve_reference_keys(
         except Exception:
             _log_unresolved("control")
 
+    if objective_ids:
+        try:
+            result = await db.execute(
+                select(SecurityObjective.id).where(
+                    SecurityObjective.id.in_(set(objective_ids)),
+                    SecurityObjective.archived_at.is_(None),
+                )
+            )
+            objective_to_key = {row.id: str(row.id) for row in result.all()}
+        except Exception:
+            _log_unresolved("security objective")
+
     resolved: Dict[UUID, Optional[str]] = {}
     for n in rows:
         if n.reference_id is None:
@@ -151,6 +172,8 @@ async def resolve_reference_keys(
             key = task_to_key.get(n.reference_id)
         elif n.reference_type in CONTROL_REFERENCE_TYPES:
             key = control_to_key.get(n.reference_id)
+        elif n.reference_type in OBJECTIVE_REFERENCE_TYPES:
+            key = objective_to_key.get(n.reference_id)
         else:
             key = None
         if key:

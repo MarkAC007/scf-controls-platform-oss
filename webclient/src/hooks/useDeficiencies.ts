@@ -1,19 +1,25 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { useMemo } from 'react'
 import { useQuery, type QueryClient } from '@tanstack/react-query'
 import {
+  getCustomRiskDefinitions,
   getDeficiencySummary,
   getOrgMembers,
   getRiskAssessments,
+  getRiskCatalog,
   listDeficiencies,
 } from '../data/apiClient'
 import type {
+  CustomRiskDefinition,
   Deficiency,
   DeficiencyFilters,
   DeficiencySummary,
   RiskAssessment,
+  RiskCodesFile,
   UserSimple,
 } from '../types'
 import { JOURNEY_QUERY_ROOT } from './useJourney'
+import { catalogCodeNote, renumberingOf, riskCatalogKey } from './useRiskCatalog'
 
 /** Every deficiency query for an organisation sits under this key. */
 export const deficienciesRoot = (orgId: string) => ['deficiencies', orgId] as const
@@ -90,6 +96,53 @@ export function useAssessedRisks(orgId: string | undefined, enabled = true) {
     enabled: Boolean(orgId) && enabled,
     staleTime: 60_000,
   })
+}
+
+/**
+ * How to label a risk in a list of the assessed risks: "code · name".
+ *
+ * The name is not on the assessment: a catalogue risk's is in the SCF Risk
+ * Catalog, a custom risk's on its definition. Both are read with the keys the
+ * risk register uses, so an open register has usually loaded them already. A
+ * code the catalogue no longer defines says so, in the register's own words
+ * ("not in 2026.3"). A name is a help, never a gate: while either source
+ * loads, or when one cannot be read, the label is the code alone.
+ */
+export function useRiskOptionLabel(orgId: string | undefined, enabled = true): (riskCode: string) => string {
+  const catalogue = useQuery<RiskCodesFile>({
+    queryKey: riskCatalogKey,
+    queryFn: () => getRiskCatalog(),
+    enabled,
+    staleTime: 5 * 60 * 1000,
+  })
+  const custom = useQuery<CustomRiskDefinition[]>({
+    queryKey: ['custom-risks', orgId],
+    queryFn: () => getCustomRiskDefinitions(orgId),
+    enabled: Boolean(orgId) && enabled,
+    staleTime: 60_000,
+  })
+  return useMemo(() => {
+    const catalog = catalogue.data
+    const names: Record<string, string> = {}
+    for (const [code, info] of Object.entries(catalog?.codes ?? {})) {
+      if (info.title) names[code] = info.title
+    }
+    // An assessment made before the publisher renumbered a risk still carries the old code.
+    if (catalog) {
+      for (const [oldCode, code] of Object.entries(renumberingOf(catalog))) {
+        if (!(oldCode in names) && names[code]) names[oldCode] = names[code]
+      }
+    }
+    for (const def of custom.data ?? []) {
+      if (def.title) names[def.risk_code] = def.title
+    }
+    return (riskCode: string) => {
+      const name = names[riskCode]?.trim()
+      if (name) return `${riskCode} · ${name}`
+      const note = catalog ? catalogCodeNote(riskCode, catalog) : null
+      return note?.kind === 'missing' ? `${riskCode} · ${note.label}` : riskCode
+    }
+  }, [catalogue.data, custom.data])
 }
 
 const pad = (n: number) => String(n).padStart(2, '0')

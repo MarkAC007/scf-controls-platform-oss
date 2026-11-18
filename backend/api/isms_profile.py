@@ -2,11 +2,17 @@
 """
 ISMS profile — the organisation facts ISO/IEC 27001 clause documents need.
 
-The scope statement and five registers (context issues, interested parties,
-objectives, communication plan, audit programme) are edited here and rendered
-by the clause document generators. Each section is saved on its own, so two
-people editing different registers do not overwrite each other, and every save
+The scope statement and four registers (context issues, interested parties,
+communication plan, audit programme) are edited here and rendered by the
+clause document generators. Each section is saved on its own, so two people
+editing different registers do not overwrite each other, and every save
 writes one audit row naming the section.
+
+Objectives (clause 6.2) are no longer saved here: they live in the
+``security_objectives`` table and are edited through
+``api/security_objectives.py``. The profile still returns an ``objectives``
+list, read from that table in the old row shape (unarchived, confirmed
+objectives only), so existing readers keep working.
 
 Starter rows are offered for the interested parties and communication plan.
 They are fixed text, not model output: generic parties and communications
@@ -17,7 +23,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Dict, List, Literal, Optional
 from uuid import UUID
 
@@ -30,6 +36,7 @@ from auth import OrgMembership, require_org_role
 from database import get_db
 from models import IsmsProfile
 from services.audit_service import create_audit_entry, detect_action_source
+from services.isms_metrics.service import legacy_objectives
 
 router = APIRouter(tags=["ISMS profile"])
 
@@ -95,7 +102,7 @@ class InterestedParty(_Row):
 
 
 class Objective(_Row):
-    """Clause 6.2."""
+    """Clause 6.2, in the old row shape. Read-only: built from ``security_objectives``."""
 
     objective: str = Field("", max_length=_TEXT)
     measure: str = Field("", max_length=_TEXT)
@@ -123,21 +130,39 @@ class AuditEntry(_Row):
     area: str = Field("", max_length=_SHORT)
     criteria: str = Field("", max_length=_TEXT)
     planned_period: str = Field("", max_length=_SHORT)
+    #: When the audit is planned, as a calendar date; ``planned_period`` stays
+    #: as free text beside it. Optional: rows saved before it existed are valid.
+    planned_date: Optional[str] = Field(None, max_length=10, pattern=r"^\d{4}-\d{2}-\d{2}$")
     auditor: str = Field("", max_length=_SHORT)
     status: Literal["planned", "in_progress", "completed", "cancelled"] = "planned"
     findings: str = Field("", max_length=_TEXT)
 
+    @field_validator("planned_date", mode="before")
+    @classmethod
+    def _blank_date_is_none(cls, value: Any) -> Any:
+        return None if isinstance(value, str) and not value.strip() else value
 
+    @field_validator("planned_date")
+    @classmethod
+    def _calendar_date(cls, value: Optional[str]) -> Optional[str]:
+        if value is not None:
+            try:
+                date.fromisoformat(value)
+            except ValueError:
+                raise ValueError("not a calendar date (YYYY-MM-DD)") from None
+        return value
+
+
+#: The sections a ``PUT`` may save. Objectives are not among them.
 SECTIONS: Dict[str, Any] = {
     "scope": ScopeStatement,
     "context_issues": ContextIssue,
     "interested_parties": InterestedParty,
-    "objectives": Objective,
     "communication_plan": Communication,
     "audit_programme": AuditEntry,
 }
 Section = Literal[
-    "scope", "context_issues", "interested_parties", "objectives",
+    "scope", "context_issues", "interested_parties",
     "communication_plan", "audit_programme",
 ]
 
@@ -187,24 +212,31 @@ def _first_error(exc: ValidationError) -> str:
     return f"{field}: {err.get('msg', 'invalid value')}" if field else err.get("msg", "invalid value")
 
 
-def serialise(profile: Optional[IsmsProfile]) -> IsmsProfileOut:
-    """Read a stored profile, tolerating rows written by an older schema."""
+def _tolerant(model: Any, stored: Optional[List[Any]]) -> List[Any]:
+    out = []
+    for row in stored or []:
+        try:
+            out.append(model.model_validate(row))
+        except Exception:  # noqa: BLE001 -- one bad row must not hide the rest
+            continue
+    return out
+
+
+def serialise(profile: Optional[IsmsProfile], objectives: Optional[List[Dict[str, Any]]] = None) -> IsmsProfileOut:
+    """Read a stored profile, tolerating rows written by an older schema.
+
+    ``objectives`` are the legacy rows built from ``security_objectives``
+    (``services.isms_metrics.service.legacy_objectives``); the profile's own
+    ``objectives`` column is no longer read.
+    """
     def rows(section: str) -> List[Any]:
-        stored = getattr(profile, section, None) or []
-        model = SECTIONS[section]
-        out = []
-        for row in stored:
-            try:
-                out.append(model.model_validate(row))
-            except Exception:  # noqa: BLE001 -- one bad row must not hide the rest
-                continue
-        return out
+        return _tolerant(SECTIONS[section], getattr(profile, section, None))
 
     return IsmsProfileOut(
         scope=ScopeStatement.model_validate((profile.scope if profile else None) or {}),
         context_issues=rows("context_issues"),
         interested_parties=rows("interested_parties"),
-        objectives=rows("objectives"),
+        objectives=_tolerant(Objective, objectives),
         communication_plan=rows("communication_plan"),
         audit_programme=rows("audit_programme"),
         updated_at=profile.updated_at.isoformat() if profile and profile.updated_at else None,
@@ -222,13 +254,17 @@ def _actor_id(membership: OrgMembership) -> Optional[UUID]:
     return UUID(db_id) if db_id else None
 
 
+async def _read(db: AsyncSession, organization_id: UUID, profile: Optional[IsmsProfile]) -> IsmsProfileOut:
+    return serialise(profile, await legacy_objectives(db, organization_id))
+
+
 @router.get("/organizations/{org_id}/isms-profile", response_model=IsmsProfileOut)
 async def get_isms_profile(
     org_id: UUID,
     membership: OrgMembership = Depends(require_org_role("viewer")),
     db: AsyncSession = Depends(get_db),
 ):
-    return serialise(await _load(db, membership.organization_id))
+    return await _read(db, membership.organization_id, await _load(db, membership.organization_id))
 
 
 @router.put("/organizations/{org_id}/isms-profile/{section}", response_model=IsmsProfileOut)
@@ -265,7 +301,7 @@ async def update_isms_profile_section(
     )
     await db.commit()
     await db.refresh(profile)
-    return serialise(profile)
+    return await _read(db, membership.organization_id, profile)
 
 
 # ---------------------------------------------------------------------------

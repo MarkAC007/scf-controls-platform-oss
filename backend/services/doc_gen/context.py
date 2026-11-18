@@ -22,6 +22,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+from uuid import UUID
 
 from sqlalchemy.orm import Session, joinedload
 
@@ -137,6 +138,17 @@ class OrganisationContext:
     #: The ISMS profile registers (api/isms_profile.py), as stored. Empty when
     #: the organisation has none or the generator did not ask for it.
     isms_profile: Dict[str, Any] = field(default_factory=dict)
+    #: The newest stored result per document objective, or "Not yet measured"
+    #: (services.isms_metrics.service.document_results_sync). Deliberately
+    #: outside ``isms_profile``: iso_core.inputs_digest hashes the profile, and
+    #: a new value must not mark a document for regeneration.
+    isms_results: List[Dict[str, Any]] = field(default_factory=list)
+    #: Per document objective: how it is measured, who measures and evaluates
+    #: it, and its stored results with the target in force at the time
+    #: (services.isms_metrics.measurement_document). Outside the fingerprint
+    #: for the same reason as ``isms_results``: neither a new value nor a new
+    #: evaluation marks a document for regeneration.
+    isms_measurement: List[Dict[str, Any]] = field(default_factory=list)
     #: Control deficiencies (the POA&M), open and closed.
     deficiencies: List[Dict[str, Any]] = field(default_factory=list)
     #: Scoped frameworks with their obligation basis, for the legal register.
@@ -520,8 +532,12 @@ def build_context(
         governance = governance_data(session, organization_id)
 
     isms_profile: Dict[str, Any] = {}
+    isms_results: List[Dict[str, Any]] = []
+    isms_measurement: List[Dict[str, Any]] = []
     if include_isms:
         isms_profile = _load_isms_profile(session, organization_id)
+        isms_results = _load_isms_results(session, organization_id)
+        isms_measurement = _load_isms_measurement(session, organization_id, isms_results)
     deficiencies: List[Dict[str, Any]] = []
     if include_deficiencies:
         deficiencies = _load_deficiencies(session, organization_id)
@@ -550,6 +566,8 @@ def build_context(
         risk_profile=risk_profile,
         governance=governance,
         isms_profile=isms_profile,
+        isms_results=isms_results,
+        isms_measurement=isms_measurement,
         deficiencies=deficiencies,
         obligations=obligations,
         documents=documents,
@@ -572,23 +590,58 @@ def build_context(
 
 
 def _load_isms_profile(session: Session, organization_id: str) -> Dict[str, Any]:
+    """The ISMS profile registers, with ``objectives`` built from ``security_objectives``.
+
+    ``objectives`` is the legacy list (unarchived, not proposed, in reference
+    order, no live value) so every renderer keeps reading the keys it always
+    read. An organisation with objectives but no profile row still gets them.
+    """
     from models import IsmsProfile
+    # Imported here, not at module scope: services.isms_metrics.library
+    # imports this module, so a top-level import would be circular.
+    from services.isms_metrics.service import legacy_objectives_sync
 
     row = (
         session.query(IsmsProfile)
         .filter(IsmsProfile.organization_id == organization_id)
         .one_or_none()
     )
-    if row is None:
+    objectives = legacy_objectives_sync(session, _uuid(organization_id))
+    if row is None and not objectives:
         return {}
     return {
-        "scope": row.scope or {},
-        "context_issues": row.context_issues or [],
-        "interested_parties": row.interested_parties or [],
-        "objectives": row.objectives or [],
-        "communication_plan": row.communication_plan or [],
-        "audit_programme": row.audit_programme or [],
+        "scope": (row.scope if row else None) or {},
+        "context_issues": (row.context_issues if row else None) or [],
+        "interested_parties": (row.interested_parties if row else None) or [],
+        "objectives": objectives,
+        "communication_plan": (row.communication_plan if row else None) or [],
+        "audit_programme": (row.audit_programme if row else None) or [],
     }
+
+
+def _load_isms_results(session: Session, organization_id: str) -> List[Dict[str, Any]]:
+    """The results table for documents; never part of the regeneration fingerprint."""
+    from services.isms_metrics.service import document_results_sync
+
+    return document_results_sync(session, _uuid(organization_id))
+
+
+def _load_isms_measurement(
+    session: Session, organization_id: str, results: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """The clause 9.1 entries; never part of the regeneration fingerprint.
+
+    ``results`` (already loaded) supplies the current status, so the 6.2 and
+    9.1 documents never disagree about it.
+    """
+    # Imported here: services.isms_metrics.library imports this module.
+    from services.isms_metrics.measurement_document import document_measurement_sync
+
+    return document_measurement_sync(session, _uuid(organization_id), current=results)
+
+
+def _uuid(value: Any) -> UUID:
+    return value if isinstance(value, UUID) else UUID(str(value))
 
 
 def _load_deficiencies(session: Session, organization_id: str) -> List[Dict[str, Any]]:

@@ -313,6 +313,12 @@ EVENTS: dict = {
         NotificationEvent("composite_insufficient", ROUTE_OWNERSHIP, escalates=True),
         # A control coming due for validation goes to whoever owns it (PIG R10).
         NotificationEvent("control_validation_due", ROUTE_OWNERSHIP),
+        # A security objective's reminders (clauses 6.2, 9.1) go to its named
+        # owner, then its team (owning_team_id, through the Item), then the
+        # admins. Not escalating: a reminder, not a stalled item.
+        NotificationEvent("objective_measurement_due", ROUTE_OWNERSHIP),
+        NotificationEvent("objective_due", ROUTE_OWNERSHIP),
+        NotificationEvent("objective_review_due", ROUTE_OWNERSHIP),
         # --- engagement evidence review board (engrev001) ------------------
         # Resolved through the evidence object's EvidenceTracking row (item
         # type 'evidence'). With no row the Item carries item_id=None, tier 2

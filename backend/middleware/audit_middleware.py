@@ -50,6 +50,8 @@ _SKIP_PATH_PREFIXES = (
 _READ_ONLY_POST_PATTERNS = (
     re.compile(r'^/api/organizations/[^/]+/framework-readiness/?$'),
     re.compile(r'^/api/organizations/[^/]+/framework-scoping/preview/?$'),
+    # Generated wording for an ISMS metric: pure text, nothing stored.
+    re.compile(r'^/api/organizations/[^/]+/isms-metrics/wording/?$'),
 )
 
 # HTTP method -> audit action mapping
@@ -73,6 +75,9 @@ _DELETE_AS_UPDATE_PATTERNS = (
 _POST_AS_UPDATE_PATTERNS = (
     re.compile(r'^/api/organizations/[^/]+/scoped-controls/[^/]+/validation/?$'),
     re.compile(r'^/api/organizations/[^/]+/capability-tests/[^/]+/findings/?$'),
+    # Confirming an objective and recording its evaluation update the
+    # objective (clauses 6.2, 9.1). Logging a metric result creates one.
+    re.compile(r'^/api/organizations/[^/]+/security-objectives/[^/]+/(confirm|evaluation)/?$'),
 )
 
 
@@ -106,6 +111,9 @@ _SEGMENT_TO_ENTITY: dict[str, str] = {
     "compensating-controls": "compensating_control",
     "posture-snapshots": "posture_snapshot",
     "capability-tests": "capability_test",
+    "security-objectives": "security_objective",
+    # The only write under isms-metrics is logging a result (wording is a read).
+    "isms-metrics": "isms_metric_result",
     "risk-profiles": "risk_profile",
     "systems": "system",
     "capabilities": "capability",

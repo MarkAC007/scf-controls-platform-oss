@@ -75,7 +75,7 @@ FULL_PROFILE = {
 class TestRegistry:
     def test_every_core_pack_generator_is_tier_1_and_not_derivative(self):
         core = [g for g in all_generators() if (g.renderer or "").startswith("iso_core.")]
-        assert len(core) == 17
+        assert len(core) == 18
         assert all(g.tier == 1 and not g.is_derivative and not g.domain_scoped for g in core)
         for g in core:
             g.resolve_renderer()

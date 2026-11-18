@@ -63,7 +63,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from sqlalchemy import delete, select, text
+from sqlalchemy import and_, delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from cache import CACHE_PREFIX, CACHE_VERSION
@@ -79,6 +79,7 @@ from catalog_models import (
     SCFCatalogThreat,
 )
 from services.risk_catalog import RISK_COMPARED_FIELDS, THREAT_COMPARED_FIELDS
+from services.theme_mapping import nist_800_53_refs, nist_families
 from models import CatalogImportRun, OrganizationCatalogState
 from schemas_catalog_upgrade import (
     CatalogEntityType,
@@ -424,7 +425,8 @@ def compute_theme_mappings(
     controls: List[Any], nist_family_mappings: Dict[str, dict], theme_code_to_id: Dict[str, int]
 ) -> List[Tuple[int, str, str]]:
     """(theme_id, scf_id, relevance) triples — same derivation as the seeder:
-    each control's nist_800_53_r5 references reduce to NIST families, crossed
+    each control's NIST 800-53 references (whichever edition key the catalogue
+    carries, see services/theme_mapping.py) reduce to NIST families, crossed
     with the JSON's family->theme rules. All controls are mapped regardless of
     lifecycle status — the §4.4 read paths filter on control status themselves,
     and drill-downs still resolve (badged) org data on deprecated controls."""
@@ -434,10 +436,7 @@ def compute_theme_mappings(
         scf_id = getattr(ctrl, "scf_id", None)
         if not scf_id:
             continue
-        nist_refs = (getattr(ctrl, "framework_mappings", None) or {}).get(
-            "nist_800_53_r5", []
-        )
-        families = {ref.split("-")[0] if "-" in ref else ref for ref in nist_refs}
+        families = nist_families(nist_800_53_refs(getattr(ctrl, "framework_mappings", None)))
         for family in sorted(families):
             rule = nist_family_mappings.get(family)
             if not rule:
@@ -457,13 +456,15 @@ def compute_theme_mappings(
     return triples
 
 
-async def _recompute_theme_mappings(
+async def _rebuild_theme_mappings(
     session: AsyncSession, themes_json: dict, version: str, now: datetime
-) -> int:
+) -> Tuple[int, int]:
     """Wipe + rebuild capability_theme_mappings from the in-transaction control
     rows. The only DELETE in this module — the mapping table is derived data
     with no org FKs into it (plan §4.2.4); the four catalog entity tables are
-    never deleted from."""
+    never deleted from.
+
+    Returns (mappings written, active controls that received a mapping)."""
     await session.flush()  # pending entity upserts must be visible to the selects
 
     await session.execute(delete(CapabilityThemeMapping))
@@ -487,7 +488,107 @@ async def _recompute_theme_mappings(
                 updated_at=now,
             )
         )
-    return len(triples)
+
+    # Every capability posture read counts ACTIVE controls only. A rebuild that
+    # maps none of them leaves each theme at zero and nothing else complains,
+    # which is how a renamed workbook column went unnoticed. Say so here.
+    active_ids = {
+        c.scf_id for c in controls if getattr(c, "status", "active") == "active"
+    }
+    active_mapped = len({scf_id for _, scf_id, _ in triples} & active_ids)
+    if active_ids and not active_mapped:
+        logger.error(
+            "Capability theme mappings: none of the %d active controls maps to a "
+            "theme for catalogue %s. The NIST 800-53 reference key has probably "
+            "changed (see services/theme_mapping.py); capability posture will "
+            "show every theme empty.",
+            len(active_ids),
+            version,
+        )
+    return len(triples), active_mapped
+
+
+async def _recompute_theme_mappings(
+    session: AsyncSession, themes_json: dict, version: str, now: datetime
+) -> int:
+    count, _ = await _rebuild_theme_mappings(session, themes_json, version, now)
+    return count
+
+
+async def repair_theme_mappings_if_uncovered(session: AsyncSession) -> dict:
+    """Rebuild the theme mappings when none of them reaches an active control.
+
+    The mappings are rebuilt on every catalogue apply, so normally there is
+    nothing to do and this costs one indexed probe. It exists for installs
+    whose mappings were derived before the 2026.3 key rename was handled:
+    their rows all point at retired control ids, and waiting for the next
+    catalogue release to rebuild them would leave capability posture empty
+    until then. Runs at start-up, under the catalogue lock, in one transaction.
+
+    Returns the seeder's result shape (``status`` + ``count`` / ``existing``).
+    """
+    probe = (
+        select(func.count().label("active_mapped"))
+        .select_from(CapabilityThemeMapping)
+        .join(
+            SCFCatalogControl,
+            and_(
+                CapabilityThemeMapping.scf_id == SCFCatalogControl.scf_id,
+                SCFCatalogControl.status == "active",
+            ),
+        )
+    )
+    covered = (await session.execute(probe)).scalar() or 0
+    if covered:
+        return {"status": "skipped", "existing": covered}
+
+    try:
+        themes_json = _load_capability_themes_json()
+    except ApplyConsistencyError as exc:
+        return {"status": "error", "message": str(exc)}
+
+    try:
+        await acquire_catalog_lock(session)
+        # Probe again under the lock: a catalogue apply may have just rebuilt them.
+        covered = (await session.execute(probe)).scalar() or 0
+        if covered:
+            await session.rollback()
+            return {"status": "skipped", "existing": covered}
+
+        version = (
+            await session.execute(
+                select(SCFCatalogControl.catalog_version)
+                .where(SCFCatalogControl.status == "active")
+                .group_by(SCFCatalogControl.catalog_version)
+                .order_by(func.count().desc())
+                .limit(1)
+            )
+        ).scalar()
+        if version is None:
+            # No active controls at all: nothing a rebuild could reach.
+            await session.rollback()
+            return {"status": "skipped", "existing": 0}
+
+        count, active_mapped = await _rebuild_theme_mappings(
+            session, themes_json, version, _now()
+        )
+        if not active_mapped:
+            # The rebuild reaches no active control either. Put the rows back
+            # rather than rewrite the table on every start.
+            await session.rollback()
+            return {"status": "skipped", "existing": 0}
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+    logger.info(
+        "Capability theme mappings rebuilt for catalogue %s: %d mappings, "
+        "%d active controls mapped",
+        version,
+        count,
+        active_mapped,
+    )
+    return {"status": "seeded", "count": count}
 
 
 # ---------------------------------------------------------------------------

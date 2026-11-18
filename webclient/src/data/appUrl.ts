@@ -74,10 +74,20 @@ export const DEFAULT_LIBRARY_MODE: LibraryMode = 'in-scope'
 /** The deficiencies page's two presentations of one record (#1155). */
 export const DEFICIENCY_VIEWS = ['list', 'board'] as const
 export type DeficiencyView = (typeof DEFICIENCY_VIEWS)[number]
+/** The Analytics screen's sub-tabs; `all-organisations` is offered only to someone in two or more
+ * organisations (phase 3 B3). Never name one `dashboard` or `workspace`: `evidenceView` is read on every tab. */
+export const ANALYTICS_VIEWS = ['isms-metrics', 'capability-posture', 'all-organisations'] as const
+export type AnalyticsView = (typeof ANALYTICS_VIEWS)[number]
+/** The ISMS profile's sections, addressable as `?section=`. */
+export const ISMS_SECTIONS = [
+  'scope', 'context_issues', 'interested_parties', 'objectives', 'communication_plan', 'audit_programme',
+] as const
+export type IsmsSectionParam = (typeof ISMS_SECTIONS)[number]
 
 /** Where the app lands when the URL names nothing it recognises. */
 export const DEFAULT_TAB = 'dashboard'
 export const DEFAULT_EVIDENCE_VIEW: EvidenceView = 'dashboard'
+export const DEFAULT_ANALYTICS_VIEW: AnalyticsView = 'isms-metrics'
 
 /**
  * Every screen the app can be on: the synced tabs plus the landing screen,
@@ -144,8 +154,29 @@ export const PARAM_CAPABILITY_TEST_ITEM = 'test'
 /**
  * The same literal as `PARAM_EVIDENCE_VIEW`, on purpose: each is read only on
  * its own tab and leaves with it (`TAB_OWNED_PARAMS`), so they never meet.
+ * `PARAM_ANALYTICS_VIEW` is the third owner of the literal, on the same terms.
  */
 export const PARAM_DEFICIENCY_VIEW = 'view'
+export const PARAM_ANALYTICS_VIEW = 'view'
+export const PARAM_ISMS_SECTION = 'section'
+export const PARAM_ISMS_OBJECTIVE = 'objective'
+/** The ISMS metric whose detail screen is open, on the Analytics tab. */
+export const PARAM_ISMS_METRIC = 'metric'
+
+/** An objective id is a UUID. Anything else in `metric` reads as no metric, so it never reaches an API path. */
+const OBJECTIVE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+function asObjectiveId(raw: string | null): string | null {
+  const v = raw?.trim() ?? ''
+  return OBJECTIVE_ID.test(v) ? v : null
+}
+/** The ISMS metrics dashboard's filters, on the Analytics tab. */
+export const PARAM_ISMS_FILTER_TEAM = 'team'
+export const PARAM_ISMS_FILTER_CLAUSE = 'clause'
+export const PARAM_ISMS_FILTER_STATUS = 'status'
+const ISMS_FILTER_PARAMS = [PARAM_ISMS_FILTER_TEAM, PARAM_ISMS_FILTER_CLAUSE, PARAM_ISMS_FILTER_STATUS] as const
+
+/** The dashboard filters; '' is "any". Values are not checked here: the dashboard ignores one it does not know. */
+export interface IsmsMetricFilters { team: string; clause: string; status: string }
 
 /**
  * Parameters that belong to a tab and must leave with it.
@@ -167,6 +198,8 @@ export const TAB_OWNED_PARAMS: Partial<Record<SyncedTab, readonly string[]>> = {
   tasks: [PARAM_TASK_ITEM],
   'capability-tests': [PARAM_CAPABILITY_TEST_ITEM],
   deficiencies: [PARAM_DEFICIENCY_VIEW],
+  'capability-posture': [PARAM_ANALYTICS_VIEW, PARAM_ISMS_METRIC, ...ISMS_FILTER_PARAMS],
+  isms: [PARAM_ISMS_SECTION, PARAM_ISMS_OBJECTIVE],
 }
 
 export interface AppLocation {
@@ -195,6 +228,16 @@ export interface AppLocation {
    * otherwise, so the page can fall back to the viewer's remembered choice.
    */
   deficiencyView: DeficiencyView | null
+  /** Which Analytics sub-tab, resolved. Only meaningful when tab is capability-posture. */
+  analyticsView: AnalyticsView
+  /** The ISMS profile section the URL names, or null. Only on the isms tab. */
+  ismsSection: IsmsSectionParam | null
+  /** The security objective to focus in the register, or null. Only on the isms tab. */
+  ismsObjective: string | null
+  /** The objective whose metric detail is open, or null. Only on the Analytics tab's ISMS metrics. */
+  ismsMetric: string | null
+  /** The ISMS metrics dashboard filters. Only on the Analytics tab's ISMS metrics; blank elsewhere. */
+  ismsFilters: IsmsMetricFilters
 }
 
 function params(search: string): URLSearchParams {
@@ -241,6 +284,23 @@ export function readAppLocation(search: string): AppLocation {
     tab === 'capability-tests' ? (p.get(PARAM_CAPABILITY_TEST_ITEM)?.trim() || null) : null
   const requestedDeficiencyView = tab === 'deficiencies' ? p.get(PARAM_DEFICIENCY_VIEW) : null
   const deficiencyView = DEFICIENCY_VIEWS.find(v => v === requestedDeficiencyView) ?? null
+  const requestedAnalyticsView = tab === 'capability-posture' ? p.get(PARAM_ANALYTICS_VIEW) : null
+  const analyticsView = ANALYTICS_VIEWS.find(v => v === requestedAnalyticsView) ?? DEFAULT_ANALYTICS_VIEW
+  const requestedSection = tab === 'isms' ? p.get(PARAM_ISMS_SECTION) : null
+  const namedSection = ISMS_SECTIONS.find(s => s === requestedSection) ?? null
+  const rawObjective = tab === 'isms' ? (p.get(PARAM_ISMS_OBJECTIVE)?.trim() || null) : null
+  // An objective with no section still means "show me this objective", as an
+  // evidence item with no view means the workspace.
+  const ismsSection = namedSection ?? (rawObjective ? 'objectives' : null)
+  const ismsObjective = ismsSection === 'objectives' ? rawObjective : null
+  const onIsmsMetrics = tab === 'capability-posture' && analyticsView === 'isms-metrics'
+  const ismsMetric = onIsmsMetrics ? asObjectiveId(p.get(PARAM_ISMS_METRIC)) : null
+  const filter = (key: string) => (onIsmsMetrics ? p.get(key)?.trim() ?? '' : '')
+  const ismsFilters: IsmsMetricFilters = {
+    team: filter(PARAM_ISMS_FILTER_TEAM),
+    clause: filter(PARAM_ISMS_FILTER_CLAUSE),
+    status: filter(PARAM_ISMS_FILTER_STATUS),
+  }
 
   return {
     tab,
@@ -254,6 +314,11 @@ export function readAppLocation(search: string): AppLocation {
     taskItem,
     capabilityTestItem,
     deficiencyView,
+    analyticsView,
+    ismsSection,
+    ismsObjective,
+    ismsMetric,
+    ismsFilters,
   }
 }
 
@@ -503,4 +568,59 @@ export function pushSearch(search: string): void {
 export function navigateToSearch(search: string): void {
   pushSearch(search)
   window.dispatchEvent(new PopStateEvent('popstate', { state: window.history.state }))
+}
+
+/**
+ * The search string with the Analytics sub-tab named. Ensures
+ * `tab=capability-posture` first, which takes any other tab's own `view` off.
+ */
+export function withAnalyticsView(search: string, view: AnalyticsView): string {
+  const onTab = readAppLocation(search).tab === 'capability-posture'
+  const p = params(onTab ? search : withTab(search, 'capability-posture'))
+  p.set(PARAM_ANALYTICS_VIEW, view)
+  // Naming a view is arriving on its list: an open metric closes. The filters
+  // belong to ISMS metrics, so they stay for it and leave with it.
+  p.delete(PARAM_ISMS_METRIC)
+  if (view !== 'isms-metrics') for (const key of ISMS_FILTER_PARAMS) p.delete(key)
+  return p.toString()
+}
+
+/** The search string with one objective's metric detail open, or the dashboard when null. */
+export function withIsmsMetric(search: string, objectiveId: string | null): string {
+  const p = params(withAnalyticsView(search, 'isms-metrics'))
+  if (objectiveId) p.set(PARAM_ISMS_METRIC, objectiveId)
+  return p.toString()
+}
+
+/** The search string with the ISMS metrics filters written; a blank filter leaves the URL. */
+export function withIsmsFilters(search: string, filters: IsmsMetricFilters): string {
+  const onDashboard = readAppLocation(search).tab === 'capability-posture'
+  const p = params(onDashboard ? search : withAnalyticsView(search, 'isms-metrics'))
+  const values: Record<string, string> = {
+    [PARAM_ISMS_FILTER_TEAM]: filters.team,
+    [PARAM_ISMS_FILTER_CLAUSE]: filters.clause,
+    [PARAM_ISMS_FILTER_STATUS]: filters.status,
+  }
+  for (const key of ISMS_FILTER_PARAMS) {
+    if (values[key]) p.set(key, values[key])
+    else p.delete(key)
+  }
+  return p.toString()
+}
+
+/** The search string with the ISMS profile section named; leaving Objectives drops `objective`. */
+export function withIsmsSection(search: string, section: IsmsSectionParam): string {
+  const onTab = readAppLocation(search).tab === 'isms'
+  const p = params(onTab ? search : withTab(search, 'isms'))
+  p.set(PARAM_ISMS_SECTION, section)
+  if (section !== 'objectives') p.delete(PARAM_ISMS_OBJECTIVE)
+  return p.toString()
+}
+
+/** The search string on the objectives register, with one objective focused or none. */
+export function withIsmsObjective(search: string, objectiveId: string | null): string {
+  const p = params(withIsmsSection(search, 'objectives'))
+  if (objectiveId) p.set(PARAM_ISMS_OBJECTIVE, objectiveId)
+  else p.delete(PARAM_ISMS_OBJECTIVE)
+  return p.toString()
 }

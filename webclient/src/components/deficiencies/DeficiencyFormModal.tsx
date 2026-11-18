@@ -24,6 +24,7 @@ import {
   isOpenDeficiency,
   useAssessedRisks,
   useOrgMembersQuery,
+  useRiskOptionLabel,
 } from '../../hooks/useDeficiencies'
 import { useDebounce } from '../../hooks/useDebounce'
 import { useDialogFocus } from '../../hooks/useDialogFocus'
@@ -38,12 +39,27 @@ import type {
 } from '../../types'
 import { PRIORITIES, PRIORITY_LABELS } from './deficiencyText'
 
+/**
+ * What a new deficiency starts with when raised from another screen (an
+ * off-track objective). Every field stays editable; nothing is saved until
+ * the person presses Raise. `source` and `source_ref` are sent as given.
+ */
+export interface DeficiencyPrefill {
+  title?: string
+  description?: string
+  priority?: ActionItemPriority
+  source?: 'security_objective'
+  source_ref?: string
+}
+
 interface Props {
   organizationId: string
   /** Edit this deficiency; raise a new one when absent. */
   deficiency?: Deficiency
   /** Raise against this control, fixed: the control's own detail page. */
   fixedScfId?: string
+  /** Raise only: the form's starting values. Ignored when editing. */
+  prefill?: DeficiencyPrefill
   onClose: () => void
 }
 
@@ -83,14 +99,25 @@ function changedFields(initial: FormValues, values: FormValues): DeficiencyUpdat
   return body
 }
 
-export default function DeficiencyFormModal({ organizationId, deficiency, fixedScfId, onClose }: Props): JSX.Element {
+export default function DeficiencyFormModal({ organizationId, deficiency, fixedScfId, prefill, onClose }: Props): JSX.Element {
   const queryClient = useQueryClient()
   const dialogRef = useRef<HTMLDivElement>(null)
   useDialogFocus(dialogRef)
   const id = useId()
 
   const editing = deficiency !== undefined
-  const initial = useMemo(() => fromRecord(deficiency), [deficiency])
+  const initial = useMemo(() => {
+    const base = fromRecord(deficiency)
+    if (editing || !prefill) return base
+    return {
+      ...base,
+      title: prefill.title ?? base.title,
+      description: prefill.description ?? base.description,
+      priority: prefill.priority ?? base.priority,
+    }
+    // The prefill is read once, when the form opens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deficiency])
   const [values, setValues] = useState<FormValues>(initial)
   const [scfId, setScfId] = useState(fixedScfId ?? '')
   const [riskCode, setRiskCode] = useState('')
@@ -99,6 +126,7 @@ export default function DeficiencyFormModal({ organizationId, deficiency, fixedS
 
   const members = useOrgMembersQuery(organizationId)
   const risks = useAssessedRisks(organizationId, !editing)
+  const riskLabel = useRiskOptionLabel(organizationId, !editing)
   const controlSearch = useDebounce(scfId.trim(), 250)
   const searching = !editing && !fixedScfId && controlSearch.length >= 2
   const controls = useScopedControlsQuery({ search: controlSearch, scope_status: 'in_scope' }, organizationId, searching)
@@ -108,7 +136,8 @@ export default function DeficiencyFormModal({ organizationId, deficiency, fixedS
     setValues((v) => ({ ...v, [key]: value }))
 
   const patch = editing ? changedFields(initial, values) : {}
-  const hasSubject = scfId.trim() !== '' || riskCode !== ''
+  // Raised from an objective, the objective is the subject: the server needs no control or risk then.
+  const hasSubject = scfId.trim() !== '' || riskCode !== '' || Boolean(prefill?.source && prefill?.source_ref)
   const canSubmit =
     values.title.trim() !== '' && (editing ? Object.keys(patch).length > 0 : hasSubject) && !busy
   const dirty = editing
@@ -141,6 +170,8 @@ export default function DeficiencyFormModal({ organizationId, deficiency, fixedS
         if (values.dueDate) body.due_date = values.dueDate
         if (values.description.trim()) body.description = values.description.trim()
         if (values.rootCause.trim()) body.root_cause = values.rootCause.trim()
+        if (prefill?.source) body.source = prefill.source
+        if (prefill?.source_ref) body.source_ref = prefill.source_ref
         await createDeficiency(organizationId, body)
         toast.success('Deficiency raised')
       }
@@ -249,7 +280,7 @@ export default function DeficiencyFormModal({ organizationId, deficiency, fixedS
                   <option value="">None</option>
                   {(risks.data ?? []).map((r) => (
                     <option key={r.risk_code} value={r.risk_code}>
-                      {r.risk_code}
+                      {riskLabel(r.risk_code)}
                     </option>
                   ))}
                 </select>

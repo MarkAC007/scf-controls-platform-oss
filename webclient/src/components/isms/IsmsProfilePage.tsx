@@ -9,7 +9,11 @@
  *
  * Each section saves on its own. Edits are a local draft until saved, and the
  * draft resets to the server copy whenever the server copy changes and the
- * section has no unsaved edits.
+ * section has no unsaved edits. Objectives is the exception: a register of its
+ * own records (security objectives), where each action saves itself.
+ *
+ * The open section is in the URL (`section`, and `objective` for a focused
+ * row in the register), so a link can land on one objective.
  */
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -24,17 +28,24 @@ import {
   type IsmsContextIssue,
   type IsmsExclusion,
   type IsmsInterestedParty,
-  type IsmsObjective,
   type IsmsProfile,
   type IsmsScope,
   type IsmsSection,
 } from '../../data/documentsApi'
+import { ISMS_SECTIONS, readAppLocation, replaceSearch, withIsmsSection } from '../../data/appUrl'
 import { useIsOrgEditor } from '../../hooks/useHasOrgRole'
+import ObjectivesRegister from './objectives/ObjectivesRegister'
 import RegisterRows, { type RegisterField } from './RegisterRows'
 
 interface Props {
   organizationId: string
 }
+
+/** Every section but Objectives keeps a local draft and the Save bar. */
+type DraftSection = Exclude<IsmsSection, 'objectives'>
+// The URL's section list and the profile's must stay one list.
+const _URL_SECTIONS: readonly IsmsSection[] = ISMS_SECTIONS
+void _URL_SECTIONS
 
 interface SectionMeta {
   key: IsmsSection
@@ -66,7 +77,7 @@ const SECTIONS: SectionMeta[] = [
   },
   {
     key: 'audit_programme', label: 'Audit programme', clause: '9.2',
-    intro: 'The internal audits planned across the ISMS clauses and your applicable controls, and their outcome.',
+    intro: 'The internal audits planned across the ISMS clauses and your applicable controls, and their outcome. Give each audit a planned date: an audit without one counts as due in the audits completed metric.',
   },
 ]
 
@@ -91,19 +102,6 @@ const PARTY_FIELDS: RegisterField<IsmsInterestedParty>[] = [
   { key: 'how_addressed', label: 'How they are addressed', type: 'textarea', wide: true },
 ]
 
-const OBJECTIVE_FIELDS: RegisterField<IsmsObjective>[] = [
-  { key: 'objective', label: 'Objective', type: 'textarea', wide: true },
-  { key: 'measure', label: 'Measure', type: 'textarea' },
-  { key: 'target', label: 'Target', type: 'textarea' },
-  { key: 'owner', label: 'Owner', type: 'text' },
-  { key: 'due_date', label: 'Due date', type: 'date' },
-  { key: 'status', label: 'Status', type: 'select', options: [
-    { value: 'planned', label: 'Planned' }, { value: 'in_progress', label: 'In progress' },
-    { value: 'achieved', label: 'Achieved' }, { value: 'missed', label: 'Missed' }] },
-  { key: 'resources', label: 'Resources', type: 'textarea' },
-  { key: 'evaluation', label: 'How results are evaluated', type: 'textarea' },
-]
-
 const COMMUNICATION_FIELDS: RegisterField<IsmsCommunication>[] = [
   { key: 'what', label: 'What', type: 'textarea', wide: true },
   { key: 'when', label: 'When', type: 'textarea' },
@@ -115,6 +113,7 @@ const COMMUNICATION_FIELDS: RegisterField<IsmsCommunication>[] = [
 const AUDIT_FIELDS: RegisterField<IsmsAuditEntry>[] = [
   { key: 'area', label: 'Area audited', type: 'text', placeholder: 'e.g. Clauses 4–6, or Access Control' },
   { key: 'planned_period', label: 'Planned period', type: 'text', placeholder: 'e.g. 2027 Q1' },
+  { key: 'planned_date', label: 'Planned date', type: 'date' },
   { key: 'auditor', label: 'Auditor', type: 'text' },
   { key: 'status', label: 'Status', type: 'select', options: [
     { value: 'planned', label: 'Planned' }, { value: 'in_progress', label: 'In progress' },
@@ -131,15 +130,11 @@ const BLANKS = {
   interested_parties: (): IsmsInterestedParty => ({
     party: '', kind: 'external', requirements: '', addressed_through_isms: true, how_addressed: '',
   }),
-  objectives: (): IsmsObjective => ({
-    objective: '', measure: '', target: '', owner: '', resources: '', due_date: null,
-    evaluation: '', status: 'planned',
-  }),
   communication_plan: (): IsmsCommunication => ({
     what: '', when: '', audience: '', communicator: '', method: '',
   }),
   audit_programme: (): IsmsAuditEntry => ({
-    area: '', criteria: '', planned_period: '', auditor: '', status: 'planned', findings: '',
+    area: '', criteria: '', planned_period: '', planned_date: null, auditor: '', status: 'planned', findings: '',
   }),
 }
 
@@ -148,7 +143,29 @@ const lines = (text: string) => text.split('\n').map((l) => l.trim()).filter(Boo
 export default function IsmsProfilePage({ organizationId }: Props) {
   const canEdit = useIsOrgEditor(organizationId)
   const queryClient = useQueryClient()
-  const [active, setActive] = useState<IsmsSection>('scope')
+  const [active, setActive] = useState<IsmsSection>(() => readAppLocation(window.location.search).ismsSection ?? 'scope')
+  const [focusObjective, setFocusObjective] = useState<string | null>(
+    () => readAppLocation(window.location.search).ismsObjective,
+  )
+
+  // replaceState: the sections are parts of one screen, not places.
+  const selectSection = (section: IsmsSection) => {
+    setActive(section)
+    if (section !== 'objectives') setFocusObjective(null)
+    replaceSearch(withIsmsSection(window.location.search, section))
+  }
+
+  // Back and Forward, and in-app links (AppLink dispatches popstate after its push).
+  useEffect(() => {
+    const onPopState = () => {
+      const loc = readAppLocation(window.location.search)
+      if (loc.tab !== 'isms') return
+      setActive(loc.ismsSection ?? 'scope')
+      setFocusObjective(loc.ismsObjective)
+    }
+    window.addEventListener('popstate', onPopState)
+    return () => window.removeEventListener('popstate', onPopState)
+  }, [])
 
   const { data: profile, isLoading, error } = useQuery({
     queryKey: ['isms-profile', organizationId],
@@ -156,7 +173,7 @@ export default function IsmsProfilePage({ organizationId }: Props) {
   })
 
   const [draft, setDraft] = useState<IsmsProfile | null>(null)
-  const [dirty, setDirty] = useState<Set<IsmsSection>>(new Set())
+  const [dirty, setDirty] = useState<Set<DraftSection>>(new Set())
 
   // Adopt the server copy for every section without unsaved edits.
   useEffect(() => {
@@ -174,7 +191,7 @@ export default function IsmsProfilePage({ organizationId }: Props) {
   }, [profile])
 
   const save = useMutation({
-    mutationFn: (section: IsmsSection) =>
+    mutationFn: (section: DraftSection) =>
       updateIsmsSection(organizationId, section, draft![section] as never),
     onSuccess: (next, section) => {
       setDirty((d) => {
@@ -189,12 +206,12 @@ export default function IsmsProfilePage({ organizationId }: Props) {
     onError: (e: Error) => toast.error(e.message),
   })
 
-  const edit = <S extends IsmsSection>(section: S, value: IsmsProfile[S]) => {
+  const edit = <S extends DraftSection>(section: S, value: IsmsProfile[S]) => {
     setDraft((current) => (current ? { ...current, [section]: value } : current))
     setDirty((d) => new Set(d).add(section))
   }
 
-  const discard = (section: IsmsSection) => {
+  const discard = (section: DraftSection) => {
     if (profile) setDraft((current) => (current ? { ...current, [section]: profile[section] } : profile))
     setDirty((d) => {
       const copy = new Set(d)
@@ -229,7 +246,7 @@ export default function IsmsProfilePage({ organizationId }: Props) {
   const disabled = !canEdit
 
   return (
-    <div className="isms-page">
+    <div className={`isms-page${active === 'objectives' ? ' isms-page--wide' : ''}`}>
       <header className="isms-head">
         <p className="isms-lede">
           The facts your ISO/IEC 27001 clause documents are written from. Anything left empty
@@ -247,11 +264,11 @@ export default function IsmsProfilePage({ organizationId }: Props) {
             type="button"
             className={`isms-tab ${active === s.key ? 'is-active' : ''}`}
             aria-current={active === s.key ? 'page' : undefined}
-            onClick={() => setActive(s.key)}
+            onClick={() => selectSection(s.key)}
           >
             {s.label}
             <span className="isms-tab-clause">{s.clause}</span>
-            {dirty.has(s.key) && <span className="isms-tab-dirty" aria-label="unsaved changes">•</span>}
+            {s.key !== 'objectives' && dirty.has(s.key) && <span className="isms-tab-dirty" aria-label="unsaved changes">•</span>}
           </button>
         ))}
       </nav>
@@ -289,11 +306,7 @@ export default function IsmsProfilePage({ organizationId }: Props) {
           </>
         )}
         {active === 'objectives' && (
-          <RegisterRows
-            rows={draft.objectives} fields={OBJECTIVE_FIELDS} blank={BLANKS.objectives}
-            onChange={(r) => edit('objectives', r)} disabled={disabled} noun="objective"
-            empty="No objectives recorded yet."
-          />
+          <ObjectivesRegister organizationId={organizationId} focusObjectiveId={focusObjective} />
         )}
         {active === 'communication_plan' && (
           <>
@@ -317,7 +330,7 @@ export default function IsmsProfilePage({ organizationId }: Props) {
           />
         )}
 
-        {canEdit && (
+        {canEdit && active !== 'objectives' && (
           <div className="isms-actions">
             <span className="isms-actions-note">
               {dirty.has(active) ? 'Unsaved changes' : 'Saved'}

@@ -11,6 +11,8 @@ import { describe, it, expect, afterEach } from 'vitest'
 import { render, screen, cleanup, fireEvent } from '@testing-library/react'
 import { MaturityDistributionWidget } from '../MaturityDistributionWidget'
 import { EVIDENCE_MATURITY_LEVELS } from '../EvidenceMaturityTypes'
+import { CONTROL_MATURITY_LEVELS } from '../ControlMaturityLevels'
+import { MATURITY_LEVEL_OPTIONS } from '../../../data/targetMaturity'
 
 afterEach(cleanup)
 
@@ -153,5 +155,67 @@ describe('rendering defects the disclosure sat on top of', () => {
       container.querySelectorAll('.maturity-distribution-legend-level'),
     ).map(n => n.textContent)
     expect(legend).toEqual(['L0', 'L1', 'L2', 'L3', 'L4', 'L5'])
+  })
+})
+
+describe('the same chart for another scale', () => {
+  const controlsWith = (extra: { scoreLabel?: string } = {}) =>
+    render(
+      <MaturityDistributionWidget
+        distribution={distribution}
+        levelInfo={CONTROL_MATURITY_LEVELS}
+        title="Control maturity"
+        totalLabel="controls assessed"
+        {...extra}
+      />,
+    )
+  const controls = () => controlsWith()
+
+  it('keeps the evidence wording when nothing else is given', () => {
+    render(<MaturityDistributionWidget distribution={distribution} />)
+    expect(screen.getByText('evidence items assessed')).toBeInTheDocument()
+    expect(screen.getByText(EVIDENCE_MATURITY_LEVELS.L1.name, { selector: '.maturity-distribution-name' })).toBeInTheDocument()
+  })
+
+  it('names what it counts', () => {
+    controls()
+    expect(screen.getByText('controls assessed')).toBeInTheDocument()
+    expect(screen.queryByText('evidence items assessed')).not.toBeInTheDocument()
+  })
+
+  it('names the levels of the scale it is given', () => {
+    controls()
+    expect(screen.getByText('Repeatable', { selector: '.maturity-distribution-name' })).toBeInTheDocument()
+    expect(screen.queryByText(EVIDENCE_MATURITY_LEVELS.L1.name)).not.toBeInTheDocument()
+  })
+
+  it('opens a level on its description, with no empty guidance headings', () => {
+    controls()
+    fireEvent.click(screen.getByRole('button', { name: n => n.startsWith('L1 ') }))
+    expect(screen.getByText(CONTROL_MATURITY_LEVELS.L1.description)).toBeInTheDocument()
+    expect(screen.queryByText('What L1 looks like')).not.toBeInTheDocument()
+    expect(screen.queryByText(/^Moving /)).not.toBeInTheDocument()
+  })
+
+  it('grades the score A to F unless it is told what the figure is', () => {
+    const { container, unmount } = render(<MaturityDistributionWidget distribution={distribution} />)
+    expect(container.querySelector('.maturity-grade')).not.toBeNull()
+    unmount()
+    controlsWith({ scoreLabel: 'average level' })
+    expect(document.querySelector('.maturity-grade')).toBeNull()
+    expect(document.querySelector('.maturity-score-label')).toHaveTextContent('average level')
+    expect(document.querySelector('.maturity-score-value')).toHaveTextContent('1.3')
+  })
+
+  it('names the control levels as the control screens do', () => {
+    for (const option of MATURITY_LEVEL_OPTIONS) {
+      expect(option.label).toBe(`${option.value} - ${CONTROL_MATURITY_LEVELS[option.value].name}`)
+    }
+  })
+
+  it('draws both scales in the same level colours', () => {
+    for (const level of ['L0', 'L1', 'L2', 'L3', 'L4', 'L5'] as const) {
+      expect(CONTROL_MATURITY_LEVELS[level].colour).toBe(EVIDENCE_MATURITY_LEVELS[level].colour)
+    }
   })
 })

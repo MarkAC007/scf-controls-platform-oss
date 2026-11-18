@@ -347,3 +347,51 @@ describe('NotificationBell — control notifications', () => {
     await waitFor(() => expect(window.location.search).toBe('?tab=library&mode=in-scope&item=GOV-01'))
   })
 })
+
+describe('NotificationBell: security objective reminders', () => {
+  // An objective's id, as the server sends it.
+  const OBJECTIVE_ID = '9b2f0c1e-4a7d-4e2b-8c3f-1d2e3f4a5b6c'
+  const objectiveNotification = (over: Record<string, unknown> = {}) => ({
+    id: 'n-obj',
+    organization_id: 'org-1',
+    organization_name: 'Acme',
+    type: 'objective_review_due',
+    reference_type: 'security_objective',
+    reference_id: OBJECTIVE_ID,
+    // Set so a row that reached the evidence branch would open evidence instead.
+    reference_key: OBJECTIVE_ID,
+    message: 'Objective OBJ-07 "Patch on time": review is due by 1 Dec 2026.',
+    is_read: true,
+    created_at: new Date().toISOString(),
+    ...over,
+  })
+
+  beforeEach(() => window.history.replaceState(null, '', '/'))
+  afterEach(() => window.history.replaceState(null, '', '/'))
+
+  it('opens that objective’s metric detail, never evidence', async () => {
+    withNotifications([objectiveNotification()])
+    const onNavigateToEvidence = vi.fn()
+    render(<NotificationBell currentOrgId="org-1" onNavigateToEvidence={onNavigateToEvidence} />)
+    await openAndClick('Objective OBJ-07 "Patch on time": review is due by 1 Dec 2026.')
+    await waitFor(() => expect(window.location.search).toBe('?tab=capability-posture&view=isms-metrics&metric=9b2f0c1e-4a7d-4e2b-8c3f-1d2e3f4a5b6c'))
+    expect(onNavigateToEvidence).not.toHaveBeenCalled()
+  })
+
+  it('says the objective no longer exists when the server sent no key, and opens nothing (review M3)', async () => {
+    // No key means archived or gone; reference_id is still there and must not be used.
+    withNotifications([objectiveNotification({ reference_key: null })])
+    render(<NotificationBell currentOrgId="org-1" />)
+    await openAndClick('Objective OBJ-07 "Patch on time": review is due by 1 Dec 2026.')
+    expect(await screen.findByText('That objective no longer exists.')).toBeInTheDocument()
+    expect(window.location.search).toBe('')
+  })
+
+  it('does not open another organisation’s objective', async () => {
+    withNotifications([objectiveNotification()])
+    render(<NotificationBell currentOrgId="org-2" />)
+    await openAndClick('Objective OBJ-07 "Patch on time": review is due by 1 Dec 2026.')
+    expect(await screen.findByText('That objective is in Acme. Switch to it to open the objective.')).toBeInTheDocument()
+    expect(window.location.search).toBe('')
+  })
+})

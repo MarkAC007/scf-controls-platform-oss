@@ -160,20 +160,83 @@ def _parties_section(ctx: OrganisationContext, level: str = "##") -> List[str]:
     return lines
 
 
+def _objective_label(o: Dict[str, Any], n: int) -> str:
+    """The objective's reference (``OBJ-01``), or its row number where it has none."""
+    return o.get("ref") or str(n)
+
+
+def _due(o: Dict[str, Any]) -> str:
+    if o.get("due_date"):
+        return o["due_date"]
+    return "Ongoing" if o.get("type") == "maintain" else TBC
+
+
 def _objectives_section(ctx: OrganisationContext, level: str = "##") -> List[str]:
     objectives = _isms(ctx, "objectives", []) or []
     lines = [f"{level} Objectives", ""]
     if not objectives:
         return lines + [_tbc("record measurable information security objectives in the ISMS Profile"), ""]
     lines += _table(
-        ["#", "Objective", "Measure", "Target", "Owner", "Due", "Status"],
+        ["Ref", "Objective", "Measure", "Target", "Owner", "Due", "Status"],
         [
-            [n, o.get("objective"), o.get("measure") or TBC, o.get("target") or TBC,
-             o.get("owner") or TBC, o.get("due_date") or TBC, status_label(o.get("status"))]
+            [_objective_label(o, n), o.get("objective"), o.get("measure") or TBC, o.get("target") or TBC,
+             o.get("owner") or TBC, _due(o), status_label(o.get("status"))]
             for n, o in enumerate(objectives, start=1)
         ],
     )
     return lines
+
+
+def _one_line(value) -> str:
+    """Text typed on several lines, joined so it stays inside one list item."""
+    return "; ".join(part.strip() for part in str(value or "").splitlines() if part.strip())
+
+
+#: ``security_objectives.objective_type`` in words.
+_OBJECTIVE_TYPES = {"maintain": "Maintain", "achieve": "Achieve by a date"}
+
+
+def _results_lines(ctx: OrganisationContext) -> List[str]:
+    """The latest stored result per objective (``ctx.isms_results``).
+
+    Read from the context's results list, never from ``isms_profile``, so a
+    new value does not move :func:`inputs_digest`.
+    """
+    objectives = _isms(ctx, "objectives", []) or []
+    if not objectives:
+        return ["No information security objectives have been set, so there are no results to report.", ""]
+    results = ctx.isms_results or []
+    if not any(r.get("measured_on") for r in results):
+        return ["No results have been recorded for these objectives yet.", ""]
+    lines = _table(
+        ["Ref", "Objective", "Supporting metric", "Target", "Latest result", "Status", "Measured on"],
+        [
+            [r.get("ref"), r.get("objective"), r.get("metric") or TBC, r.get("target") or TBC,
+             f"{r.get('value_text')} ({r['population']})" if r.get("population") else r.get("value_text"),
+             r.get("status"), r.get("measured_on")]
+            for r in results
+        ],
+    )
+    return lines + [
+        "Each result is the newest value recorded for the objective's metric when this "
+        "document was generated.",
+        "",
+    ]
+
+
+def _evaluation_count_lines(ctx: OrganisationContext) -> List[str]:
+    """How many document objectives have a recorded evaluation (clause 9.1), for the 9.3 review."""
+    entries = ctx.isms_measurement or []
+    if not entries:
+        return []
+    dates = sorted(e["evaluated_on"] for e in entries if e.get("evaluated_on"))
+    if not dates:
+        if len(entries) == 1:
+            return ["The objective has no recorded evaluation yet.", ""]
+        return [f"None of the {len(entries)} objectives has a recorded evaluation yet.", ""]
+    have = "has" if len(dates) == 1 else "have"
+    return [f"{len(dates)} of {_tally(len(entries), 'objective')} {have} a recorded evaluation; "
+            f"the most recent was on {dates[-1]}.", ""]
 
 
 def _communication_section(ctx: OrganisationContext, level: str = "##") -> List[str]:
@@ -196,7 +259,8 @@ def _audit_rows_section(ctx: OrganisationContext, level: str = "##") -> List[str
         return lines + [_tbc("plan the internal audits in the ISMS Profile"), ""]
     lines += _table(
         ["Area", "Planned period", "Auditor", "Criteria", "Status", "Findings"],
-        [[a.get("area"), a.get("planned_period") or TBC, a.get("auditor") or TBC,
+        # The structured date when one is set, else the free-text period.
+        [[a.get("area"), a.get("planned_date") or a.get("planned_period") or TBC, a.get("auditor") or TBC,
           a.get("criteria") or TBC, status_label(a.get("status")),
           a.get("findings") or ("—" if a.get("status") != "completed" else TBC)]
          for a in audits],
@@ -355,18 +419,23 @@ def render_security_objectives(ctx: OrganisationContext, **_: Any) -> str:
     if objectives:
         lines += ["## 3. Planning", ""]
         for n, o in enumerate(objectives, start=1):
+            label = o.get("ref") or f"Objective {n}"
             lines += [
-                f"### Objective {n}",
+                f"### {label}",
                 "",
                 f"**Objective:** {_cell(o.get('objective'))}",
                 "",
-                f"- **What will be done:** {_cell(o.get('objective'))}",
-                f"- **Resources:** {o.get('resources') or TBC}",
+                f"- **What will be done:** {_one_line(o.get('planned_actions')) or TBC}",
+                f"- **Resources:** {_one_line(o.get('resources')) or TBC}",
                 f"- **Responsible:** {o.get('owner') or TBC}",
-                f"- **Completion:** {o.get('due_date') or TBC}",
+                f"- **Type:** {_OBJECTIVE_TYPES.get(o.get('type') or '', TBC)}",
+                f"- **Completion:** {_due(o)}",
+                f"- **Review date:** {o.get('review_date') or TBC}",
                 f"- **How results are evaluated:** {o.get('evaluation') or TBC}",
                 "",
             ]
+    lines += ["## 4. Results", ""]
+    lines += _results_lines(ctx)
     below = [
         c for c in ctx.all_controls
         if c.target_maturity and _level_index(c.maturity_level) is not None
@@ -374,7 +443,7 @@ def render_security_objectives(ctx: OrganisationContext, **_: Any) -> str:
         and _level_index(c.maturity_level) < _level_index(c.target_maturity)
     ]
     lines += [
-        "## 4. Supporting Indicators",
+        "## 5. Supporting Indicators",
         "",
         "These figures come from the platform and inform the objectives; they are not "
         "objectives in themselves.",
@@ -410,6 +479,111 @@ def render_communication_plan(ctx: OrganisationContext, **_: Any) -> str:
         "",
         "Records of significant communications (policy acknowledgements, incident and "
         "breach notifications, management review outputs) are retained as evidence.",
+    ]
+    return _done(lines)
+
+
+# ---------------------------------------------------------------------------
+# 9.1 Monitoring, Measurement, Analysis and Evaluation
+# ---------------------------------------------------------------------------
+
+
+def _evaluation_lines(e: Dict[str, Any]) -> List[str]:
+    """Who evaluated the results, when, and what they found. Never a name nobody recorded."""
+    if not e.get("evaluated_on"):
+        return [f"- **Last evaluation:** {_tbc('record who evaluated these results, when, and what they found')}"]
+    return [
+        f"- **Last evaluation:** {e['evaluated_on']} by {_one_line(e.get('evaluated_by')) or TBC}",
+        f"- **Evaluation note:** {_one_line(e.get('evaluation_note')) or TBC}",
+    ]
+
+
+def _source_text(r: Dict[str, Any]) -> str:
+    """"Logged by Alice", "Logged by collector patch-sla (key of Alice)", or the source alone.
+
+    A collector never hides the person whose key posted the value: the
+    document must trace every result to someone accountable.
+    """
+    source = r.get("source") or TBC
+    person, collector = r.get("entered_by"), r.get("collector")
+    if collector and person:
+        return f"{source} by collector {collector} (key of {person})"
+    if collector:
+        return f"{source} by collector {collector}"
+    if person:
+        return f"{source} by {person}"
+    return source
+
+
+def render_monitoring_measurement(ctx: OrganisationContext, **_: Any) -> str:
+    entries = ctx.isms_measurement or []
+    lines = _header(ctx, "Monitoring, Measurement, Analysis and Evaluation")
+    lines += [
+        "## 1. Purpose",
+        "",
+        f"This document records what {ctx.name} monitors and measures to evaluate its information "
+        "security performance and the effectiveness of the ISMS: the method, how often, who measures, "
+        "and when and by whom the results are analysed and evaluated (ISO/IEC 27001, clause 9.1). "
+        "Each measure supports an information security objective (clause 6.2).",
+        "",
+        "## 2. What Is Monitored and Measured",
+        "",
+    ]
+    if not entries:
+        lines += [_tbc("record measurable information security objectives in the ISMS Profile"), ""]
+    else:
+        lines += _table(
+            ["Ref", "Objective", "Metric", "Method", "Frequency", "Measured by"],
+            [[e.get("ref"), e.get("objective"), e.get("metric") or TBC, e.get("method") or TBC,
+              e.get("frequency_text") or TBC, e.get("measured_by") or TBC] for e in entries],
+        )
+    lines += ["## 3. Results and Evaluation", ""]
+    if not entries:
+        lines += ["No information security objectives have been set, so there are no results to report.", ""]
+    for e in entries:
+        status = e.get("status") or TBC
+        if e.get("status_as_of"):
+            status = f"{status} (as of {e['status_as_of']})"
+        lines += [
+            f"### {e.get('ref')}",
+            "",
+            f"**Objective:** {_cell(e.get('objective'))}",
+            "",
+            f"- **What is measured:** {_one_line(e.get('what_is_measured')) or TBC}",
+            f"- **Current status:** {status}",
+            f"- **How results are evaluated:** {_one_line(e.get('evaluation_method')) or TBC}",
+            f"- **Next review:** {e.get('review_date') or TBC}",
+            *_evaluation_lines(e),
+            "",
+        ]
+        results = e.get("results") or []
+        if e.get("kind") == "unset":
+            lines += [_tbc("choose a metric for this objective"), ""]
+        elif not results:
+            lines += ["No results have been stored for this objective yet.", ""]
+        else:
+            lines += _table(
+                ["Date", "Period", "Result", "Target at the time", "Status at the time", "Source"],
+                [[r.get("measured_on"), r.get("period"), r.get("value_text"), r.get("target") or TBC,
+                  r.get("status"), _source_text(r)] for r in results],
+            )
+    if entries:
+        lines += [
+            "Each result is judged against the target in force on the day it was measured. A live "
+            "metric shows the newest stored value of each of the last 12 months, a logged metric the "
+            "newest entry for each of its last 12 periods, and a milestone its newest 12 entries.",
+            "",
+        ]
+    lines += [
+        "## 4. How Results Are Used",
+        "",
+        "The results and their evaluation are an input to the management review (clause 9.3), which "
+        "considers the fulfilment of the information security objectives. Where an objective is at "
+        "risk or off track, a deficiency can be raised from it on the platform and is then tracked in "
+        "the Nonconformity and Corrective Action Register (clause 10.2).",
+        "",
+        "A new result or a new evaluation does not mark this document out of date. Generate it again "
+        "before each management review or audit so that it shows the results in force.",
     ]
     return _done(lines)
 
@@ -991,6 +1165,10 @@ def render_management_review(ctx: OrganisationContext, **_: Any) -> str:
         "| Objectives | " + (", ".join(f"{v} {status_label(k).lower()}" for k, v in sorted(obj_status.items()))
                              or "None recorded") + " |",
         "",
+        "### Fulfilment of Information Security Objectives",
+        "",
+        *_results_lines(ctx),
+        *_evaluation_count_lines(ctx),
         "### Feedback from Interested Parties",
         "",
         _tbc("record feedback received from interested parties"),
@@ -1174,6 +1352,7 @@ _MANUAL_REFERENCES = [
     ("communication-plan", "Communication Plan"),
     ("document-control", "Document and Record Control Procedure"),
     ("risk-assessment-report", "Risk Assessment Report"),
+    ("monitoring-measurement", "Monitoring, Measurement, Analysis and Evaluation"),
     ("internal-audit-programme", "Internal Audit Programme"),
     ("management-review", "Management Review"),
     ("nonconformity-register", "Nonconformity and Corrective Action Register"),

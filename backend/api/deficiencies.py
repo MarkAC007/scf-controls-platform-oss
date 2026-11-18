@@ -7,16 +7,17 @@ needs viewer; raising and updating need editor. A deficiency is never
 deleted: one raised in error is cancelled, and the record stays.
 """
 from datetime import date
-from typing import Annotated, List, Optional, Tuple
+from typing import Annotated, List, Literal, Optional, Tuple
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth import OrgMembership, assert_user_in_org, require_org_role
 from database import get_db
-from models import RiskAssessment, ScopedControl, VendorActionItem
+from models import RiskAssessment, ScopedControl, SecurityObjective, VendorActionItem
 from schemas import (
     ACTION_ITEM_STATUSES,
     DeficiencyCreate,
@@ -48,6 +49,38 @@ from services.deficiencies import (
 )
 
 router = APIRouter(tags=["deficiencies"])
+
+#: The one source a person may name when raising a deficiency by hand: an
+#: off-track security objective (clause 10.2 from 9.1). ``source_ref`` is
+#: then the objective's id as text; its reference (``OBJ-01``) goes in the
+#: title, because a reference can be reused after an archive and an id cannot.
+SOURCE_SECURITY_OBJECTIVE = "security_objective"
+
+
+class DeficiencyRaise(DeficiencyCreate):
+    """A deficiency raised by hand: against a control, a risk, or an objective."""
+
+    source: Optional[Literal["security_objective"]] = Field(
+        None, description="security_objective when raised from an objective; omit otherwise",
+    )
+    source_ref: Optional[str] = Field(
+        None, max_length=100, description="With source: the objective's id",
+    )
+
+    @model_validator(mode="after")
+    def _ref_goes_with_source(self) -> "DeficiencyRaise":
+        ref = self.source_ref.strip() if self.source_ref else None
+        if self.source is None and ref:
+            raise ValueError("source_ref is only accepted with a source")
+        if self.source is not None:
+            try:
+                ref = str(UUID(ref)) if ref else None
+            except ValueError:
+                raise ValueError("source_ref must be the objective's id") from None
+            if ref is None:
+                raise ValueError("source_ref is required with a source")
+        self.source_ref = ref
+        return self
 
 
 def _caller_id(membership: OrgMembership) -> Optional[UUID]:
@@ -131,6 +164,19 @@ async def resolve_subject(
         if known is None:
             raise HTTPException(status_code=422, detail=f"{risk_code} is not a risk this organisation has assessed")
     return scf_id, control_id, risk_code
+
+
+async def check_objective(db: AsyncSession, org_id: UUID, objective_id: str) -> None:
+    """The objective exists in this organisation and is not archived (422 otherwise)."""
+    found = await db.scalar(
+        select(SecurityObjective.id).where(
+            SecurityObjective.organization_id == org_id,
+            SecurityObjective.id == UUID(objective_id),
+            SecurityObjective.archived_at.is_(None),
+        )
+    )
+    if found is None:
+        raise HTTPException(status_code=422, detail="That objective is not one this organisation has open")
 
 
 async def audit_deficiency(db, request, org_id, item, action, user_id, old_values):
@@ -222,17 +268,29 @@ async def get_deficiency(
 )
 async def create_deficiency(
     org_id: UUID,
-    data: DeficiencyCreate,
+    data: DeficiencyRaise,
     request: Request,
     membership: OrgMembership = Depends(require_org_role("editor")),
     db: AsyncSession = Depends(get_db),
 ):
-    """Raise a deficiency against a control, a risk, or both. Requires editor."""
-    if not (data.scf_id and data.scf_id.strip()) and not (data.risk_code and data.risk_code.strip()):
+    """Raise a deficiency against a control, a risk, or both, or from a
+    security objective (``source`` ``security_objective``). Requires editor."""
+    # Internal callers may still pass the plain DeficiencyCreate, which has
+    # no source: that is a deficiency raised against a control or a risk.
+    source = getattr(data, "source", None)
+    source_ref = getattr(data, "source_ref", None)
+    from_objective = source == SOURCE_SECURITY_OBJECTIVE
+    if (
+        not from_objective
+        and not (data.scf_id and data.scf_id.strip())
+        and not (data.risk_code and data.risk_code.strip())
+    ):
         raise HTTPException(
             status_code=422, detail="A deficiency is raised against a control (scf_id), a risk (risk_code), or both"
         )
     scf_id, control_id, risk_code = await resolve_subject(db, org_id, data.scf_id, data.risk_code)
+    if from_objective:
+        await check_objective(db, org_id, source_ref)
     await check_owner(db, org_id, data.owner_user_id)
 
     item = VendorActionItem(
@@ -249,6 +307,8 @@ async def create_deficiency(
         owner_user_id=data.owner_user_id,
         due_date=data.due_date,
         auto_generated=False,
+        source=source,
+        source_ref=source_ref,
         root_cause=blank_to_none(data.root_cause),
     )
     db.add(item)
