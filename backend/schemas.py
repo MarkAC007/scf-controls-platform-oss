@@ -1617,10 +1617,12 @@ class EvidenceGapsResponse(BaseModel):
     """Response for evidence gap analysis endpoint.
 
     Scope-aware: the universe is the evidence at least one in-scope control
-    requests. A gap is required evidence that is not actively tracked;
-    coverage is tracked-required over required. Evidence that is tracked but
-    no in-scope control asks for is listed separately — it is work nobody
-    needs, not coverage.
+    requests. A gap is required evidence that is not tracked, so
+    total_tracked + total_gaps == total_evidence; coverage is tracked-required
+    over required. Evidence that is tracked but no in-scope control asks for
+    is listed separately — it is work nobody needs, not coverage. Required
+    evidence that is tracked but names no collecting system is tracked, and
+    is listed separately too.
     """
     total_gaps: int
     total_tracked: int
@@ -1630,6 +1632,10 @@ class EvidenceGapsResponse(BaseModel):
     tracked_not_required: List[str] = Field(
         default_factory=list,
         description="Tracked evidence ids that no in-scope control requests",
+    )
+    tracked_without_system: List[str] = Field(
+        default_factory=list,
+        description="Required, tracked evidence ids with no collecting system named",
     )
 
 

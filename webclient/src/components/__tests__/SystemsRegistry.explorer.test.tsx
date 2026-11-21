@@ -28,6 +28,15 @@ import SystemsRegistry from '../SystemsRegistry'
 import type { System, CollectionInterfacesFile } from '../../types'
 
 // ── Mock API calls ────────────────────────────────────────────────────────────
+// The viewer's role in the organisation, switchable per test. The suites above
+// the role-gating block run as 'admin'; that block (#1273) sets its own.
+const role = vi.hoisted(() => ({ rank: 'admin' as 'viewer' | 'editor' | 'admin' }))
+vi.mock('../../hooks/useHasOrgRole', () => {
+  const order = { viewer: 0, editor: 1, admin: 2 }
+  const has = (_org: unknown, min: 'viewer' | 'editor' | 'admin') => order[role.rank] >= order[min]
+  return { useHasOrgRole: has, useIsOrgEditor: (org: unknown) => has(org, 'editor') }
+})
+
 vi.mock('../../data/apiClient', () => ({
   getSystems: vi.fn(),
   deleteSystem: vi.fn(),
@@ -270,5 +279,30 @@ describe('SystemsRegistry — Explorer chrome (Phase 3 Task 6)', () => {
     const titleEls = document.querySelectorAll('.explorer-row-title')
     expect(titleEls.length).toBe(1)
     expect(titleEls[0].textContent).toBe('Legacy SIEM')
+  })
+})
+
+// ── Role gating (#1273) ─────────────────────────────────────────────────────
+import { afterEach as afterEachRoleTest } from 'vitest'
+
+describe('SystemsRegistry — what each role is offered', () => {
+  afterEachRoleTest(() => { role.rank = 'admin' })
+
+  it('offers a viewer no Add, Edit or Delete', async () => {
+    role.rank = 'viewer'
+    renderRegistry()
+    expect(await screen.findByText(systems[0].name)).toBeInTheDocument()
+    expect(document.querySelector('.system-explorer-add-btn')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument()
+  })
+
+  it.each(['editor', 'admin'] as const)('offers an %s Add, Edit and Delete', async (rank) => {
+    role.rank = rank
+    renderRegistry()
+    expect(await screen.findByText(systems[0].name)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '+ Add System' })).toBeEnabled()
+    expect(screen.getAllByRole('button', { name: 'Edit' })).toHaveLength(systems.length)
+    expect(screen.getAllByRole('button', { name: 'Delete' })).toHaveLength(systems.length)
   })
 })

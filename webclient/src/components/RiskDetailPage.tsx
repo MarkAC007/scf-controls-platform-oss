@@ -342,56 +342,60 @@ export default function RiskDetailPage({
 
   // ── Debounced auto-save ───────────────────────────────────────────────────
 
-  // Every field changed since the last save. Two changes can land in one
-  // render (both waiting on the same approval question), and each call below
-  // closes over that render's state: without this the second save drops the
-  // first change.
-  const pendingUpdatesRef = useRef<Partial<RiskAssessmentUpdate>>({})
+  // The fields changed since the last save, and the risk they belong to. A
+  // save sends these and nothing else (#1275): the rest of the form is what
+  // this page loaded, and sending it back undoes whatever a colleague has
+  // saved to those fields since. Two changes can also land in one render
+  // (both waiting on the same approval question), so they collect here
+  // rather than in each call's closure.
+  const pendingSaveRef = useRef<{ riskCode: string; updates: Partial<RiskAssessmentUpdate> } | null>(null)
+  const shownRiskRef = useRef(riskCode)
+  shownRiskRef.current = riskCode
+
+  // What is left here with no save scheduled is a change whose save failed.
+  // It is not carried to another risk, or back to this one once the form has
+  // been reloaded from the server.
+  useEffect(() => {
+    if (!saveTimeoutRef.current) pendingSaveRef.current = null
+  }, [riskCode])
 
   const debouncedSave = useCallback(
     (updates: Partial<RiskAssessmentUpdate>) => {
       if (!assessment) return
-      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current)
-      setSaving(true)
-      pendingUpdatesRef.current = { ...pendingUpdatesRef.current, ...updates }
-      saveTimeoutRef.current = setTimeout(async () => {
-        const pending = pendingUpdatesRef.current
-        pendingUpdatesRef.current = {}
+      const send = async (save: { riskCode: string; updates: Partial<RiskAssessmentUpdate> }) => {
         try {
-          await onSave(assessment.risk_code, {
-            likelihood,
-            impact,
-            residual_likelihood: residualLikelihood,
-            residual_impact: residualImpact,
-            treatment_status: treatmentStatus,
-            treatment_plan: treatmentPlan || null,
-            treatment_due_date: treatmentDueDate || null,
-            owner_user_id: ownerUserId,
-            next_review_date: nextReviewDate || null,
-            notes: notes || null,
-            ...pending,
-          })
+          await onSave(save.riskCode, save.updates)
         } catch (error) {
           console.error('Failed to save risk assessment:', error)
+          // Kept for the next save, under anything changed since, while the
+          // form still shows this risk as the user left it.
+          const newer = pendingSaveRef.current
+          if (shownRiskRef.current === save.riskCode && (!newer || newer.riskCode === save.riskCode)) {
+            pendingSaveRef.current = { riskCode: save.riskCode, updates: { ...save.updates, ...newer?.updates } }
+          }
         } finally {
           setSaving(false)
         }
+      }
+      const riskCode = assessment.risk_code
+      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current)
+      setSaving(true)
+      const held = pendingSaveRef.current
+      // A change to the previous risk still inside its debounce window is
+      // saved to that risk now, not merged into this one's.
+      if (held && held.riskCode !== riskCode) void send(held)
+      pendingSaveRef.current = {
+        riskCode,
+        updates: { ...(held?.riskCode === riskCode ? held.updates : {}), ...updates },
+      }
+      saveTimeoutRef.current = setTimeout(() => {
+        saveTimeoutRef.current = null
+        const pending = pendingSaveRef.current
+        pendingSaveRef.current = null
+        if (pending) void send(pending)
       }, 500)
     },
-    [
-      assessment,
-      onSave,
-      likelihood,
-      impact,
-      residualLikelihood,
-      residualImpact,
-      treatmentStatus,
-      treatmentPlan,
-      treatmentDueDate,
-      ownerUserId,
-      nextReviewDate,
-      notes,
-    ],
+    [assessment, onSave],
   )
 
   // An approval in force is withdrawn by the server on a re-score or (by an

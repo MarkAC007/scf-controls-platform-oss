@@ -11,6 +11,7 @@ import {
   refreshOidcToken,
   clearAuthSession,
 } from '../data/authToken'
+import { clearOrgRoleCache } from '../hooks/orgRoleLookup'
 
 interface User {
   id: string
@@ -258,6 +259,8 @@ function OidcAuthProvider({ children }: { children: ReactNode }) {
       }).catch(() => {})
     }
     clearAuthSession()
+    // The next person to sign in on this tab must not start from this one's role.
+    clearOrgRoleCache()
     setToken(null)
     setUser(null)
   }
@@ -460,6 +463,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = () => {
     localStorage.removeItem('google_token')
+    clearOrgRoleCache()
     setToken(null)
     setUser(null)
     console.log('👋 User signed out')

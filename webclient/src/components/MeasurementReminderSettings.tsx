@@ -16,7 +16,7 @@ import { toast } from 'react-hot-toast'
 
 import { updateOrganizationSettings } from '../data/apiClient'
 import { useOrganizationSettings } from '../hooks/useOrganizationSettings'
-import { useIsOrgAdmin } from '../hooks/useIsOrgAdmin'
+import { useOrgRoleState } from '../hooks/useHasOrgRole'
 
 interface MeasurementReminderSettingsProps {
   organizationId: string
@@ -46,7 +46,8 @@ function messageOf(err: unknown, fallback: string): string {
 
 export default function MeasurementReminderSettings({ organizationId }: MeasurementReminderSettingsProps) {
   const { data: orgSettings, refetch } = useOrganizationSettings(organizationId)
-  const isAdmin = useIsOrgAdmin(organizationId)
+  // The "only an administrator" line waits until the role is known to be missing.
+  const { allowed: isAdmin, resolved: roleResolved } = useOrgRoleState(organizationId, 'admin')
 
   const savedDays = orgSettings?.isms_measurement_reminder_days ?? DEFAULT_REMINDER_DAYS
   const [days, setDays] = useState(savedDays)
@@ -101,11 +102,11 @@ export default function MeasurementReminderSettings({ organizationId }: Measurem
             {saving ? 'Saving...' : 'Save reminder timing'}
           </button>
         </div>
-      ) : (
+      ) : roleResolved ? (
         <p className="settings-card-sub assessment-engine-muted">
           Only an organisation administrator can change the reminder timing.
         </p>
-      )}
+      ) : null}
     </div>
   )
 }

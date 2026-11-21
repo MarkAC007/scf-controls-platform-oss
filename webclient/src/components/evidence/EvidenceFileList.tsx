@@ -778,6 +778,7 @@ export function EvidenceFileList({
           onDownload={handleDownloadFromModal}
           onDelete={handleDeleteFromModal}
           isDeleting={deletingIds.has(previewFile.id)}
+          canDelete={canDelete}
         />
       )}
     </div>

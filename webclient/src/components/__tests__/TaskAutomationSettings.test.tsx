@@ -29,8 +29,10 @@ vi.mock('../../hooks/useOrganizationSettings', () => ({
 }))
 
 let admin = true
-vi.mock('../../hooks/useIsOrgAdmin', () => ({
-  useIsOrgAdmin: () => admin,
+// roleKnown false is the window before the membership lookup returns.
+let roleKnown = true
+vi.mock('../../hooks/useHasOrgRole', () => ({
+  useOrgRoleState: () => ({ allowed: roleKnown && admin, resolved: roleKnown }),
 }))
 
 vi.mock('react-hot-toast', () => ({
@@ -44,6 +46,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   settings = undefined
   admin = true
+  roleKnown = true
   mockUpdate.mockResolvedValue({} as never)
 })
 
@@ -74,6 +77,15 @@ describe('TaskAutomationSettings', () => {
     await userEvent.click(save)
     await waitFor(() => expect(mockUpdate).toHaveBeenCalledWith(ORG, { auto_task_generation_enabled: false }))
     expect(mockRefetch).toHaveBeenCalled()
+  })
+
+  it('renders read-only, without the administrator line, while the role is not yet known', () => {
+    roleKnown = false
+    settings = { auto_task_generation_enabled: true }
+    render(<TaskAutomationSettings organizationId={ORG} />)
+    expect(screen.getByRole('switch', { name: 'Automatic task creation' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Save task automation' })).toBeNull()
+    expect(screen.queryByText(/Only an organisation administrator/)).toBeNull()
   })
 
   it('renders read-only below admin', () => {

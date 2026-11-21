@@ -15,7 +15,7 @@ import { toast } from 'react-hot-toast'
 
 import { updateOrganizationSettings } from '../data/apiClient'
 import { useOrganizationSettings } from '../hooks/useOrganizationSettings'
-import { useIsOrgAdmin } from '../hooks/useIsOrgAdmin'
+import { useOrgRoleState } from '../hooks/useHasOrgRole'
 
 interface TaskAutomationSettingsProps {
   organizationId: string
@@ -27,7 +27,8 @@ function messageOf(err: unknown, fallback: string): string {
 
 export default function TaskAutomationSettings({ organizationId }: TaskAutomationSettingsProps) {
   const { data: orgSettings, refetch } = useOrganizationSettings(organizationId)
-  const isAdmin = useIsOrgAdmin(organizationId)
+  // The "only an administrator" line waits until the role is known to be missing.
+  const { allowed: isAdmin, resolved: roleResolved } = useOrgRoleState(organizationId, 'admin')
 
   // Absent means on: the backend's default, and what every organisation had
   // before the switch existed.
@@ -96,11 +97,11 @@ export default function TaskAutomationSettings({ organizationId }: TaskAutomatio
             {saving ? 'Saving...' : 'Save task automation'}
           </button>
         </div>
-      ) : (
+      ) : roleResolved ? (
         <p className="settings-card-sub assessment-engine-muted">
           Only an organisation administrator can change task automation.
         </p>
-      )}
+      ) : null}
     </div>
   )
 }

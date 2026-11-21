@@ -19,6 +19,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 import { toast } from 'react-hot-toast'
+import { useOrgRoleState } from '../hooks/useHasOrgRole'
 import {
   addTeamMember,
   archiveTeam,
@@ -194,6 +195,10 @@ function memberWithRole(
 
 export default function TeamManagement({ organizationId }: TeamManagementProps) {
   const confirm = useConfirm()
+  // Every team write (create, edit, archive, membership) is admin-only on the API.
+  // The controls stay withheld until the role is known; the sentence saying so
+  // is only added once it is known that the viewer is not an admin.
+  const { allowed: isAdmin, resolved: roleResolved } = useOrgRoleState(organizationId, 'admin')
   const [functions, setFunctions] = useState<OrgFunction[]>([])
   const [teams, setTeams] = useState<TeamDetail[]>([])
   const [orgUsers, setOrgUsers] = useState<UserSimple[]>([])
@@ -512,6 +517,8 @@ export default function TeamManagement({ organizationId }: TeamManagementProps) 
     return (
       <div className="team-detail">
         {team.description && <p className="team-detail-description">{team.description}</p>}
+        {/* One switch for every control in the detail: a non-admin reads it, an admin edits it. */}
+        <fieldset disabled={!isAdmin} style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
 
         <div className="team-create-field">
           <label htmlFor={`team-functions-${team.id}`}>Business functions</label>
@@ -716,6 +723,7 @@ export default function TeamManagement({ organizationId }: TeamManagementProps) 
             </span>
           )}
         </div>
+        </fieldset>
       </div>
     )
   }
@@ -747,13 +755,15 @@ export default function TeamManagement({ organizationId }: TeamManagementProps) 
             />
             Show archived teams
           </label>
-          <button
-            type="button"
-            className="btn-team-primary"
-            onClick={() => setShowCreateForm(prev => !prev)}
-          >
-            {showCreateForm ? 'Cancel' : 'New team'}
-          </button>
+          {isAdmin && (
+            <button
+              type="button"
+              className="btn-team-primary"
+              onClick={() => setShowCreateForm(prev => !prev)}
+            >
+              {showCreateForm ? 'Cancel' : 'New team'}
+            </button>
+          )}
         </div>
       </div>
 
@@ -766,6 +776,7 @@ export default function TeamManagement({ organizationId }: TeamManagementProps) 
         <span>
           Teams describe who is answerable for what. They grant no access:
           permissions come from organisation roles, set under User Management.
+          {roleResolved && !isAdmin && ' Only an admin can create, change or archive a team.'}
         </span>
       </div>
 
@@ -776,7 +787,7 @@ export default function TeamManagement({ organizationId }: TeamManagementProps) 
         </div>
       )}
 
-      {showCreateForm && (
+      {isAdmin && showCreateForm && (
         <form className="team-create-form" onSubmit={handleCreate}>
           <div className="team-create-field">
             <label htmlFor="team-name">Team name</label>
@@ -830,9 +841,11 @@ export default function TeamManagement({ organizationId }: TeamManagementProps) 
       {groups.length === 0 ? (
         <div className="team-empty-state">
           <p>No teams yet.</p>
-          <p className="subtitle">
-            Create one to describe how your organisation is structured.
-          </p>
+          {isAdmin && (
+            <p className="subtitle">
+              Create one to describe how your organisation is structured.
+            </p>
+          )}
         </div>
       ) : (
         groups.map(group => (
@@ -892,6 +905,7 @@ export default function TeamManagement({ organizationId }: TeamManagementProps) 
                           : <span className="team-row-role-empty">Not assigned</span>}
                       </span>
                       {renderWarnings(team)}
+                      {isAdmin && (
                       <span className="team-row-actions">
                         {team.is_active ? (
                           <button
@@ -912,6 +926,7 @@ export default function TeamManagement({ organizationId }: TeamManagementProps) 
                           </button>
                         )}
                       </span>
+                      )}
                     </div>
                     {expanded && renderTeamDetail(team)}
                   </div>

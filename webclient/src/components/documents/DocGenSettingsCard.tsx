@@ -18,6 +18,7 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'react-hot-toast'
 import { useConfirm } from '../../contexts/ConfirmContext'
+import { useHasOrgRole } from '../../hooks/useHasOrgRole'
 import {
   getDocGenSettings,
   getProfilePreview,
@@ -116,14 +117,19 @@ export function describeProfileOutput(profile: DocumentProfile): string {
 
 interface Props {
   organizationId: string
-  /** Admin-only actions are hidden for non-admins; the API refuses them too. */
+  /**
+   * Admin-only actions are hidden for non-admins; the API refuses them too.
+   * Left out, the card works it out from the viewer's role in the organisation.
+   */
   canAdminister?: boolean
 }
 
 export const DOC_GEN_ADMIN_DOC_URL =
   'https://docs.scfcontrolsplatform.app/admin-guide/document-generation/'
 
-export default function DocGenSettingsCard({ organizationId, canAdminister = true }: Props) {
+export default function DocGenSettingsCard({ organizationId, canAdminister: canAdministerProp }: Props) {
+  const isAdmin = useHasOrgRole(organizationId, 'admin')
+  const canAdminister = canAdministerProp ?? isAdmin
   const queryClient = useQueryClient()
   const [acknowledging, setAcknowledging] = useState(false)
 

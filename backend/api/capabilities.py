@@ -859,14 +859,18 @@ async def get_evidence_gaps(
 
     The universe is the evidence at least one in-scope control requests
     (``services.scoping_service.required_controls_by_evidence``). A gap is
-    required evidence that is not actively tracked (is_tracked with a
-    collecting system); capable systems are attached when any exist, but
-    their absence does not hide the gap — the control still needs the
-    evidence. Evidence that is tracked but nothing in scope asks for is
-    reported in ``tracked_not_required`` and counts toward neither gaps nor
-    coverage. Before this the endpoint iterated tracking rows and reported a
-    gap only where a system claimed a capability, which on a tenant with a
-    large un-scope reported zero gaps over dozens of untracked requirements.
+    required evidence that is not tracked (is_tracked false or no tracking
+    row), so ``total_tracked + total_gaps == total_evidence`` and the figures
+    agree with the dashboard's "Evidence tracked" tile; capable systems are
+    attached when any exist, but their absence does not hide the gap — the
+    control still needs the evidence. Required evidence that is tracked but
+    names no collecting system is tracked, not a gap; it is listed in
+    ``tracked_without_system``. Evidence that is tracked but nothing in scope
+    asks for is reported in ``tracked_not_required`` and counts toward neither
+    gaps nor coverage. Before this the endpoint iterated tracking rows and
+    reported a gap only where a system claimed a capability, which on a tenant
+    with a large un-scope reported zero gaps over dozens of untracked
+    requirements.
     """
     # Organization existence verified by require_org_role
 
@@ -902,15 +906,15 @@ async def get_evidence_gaps(
             capabilities_by_evidence[cap.evidence_id] = []
         capabilities_by_evidence[cap.evidence_id].append(cap)
 
-    def _actively_tracked(tracking) -> bool:
-        return bool(tracking is not None and tracking.is_tracked and tracking.collecting_system)
-
     gaps = []
     total_tracked = 0
+    tracked_without_system = []
     for evidence_id in sorted(required_by):
         tracking = tracking_entries.get(evidence_id)
-        if _actively_tracked(tracking):
+        if tracking is not None and tracking.is_tracked:
             total_tracked += 1
+            if not tracking.collecting_system:
+                tracked_without_system.append(evidence_id)
             continue
 
         capabilities = capabilities_by_evidence.get(evidence_id, [])
@@ -931,8 +935,6 @@ async def get_evidence_gaps(
                 recommended_action = f"{best_system_name} is already active - link it to tracking"
             elif best_cap.capability_status == "configured":
                 recommended_action = f"Activate collection in {best_system_name}"
-        elif tracking is not None and tracking.is_tracked:
-            recommended_action = "Tracked without a collecting system - name the system that provides it"
         else:
             recommended_action = "Start tracking this evidence and name a collecting system"
 
@@ -964,6 +966,7 @@ async def get_evidence_gaps(
         coverage_percentage=round(coverage_percentage, 1),
         gaps=gaps,
         tracked_not_required=tracked_not_required,
+        tracked_without_system=tracked_without_system,
     )
 
 

@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { useMemo } from 'react'
-import type { EnrichedControl, ScopedControlsFile, ImplementationStatus, EvidenceMaturityLevel } from '../types'
+import type { EnrichedControl, ScopedControl, ScopedControlsFile, ImplementationStatus, EvidenceMaturityLevel, TeamAssignment } from '../types'
 import { getScopedControl, getEvidenceTracking } from '../data/scopingService'
 import { evidenceOwnerLabel } from '../data/userDisplay'
+import { useTeamAssignments, assignmentTeamName } from './useTeamAssignments'
 
 export interface DashboardStats {
   selectedCount: number
@@ -31,10 +32,39 @@ export interface DashboardStats {
   evidenceMaturityDistribution: Record<EvidenceMaturityLevel, number>
 }
 
+/**
+ * Controls per accountable team, for the dashboard's "Controls by owner" card.
+ *
+ * Ownership is the accountable team assignment, the same lookup the Control
+ * Library's owner column uses, not the legacy free-text `owner` column, which
+ * nothing writes any more (#1277). A control no team is accountable for counts
+ * as 'Unassigned'. Rows are keyed on the team name alone so a team's controls
+ * stay in one row whoever leads it.
+ */
+export function countControlsByAccountableTeam(
+  scopedControls: Array<ScopedControl | undefined>,
+  accountableFor: (itemId: string) => TeamAssignment | null
+): Record<string, number> {
+  const controlsByTeam: Record<string, number> = {}
+  scopedControls.forEach(scoped => {
+    const team = assignmentTeamName(scoped?.id ? accountableFor(scoped.id) : null) ?? 'Unassigned'
+    controlsByTeam[team] = (controlsByTeam[team] || 0) + 1
+  })
+  return controlsByTeam
+}
+
 export function useDashboardStats(
   controls: EnrichedControl[],
   scopingData: ScopedControlsFile
 ): DashboardStats {
+  // The scoping payload is already entirely in memory, so read the whole
+  // organisation's control assignments once rather than by id.
+  const {
+    accountableFor,
+    loading: teamsLoading,
+    error: teamsError,
+  } = useTeamAssignments(scopingData.organizationId, 'control')
+
   return useMemo(() => {
     const selectedControls = controls.filter(c => {
       const scoped = getScopedControl(scopingData, c.scf_id)
@@ -149,13 +179,15 @@ export function useDashboardStats(
 
     frameworkStats.sort((a, b) => b.totalControls - a.totalControls)
 
-    // Controls by Owner Team
-    const controlsByTeam: Record<string, number> = {}
-    selectedControls.forEach(c => {
-      const scoped = getScopedControl(scopingData, c.scf_id)
-      const team = scoped?.owner || 'Unassigned'
-      controlsByTeam[team] = (controlsByTeam[team] || 0) + 1
-    })
+    // Controls by accountable team. Until the assignments have loaded there
+    // is nothing true to show: counting now would report every control as
+    // Unassigned.
+    const controlsByTeam = teamsLoading || teamsError
+      ? {}
+      : countControlsByAccountableTeam(
+          selectedControls.map(c => getScopedControl(scopingData, c.scf_id)),
+          accountableFor
+        )
 
     // Maturity level stats
     const maturityCounts: Record<string, number> = {
@@ -253,5 +285,5 @@ export function useDashboardStats(
       frameworkStats,
       evidenceMaturityDistribution
     }
-  }, [controls, scopingData])
+  }, [controls, scopingData, accountableFor, teamsLoading, teamsError])
 }

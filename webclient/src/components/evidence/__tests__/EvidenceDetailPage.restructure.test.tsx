@@ -28,6 +28,7 @@ const trackingRow = vi.hoisted(() => ({ current: null as { id?: string } | null 
 vi.mock('../../../hooks/useHasOrgRole', () => ({
   useHasOrgRole: () => false,
   useIsOrgEditor: () => false,
+  useOrgRoleState: () => ({ allowed: false, resolved: true }),
 }))
 vi.mock('../../maturity', () => ({
   MaturityBadge: () => <span data-testid="maturity-badge" />,

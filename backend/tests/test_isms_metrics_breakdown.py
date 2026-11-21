@@ -671,6 +671,28 @@ def test_same_measure_rules():
     assert not same(live, None)
 
 
+def _logged(period, value, entered=TODAY, seq=0):
+    return {**_result(entered, value, source="logged", created=datetime.combine(entered, datetime.min.time())
+                      + timedelta(seconds=seq)), "period_start": period}
+
+
+def test_change_dates_a_logged_reading_on_the_period_it_covers_not_the_day_it_was_entered():
+    """#1280: back-filled readings were all "in the last 60 days" because they were typed in today."""
+    logged = ObjectiveMetric(kind="logged", unit="percent")
+    # June 10%, July 20%, November 50%, all entered today: only November is recent.
+    backfilled = [_logged(date(2026, 11, 1), 50, seq=2), _logged(date(2026, 7, 1), 20, seq=1),
+                  _logged(date(2026, 6, 1), 10, seq=0)]
+    assert service.change_over(backfilled, logged, TODAY) is None
+    # Two periods inside the window still give a change line, ordered by period whatever the entry order.
+    recent = [_logged(date(2026, 10, 1), 40, seq=2), _logged(date(2026, 11, 1), 50, seq=1),
+              _logged(date(2026, 6, 1), 10, seq=0)]
+    change = service.change_over(recent, logged, TODAY)
+    assert change == {"delta": 10.0, "days": 60, "text": "up 10 points in the last 60 days, to the last stored measurement"}
+    # A reading without a period keeps the day it was measured on.
+    assert service.change_over([_logged(None, 50), _logged(None, 30, entered=TODAY - timedelta(days=30))],
+                               logged, TODAY)["delta"] == 20.0
+
+
 def test_change_leaves_out_results_under_another_measure():
     live = ObjectiveMetric(kind="live", unit="percent")
     rows = [_result(TODAY, 90), _result(TODAY - timedelta(days=30), 40)]

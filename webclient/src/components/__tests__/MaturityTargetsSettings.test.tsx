@@ -21,6 +21,8 @@ import MaturityTargetsSettings from '../MaturityTargetsSettings'
 
 const state = vi.hoisted(() => ({
   admin: true,
+  // false is the window before the membership lookup returns.
+  roleKnown: true,
   settings: undefined as Record<string, unknown> | undefined,
   settingsError: null as Error | null,
   domainsError: false,
@@ -52,7 +54,9 @@ vi.mock('../../hooks/useCatalogFilters', () => ({
     error: state.domainsError ? new Error('Catalogue unavailable') : null,
   }),
 }))
-vi.mock('../../hooks/useIsOrgAdmin', () => ({ useIsOrgAdmin: () => state.admin }))
+vi.mock('../../hooks/useHasOrgRole', () => ({
+  useOrgRoleState: () => ({ allowed: state.roleKnown && state.admin, resolved: state.roleKnown }),
+}))
 vi.mock('react-hot-toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
 function renderCard() {
@@ -70,6 +74,7 @@ describe('MaturityTargetsSettings', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     state.admin = true
+    state.roleKnown = true
     state.settingsError = null
     state.domainsError = false
     state.settings = { maturity_targets: { gov: 'L3', RSK: 'L2' } }
@@ -167,6 +172,14 @@ describe('MaturityTargetsSettings', () => {
     renderCard()
     expect(screen.getByRole('alert')).toHaveTextContent('Catalogue unavailable')
     expect(screen.queryByRole('button', { name: 'Save maturity targets' })).not.toBeInTheDocument()
+  })
+
+  it('is read-only, without the administrator line, while the role is not yet known', () => {
+    state.roleKnown = false
+    renderCard()
+    expect(screen.getByLabelText('GOV target')).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Save maturity targets' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/Only an organisation administrator/)).not.toBeInTheDocument()
   })
 
   it('is read-only below admin', () => {

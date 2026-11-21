@@ -23,10 +23,22 @@ import { describe, expect, it, vi, afterEach } from 'vitest'
 // layout and keyboard behaviour, so the role is stubbed rather than provided
 // through a real AuthProvider — the gate itself is covered in
 // hooks/__tests__/useHasOrgRole.test.ts.
-vi.mock('../../../hooks/useHasOrgRole', () => ({
-  useHasOrgRole: () => false,
-  useIsOrgEditor: () => false,
-}))
+// The viewer's role in the organisation, switchable per test. The suites above
+// the role-gating block run as 'viewer'; that block (#1273) sets its own.
+const role = vi.hoisted(() => ({ rank: 'viewer' as 'viewer' | 'editor' | 'admin' | 'unknown' }))
+vi.mock('../../../hooks/useHasOrgRole', () => {
+  const order: Record<string, number> = { viewer: 0, editor: 1, admin: 2 }
+  // 'unknown' is the window before the membership lookup returns: nothing is allowed yet.
+  const has = (_org: unknown, min: 'viewer' | 'editor' | 'admin') => order[role.rank] >= order[min]
+  return {
+    useHasOrgRole: has,
+    useIsOrgEditor: (org: unknown) => has(org, 'editor'),
+    useOrgRoleState: (org: unknown, min: 'viewer' | 'editor' | 'admin') => ({
+      allowed: has(org, min),
+      resolved: role.rank !== 'unknown',
+    }),
+  }
+})
 vi.mock('../MaturityStepper', () => ({
   MaturityStepper: () => <div data-testid="maturity-stepper" />,
 }))
@@ -461,5 +473,38 @@ describe('EvidenceDetailPage', () => {
       fireEvent.keyDown(window, { key: 'Escape' })
       expect(onBack).toHaveBeenCalledTimes(2)
     })
+  })
+})
+
+// ── Role gating (#1273) ─────────────────────────────────────────────────────
+import { afterEach as afterEachRoleTest } from 'vitest'
+
+describe('EvidenceDetailPage — who is offered the upload zone', () => {
+  afterEachRoleTest(() => { role.rank = 'viewer' })
+
+  it('shows a viewer the file list with a note in place of the upload zone', () => {
+    role.rank = 'viewer'
+    render(<EvidenceDetailPage {...makeProps()} />)
+    expect(screen.getByTestId('evidence-file-list')).toBeInTheDocument()
+    expect(screen.queryByTestId('evidence-file-upload')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('untracked-upload-notice')).not.toBeInTheDocument()
+    expect(screen.getByTestId('evidence-upload-readonly')).toHaveTextContent('needs the editor role')
+  })
+
+  it('shows neither the upload zone nor the note while the role is not yet known', () => {
+    role.rank = 'unknown'
+    render(<EvidenceDetailPage {...makeProps()} />)
+    expect(screen.getByTestId('evidence-file-list')).toBeInTheDocument()
+    expect(screen.queryByTestId('evidence-file-upload')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('untracked-upload-notice')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('evidence-upload-readonly')).not.toBeInTheDocument()
+  })
+
+  it.each(['editor', 'admin'] as const)('offers an %s the upload zone', (rank) => {
+    role.rank = rank
+    render(<EvidenceDetailPage {...makeProps()} />)
+    expect(screen.getByTestId('evidence-file-upload')).toBeInTheDocument()
+    expect(screen.getByTestId('untracked-upload-notice')).toBeInTheDocument()
+    expect(screen.queryByTestId('evidence-upload-readonly')).not.toBeInTheDocument()
   })
 })

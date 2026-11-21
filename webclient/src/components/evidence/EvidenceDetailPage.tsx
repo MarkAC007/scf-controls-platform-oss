@@ -42,7 +42,7 @@ import { frequencyOptionsFor } from '../../data/frequencyVocabulary'
 import { userLabel } from '../../data/userDisplay'
 import { PER_WINDOW_REVIEW_ENABLED } from '../../data/featureFlags'
 import { getEvidenceTracking } from '../../data/scopingService'
-import { useIsOrgEditor } from '../../hooks/useHasOrgRole'
+import { useOrgRoleState } from '../../hooks/useHasOrgRole'
 import DetailSplitLayout from '../explorer/DetailSplitLayout'
 import { keyEventBelongsToModal } from '../../hooks/useModalDismiss'
 
@@ -150,7 +150,10 @@ export default function EvidenceDetailPage({
   // Derived here rather than in ``EvidenceReview`` — the other permission on
   // this page (``canManageTeams``) arrives as a prop, and that remains the
   // grain for anything a sibling screen also needs.
-  const canReviewFiles = useIsOrgEditor(scopingData.organizationId)
+  const { allowed: canReviewFiles, resolved: roleResolved } = useOrgRoleState(
+    scopingData.organizationId,
+    'editor',
+  )
 
   // ── Keyboard shortcuts ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -405,22 +408,31 @@ export default function EvidenceDetailPage({
             <span className="container-title">Your Evidence Files</span>
           </div>
           <div className="container-content">
-            {!isTracked && (
+            {canReviewFiles && !isTracked && (
               <UntrackedUploadNotice
                 onStartTracking={() =>
                   onUpdateTracking(evidenceItem.id, 'is_tracked', true)
                 }
               />
             )}
-            <EvidenceFileUpload
-              orgId={scopingData.organizationId}
-              evidenceId={evidenceItem.id}
-              onUploadComplete={onFileUploaded}
-            />
+            {/* Upload and file deletion need the editor role, like review. The note
+                waits until the role is known to be missing. */}
+            {canReviewFiles ? (
+              <EvidenceFileUpload
+                orgId={scopingData.organizationId}
+                evidenceId={evidenceItem.id}
+                onUploadComplete={onFileUploaded}
+              />
+            ) : roleResolved ? (
+              <p className="form-hint" data-testid="evidence-upload-readonly">
+                You can view these files. Uploading, reviewing or deleting one needs the editor role.
+              </p>
+            ) : null}
             <EvidenceFileList
               orgId={scopingData.organizationId}
               evidenceId={evidenceItem.id}
               refreshTrigger={fileListRefreshTrigger}
+              canDelete={canReviewFiles}
               canReview={canReviewFiles}
               canAssess={canReviewFiles}
             />

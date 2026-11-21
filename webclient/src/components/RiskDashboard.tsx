@@ -43,6 +43,7 @@ import { useRiskProfile } from '../contexts/RiskProfileContext'
 import { useModalDismiss } from '../hooks/useModalDismiss'
 import { saveOutcome } from './RiskAcceptancePanel'
 import { useRiskCatalog } from '../hooks/useRiskCatalog'
+import { useIsOrgEditor } from '../hooks/useHasOrgRole'
 
 interface RiskDashboardProps {
   organizationId: string
@@ -61,6 +62,7 @@ export default function RiskDashboard({ organizationId, onNavigateToControl, ris
   // install whose catalogue predates it): the register still renders, the
   // custom risks still work, and the notice below says what to run.
   const riskCatalog = useRiskCatalog()
+  const canEdit = useIsOrgEditor(organizationId)
 
   // State
   const [assessments, setAssessments] = useState<RiskAssessment[]>([])
@@ -447,14 +449,16 @@ export default function RiskDashboard({ organizationId, onNavigateToControl, ris
 
         {/* View mode + matrix type toggles + Add Custom Risk pushed to the right */}
         <div className="risk-level-strip-controls">
-          {/* + Add Custom Risk button — always visible */}
-          <button
-            className="risk-add-custom-btn"
-            onClick={() => setShowCreateModal(true)}
-            title="Create a custom risk code"
-          >
-            + Add Custom Risk
-          </button>
+          {/* + Add Custom Risk button — editors and admins (the API refuses a viewer) */}
+          {canEdit && (
+            <button
+              className="risk-add-custom-btn"
+              onClick={() => setShowCreateModal(true)}
+              title="Create a custom risk code"
+            >
+              + Add Custom Risk
+            </button>
+          )}
 
           {/* Matrix type toggle */}
           <div className="toggle-group">

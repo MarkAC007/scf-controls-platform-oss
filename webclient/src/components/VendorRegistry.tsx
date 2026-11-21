@@ -10,6 +10,7 @@ import {
   vendorRiskLevelToRAG
 } from '../types'
 import { getVendors } from '../data/apiClient'
+import { useHasOrgRole, useOrgRoleState } from '../hooks/useHasOrgRole'
 import FilterSidebar, { FilterGroup, FilterSelect, defaultFiltersCollapsed } from './explorer/FilterSidebar'
 import ListToolbar from './explorer/ListToolbar'
 import ExplorerListRow, { RowMeta } from './explorer/ListRow'
@@ -69,6 +70,9 @@ export const VendorRegistry: React.FC<VendorRegistryProps> = ({
   const [criticalityFilter, setCriticalityFilter] = useState<VendorCriticality | 'all'>('all')
   const [categoryFilter, setCategoryFilter] = useState<string>('all')
   const [filtersCollapsed, setFiltersCollapsed] = useState(defaultFiltersCollapsed)
+  // The API takes a new vendor from an editor and a deletion from an admin only.
+  const { allowed: canEdit, resolved: roleResolved } = useOrgRoleState(organizationId, 'editor')
+  const canDelete = useHasOrgRole(organizationId, 'admin')
 
   // Build API filter params from the current sidebar filter values.
   // Search is handled client-side only for immediate feedback — it is NOT
@@ -222,9 +226,11 @@ export const VendorRegistry: React.FC<VendorRegistryProps> = ({
             </span>
           }
           actions={
-            <button onClick={onAddVendor} className="vendor-explorer-add-btn">
-              + Add Vendor
-            </button>
+            canEdit ? (
+              <button onClick={onAddVendor} className="vendor-explorer-add-btn">
+                + Add Vendor
+              </button>
+            ) : undefined
           }
         />
 
@@ -234,10 +240,14 @@ export const VendorRegistry: React.FC<VendorRegistryProps> = ({
               <h3>No Vendors Found</h3>
               <p>
                 {vendors.length === 0
-                  ? 'Add your first vendor to start tracking third-party risk.'
+                  ? canEdit
+                    ? 'Add your first vendor to start tracking third-party risk.'
+                    : roleResolved
+                      ? 'No vendors have been added yet. Adding one needs the editor role.'
+                      : 'No vendors have been added yet.'
                   : 'No vendors match the current filters. Try adjusting your search or filter criteria.'}
               </p>
-              {vendors.length === 0 && (
+              {vendors.length === 0 && canEdit && (
                 <button onClick={onAddVendor} className="vendor-explorer-add-btn">
                   Add Your First Vendor
                 </button>
@@ -355,6 +365,7 @@ export const VendorRegistry: React.FC<VendorRegistryProps> = ({
                   </RowMeta>
 
                   {/* Delete action — outside row click with stopPropagation */}
+                  {canDelete && (
                   <RowMeta>
                     <button
                       onClick={(e) => {
@@ -371,6 +382,7 @@ export const VendorRegistry: React.FC<VendorRegistryProps> = ({
                       </svg>
                     </button>
                   </RowMeta>
+                  )}
                 </ExplorerListRow>
               )
             })

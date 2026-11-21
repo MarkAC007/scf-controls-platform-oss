@@ -15,7 +15,7 @@ Key design decisions:
 """
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import UUID
-from typing import Optional
+from typing import Iterable, Optional
 import hashlib
 import json
 import logging
@@ -133,11 +133,8 @@ VENDOR_TRACKED_FIELDS: set = {
     'name',
     'website',
     'description',
-    'risk_tier',
+    'criticality',
     'status',
-    'cia_confidentiality',
-    'cia_integrity',
-    'cia_availability',
     # PIG R4: data location and the contractual split of responsibility.
     'data_location',
     'flow_down_requirements',
@@ -431,7 +428,7 @@ async def log_entity_changes(
     scf_id: Optional[str] = None,
     ip_address: Optional[str] = None,
     user_agent: Optional[str] = None,
-    tracked_fields: Optional[set] = None,
+    tracked_fields: Optional[Iterable[str]] = None,
     action_source: Optional[str] = None,
     request_id: Optional[UUID] = None,
 ) -> list[AuditLog]:
@@ -456,12 +453,16 @@ async def log_entity_changes(
         scf_id: Optional denormalised SCF control identifier.
         ip_address: Optional client IP address.
         user_agent: Optional client user-agent string.
-        tracked_fields: Optional set of field names to limit auditing to.
+        tracked_fields: Optional field names to limit auditing to. Any
+            iterable; callers keep these as sets, lists and tuples.
 
     Returns:
         List of AuditLog instances that were added to the session.
     """
     entries: list[AuditLog] = []
+
+    if tracked_fields is not None:
+        tracked_fields = set(tracked_fields)
 
     if action == 'create':
         fields = new_values.keys()
@@ -560,6 +561,10 @@ async def log_entity_changes(
 # MCP User-Agent patterns
 _MCP_UA_PATTERN = re.compile(r'mcp|model.context.protocol', re.IGNORECASE)
 
+#: ``auth.User.auth_method`` values of an interactive browser sign-in: Google
+#: OAuth and a self-hosted OIDC provider such as Keycloak (#1269).
+_INTERACTIVE_AUTH_METHODS = frozenset({"google", "oidc"})
+
 
 def detect_action_source(request: Request) -> str:
     """Detect the origin of a mutation from request context.
@@ -578,7 +583,7 @@ def detect_action_source(request: Request) -> str:
     user = getattr(request.state, "user", None)
     if user is not None:
         auth_method = getattr(user, "auth_method", None)
-        if auth_method == "google":
+        if auth_method in _INTERACTIVE_AUTH_METHODS:
             return "ui"
         if auth_method == "api_key":
             return "api_key"

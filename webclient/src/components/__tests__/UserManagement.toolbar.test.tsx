@@ -77,7 +77,8 @@ const MEMBERS = [
 ]
 
 async function setup() {
-  vi.mocked(useIsOrgAdmin).mockReturnValue(false)
+  // An admin's view: Invite and the row actions are withheld from anyone else (#1273).
+  vi.mocked(useIsOrgAdmin).mockReturnValue(true)
   vi.mocked(apiClient.get).mockResolvedValue(MEMBERS as never)
   render(<UserManagement organizationId={ORG_ID} />)
   await waitFor(() => expect(screen.getByText('Alice Admin')).toBeInTheDocument())

@@ -226,6 +226,15 @@ import { act } from '@testing-library/react'
 import RiskDashboard from '../RiskDashboard'
 
 // Stub all heavy API calls
+// The viewer's role in the organisation, switchable per test. The suites above
+// the role-gating block run as 'admin'; that block (#1273) sets its own.
+const role = vi.hoisted(() => ({ rank: 'admin' as 'viewer' | 'editor' | 'admin' }))
+vi.mock('../../hooks/useHasOrgRole', () => {
+  const order = { viewer: 0, editor: 1, admin: 2 }
+  const has = (_org: unknown, min: 'viewer' | 'editor' | 'admin') => order[role.rank] >= order[min]
+  return { useHasOrgRole: has, useIsOrgEditor: (org: unknown) => has(org, 'editor') }
+})
+
 vi.mock('../../data/apiClient', () => ({
   getRiskAssessments: vi.fn().mockResolvedValue([
     {
@@ -318,5 +327,29 @@ describe('RiskDashboard — level summary strip', () => {
     fireEvent.click(btn)
     // Modal should render
     expect(screen.getByText('Add Custom Risk')).toBeInTheDocument()
+  })
+})
+
+// ── Role gating (#1273) ─────────────────────────────────────────────────────
+import { afterEach as afterEachRoleTest } from 'vitest'
+
+describe('RiskDashboard — who is offered "+ Add Custom Risk"', () => {
+  afterEachRoleTest(() => { role.rank = 'admin' })
+
+  it('withholds it from a viewer', async () => {
+    role.rank = 'viewer'
+    await act(async () => {
+      render(<RiskDashboard organizationId="org-1" />, { wrapper: queryWrapper() })
+    })
+    expect(document.querySelector('.risk-level-label')).not.toBeNull()
+    expect(screen.queryByRole('button', { name: /add custom risk/i })).not.toBeInTheDocument()
+  })
+
+  it.each(['editor', 'admin'] as const)('offers it to an %s', async (rank) => {
+    role.rank = rank
+    await act(async () => {
+      render(<RiskDashboard organizationId="org-1" />, { wrapper: queryWrapper() })
+    })
+    expect(screen.getByRole('button', { name: /add custom risk/i })).toBeEnabled()
   })
 })

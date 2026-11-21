@@ -21,7 +21,7 @@ import { toast } from 'react-hot-toast'
 import { fetchOrganizationSettings, updateOrganizationSettings } from '../data/apiClient'
 import { MATURITY_LEVEL_OPTIONS } from '../data/targetMaturity'
 import { domainFilterLabel, useCatalogDomains } from '../hooks/useCatalogFilters'
-import { useIsOrgAdmin } from '../hooks/useIsOrgAdmin'
+import { useOrgRoleState } from '../hooks/useHasOrgRole'
 import { useOrganizationSettings } from '../hooks/useOrganizationSettings'
 import type { MaturityLevel } from '../types'
 
@@ -65,7 +65,8 @@ function messageOf(err: unknown, fallback: string): string {
 
 export default function MaturityTargetsSettings({ organizationId }: MaturityTargetsSettingsProps) {
   const queryClient = useQueryClient()
-  const isAdmin = useIsOrgAdmin(organizationId)
+  // The "only an administrator" line waits until the role is known to be missing.
+  const { allowed: isAdmin, resolved: roleResolved } = useOrgRoleState(organizationId, 'admin')
   const settings = useOrganizationSettings(organizationId)
   const catalogue = useCatalogDomains()
 
@@ -185,11 +186,11 @@ export default function MaturityTargetsSettings({ organizationId }: MaturityTarg
                 {saving ? 'Saving...' : 'Save maturity targets'}
               </button>
             </div>
-          ) : (
+          ) : roleResolved ? (
             <p className="settings-card-sub assessment-engine-muted">
               Only an organisation administrator can change maturity targets.
             </p>
-          )}
+          ) : null}
         </>
       )}
     </div>

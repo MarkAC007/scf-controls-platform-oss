@@ -33,6 +33,12 @@ vi.mock('../../hooks/useHasOrgRole', () => ({
     const order = { viewer: 0, editor: 1, admin: 2 }
     return order[rank] >= order[min]
   },
+  // 'pending' is the window before the membership lookup returns.
+  useOrgRoleState: (_org: string, min: 'admin' | 'editor' | 'viewer') => {
+    if (rank === 'pending') return { allowed: false, resolved: false }
+    const order = { viewer: 0, editor: 1, admin: 2 }
+    return { allowed: order[rank] >= order[min], resolved: true }
+  },
 }))
 
 vi.mock('react-hot-toast', () => ({
@@ -82,11 +88,44 @@ describe('ApiKeyManagement — key role picker', () => {
     expect(select.value).toBe('editor')
   })
 
-  it('holds the picker disabled until the creator role is known', async () => {
+  // Until the role is known the hook reads false, exactly as it does for a
+  // viewer, so "Create key" is withheld rather than opening a form whose role
+  // picker could only sit disabled (#1273).
+  it.each(['pending', 'viewer'] as const)('does not offer Create key or Revoke while the role is %s', async (r) => {
+    rank = r
+    mockList.mockResolvedValue([
+      { id: 'k1', name: 'feed', key_prefix: 'scf_abc', role: 'viewer', is_active: true, created_at: '2026-01-01T00:00:00Z' },
+    ] as never)
+    render(<ApiKeyManagement organizationId={ORG} />)
+    expect(await screen.findByText('feed')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Create key' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Revoke' })).not.toBeInTheDocument()
+  })
+
+  // The empty state names the missing role only once it is known to be missing:
+  // an editor must not read "needs the editor role" while the lookup is out.
+  it('says only that there are no keys while the role is pending', async () => {
     rank = 'pending'
-    const select = await openCreateModal()
-    expect(select).toBeDisabled()
-    expect(optionValues(select)).toEqual([])
+    render(<ApiKeyManagement organizationId={ORG} />)
+    expect(await screen.findByText('No API keys yet.')).toBeInTheDocument()
+    expect(screen.queryByText(/needs the editor role/)).not.toBeInTheDocument()
+  })
+
+  it('tells a viewer that creating a key needs the editor role', async () => {
+    rank = 'viewer'
+    render(<ApiKeyManagement organizationId={ORG} />)
+    expect(await screen.findByText('No API keys yet. Creating one needs the editor role.')).toBeInTheDocument()
+  })
+
+  it('offers an editor Create key and Revoke', async () => {
+    rank = 'editor'
+    mockList.mockResolvedValue([
+      { id: 'k1', name: 'feed', key_prefix: 'scf_abc', role: 'viewer', is_active: true, created_at: '2026-01-01T00:00:00Z' },
+    ] as never)
+    render(<ApiKeyManagement organizationId={ORG} />)
+    expect(await screen.findByText('feed')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Create key' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Revoke' })).toBeEnabled()
   })
 
   it('sends the chosen role on create', async () => {

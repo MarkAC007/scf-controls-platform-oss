@@ -26,10 +26,22 @@ vi.mock('../../../data/apiClient', () => ({
 
 // The nested verdict panel reads the org role; without this the render dies
 // in AuthContext rather than testing anything.
-vi.mock('../../../hooks/useHasOrgRole', () => ({
-  useHasOrgRole: () => true,
-  useIsOrgEditor: () => true,
-}))
+// The viewer's role in the organisation, switchable per test. The suites above
+// the role-gating block run as 'admin'; that block (#1273) sets its own.
+const role = vi.hoisted(() => ({ rank: 'admin' as 'viewer' | 'editor' | 'admin' | 'unknown' }))
+vi.mock('../../../hooks/useHasOrgRole', () => {
+  const order: Record<string, number> = { viewer: 0, editor: 1, admin: 2 }
+  // 'unknown' is the window before the membership lookup returns: nothing is allowed yet.
+  const has = (_org: unknown, min: 'viewer' | 'editor' | 'admin') => order[role.rank] >= order[min]
+  return {
+    useHasOrgRole: has,
+    useIsOrgEditor: (org: unknown) => has(org, 'editor'),
+    useOrgRoleState: (org: unknown, min: 'viewer' | 'editor' | 'admin') => ({
+      allowed: has(org, min),
+      resolved: role.rank !== 'unknown',
+    }),
+  }
+})
 
 import {
   listWindowAssessments,
@@ -195,5 +207,50 @@ describe('WindowReviewPanel', () => {
     render(<WindowReviewPanel orgId="org-1" evidenceId="E-BCM-11" />)
     await waitFor(() => expect(screen.getByTestId('window-review-unassessable-reason')).toBeInTheDocument())
     expect(screen.getByTestId('window-review-status-assessment-badge')).toHaveTextContent('AI suggests: Unassessable')
+  })
+})
+
+// ── Role gating (#1273) ─────────────────────────────────────────────────────
+import { afterEach as afterEachRoleTest } from 'vitest'
+
+describe('WindowReviewPanel — who may review a window', () => {
+  afterEachRoleTest(() => { role.rank = 'admin' })
+
+  it('shows a viewer the assessment without Approve, Reject, Request revision or an editable note', async () => {
+    role.rank = 'viewer'
+    vi.mocked(listWindowAssessments).mockResolvedValueOnce([sampleEwa])
+    render(<WindowReviewPanel orgId="org-1" evidenceId="E-BCM-11" />)
+    await waitFor(() => expect(screen.getByTestId('window-review-panel')).toBeInTheDocument())
+
+    expect(screen.getByTestId('window-review-status-badge')).toHaveTextContent(/not reviewed/i)
+    expect(screen.queryByTestId('window-review-approve-btn')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('window-review-reject-btn')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('window-review-revision-btn')).not.toBeInTheDocument()
+    expect(screen.getByTestId('window-review-notes-textarea')).toBeDisabled()
+    expect(screen.getByTestId('window-review-readonly')).toHaveTextContent('Editor access is needed')
+  })
+
+  it('shows neither the review actions nor the editor-access line while the role is not yet known', async () => {
+    role.rank = 'unknown'
+    vi.mocked(listWindowAssessments).mockResolvedValueOnce([sampleEwa])
+    render(<WindowReviewPanel orgId="org-1" evidenceId="E-BCM-11" />)
+    await waitFor(() => expect(screen.getByTestId('window-review-panel')).toBeInTheDocument())
+
+    expect(screen.queryByTestId('window-review-approve-btn')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('window-review-reject-btn')).not.toBeInTheDocument()
+    expect(screen.getByTestId('window-review-notes-textarea')).toBeDisabled()
+    expect(screen.queryByTestId('window-review-readonly')).not.toBeInTheDocument()
+  })
+
+  it.each(['editor', 'admin'] as const)('offers an %s the review actions', async (rank) => {
+    role.rank = rank
+    vi.mocked(listWindowAssessments).mockResolvedValueOnce([sampleEwa])
+    render(<WindowReviewPanel orgId="org-1" evidenceId="E-BCM-11" />)
+    await waitFor(() => expect(screen.getByTestId('window-review-panel')).toBeInTheDocument())
+
+    expect(screen.getByTestId('window-review-approve-btn')).toBeEnabled()
+    expect(screen.getByTestId('window-review-reject-btn')).toBeEnabled()
+    expect(screen.getByTestId('window-review-notes-textarea')).toBeEnabled()
+    expect(screen.queryByTestId('window-review-readonly')).not.toBeInTheDocument()
   })
 })

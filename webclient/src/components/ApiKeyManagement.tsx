@@ -18,7 +18,7 @@ import {
 import type { OrgApiKey, OrgApiKeyCreated, OrgApiKeyRole } from '../data/apiClient'
 import { useConfirm } from '../contexts/ConfirmContext'
 import { useModalDismiss } from '../hooks/useModalDismiss'
-import { useHasOrgRole } from '../hooks/useHasOrgRole'
+import { useHasOrgRole, useOrgRoleState } from '../hooks/useHasOrgRole'
 
 interface ApiKeyManagementProps {
   organizationId: string
@@ -45,7 +45,7 @@ export default function ApiKeyManagement({ organizationId }: ApiKeyManagementPro
   // false and the picker is held disabled rather than defaulting to viewer —
   // an admin should not mint a weaker key than they meant by clicking fast.
   const isAdmin = useHasOrgRole(organizationId, 'admin')
-  const isEditor = useHasOrgRole(organizationId, 'editor')
+  const { allowed: isEditor, resolved: roleResolved } = useOrgRoleState(organizationId, 'editor')
   const creatorRole: OrgApiKeyRole | null = isAdmin ? 'admin' : isEditor ? 'editor' : null
   const offeredRoles = creatorRole
     ? KEY_ROLES.slice(0, KEY_ROLES.indexOf(creatorRole) + 1)
@@ -155,13 +155,16 @@ export default function ApiKeyManagement({ organizationId }: ApiKeyManagementPro
             Create scoped API keys for programmatic access to this organisation.
           </p>
         </div>
-        <button
-          className="btn btn-primary"
-          onClick={() => setShowCreateModal(true)}
-          style={{ whiteSpace: 'nowrap' }}
-        >
-          Create key
-        </button>
+        {/* Creating and revoking a key need the editor role; a viewer only reads the list. */}
+        {isEditor && (
+          <button
+            className="btn btn-primary"
+            onClick={() => setShowCreateModal(true)}
+            style={{ whiteSpace: 'nowrap' }}
+          >
+            Create key
+          </button>
+        )}
       </div>
 
       {loading ? (
@@ -170,7 +173,9 @@ export default function ApiKeyManagement({ organizationId }: ApiKeyManagementPro
         </div>
       ) : keys.length === 0 ? (
         <div className="api-keys-table-container" style={{ textAlign: 'center', padding: '2rem', color: 'var(--muted)' }}>
-          No API keys yet. Create one to get started.
+          {isEditor
+            ? 'No API keys yet. Create one to get started.'
+            : roleResolved ? 'No API keys yet. Creating one needs the editor role.' : 'No API keys yet.'}
         </div>
       ) : (
         <div className="api-keys-table-container">
@@ -204,7 +209,7 @@ export default function ApiKeyManagement({ organizationId }: ApiKeyManagementPro
                     )}
                   </td>
                   <td>
-                    {k.is_active && (
+                    {k.is_active && isEditor && (
                       <button
                         className="btn btn-danger btn-sm"
                         onClick={() => void handleRevoke(k.id, k.name)}

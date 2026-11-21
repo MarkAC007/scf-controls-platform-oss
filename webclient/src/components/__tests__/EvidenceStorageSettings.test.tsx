@@ -30,6 +30,23 @@ import type {
   EvidenceStorageEffective,
 } from '../../data/evidenceStorageApi'
 
+// The viewer's role in the organisation, switchable per test. The suites above
+// the role-gating block run as 'admin'; that block (#1273) sets its own.
+const role = vi.hoisted(() => ({ rank: 'admin' as 'viewer' | 'editor' | 'admin' | 'unknown' }))
+vi.mock('../../hooks/useHasOrgRole', () => {
+  const order: Record<string, number> = { viewer: 0, editor: 1, admin: 2 }
+  // 'unknown' is the window before the membership lookup returns: nothing is allowed yet.
+  const has = (_org: unknown, min: 'viewer' | 'editor' | 'admin') => order[role.rank] >= order[min]
+  return {
+    useHasOrgRole: has,
+    useIsOrgEditor: (org: unknown) => has(org, 'editor'),
+    useOrgRoleState: (org: unknown, min: 'viewer' | 'editor' | 'admin') => ({
+      allowed: has(org, min),
+      resolved: role.rank !== 'unknown',
+    }),
+  }
+})
+
 vi.mock('../../data/evidenceStorageApi', async () => {
   const actual = await vi.importActual<typeof import('../../data/evidenceStorageApi')>(
     '../../data/evidenceStorageApi'
@@ -708,5 +725,54 @@ describe('EvidenceStorageSettings', () => {
       />
     )
     expect(await screen.findByTestId('migration-panel')).toBeInTheDocument()
+  })
+})
+
+// ── Role gating (#1273) ─────────────────────────────────────────────────────
+import { afterEach as afterEachRoleTest } from 'vitest'
+
+describe('EvidenceStorageSettings — what each role is offered', () => {
+  afterEachRoleTest(() => { role.rank = 'admin' })
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockEffective.mockResolvedValue(effective())
+    mockList.mockResolvedValue({ items: [] })
+  })
+
+  // Both reads are admin-only on the API: asking for them as anyone else is a
+  // pair of 403s, so the card says who may configure the store and asks for nothing.
+  it.each(['viewer', 'editor'] as const)('tells a %s it is an admin setting without requesting it', async (rank) => {
+    role.rank = rank
+    render(<EvidenceStorageSettings organizationId={ORG} />)
+    expect(screen.getByTestId('evidence-storage-forbidden')).toHaveTextContent('You cannot change this.')
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(mockEffective).not.toHaveBeenCalled()
+    expect(mockList).not.toHaveBeenCalled()
+  })
+
+  // Until the role is known the card neither refuses nor asks: an admin must
+  // not read "You cannot change this" first, and a viewer must not earn a 403.
+  it('stays on Loading while the role is not yet known, then loads for an admin', async () => {
+    role.rank = 'unknown'
+    const { rerender } = render(<EvidenceStorageSettings organizationId={ORG} />)
+    expect(screen.getByText('Loading…')).toBeInTheDocument()
+    expect(screen.queryByTestId('evidence-storage-forbidden')).not.toBeInTheDocument()
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(mockEffective).not.toHaveBeenCalled()
+    expect(mockList).not.toHaveBeenCalled()
+
+    role.rank = 'admin'
+    rerender(<EvidenceStorageSettings organizationId={ORG} />)
+    await waitFor(() => expect(mockEffective).toHaveBeenCalledWith(ORG))
+    await waitFor(() => expect(screen.queryByText('Loading…')).not.toBeInTheDocument())
+    expect(screen.queryByTestId('evidence-storage-forbidden')).not.toBeInTheDocument()
+  })
+
+  it('requests and shows the configuration for an admin', async () => {
+    role.rank = 'admin'
+    await renderLoaded()
+    expect(mockEffective).toHaveBeenCalledWith(ORG)
+    expect(mockList).toHaveBeenCalledWith(ORG)
+    expect(screen.queryByTestId('evidence-storage-forbidden')).not.toBeInTheDocument()
   })
 })

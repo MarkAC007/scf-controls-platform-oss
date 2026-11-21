@@ -16,6 +16,7 @@ Endpoints:
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Request, Query
 from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.security import HTTPAuthorizationCredentials
 from uuid import UUID
 from typing import List, Optional
 import logging
@@ -463,19 +464,18 @@ async def download_evidence_file(
     reader_user_id: Optional[str] = None
     auth_method: Optional[str] = None
 
-    # Method 1: Bearer auth — extract credentials and delegate to require_org_role
+    # Method 1: Bearer auth — extract credentials and delegate to require_org_role.
+    # A caller who presents a bearer token is judged on it: the checker's
+    # 401/403/404 is the answer, and nothing falls through to the signed link.
+    # Swallowing failures here once hid a TypeError that refused every token.
     auth_header = request.headers.get("authorization", "")
     if auth_header.startswith("Bearer "):
-        try:
-            from fastapi.security import HTTPAuthorizationCredentials
-            bearer_token = auth_header[len("Bearer "):]
-            creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=bearer_token)
-            checker = require_org_role("viewer")
-            membership = await checker(org_id=org_id, credentials=creds, db=db)
-            reader_user_id = getattr(getattr(membership, "user", None), "db_id", None)
-            auth_method = "bearer"
-        except Exception:
-            pass
+        bearer_token = auth_header[len("Bearer "):]
+        creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=bearer_token)
+        checker = require_org_role("viewer")
+        membership = await checker(request=request, org_id=org_id, credentials=creds, db=db)
+        reader_user_id = getattr(getattr(membership, "user", None), "db_id", None)
+        auth_method = "bearer"
 
     # Method 2: Signed URL token. The token now carries the id of the user it was
     # minted for, so a browser navigation is as attributable as an API call.

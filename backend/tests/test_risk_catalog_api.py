@@ -167,11 +167,11 @@ async def test_linked_risk_codes_unions_likely_catalog_with_org_links():
 # ---------------------------------------------------------------------------
 
 
-def _assessment(code, assessed=True):
+def _assessment(code, assessed=True, status="identified"):
     return SimpleNamespace(
         risk_code=code,
         likelihood=3 if assessed else None, impact=3 if assessed else None,
-        treatment_status="identified",
+        treatment_status=status,
         get_inherent_risk_level=lambda *_: "medium" if assessed else None,
         get_residual_risk_level=lambda *_: None,
     )
@@ -190,8 +190,28 @@ async def test_risk_summary_counts_from_the_catalog_table_and_clamps():
     summary = await ra_api.get_risk_summary(org_id=ORG, membership=MEMBERSHIP, db=db)
     assert summary.total_risks == 3
     assert summary.assessed_risks == 1              # the orphans are not counted
-    assert summary.unassessed_risks == 1            # R-XX-2 (row, unscored) + R-ORG-1 (no row) → 3 - 2
-    assert summary.inherent_medium == 4             # level tallies still cover every row
+    assert summary.unassessed_risks == 2            # R-XX-2 (row, unscored) + R-ORG-1 (no row) → 3 - 1
+    assert summary.inherent_medium == 1             # level tallies cover the same risks as the total
+
+
+@pytest.mark.asyncio
+async def test_risk_summary_counts_the_same_risks_throughout():
+    """Assessed + unassessed is the total, and the stage tally adds up to it:
+    a row outside the universe is left out, a risk with no row is 'identified'."""
+    assessments = [_assessment("R-XX-1", status="treating"), _assessment("R-XX-2", assessed=False),
+                   _assessment("R-XX-3", assessed=False, status="analysed"),
+                   _assessment("R-ZZ-9", status="treating")]                              # retired from the catalogue
+    db = _db({
+        "risk_assessments": _result(assessments),
+        "organization_risk_profiles": _result([]),
+        "scf_catalog_risks": _result(["R-XX-1", "R-XX-2", "R-XX-3", "R-XX-4"]),
+        "custom_risk_definitions": _result(["R-ORG-1"]),
+    })
+    summary = await ra_api.get_risk_summary(org_id=ORG, membership=MEMBERSHIP, db=db)
+    assert (summary.total_risks, summary.assessed_risks, summary.unassessed_risks) == (5, 1, 4)
+    assert summary.by_treatment_status == {"treating": 1, "identified": 3, "analysed": 1}   # R-XX-4 and R-ORG-1 have no row
+    assert sum(summary.by_treatment_status.values()) == summary.total_risks
+    assert summary.inherent_medium == 1
 
 
 @pytest.mark.asyncio
@@ -219,7 +239,7 @@ async def test_risk_summary_counts_the_register_when_the_catalogue_is_not_loaded
         "custom_risk_definitions": _result(["R-ORG-1"]),
     })
     summary = await ra_api.get_risk_summary(org_id=ORG, membership=MEMBERSHIP, db=db)
-    assert (summary.total_risks, summary.assessed_risks, summary.unassessed_risks) == (6, 5, 0)
+    assert (summary.total_risks, summary.assessed_risks, summary.unassessed_risks) == (6, 5, 1)
 
 
 # ---------------------------------------------------------------------------

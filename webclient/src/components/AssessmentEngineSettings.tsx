@@ -18,7 +18,7 @@ import { updateOrganizationSettings } from '../data/apiClient'
 import { getAssessmentEngineStatus } from '../data/assessmentEngineApi'
 import type { AssessmentEngine, AssessmentEngineStatus, ShadowStats } from '../data/assessmentEngineApi'
 import { useOrganizationSettings } from '../hooks/useOrganizationSettings'
-import { useIsOrgAdmin } from '../hooks/useIsOrgAdmin'
+import { useOrgRoleState } from '../hooks/useHasOrgRole'
 
 interface AssessmentEngineSettingsProps {
   organizationId: string
@@ -111,7 +111,8 @@ function ShadowStatsBlock({ stats, cutoff }: { stats: ShadowStats; cutoff: numbe
 
 export default function AssessmentEngineSettings({ organizationId }: AssessmentEngineSettingsProps) {
   const { data: orgSettings, refetch: refetchSettings } = useOrganizationSettings(organizationId)
-  const isAdmin = useIsOrgAdmin(organizationId)
+  // The "only an administrator" line waits until the role is known to be missing.
+  const { allowed: isAdmin, resolved: roleResolved } = useOrgRoleState(organizationId, 'admin')
 
   const savedEngine: AssessmentEngine = orgSettings?.evidence_assessment_engine ?? 'llm'
   const [selected, setSelected] = useState<AssessmentEngine>(savedEngine)
@@ -208,11 +209,11 @@ export default function AssessmentEngineSettings({ organizationId }: AssessmentE
             {saving ? 'Saving...' : 'Save engine'}
           </button>
         </div>
-      ) : (
+      ) : roleResolved ? (
         <p className="settings-card-sub assessment-engine-muted">
           Only an organisation administrator can change the assessment engine.
         </p>
-      )}
+      ) : null}
 
       {statusError && (
         <p className="settings-card-sub assessment-engine-muted" role="alert">

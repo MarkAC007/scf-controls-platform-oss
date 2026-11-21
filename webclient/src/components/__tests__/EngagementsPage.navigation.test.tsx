@@ -26,6 +26,14 @@ import {
 } from '../../data/apiClient'
 import { fetchFrameworks } from '../../data/catalogApi'
 
+// These suites exercise the page as an admin sees it; what a viewer or an
+// editor is offered is covered in the *.roleGating tests (#1273).
+vi.mock('../../hooks/useHasOrgRole', () => ({
+  useHasOrgRole: () => true,
+  useIsOrgEditor: () => true,
+  useOrgRoleState: () => ({ allowed: true, resolved: true }),
+}))
+
 vi.mock('../../data/apiClient', () => ({
   listEngagements: vi.fn(),
   createEngagement: vi.fn(),

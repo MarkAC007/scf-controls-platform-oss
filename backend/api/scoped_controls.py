@@ -166,6 +166,33 @@ async def _exclusion_refusal(
     return 403, material_not_applicable_message(scf_id)
 
 
+async def _notify_if_became_ready_for_review(
+    db: AsyncSession,
+    org_id: UUID,
+    control: ScopedControl,
+    scf_id: str,
+    was_status: Optional[str],
+    requested_status: Optional[str],
+    actor_user_id: UUID,
+) -> None:
+    """Tell the org admins a control was handed over for review.
+
+    Shared by the POST (upsert) and PATCH routes, and called after the commit.
+    Sent only on a genuine transition into ready_for_review: a re-save of a
+    control already in that status sends nothing, and a row first created
+    with it (``was_status`` None) does.
+    """
+    if requested_status != 'ready_for_review' or was_status == 'ready_for_review':
+        return
+    await create_control_ready_for_review_notifications(
+        db,
+        organization_id=org_id,
+        scoped_control_id=control.id,
+        scf_id=scf_id,
+        actor_user_id=actor_user_id,
+    )
+
+
 def _stamp_rescope_and_assessment(control: ScopedControl, old_values: dict, update_data: dict) -> None:
     """Keep the two re-scope staleness stamps honest on a direct control write.
 
@@ -835,6 +862,10 @@ async def create_or_update_scoped_control(
 
         await db.commit()
         await db.refresh(existing_control)
+        await _notify_if_became_ready_for_review(
+            db, org_id, existing_control, control_data.scf_id,
+            was_status, control_dict.get('implementation_status'), user_id,
+        )
         return existing_control
     else:
         # New scoped rows are refused for deprecated catalog controls (409);
@@ -871,6 +902,10 @@ async def create_or_update_scoped_control(
 
         await db.commit()
         await db.refresh(new_control)
+        await _notify_if_became_ready_for_review(
+            db, org_id, new_control, control_data.scf_id,
+            None, full_dict.get('implementation_status'), user_id,
+        )
         return new_control
 
 
@@ -934,12 +969,6 @@ async def update_scoped_control(
         elif new_status != 'implemented' and control.completion_date:
             control.completion_date = None
 
-    # Notify only on a genuine transition into ready_for_review
-    became_ready_for_review = (
-        update_data.get('implementation_status') == 'ready_for_review'
-        and old_values.get('implementation_status') != 'ready_for_review'
-    )
-
     # Log field-level changes
     new_values = _tracked_values(control)
     await log_entity_changes(
@@ -959,14 +988,10 @@ async def update_scoped_control(
     await db.commit()
     await db.refresh(control)
 
-    if became_ready_for_review:
-        await create_control_ready_for_review_notifications(
-            db,
-            organization_id=org_id,
-            scoped_control_id=control.id,
-            scf_id=scf_id,
-            actor_user_id=user_id,
-        )
+    await _notify_if_became_ready_for_review(
+        db, org_id, control, scf_id,
+        was_status, update_data.get('implementation_status'), user_id,
+    )
 
     return control
 
