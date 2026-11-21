@@ -8,6 +8,7 @@ to avoid blocking the uvicorn event loop.
 
 Follows conventions from tasks_research.py and tasks_vendor_assessment.py.
 """
+import base64
 import json
 import logging
 import os
@@ -202,8 +203,36 @@ def _get_sync_session():
 # LLM call (sync — runs naturally in Celery worker)
 # ---------------------------------------------------------------------------
 
-def _call_llm(system_prompt: str, user_prompt: str) -> dict:
+def _user_content(user_prompt: str, images=None):
+    """The user turn: the prompt alone, or pictures followed by the prompt.
+
+    Pictures go first, each introduced by its label, because the model reads
+    a picture best when it comes before the question about it. With no
+    pictures the content is the plain string it has always been.
+    """
+    if not images:
+        return user_prompt
+    content = []
+    for index, image in enumerate(images, start=1):
+        content.append({"type": "text", "text": f"Picture {index}: {image.label}"})
+        content.append({
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": image.media_type,
+                "data": base64.standard_b64encode(image.data).decode("ascii"),
+            },
+        })
+    content.append({"type": "text", "text": user_prompt})
+    return content
+
+
+def _call_llm(system_prompt: str, user_prompt: str, images=None) -> dict:
     """Call Claude API for evidence assessment (sync).
+
+    ``images`` are ``ImagePart`` pictures from the extractor (a screenshot, a
+    photograph, the pages of a scanned PDF). They are sent as image blocks so
+    the model looks at the evidence itself.
 
     Raises rather than returning None. Returning None made every API failure
     look identical to a successful "we decided not to call it", and let the
@@ -232,7 +261,7 @@ def _call_llm(system_prompt: str, user_prompt: str) -> dict:
                 "text": system_prompt,
                 "cache_control": {"type": "ephemeral"},
             }],
-            messages=[{"role": "user", "content": user_prompt}],
+            messages=[{"role": "user", "content": _user_content(user_prompt, images)}],
         ) as stream:
             message = stream.get_final_message()
         return {
@@ -404,7 +433,13 @@ def assess_evidence_task(
             )
             return {"status": "error", "message": "Download failed"}
 
-        extracted = extract_text_from_bytes(file_bytes, content_type, filename)
+        # Jev reads text: for an organisation on that engine pictures are
+        # described and counted, not prepared for a model that will never
+        # be shown them.
+        extracted = extract_text_from_bytes(
+            file_bytes, content_type, filename,
+            with_images=engine != jev_assessment.ENGINE_JEV,
+        )
 
         # An extraction failure is not a compliance verdict. Images, xlsx, zip
         # and broken files used to be stored as 'insufficient' with score 0,
@@ -420,8 +455,9 @@ def assess_evidence_task(
                     "level": "info",
                     "message": extracted.error,
                     "suggestion": (
-                        "Upload this evidence in a text-extractable format "
-                        "(PDF, DOCX, CSV, JSON, YAML or TXT) so it can be assessed."
+                        "Check that the file opens on your own machine and is not "
+                        "password protected, then upload it again. Every accepted "
+                        "file type can be assessed, pictures and scanned PDFs included."
                     ),
                 }],
                 summary=f"Cannot assess this file: {extracted.error}",
@@ -449,6 +485,35 @@ def assess_evidence_task(
             return {"status": "insufficient", "message": "Empty file"}
 
         assessment_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+        # Jev reads text. A picture reaches it as one line that describes the
+        # file ("[Picture: PNG image, 640 x 480 pixels]"), and judging that
+        # line would record a verdict on evidence nobody looked at. Say so
+        # instead; the reviewer still has the file, and an organisation on
+        # the LLM engine gets a real reading.
+        if engine == jev_assessment.ENGINE_JEV and extracted.visual_only:
+            reason = (
+                "This file is a picture or a scanned document. The assessment engine "
+                "chosen for this organisation reads text only, so it was not assessed."
+            )
+            _update_assessment_result(
+                session, evidence_file_id, organization_id, start_time,
+                status="unassessable",
+                relevance_score=None,
+                findings=[{
+                    "category": "error",
+                    "level": "info",
+                    "message": reason,
+                    "suggestion": (
+                        "Review this file by hand, upload a text version of it, or "
+                        "switch the assessment engine in Settings to one that reads pictures."
+                    ),
+                }],
+                summary=f"Cannot assess this file: {reason}",
+                unassessable_reason=reason,
+                assessed_file_sha256=file_sha256,
+            )
+            return {"status": "unassessable", "message": reason}
 
         # Step 7 (Jev primary): the organisation has moved off the LLM. Jev
         # answers the per-objective questions and its verdict is the one
@@ -505,6 +570,9 @@ def assess_evidence_task(
             content_type=content_type,
             assessment_date=assessment_date,
             truncated=extracted.truncated,
+            picture_count=len(extracted.images),
+            visual_only=extracted.visual_only,
+            truncation_note=extracted.truncation_note,
         )
         prompt_hash_value = hash_prompt(system_prompt, user_prompt)
 
@@ -527,6 +595,8 @@ def assess_evidence_task(
                     "objectives_capped": control_context.objectives_capped,
                     "extracted_text_length": len(extracted.text),
                     "extracted_text_truncated": extracted.truncated,
+                    "extraction_method": extracted.extraction_method,
+                    "picture_count": len(extracted.images),
                     "model_id": resolve_model(MODEL_ROLE),
                     "system_prompt": system_prompt,
                     "user_prompt": user_prompt,
@@ -536,7 +606,10 @@ def assess_evidence_task(
 
         # Step 9: Call LLM. Failures raise from here — see LLMCallError /
         # LLMUnavailableError and the handlers at the bottom of this task.
-        llm_result = _call_llm(system_prompt, user_prompt)
+        llm_result = (
+            _call_llm(system_prompt, user_prompt, images=extracted.images)
+            if extracted.images else _call_llm(system_prompt, user_prompt)
+        )
 
         # Step 10: Parse. A response that does not satisfy the contract raises;
         # nothing here manufactures a verdict the model did not give.
@@ -589,6 +662,7 @@ def assess_evidence_task(
         age_exceeded = exceeds_max_age(parsed.evidence_effective_date)
         findings = _with_truncation_finding(
             findings, extracted.truncated, len(extracted.text),
+            note=extracted.truncation_note,
         )
 
         # Price the model that ANSWERED — see services/model_registry.cost_cents.
@@ -636,7 +710,12 @@ def assess_evidence_task(
         # the version with a per-objective comparison. Nothing here can change
         # the verdict or fail the task — a shadow that could break the primary
         # would not be a shadow.
-        if engine == jev_assessment.ENGINE_JEV_SHADOW and written is not None:
+        if (
+            engine == jev_assessment.ENGINE_JEV_SHADOW
+            and written is not None
+            # Jev reads text; a picture has none for it to compare on.
+            and not extracted.visual_only
+        ):
             _run_shadow_assessment(
                 session, evidence_file_id, organization_id, evidence_id,
                 control_context, extracted, filename, content_type, assessment_date,
@@ -770,8 +849,13 @@ TRUNCATION_FINDING_KEY = "truncated"
 TRUNCATION_CHARS_KEY = "truncated_at_chars"
 
 
-def _with_truncation_finding(findings: list, truncated: bool, assessed_chars: int) -> list:
+def _with_truncation_finding(
+    findings: list, truncated: bool, assessed_chars: int, note: Optional[str] = None,
+) -> list:
     """Append a truncation disclosure finding when the text was cut short.
+
+    ``note`` replaces the character wording when what was left out is not the
+    tail of the text: later pages of a scanned PDF, or files in a ZIP.
 
     The *fact* of truncation now lives in the ``truncated`` column, which is
     what readers should test. This finding still carries it because it is the
@@ -781,6 +865,18 @@ def _with_truncation_finding(findings: list, truncated: bool, assessed_chars: in
     """
     if not truncated:
         return list(findings)
+    if note:
+        return list(findings) + [{
+            "category": "quality",
+            "level": "info",
+            "message": f"{note} Findings may not reflect what was left out.",
+            "suggestion": (
+                "Upload the part that matters for this control as its own file so "
+                "the whole of it can be assessed."
+            ),
+            TRUNCATION_FINDING_KEY: True,
+            TRUNCATION_CHARS_KEY: assessed_chars,
+        }]
     return list(findings) + [{
         "category": "quality",
         "level": "info",
@@ -1131,6 +1227,13 @@ def _resolve_engine(session, organization_id: str) -> str:
     return jev_assessment.resolve_engine(settings)
 
 
+#: Added to a text-only engine's verdict on a file that also holds pictures.
+PICTURES_NOT_ASSESSED_NOTE = (
+    "This file also holds pictures or scanned pages. The assessment engine chosen "
+    "for this organisation reads text only, so they were not assessed."
+)
+
+
 def _jev_primary_verdict(
     control_context,
     extracted,
@@ -1151,7 +1254,16 @@ def _jev_primary_verdict(
         assessment_date, extracted.truncated,
     )
     findings = jev_assessment.terminal_findings(verdict, control_context)
-    findings = _with_truncation_finding(findings, extracted.truncated, len(extracted.text))
+    # A file with text and pictures (a ZIP of logs and screenshots, a typed
+    # PDF with a scanned signature page) is judged here on its text alone.
+    # The verdict has to say so: otherwise it reads as a verdict on the whole
+    # file.
+    truncated, note = extracted.truncated, extracted.truncation_note
+    unseen = len(getattr(extracted, "images", None) or []) + (getattr(extracted, "pictures_left_out", 0) or 0)
+    if unseen:
+        truncated = True
+        note = " ".join(part for part in (note, PICTURES_NOT_ASSESSED_NOTE) if part)
+    findings = _with_truncation_finding(findings, truncated, len(extracted.text), note=note)
     processing_time_ms = int((time.monotonic() - start_time) * 1000)
     return TerminalVerdict(
         status=verdict.status,
@@ -1161,7 +1273,7 @@ def _jev_primary_verdict(
         ao_findings=jev_assessment.terminal_ao_findings(verdict),
         gap_count=verdict.gap_count,
         cannot_assess_count=verdict.cannot_assess_count,
-        truncated=extracted.truncated,
+        truncated=truncated,
         unassessable_reason=verdict.unassessable_reason,
         assessed_file_sha256=file_sha256,
         model_id=verdict.model_id,
@@ -1342,8 +1454,10 @@ def _shadow_cached_verdict(
         if file_bytes is None:
             logger.warning("Shadow skipped for file=%s: bytes could not be read back", evidence_file_id)
             return "skipped"
-        extracted = extract_text_from_bytes(file_bytes, content_type, filename)
-        if extracted.is_empty:
+        # Jev reads text, so pictures are described and not prepared.
+        extracted = extract_text_from_bytes(file_bytes, content_type, filename, with_images=False)
+        if extracted.is_empty or extracted.visual_only:
+            # Nothing, or only pictures: no text for Jev to compare on.
             return "skipped"
         ao_findings = prior.get("ao_findings") or []
         if isinstance(ao_findings, (str, bytes)):

@@ -7487,6 +7487,135 @@ textarea.form-control{
   background: var(--secondary);
 }
 
+/* CSV tables and server-read previews (Office files, archives, email; #1309).
+   The body is the scroll container on both axes, so a wide table scrolls
+   inside the dialog and the header row can stick to its top edge. Same 60vh
+   cap as the code pane so the panels below stay reachable. */
+.evidence-preview-body--table,
+.evidence-preview-body--structured {
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-start;
+  max-height: 60vh;
+  overflow: auto;
+  padding: 16px 20px;
+  gap: 10px;
+  color: var(--text);
+}
+
+.evidence-preview-note {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.evidence-preview-table {
+  border-collapse: separate;
+  border-spacing: 0;
+  width: max-content;
+  min-width: 100%;
+  font-size: 12.5px;
+  background: var(--card);
+}
+.evidence-preview-table th,
+.evidence-preview-table td {
+  padding: 5px 10px;
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+  white-space: pre-wrap;
+  max-width: 40ch;
+  overflow-wrap: anywhere;
+}
+.evidence-preview-table tr > :first-child { border-left: 1px solid var(--border); }
+.evidence-preview-table tr:first-child > * { border-top: 1px solid var(--border); }
+.evidence-preview-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  font-weight: 600;
+  background: var(--secondary);
+}
+
+.evidence-preview-document {
+  width: 100%;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.evidence-preview-document p { margin: 0 0 0.7em; }
+.evidence-preview-document h3 {
+  margin: 1em 0 0.5em;
+  font-size: 1em;
+  font-weight: 600;
+}
+.evidence-preview-document > :first-child,
+.evidence-preview-sheet:first-child > h3,
+.evidence-preview-slide:first-child > h3 { margin-top: 0; }
+
+.evidence-preview-slide {
+  padding: 10px 14px;
+  margin-bottom: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
+}
+
+.evidence-preview-archive {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
+}
+.evidence-preview-archive > li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  padding: 6px 12px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--border);
+}
+.evidence-preview-archive > li:last-child { border-bottom: none; }
+.evidence-preview-member-name {
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+.evidence-preview-member-meta,
+.evidence-preview-member-note { color: var(--muted); }
+.evidence-preview-member-note { flex-basis: 100%; font-size: 12px; }
+
+.evidence-preview-email-headers {
+  margin: 0 0 12px;
+  display: grid;
+  gap: 2px;
+  font-size: 13px;
+}
+.evidence-preview-email-header { display: flex; gap: 8px; }
+.evidence-preview-email-header dt {
+  flex: 0 0 64px;
+  color: var(--muted);
+}
+.evidence-preview-email-header dd { margin: 0; overflow-wrap: anywhere; }
+.evidence-preview-email-body {
+  white-space: pre-wrap;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
+}
+
+.evidence-preview-unsupported-detail {
+  font-size: 13px;
+  color: var(--text);
+  text-align: center;
+  max-width: 48ch;
+}
+
 .evidence-preview-pdf-fallback:hover {
   text-decoration: underline;
 }

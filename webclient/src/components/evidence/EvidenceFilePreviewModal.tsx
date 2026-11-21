@@ -1,11 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
+  getEvidenceFilePreview,
   type EvidenceFileResponse,
   type AssessmentFinding,
   type EvidenceAssessmentResponse,
+  type EvidenceFilePreviewMode,
+  type EvidenceFileStructuredPreview,
 } from '../../data/apiClient'
 import { useAssessmentPolling } from '../../hooks/useAssessmentPolling'
+import { useEvidenceFileTypes } from '../../hooks/useEvidenceFileTypes'
+import { listedPreviewMode } from './evidenceFileTypes'
+import { parseCsv } from './csvPreview'
 import { formatFileSize, fileTypeIcon, relativeTime } from './EvidenceFileList'
 import { PreparerAssertionPanel } from './PreparerAssertionPanel'
 import { AssessmentReviewPanel } from './AssessmentReviewPanel'
@@ -27,7 +33,203 @@ interface EvidenceFilePreviewModalProps {
   canDelete?: boolean
 }
 
-// ---- Component ----
+// ---- Text, CSV and structured previews (#1309) ----
+
+/** Text-like files are fetched in full only up to this size. */
+const TEXT_PREVIEW_MAX_BYTES = 512 * 1024
+const CSV_MAX_ROWS = 500
+const CSV_MAX_COLUMNS = 50
+
+/** Previews fetched from the download URL and shown in the dialog. */
+const TEXT_MODES: ReadonlySet<EvidenceFilePreviewMode> = new Set(['markdown', 'code', 'csv'])
+
+/** Thousands separators that do not depend on the test runner's locale. */
+function count(n: number): string {
+  return n.toLocaleString('en-GB')
+}
+
+/**
+ * A value from the structured preview, as display text. The reply is read out
+ * of an uploaded file, so a field the contract says is a string is not trusted
+ * to be one: anything else becomes text rather than crashing the dialog.
+ */
+function asText(value: unknown): string {
+  if (typeof value === 'string') return value
+  if (value === null || value === undefined) return ''
+  return String(value)
+}
+
+function asList<T>(value: T[] | null | undefined): T[] {
+  return Array.isArray(value) ? value : []
+}
+
+function padRow(row: string[], width: number): string[] {
+  const cells = row.slice(0, width)
+  while (cells.length < width) cells.push('')
+  return cells
+}
+
+/**
+ * CSV as a table: the first row as headers, at most 500 data rows and 50
+ * columns, with a sentence saying so when there are more.
+ */
+function CsvTable({ rows }: { rows: string[][] }) {
+  const totalColumns = rows.reduce((max, r) => Math.max(max, r.length), 0)
+  const columns = Math.min(totalColumns, CSV_MAX_COLUMNS)
+  const [header, ...data] = rows
+  const shown = data.slice(0, CSV_MAX_ROWS)
+  return (
+    <>
+      {data.length > CSV_MAX_ROWS && (
+        <p className="evidence-preview-note">
+          {`Showing the first ${count(CSV_MAX_ROWS)} of ${count(data.length)} rows.`}
+        </p>
+      )}
+      {totalColumns > CSV_MAX_COLUMNS && (
+        <p className="evidence-preview-note">
+          {`Showing the first ${count(CSV_MAX_COLUMNS)} of ${count(totalColumns)} columns.`}
+        </p>
+      )}
+      <table className="evidence-preview-table">
+        <thead>
+          <tr>
+            {padRow(header, columns).map((cell, i) => (
+              <th key={i} scope="col">{cell}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {shown.map((row, r) => (
+            <tr key={r}>
+              {padRow(row, columns).map((cell, c) => (
+                <td key={c}>{cell}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </>
+  )
+}
+
+/** Rows with no header row: a spreadsheet's first row is not known to be one. */
+function PlainTable({ rows }: { rows: string[][] }) {
+  const width = rows.reduce((max, r) => Math.max(max, asList(r).length), 0)
+  return (
+    <table className="evidence-preview-table">
+      <tbody>
+        {rows.map((row, r) => (
+          <tr key={r}>
+            {padRow(asList(row).map(asText), width).map((cell, c) => (
+              <td key={c}>{cell}</td>
+            ))}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
+/**
+ * The server's reading of an Office file, archive or email, drawn by kind.
+ * Returns null for a kind this client does not know, so the caller can show
+ * the not-available card rather than an empty pane.
+ */
+function StructuredContent({ preview }: { preview: EvidenceFileStructuredPreview }): ReactNode {
+  switch (preview.kind) {
+    case 'document':
+      return (
+        <div className="evidence-preview-document">
+          {asList(preview.paragraphs).map((p, i) => <p key={i}>{asText(p)}</p>)}
+        </div>
+      )
+    case 'spreadsheet':
+      return (
+        <div className="evidence-preview-document">
+          {asList(preview.sheets).map((sheet, i) => (
+            <section key={i} className="evidence-preview-sheet">
+              <h3>{asText(sheet.name)}</h3>
+              {sheet.truncated && (
+                <p className="evidence-preview-note">Only the first rows of this sheet are shown.</p>
+              )}
+              <PlainTable rows={asList(sheet.rows)} />
+            </section>
+          ))}
+        </div>
+      )
+    case 'slides':
+      return (
+        <div className="evidence-preview-document">
+          {asList(preview.slides).map((slide, i) => (
+            <section key={i} className="evidence-preview-slide">
+              <h3>{`Slide ${asText(slide.number)}`}</h3>
+              {asList(slide.paragraphs).map((p, j) => <p key={j}>{asText(p)}</p>)}
+            </section>
+          ))}
+        </div>
+      )
+    case 'archive':
+      return (
+        <div className="evidence-preview-document">
+          <ul className="evidence-preview-archive">
+            {asList(preview.members).map((m, i) => (
+              <li key={i}>
+                <span className="evidence-preview-member-name">{asText(m.name)}</span>
+                <span className="evidence-preview-member-meta">
+                  {formatFileSize(Number(m.size_bytes) || 0)}
+                  {' \u00B7 '}
+                  {m.label ? asText(m.label) : 'not read'}
+                </span>
+                {m.note && <span className="evidence-preview-member-note">{asText(m.note)}</span>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )
+    case 'email': {
+      const h = preview.headers ?? {}
+      const headerRows: Array<[string, unknown]> = [
+        ['From', h.from], ['To', h.to], ['Cc', h.cc], ['Subject', h.subject], ['Date', h.date],
+      ]
+      const attachments = asList(preview.attachments)
+      return (
+        <div className="evidence-preview-document">
+          <dl className="evidence-preview-email-headers">
+            {headerRows
+              .filter(([, value]) => asText(value).trim() !== '')
+              .map(([label, value]) => (
+                <div key={label} className="evidence-preview-email-header">
+                  <dt>{label}</dt>
+                  <dd>{asText(value)}</dd>
+                </div>
+              ))}
+          </dl>
+          <div className="evidence-preview-email-body">{asText(preview.body)}</div>
+          {attachments.length > 0 && (
+            <>
+              <h3>Attachments</h3>
+              <p className="evidence-preview-note">Attachments are listed, not opened.</p>
+              <ul className="evidence-preview-archive">
+                {attachments.map((a, i) => (
+                  <li key={i}>
+                    <span className="evidence-preview-member-name">{asText(a.name)}</span>
+                    <span className="evidence-preview-member-meta">
+                      {asText(a.content_type)}
+                      {' \u00B7 '}
+                      {formatFileSize(Number(a.size_bytes) || 0)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </div>
+      )
+    }
+    default:
+      return null
+  }
+}
 
 // ---- AI Assessment Sub-components ----
 
@@ -158,6 +360,11 @@ export function EvidenceFilePreviewModal({
   const [codeContent, setCodeContent] = useState<string | null>(null)
   const [codeLoading, setCodeLoading] = useState(false)
   const [codeError, setCodeError] = useState<string | null>(null)
+  const [codeTooLarge, setCodeTooLarge] = useState(false)
+  const [structuredPreview, setStructuredPreview] = useState<EvidenceFileStructuredPreview | null>(null)
+  const [structuredLoading, setStructuredLoading] = useState(false)
+  const [structuredError, setStructuredError] = useState<string | null>(null)
+  const { fileTypes, loading: fileTypesLoading } = useEvidenceFileTypes()
   const [panelExpanded, setPanelExpanded] = useState(true)
   const {
     assessment: polledAssessment,
@@ -226,26 +433,68 @@ export function EvidenceFilePreviewModal({
     contentType === 'text/x-markdown' ||
     file.filename.toLowerCase().endsWith('.md') ||
     file.filename.toLowerCase().endsWith('.markdown')
-  // Both are fetched as text and shown inline; only the presentation differs.
-  const isTextPreview = isCodeFile || isMarkdown
+
+  // Which viewer: the server's list decides (#1309). The flags above are what
+  // this dialog knew before that list existed, and are kept as the fallback so
+  // a slow or failed list request never makes a file previewable yesterday
+  // unpreviewable today.
+  const fallbackMode: EvidenceFilePreviewMode =
+    isMarkdown ? 'markdown' : isCodeFile ? 'code' : isImage ? 'image' : isPdf ? 'pdf' : 'none'
+  const mode: EvidenceFilePreviewMode =
+    (fileTypes && listedPreviewMode(fileTypes.types, file)) || fallbackMode
+  // Saying "not available" for a file the list is about to place would be a
+  // claim the dialog has to retract a moment later.
+  const awaitingFileTypes = !fileTypes && fileTypesLoading && fallbackMode === 'none'
+  // Fetched as text and shown inline; only the presentation differs.
+  const isTextPreview = TEXT_MODES.has(mode)
+  const isStructured = mode === 'structured'
 
   // Reset state when switching files
   useEffect(() => {
     setCodeContent(null)
     setCodeLoading(false)
     setCodeError(null)
+    setCodeTooLarge(false)
+    setStructuredPreview(null)
+    setStructuredLoading(false)
+    setStructuredError(null)
     setConfirmDelete(false)
   }, [file.id])
 
-  // Fetch text content for JSON/YAML/Markdown files
+  // Office files, archives and email: the server reads them, the dialog draws
+  // what it read. Independent of `download_url` — the bytes never come here.
+  useEffect(() => {
+    if (!isStructured) return
+    let cancelled = false
+    setStructuredLoading(true)
+    setStructuredError(null)
+    setStructuredPreview(null)
+    getEvidenceFilePreview(orgId, evidenceId, file.id)
+      .then(preview => {
+        if (!cancelled) setStructuredPreview(preview)
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return
+        setStructuredError(
+          err instanceof Error && err.message ? err.message : 'The preview could not be loaded.',
+        )
+      })
+      .finally(() => {
+        if (!cancelled) setStructuredLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [orgId, evidenceId, file.id, isStructured])
+
+  // Fetch text content for text-like files (code, CSV, Markdown)
   useEffect(() => {
     if (!isTextPreview || !file.download_url) return
-    if (file.file_size_bytes > 512 * 1024) return
+    if (file.file_size_bytes > TEXT_PREVIEW_MAX_BYTES) return
 
     let cancelled = false
     setCodeLoading(true)
     setCodeError(null)
     setCodeContent(null)
+    setCodeTooLarge(false)
 
     fetch(file.download_url)
       .then(r => {
@@ -254,7 +503,13 @@ export function EvidenceFilePreviewModal({
       })
       .then(text => {
         if (cancelled) return
-        if (isJson) {
+        // The size on the record is zero until the server has measured the
+        // file, so what arrived is checked as well before any of it is drawn.
+        if (text.length > TEXT_PREVIEW_MAX_BYTES) {
+          setCodeTooLarge(true)
+          return
+        }
+        if (isJson && mode === 'code') {
           try {
             setCodeContent(JSON.stringify(JSON.parse(text), null, 2))
           } catch {
@@ -272,7 +527,12 @@ export function EvidenceFilePreviewModal({
       })
 
     return () => { cancelled = true }
-  }, [file.id, file.download_url, file.file_size_bytes, isTextPreview, isJson])
+  }, [file.id, file.download_url, file.file_size_bytes, isTextPreview, isJson, mode])
+
+  const csvRows = useMemo(
+    () => (mode === 'csv' && codeContent !== null ? parseCsv(codeContent) : null),
+    [mode, codeContent],
+  )
 
   function handleDialogClick(e: { stopPropagation(): void }) {
     e.stopPropagation()
@@ -284,7 +544,44 @@ export function EvidenceFilePreviewModal({
 
   // ---- Body branches ----
 
+  function renderLoading(): ReactNode {
+    return (
+      <div className="evidence-preview-body evidence-preview-body--structured">
+        <span className="evidence-preview-code-loading">Loading…</span>
+      </div>
+    )
+  }
+
+  function renderStructured(): ReactNode {
+    if (structuredError) return renderUnavailable(structuredError)
+    if (structuredLoading || !structuredPreview) return renderLoading()
+    const content = StructuredContent({ preview: structuredPreview })
+    if (content === null) return renderUnavailable()
+    return (
+      <div
+        className="evidence-preview-body evidence-preview-body--structured"
+        data-testid="evidence-preview-structured"
+      >
+        {structuredPreview.note && (
+          <p className="evidence-preview-note">{asText(structuredPreview.note)}</p>
+        )}
+        {structuredPreview.truncated && (
+          <p className="evidence-preview-note">
+            Only the first part of this file is shown. Download it to see the rest.
+          </p>
+        )}
+        {content}
+      </div>
+    )
+  }
+
   function renderBody() {
+    if (awaitingFileTypes) return renderLoading()
+
+    // Before the URL guard: a structured preview is read by the server and
+    // does not need a download URL in this dialog.
+    if (isStructured) return renderStructured()
+
     // Null URL guard — show error state instead of broken image / blank iframe
     if (!file.download_url) {
       return (
@@ -298,7 +595,7 @@ export function EvidenceFilePreviewModal({
     }
 
     if (isTextPreview) {
-      if (file.file_size_bytes > 512 * 1024) {
+      if (file.file_size_bytes > TEXT_PREVIEW_MAX_BYTES || codeTooLarge) {
         return (
           <div className="evidence-preview-body evidence-preview-body--unsupported">
             <span className="evidence-preview-unsupported-icon" aria-hidden="true">📦</span>
@@ -308,7 +605,7 @@ export function EvidenceFilePreviewModal({
           </div>
         )
       }
-      if (isMarkdown) {
+      if (mode === 'markdown') {
         return (
           <div className="evidence-preview-body evidence-preview-body--markdown">
             {codeLoading && (
@@ -329,6 +626,15 @@ export function EvidenceFilePreviewModal({
           </div>
         )
       }
+      if (csvRows && csvRows.length > 0) {
+        return (
+          <div className="evidence-preview-body evidence-preview-body--table">
+            <CsvTable rows={csvRows} />
+          </div>
+        )
+      }
+      // Code, and CSV with nothing to tabulate. The file body verbatim, as a
+      // text node: XML in particular is never parsed or inserted as markup.
       return (
         <div className="evidence-preview-body evidence-preview-body--code">
           {codeLoading && (
@@ -344,7 +650,7 @@ export function EvidenceFilePreviewModal({
       )
     }
 
-    if (isImage) {
+    if (mode === 'image') {
       return (
         <div className="evidence-preview-body evidence-preview-body--image">
           <img
@@ -356,7 +662,7 @@ export function EvidenceFilePreviewModal({
       )
     }
 
-    if (isPdf) {
+    if (mode === 'pdf') {
       return (
         <div className="evidence-preview-body evidence-preview-body--pdf">
           {/*
@@ -386,15 +692,24 @@ export function EvidenceFilePreviewModal({
       )
     }
 
-    // Unsupported file type — metadata card
+    return renderUnavailable()
+  }
+
+  /**
+   * The metadata card. With `detail`, the server refused a preview for a
+   * reason of its own (too large, unreadable, held by the malware scan), and
+   * that sentence is shown instead of blaming the file type.
+   */
+  function renderUnavailable(detail?: string): ReactNode {
     return (
       <div className="evidence-preview-body evidence-preview-body--unsupported">
         <span className="evidence-preview-unsupported-icon" aria-hidden="true">
           {fileTypeIcon(contentType)}
         </span>
         <span className="evidence-preview-unsupported-label">
-          Preview not available for this file type
+          {detail ? 'Preview not available' : 'Preview not available for this file type'}
         </span>
+        {detail && <span className="evidence-preview-unsupported-detail">{detail}</span>}
         <div className="evidence-preview-meta-card">
           <div className="evidence-preview-meta-row">
             <span className="evidence-preview-meta-label">Filename</span>

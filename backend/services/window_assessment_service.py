@@ -609,6 +609,26 @@ def _plan_prompt_content(files: list[_FileInWindow]) -> None:
             seen_hash[key] = f
 
 
+PICTURE_NOT_SHOWN_NOTE = (
+    "\n[This file is a picture or a scan. Its content is not shown in "
+    "this portfolio view; it is read in the file's own assessment.]"
+)
+
+
+def _window_text(extracted) -> str:
+    """The text of one file as the window prompt carries it.
+
+    The window view is text only. A picture or a scanned PDF extracts to one
+    line describing it, so that line is followed by a note saying the picture
+    itself is not on the table: otherwise the description reads as the whole
+    of what the file shows.
+    """
+    text = extracted.text or ""
+    if text and getattr(extracted, "visual_only", False):
+        text += PICTURE_NOT_SHOWN_NOTE
+    return text
+
+
 def _apply_text_budget(f: _FileInWindow, text_value: str, budget_left: int) -> tuple[str, int]:
     """Cut one file's text to the per-file cap and the remaining budget."""
     allowed = min(PER_FILE_TEXT_CAP, max(budget_left, 0))
@@ -943,10 +963,12 @@ def assess_window(
         )
         extracted_text = ""
         if raw:
+            # Text only: this view never sends pictures, so none are prepared.
             extracted = extract_text_from_bytes(
-                data=raw, content_type=f.content_type, filename=f.filename
+                data=raw, content_type=f.content_type, filename=f.filename,
+                with_images=False,
             )
-            extracted_text = extracted.text or ""
+            extracted_text = _window_text(extracted)
         f.extracted_text, budget_left = _apply_text_budget(f, extracted_text, budget_left)
 
     # Coverage counts every member file, shown or not.

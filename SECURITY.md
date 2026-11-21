@@ -15,6 +15,24 @@ This repository is published as periodic sanitised snapshots from an upstream so
 
 Releases after v1.3.1 carry `upgrade-manifest.json` and `release-images.json`, each with a build-provenance attestation signed by this repository's release workflow. `release-images.json` names the release's images by digest. The commands are in the README under "Verifying a release".
 
+## Vulnerabilities in the release images
+
+The backend image is built on Debian and the frontend image on Alpine. When an image is built it takes every fix the distribution has published for the packages in it. Before a release is published, each image's software bill of materials is scanned (Grype), and the result is published with the release as `image-scan-gate.json`. The scan gate holds a release when any of these is true:
+
+- A Critical or High vulnerability has a fix available.
+- A vulnerability of any severity is on the CISA Known Exploited Vulnerabilities list.
+- A Critical or High vulnerability with no fix has an EPSS score of 10% or higher. EPSS is the estimated probability that a vulnerability will be exploited in the next 30 days.
+
+A finding with a fix is never set aside. A finding that trips one of these rules and has no fix is set aside only by an OpenVEX `not_affected` statement, with a named author, that says why the images are not affected. The statements applied to a release are published with it as `vex-*.json`. Matches the scanner itself ignores by its built-in rules are counted and never hold a release.
+
+### Vulnerabilities with no fix yet
+
+Scanners report vulnerabilities in base packages that have no known fix: the distribution has not fixed them yet, has decided not to, or no fixed version is recorded. Where such a finding is Critical or High and trips none of the rules above, it is accepted: it does not hold a release, it is listed in `image-scan-gate.json` with the outcome `accepted`, and it is fixed by the first release built after the distribution publishes a fix. `accepted` does not claim the images are unaffected. It says that no fix exists and that no exploitation is known.
+
+This acceptance has a review date, recorded in `image-scan-gate.json` under `policy`. After that date the gate accepts nothing until the policy has been reviewed.
+
+The gate reports without holding releases during its first releases. `image-scan-gate.json` says which applied, under `enforcing`.
+
 ## Reporting a Vulnerability
 
 **Please do not report security vulnerabilities through public GitHub issues, discussions, or pull requests.** Public disclosure before a fix is available puts users at risk.

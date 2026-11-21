@@ -68,19 +68,39 @@ RUN --mount=type=bind,from=scf_secrets,target=/run/scf_secrets \
 # Stage 2: Production with nginx
 # nginx 1.31.9. The tag is kept so the line stays readable; the digest is what is
 # pulled. Change the two together.
-FROM nginx:alpine@sha256:90b6bd2aec278b16b98221d64deb1d6d35d164567f507ab0716e6053878315aa
+#
+# The slim variant is the same nginx build without the optional modules (ACME,
+# xslt, image filter, GeoIP, njs) and the libraries they need (libxml2,
+# libxslt, libgd and others), and without curl and the CA certificate tools.
+# nginx.conf loads none of those modules, and every package left out is one
+# fewer for the scanner to find advisories in.
+FROM nginx:alpine-slim@sha256:5bfced78d24d644270bedb0a9968697042e38d5c03fb6354603df025279c1cbe
 
-# envsubst (gettext) renders nginx.conf; jq builds /config.js.
-# jq rather than shell escaping because a config value is arbitrary operator
-# input being written into a JavaScript file — a newline breaks it and a
-# `</script>` ends it early. See docker-entrypoint.sh.
-RUN apk add --no-cache gettext jq
-
-# The pinned base carries zlib 1.3.2-r1 and libxslt 1.1.43-r3, both with High
-# or Critical advisories that Alpine has fixed (zlib 1.4-r0, libxslt 1.1.43-r4).
-# The release scan gate blocks a fixable finding, so these two are upgraded
-# from the Alpine repository until the base image digest carries the fixes.
-RUN apk upgrade --no-cache zlib libxslt
+# apk upgrade installs every fix Alpine has published for the packages in the
+# base image, on the day this layer is built. The digest above pins nginx and
+# the Alpine release, not these packages: a base image is rebuilt less often
+# than Alpine ships fixes, and the release scan gate blocks a finding that has
+# a fix. This is a deliberate exception to the seven-day cooldown on dependency
+# updates. The packages come signed from the repositories of the base image's
+# Alpine release (main and community), which carry security and bug fixes for
+# that release, sometimes as a new upstream version (zlib 1.3.2 to 1.4, for
+# one), and never a new Alpine release. Two builds of one commit can therefore
+# differ; the SBOM published with each release records what the published image
+# holds. A build that reuses a cached layer keeps that layer's packages: the
+# release and CI builds use no cache.
+#
+# nginx itself must not move. It comes from nginx.org, and Alpine has an older
+# package of the same name. The base image pins the nginx version in
+# /etc/apk/world, which is what holds it; the last command stops the build if
+# the upgrade changed the nginx build anyway.
+#
+# envsubst renders nginx.conf and is already in the slim image. jq builds
+# /config.js: jq rather than shell escaping because a config value is arbitrary
+# operator input being written into a JavaScript file — a newline breaks it and
+# a `</script>` ends it early. See docker-entrypoint.sh.
+RUN nginx_before="$(nginx -V 2>&1)" && \
+    apk upgrade --no-cache && apk add --no-cache jq && \
+    [ "$(nginx -V 2>&1)" = "$nginx_before" ]
 
 # Copy built files from builder
 COPY --from=builder /app/dist /usr/share/nginx/html

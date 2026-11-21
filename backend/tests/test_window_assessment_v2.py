@@ -542,7 +542,7 @@ def stubbed(monkeypatch):
         return b"{}"
 
     monkeypatch.setattr(svc, "download_evidence_bytes", fake_download)
-    monkeypatch.setattr(svc, "extract_text_from_bytes", lambda data, content_type, filename: _Extracted('{"job": "ok"}'))
+    monkeypatch.setattr(svc, "extract_text_from_bytes", lambda data, content_type, filename, **_: _Extracted('{"job": "ok"}'))
     monkeypatch.setattr(svc, "_build_expected_artifact_types", lambda session, evidence_id: [])
     monkeypatch.setattr(svc, "_fetch_webhook_sources_for_files", lambda session, ids: {})
     monkeypatch.setattr(svc, "_prior_review_reference", lambda session, org, ev: None)

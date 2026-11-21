@@ -25,6 +25,7 @@ from typing import Optional
 import boto3
 from botocore.config import Config
 
+from services import evidence_file_types
 from services.storage_config import (
     ROLE_INTERNAL,
     ROLE_PRESIGN,
@@ -55,20 +56,9 @@ PROBE_CONTENT_TYPE = "text/plain"
 
 # Content-type allowlist for evidence uploads. A policy constant, not a storage
 # setting: it does not vary by provider and is not read from the environment.
-ALLOWED_CONTENT_TYPES = {
-    "application/pdf",
-    "image/png",
-    "image/jpeg",
-    "image/gif",
-    "text/csv",
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",  # .xlsx
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",  # .docx
-    "application/zip",
-    "application/json",
-    "text/plain",
-    "text/yaml",            # .yml / .yaml
-    "text/markdown",        # .md / .markdown
-}
+# Defined once, in services/evidence_file_types.py; this name stays because
+# the storage facade and its callers import it from here.
+ALLOWED_CONTENT_TYPES = set(evidence_file_types.ALLOWED_CONTENT_TYPES)
 
 # ---------------------------------------------------------------------------
 # Client cache

@@ -10,7 +10,9 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.0063,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -25,40 +27,48 @@
       ],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00859,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-124709",
       "severity": "High",
-      "package": "libssl3t64 3.5.7-1~deb13u3",
+      "package": "libssl3t64 3.5.9-1~deb13u1",
       "fix_state": "not-fixed",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00569,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-124709",
       "severity": "High",
-      "package": "openssl 3.5.7-1~deb13u3",
+      "package": "openssl 3.5.9-1~deb13u1",
       "fix_state": "not-fixed",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00569,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-124709",
       "severity": "High",
-      "package": "openssl-provider-legacy 3.5.7-1~deb13u3",
+      "package": "openssl-provider-legacy 3.5.9-1~deb13u1",
       "fix_state": "not-fixed",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00569,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -69,7 +79,9 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00521,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -80,7 +92,9 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00521,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -91,7 +105,9 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00521,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -102,7 +118,9 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00521,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -113,7 +131,9 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00517,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -124,7 +144,9 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00473,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -135,6 +157,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00688,
       "outcome": "reported"
     },
     {
@@ -146,6 +170,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00688,
       "outcome": "reported"
     },
     {
@@ -157,6 +183,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00688,
       "outcome": "reported"
     },
     {
@@ -168,6 +196,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00688,
       "outcome": "reported"
     },
     {
@@ -179,7 +209,9 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00494,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -190,7 +222,9 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00482,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -201,7 +235,9 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00482,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -212,7 +248,9 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00482,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -223,40 +261,48 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00482,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-95692",
       "severity": "High",
-      "package": "libssl3t64 3.5.7-1~deb13u3",
+      "package": "libssl3t64 3.5.9-1~deb13u1",
       "fix_state": "not-fixed",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00449,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-95692",
       "severity": "High",
-      "package": "openssl 3.5.7-1~deb13u3",
+      "package": "openssl 3.5.9-1~deb13u1",
       "fix_state": "not-fixed",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00449,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-95692",
       "severity": "High",
-      "package": "openssl-provider-legacy 3.5.7-1~deb13u3",
+      "package": "openssl-provider-legacy 3.5.9-1~deb13u1",
       "fix_state": "not-fixed",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00449,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -267,7 +313,9 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00425,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -278,7 +326,9 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00429,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -289,7 +339,9 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00429,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -300,7 +352,9 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00429,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -311,7 +365,9 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00429,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -322,28 +378,34 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00391,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2018-20796",
       "severity": "Negligible",
-      "package": "libc-bin 2.41-12+deb13u4",
+      "package": "libc-bin 2.41-12+deb13u5",
       "fix_state": "not-fixed",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.05804,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2018-20796",
       "severity": "Negligible",
-      "package": "libc6 2.41-12+deb13u4",
+      "package": "libc6 2.41-12+deb13u5",
       "fix_state": "not-fixed",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.05804,
       "outcome": "reported"
     },
     {
@@ -357,40 +419,48 @@
       ],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00493,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-107496",
       "severity": "High",
-      "package": "libssl3t64 3.5.7-1~deb13u3",
+      "package": "libssl3t64 3.5.9-1~deb13u1",
       "fix_state": "not-fixed",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00336,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-107496",
       "severity": "High",
-      "package": "openssl 3.5.7-1~deb13u3",
+      "package": "openssl 3.5.9-1~deb13u1",
       "fix_state": "not-fixed",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00336,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-107496",
       "severity": "High",
-      "package": "openssl-provider-legacy 3.5.7-1~deb13u3",
+      "package": "openssl-provider-legacy 3.5.9-1~deb13u1",
       "fix_state": "not-fixed",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00336,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -401,28 +471,34 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00473,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-124024",
       "severity": "Medium",
-      "package": "libc-bin 2.41-12+deb13u4",
+      "package": "libc-bin 2.41-12+deb13u5",
       "fix_state": "not-fixed",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00454,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-124024",
       "severity": "Medium",
-      "package": "libc6 2.41-12+deb13u4",
+      "package": "libc6 2.41-12+deb13u5",
       "fix_state": "not-fixed",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00454,
       "outcome": "reported"
     },
     {
@@ -438,6 +514,8 @@
       ],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00431,
       "outcome": "reported"
     },
     {
@@ -449,6 +527,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00454,
       "outcome": "reported"
     },
     {
@@ -460,6 +540,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00454,
       "outcome": "reported"
     },
     {
@@ -471,6 +553,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00454,
       "outcome": "reported"
     },
     {
@@ -482,6 +566,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00454,
       "outcome": "reported"
     },
     {
@@ -493,6 +579,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00454,
       "outcome": "reported"
     },
     {
@@ -504,6 +592,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00454,
       "outcome": "reported"
     },
     {
@@ -515,6 +605,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00454,
       "outcome": "reported"
     },
     {
@@ -526,6 +618,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00454,
       "outcome": "reported"
     },
     {
@@ -537,29 +631,35 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00454,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-19499",
       "severity": "High",
-      "package": "libc-bin 2.41-12+deb13u4",
+      "package": "libc-bin 2.41-12+deb13u5",
       "fix_state": "wont-fix",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00297,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-19499",
       "severity": "High",
-      "package": "libc6 2.41-12+deb13u4",
+      "package": "libc6 2.41-12+deb13u5",
       "fix_state": "wont-fix",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00297,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -570,83 +670,99 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00278,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-95691",
       "severity": "High",
-      "package": "libssl3t64 3.5.7-1~deb13u3",
+      "package": "libssl3t64 3.5.9-1~deb13u1",
       "fix_state": "not-fixed",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00284,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-95691",
       "severity": "High",
-      "package": "openssl 3.5.7-1~deb13u3",
+      "package": "openssl 3.5.9-1~deb13u1",
       "fix_state": "not-fixed",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00284,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-95691",
       "severity": "High",
-      "package": "openssl-provider-legacy 3.5.7-1~deb13u3",
+      "package": "openssl-provider-legacy 3.5.9-1~deb13u1",
       "fix_state": "not-fixed",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00284,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-84243",
       "severity": "High",
-      "package": "libc-bin 2.41-12+deb13u4",
+      "package": "libc-bin 2.41-12+deb13u5",
       "fix_state": "wont-fix",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00297,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-84243",
       "severity": "High",
-      "package": "libc6 2.41-12+deb13u4",
+      "package": "libc6 2.41-12+deb13u5",
       "fix_state": "wont-fix",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00297,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-6238",
       "severity": "Medium",
-      "package": "libc-bin 2.41-12+deb13u4",
+      "package": "libc-bin 2.41-12+deb13u5",
       "fix_state": "wont-fix",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00358,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-6238",
       "severity": "Medium",
-      "package": "libc6 2.41-12+deb13u4",
+      "package": "libc6 2.41-12+deb13u5",
       "fix_state": "wont-fix",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00358,
       "outcome": "reported"
     },
     {
@@ -660,62 +776,74 @@
       ],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00377,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-121758",
       "severity": "Medium",
-      "package": "libc-bin 2.41-12+deb13u4",
+      "package": "libc-bin 2.41-12+deb13u5",
       "fix_state": "not-fixed",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00372,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-121758",
       "severity": "Medium",
-      "package": "libc6 2.41-12+deb13u4",
+      "package": "libc6 2.41-12+deb13u5",
       "fix_state": "not-fixed",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00372,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-88823",
       "severity": "High",
-      "package": "libssl3t64 3.5.7-1~deb13u3",
+      "package": "libssl3t64 3.5.9-1~deb13u1",
       "fix_state": "not-fixed",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00267,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-88823",
       "severity": "High",
-      "package": "openssl 3.5.7-1~deb13u3",
+      "package": "openssl 3.5.9-1~deb13u1",
       "fix_state": "not-fixed",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00267,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-88823",
       "severity": "High",
-      "package": "openssl-provider-legacy 3.5.7-1~deb13u3",
+      "package": "openssl-provider-legacy 3.5.9-1~deb13u1",
       "fix_state": "not-fixed",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00267,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -726,50 +854,60 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.03992,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-77117",
       "severity": "Medium",
-      "package": "libc-bin 2.41-12+deb13u4",
+      "package": "libc-bin 2.41-12+deb13u5",
       "fix_state": "wont-fix",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00358,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-80489",
       "severity": "Medium",
-      "package": "libc-bin 2.41-12+deb13u4",
+      "package": "libc-bin 2.41-12+deb13u5",
       "fix_state": "wont-fix",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00358,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-77117",
       "severity": "Medium",
-      "package": "libc6 2.41-12+deb13u4",
+      "package": "libc6 2.41-12+deb13u5",
       "fix_state": "wont-fix",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00358,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-80489",
       "severity": "Medium",
-      "package": "libc6 2.41-12+deb13u4",
+      "package": "libc6 2.41-12+deb13u5",
       "fix_state": "wont-fix",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00358,
       "outcome": "reported"
     },
     {
@@ -781,6 +919,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.0032,
       "outcome": "reported"
     },
     {
@@ -792,6 +932,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.0032,
       "outcome": "reported"
     },
     {
@@ -803,6 +945,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.0032,
       "outcome": "reported"
     },
     {
@@ -814,6 +958,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.0032,
       "outcome": "reported"
     },
     {
@@ -830,6 +976,8 @@
       ],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00344,
       "outcome": "reported"
     },
     {
@@ -841,7 +989,9 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.0023,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -852,7 +1002,9 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00237,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -863,7 +1015,9 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00237,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -874,7 +1028,9 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00237,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -885,7 +1041,9 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00237,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -896,7 +1054,9 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00237,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -907,7 +1067,9 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00237,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -918,7 +1080,9 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00237,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -929,7 +1093,9 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00237,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -940,39 +1106,47 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00237,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-95690",
       "severity": "Medium",
-      "package": "libssl3t64 3.5.7-1~deb13u3",
+      "package": "libssl3t64 3.5.9-1~deb13u1",
       "fix_state": "not-fixed",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00351,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-95690",
       "severity": "Medium",
-      "package": "openssl 3.5.7-1~deb13u3",
+      "package": "openssl 3.5.9-1~deb13u1",
       "fix_state": "not-fixed",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00351,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-95690",
       "severity": "Medium",
-      "package": "openssl-provider-legacy 3.5.7-1~deb13u3",
+      "package": "openssl-provider-legacy 3.5.9-1~deb13u1",
       "fix_state": "not-fixed",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00351,
       "outcome": "reported"
     },
     {
@@ -986,29 +1160,35 @@
       ],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.0032,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-5435",
       "severity": "High",
-      "package": "libc-bin 2.41-12+deb13u4",
+      "package": "libc-bin 2.41-12+deb13u5",
       "fix_state": "wont-fix",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00237,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-5435",
       "severity": "High",
-      "package": "libc6 2.41-12+deb13u4",
+      "package": "libc6 2.41-12+deb13u5",
       "fix_state": "wont-fix",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00237,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -1019,7 +1199,9 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00216,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -1030,7 +1212,9 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00216,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -1041,7 +1225,9 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00216,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -1052,7 +1238,9 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00216,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -1063,7 +1251,9 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00216,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -1074,7 +1264,9 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00216,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -1085,7 +1277,9 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00216,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -1096,7 +1290,9 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00216,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -1107,116 +1303,138 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00216,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-121757",
       "severity": "Medium",
-      "package": "libc-bin 2.41-12+deb13u4",
+      "package": "libc-bin 2.41-12+deb13u5",
       "fix_state": "not-fixed",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00302,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-121757",
       "severity": "Medium",
-      "package": "libc6 2.41-12+deb13u4",
+      "package": "libc6 2.41-12+deb13u5",
       "fix_state": "not-fixed",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00302,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2019-1010022",
       "severity": "Negligible",
-      "package": "libc-bin 2.41-12+deb13u4",
+      "package": "libc-bin 2.41-12+deb13u5",
       "fix_state": "not-fixed",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.03249,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2019-1010022",
       "severity": "Negligible",
-      "package": "libc6 2.41-12+deb13u4",
+      "package": "libc6 2.41-12+deb13u5",
       "fix_state": "not-fixed",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.03249,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-8674",
       "severity": "Medium",
-      "package": "libc-bin 2.41-12+deb13u4",
+      "package": "libc-bin 2.41-12+deb13u5",
       "fix_state": "wont-fix",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00315,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-8674",
       "severity": "Medium",
-      "package": "libc6 2.41-12+deb13u4",
+      "package": "libc6 2.41-12+deb13u5",
       "fix_state": "wont-fix",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00315,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2019-1010024",
       "severity": "Negligible",
-      "package": "libc-bin 2.41-12+deb13u4",
+      "package": "libc-bin 2.41-12+deb13u5",
       "fix_state": "not-fixed",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.0322,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2019-1010024",
       "severity": "Negligible",
-      "package": "libc6 2.41-12+deb13u4",
+      "package": "libc6 2.41-12+deb13u5",
       "fix_state": "not-fixed",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.0322,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-126765",
       "severity": "Low",
-      "package": "libc-bin 2.41-12+deb13u4",
+      "package": "libc-bin 2.41-12+deb13u5",
       "fix_state": "not-fixed",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00469,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-126765",
       "severity": "Low",
-      "package": "libc6 2.41-12+deb13u4",
+      "package": "libc6 2.41-12+deb13u5",
       "fix_state": "not-fixed",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00469,
       "outcome": "reported"
     },
     {
@@ -1230,6 +1448,8 @@
       ],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00292,
       "outcome": "reported"
     },
     {
@@ -1243,28 +1463,34 @@
       ],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00272,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2019-1010023",
       "severity": "Negligible",
-      "package": "libc-bin 2.41-12+deb13u4",
+      "package": "libc-bin 2.41-12+deb13u5",
       "fix_state": "not-fixed",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.03069,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2019-1010023",
       "severity": "Negligible",
-      "package": "libc6 2.41-12+deb13u4",
+      "package": "libc6 2.41-12+deb13u5",
       "fix_state": "not-fixed",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.03069,
       "outcome": "reported"
     },
     {
@@ -1276,7 +1502,9 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00198,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -1287,7 +1515,9 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00198,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -1298,7 +1528,9 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00198,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -1309,7 +1541,9 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00198,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -1320,7 +1554,9 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00198,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -1331,7 +1567,9 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00198,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -1342,7 +1580,9 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00198,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -1353,7 +1593,9 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00198,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -1364,39 +1606,47 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00198,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-88822",
       "severity": "Medium",
-      "package": "libssl3t64 3.5.7-1~deb13u3",
+      "package": "libssl3t64 3.5.9-1~deb13u1",
       "fix_state": "not-fixed",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00259,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-88822",
       "severity": "Medium",
-      "package": "openssl 3.5.7-1~deb13u3",
+      "package": "openssl 3.5.9-1~deb13u1",
       "fix_state": "not-fixed",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00259,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-88822",
       "severity": "Medium",
-      "package": "openssl-provider-legacy 3.5.7-1~deb13u3",
+      "package": "openssl-provider-legacy 3.5.9-1~deb13u1",
       "fix_state": "not-fixed",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00259,
       "outcome": "reported"
     },
     {
@@ -1408,6 +1658,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00251,
       "outcome": "reported"
     },
     {
@@ -1419,6 +1671,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00249,
       "outcome": "reported"
     },
     {
@@ -1430,6 +1684,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00426,
       "outcome": "reported"
     },
     {
@@ -1441,6 +1697,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00426,
       "outcome": "reported"
     },
     {
@@ -1452,7 +1710,9 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00189,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -1463,7 +1723,9 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00189,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -1474,7 +1736,9 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00189,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -1485,7 +1749,9 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00189,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -1496,7 +1762,9 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00189,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -1507,7 +1775,9 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00189,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -1518,7 +1788,9 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00189,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -1529,7 +1801,9 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00189,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -1540,7 +1814,9 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00189,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -1551,6 +1827,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00256,
       "outcome": "reported"
     },
     {
@@ -1564,28 +1842,34 @@
       ],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00259,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2010-4756",
       "severity": "Negligible",
-      "package": "libc-bin 2.41-12+deb13u4",
+      "package": "libc-bin 2.41-12+deb13u5",
       "fix_state": "not-fixed",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.02633,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2010-4756",
       "severity": "Negligible",
-      "package": "libc6 2.41-12+deb13u4",
+      "package": "libc6 2.41-12+deb13u5",
       "fix_state": "not-fixed",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.02633,
       "outcome": "reported"
     },
     {
@@ -1597,40 +1881,48 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.0025,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-84786",
       "severity": "High",
-      "package": "libssl3t64 3.5.7-1~deb13u3",
+      "package": "libssl3t64 3.5.9-1~deb13u1",
       "fix_state": "not-fixed",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00173,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-84786",
       "severity": "High",
-      "package": "openssl 3.5.7-1~deb13u3",
+      "package": "openssl 3.5.9-1~deb13u1",
       "fix_state": "not-fixed",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00173,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-84786",
       "severity": "High",
-      "package": "openssl-provider-legacy 3.5.7-1~deb13u3",
+      "package": "openssl-provider-legacy 3.5.9-1~deb13u1",
       "fix_state": "not-fixed",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00173,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -1641,50 +1933,60 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00162,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-115819",
       "severity": "Medium",
-      "package": "libc-bin 2.41-12+deb13u4",
+      "package": "libc-bin 2.41-12+deb13u5",
       "fix_state": "wont-fix",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00263,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-115819",
       "severity": "Medium",
-      "package": "libc6 2.41-12+deb13u4",
+      "package": "libc6 2.41-12+deb13u5",
       "fix_state": "wont-fix",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00263,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-6791",
       "severity": "Medium",
-      "package": "libc-bin 2.41-12+deb13u4",
+      "package": "libc-bin 2.41-12+deb13u5",
       "fix_state": "wont-fix",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.0022,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-6791",
       "severity": "Medium",
-      "package": "libc6 2.41-12+deb13u4",
+      "package": "libc6 2.41-12+deb13u5",
       "fix_state": "wont-fix",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.0022,
       "outcome": "reported"
     },
     {
@@ -1696,6 +1998,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00371,
       "outcome": "reported"
     },
     {
@@ -1707,6 +2011,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00371,
       "outcome": "reported"
     },
     {
@@ -1718,6 +2024,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00371,
       "outcome": "reported"
     },
     {
@@ -1729,72 +2037,86 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00371,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2019-1010025",
       "severity": "Negligible",
-      "package": "libc-bin 2.41-12+deb13u4",
+      "package": "libc-bin 2.41-12+deb13u5",
       "fix_state": "not-fixed",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.02478,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2019-1010025",
       "severity": "Negligible",
-      "package": "libc6 2.41-12+deb13u4",
+      "package": "libc6 2.41-12+deb13u5",
       "fix_state": "not-fixed",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.02478,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2019-9192",
       "severity": "Negligible",
-      "package": "libc-bin 2.41-12+deb13u4",
+      "package": "libc-bin 2.41-12+deb13u5",
       "fix_state": "not-fixed",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.02447,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2019-9192",
       "severity": "Negligible",
-      "package": "libc6 2.41-12+deb13u4",
+      "package": "libc6 2.41-12+deb13u5",
       "fix_state": "not-fixed",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.02447,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-19542",
       "severity": "Medium",
-      "package": "libc-bin 2.41-12+deb13u4",
+      "package": "libc-bin 2.41-12+deb13u5",
       "fix_state": "wont-fix",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00226,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-19542",
       "severity": "Medium",
-      "package": "libc6 2.41-12+deb13u4",
+      "package": "libc6 2.41-12+deb13u5",
       "fix_state": "wont-fix",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00226,
       "outcome": "reported"
     },
     {
@@ -1806,6 +2128,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00252,
       "outcome": "reported"
     },
     {
@@ -1817,6 +2141,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00252,
       "outcome": "reported"
     },
     {
@@ -1828,6 +2154,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00252,
       "outcome": "reported"
     },
     {
@@ -1839,6 +2167,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00252,
       "outcome": "reported"
     },
     {
@@ -1850,6 +2180,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00195,
       "outcome": "reported"
     },
     {
@@ -1861,6 +2193,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00217,
       "outcome": "reported"
     },
     {
@@ -1872,28 +2206,34 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00191,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-100290",
       "severity": "Low",
-      "package": "libc-bin 2.41-12+deb13u4",
+      "package": "libc-bin 2.41-12+deb13u5",
       "fix_state": "wont-fix",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00336,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-100290",
       "severity": "Low",
-      "package": "libc6 2.41-12+deb13u4",
+      "package": "libc6 2.41-12+deb13u5",
       "fix_state": "wont-fix",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00336,
       "outcome": "reported"
     },
     {
@@ -1905,28 +2245,34 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00153,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-89092",
       "severity": "Medium",
-      "package": "libc-bin 2.41-12+deb13u4",
+      "package": "libc-bin 2.41-12+deb13u5",
       "fix_state": "wont-fix",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.0024,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-89092",
       "severity": "Medium",
-      "package": "libc6 2.41-12+deb13u4",
+      "package": "libc6 2.41-12+deb13u5",
       "fix_state": "wont-fix",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.0024,
       "outcome": "reported"
     },
     {
@@ -1940,40 +2286,48 @@
       ],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00436,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-107493",
       "severity": "High",
-      "package": "libssl3t64 3.5.7-1~deb13u3",
+      "package": "libssl3t64 3.5.9-1~deb13u1",
       "fix_state": "not-fixed",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00143,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-107493",
       "severity": "High",
-      "package": "openssl 3.5.7-1~deb13u3",
+      "package": "openssl 3.5.9-1~deb13u1",
       "fix_state": "not-fixed",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00143,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-107493",
       "severity": "High",
-      "package": "openssl-provider-legacy 3.5.7-1~deb13u3",
+      "package": "openssl-provider-legacy 3.5.9-1~deb13u1",
       "fix_state": "not-fixed",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00143,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -1984,6 +2338,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00183,
       "outcome": "reported"
     },
     {
@@ -1997,39 +2353,47 @@
       ],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00188,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-35190",
       "severity": "Medium",
-      "package": "libssl3t64 3.5.7-1~deb13u3",
+      "package": "libssl3t64 3.5.9-1~deb13u1",
       "fix_state": "not-fixed",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00206,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-35190",
       "severity": "Medium",
-      "package": "openssl 3.5.7-1~deb13u3",
+      "package": "openssl 3.5.9-1~deb13u1",
       "fix_state": "not-fixed",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00206,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-35190",
       "severity": "Medium",
-      "package": "openssl-provider-legacy 3.5.7-1~deb13u3",
+      "package": "openssl-provider-legacy 3.5.9-1~deb13u1",
       "fix_state": "not-fixed",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00206,
       "outcome": "reported"
     },
     {
@@ -2041,6 +2405,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.0021,
       "outcome": "reported"
     },
     {
@@ -2052,6 +2418,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.0021,
       "outcome": "reported"
     },
     {
@@ -2063,6 +2431,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.0021,
       "outcome": "reported"
     },
     {
@@ -2074,6 +2444,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.0021,
       "outcome": "reported"
     },
     {
@@ -2085,6 +2457,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.02043,
       "outcome": "reported"
     },
     {
@@ -2096,6 +2470,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00171,
       "outcome": "reported"
     },
     {
@@ -2111,6 +2487,8 @@
       ],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00219,
       "outcome": "reported"
     },
     {
@@ -2126,6 +2504,8 @@
       ],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00179,
       "outcome": "reported"
     },
     {
@@ -2137,28 +2517,34 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00181,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-97399",
       "severity": "Low",
-      "package": "libc-bin 2.41-12+deb13u4",
+      "package": "libc-bin 2.41-12+deb13u5",
       "fix_state": "wont-fix",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00281,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-97399",
       "severity": "Low",
-      "package": "libc6 2.41-12+deb13u4",
+      "package": "libc6 2.41-12+deb13u5",
       "fix_state": "wont-fix",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00281,
       "outcome": "reported"
     },
     {
@@ -2172,6 +2558,8 @@
       ],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.0036,
       "outcome": "reported"
     },
     {
@@ -2183,6 +2571,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00147,
       "outcome": "reported"
     },
     {
@@ -2194,6 +2584,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00163,
       "outcome": "reported"
     },
     {
@@ -2205,6 +2597,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00163,
       "outcome": "reported"
     },
     {
@@ -2216,6 +2610,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.0016,
       "outcome": "reported"
     },
     {
@@ -2227,6 +2623,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00159,
       "outcome": "reported"
     },
     {
@@ -2240,6 +2638,8 @@
       ],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00162,
       "outcome": "reported"
     },
     {
@@ -2251,6 +2651,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00146,
       "outcome": "reported"
     },
     {
@@ -2262,6 +2664,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.01628,
       "outcome": "reported"
     },
     {
@@ -2275,6 +2679,8 @@
       ],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00305,
       "outcome": "reported"
     },
     {
@@ -2286,6 +2692,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00135,
       "outcome": "reported"
     },
     {
@@ -2297,6 +2705,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00135,
       "outcome": "reported"
     },
     {
@@ -2308,6 +2718,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00135,
       "outcome": "reported"
     },
     {
@@ -2319,6 +2731,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00135,
       "outcome": "reported"
     },
     {
@@ -2330,28 +2744,34 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00141,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-18374",
       "severity": "Medium",
-      "package": "libc-bin 2.41-12+deb13u4",
+      "package": "libc-bin 2.41-12+deb13u5",
       "fix_state": "wont-fix",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00144,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-18374",
       "severity": "Medium",
-      "package": "libc6 2.41-12+deb13u4",
+      "package": "libc6 2.41-12+deb13u5",
       "fix_state": "wont-fix",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00144,
       "outcome": "reported"
     },
     {
@@ -2365,6 +2785,8 @@
       ],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00138,
       "outcome": "reported"
     },
     {
@@ -2376,6 +2798,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00141,
       "outcome": "reported"
     },
     {
@@ -2389,6 +2813,8 @@
       ],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00137,
       "outcome": "reported"
     },
     {
@@ -2400,7 +2826,9 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00088,
+      "outcome": "accepted"
     },
     {
       "image": "scf-backend",
@@ -2411,6 +2839,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00126,
       "outcome": "reported"
     },
     {
@@ -2422,6 +2852,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.01191,
       "outcome": "reported"
     },
     {
@@ -2433,6 +2865,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.01191,
       "outcome": "reported"
     },
     {
@@ -2444,6 +2878,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.0018,
       "outcome": "reported"
     },
     {
@@ -2455,28 +2891,34 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.0018,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-86805",
       "severity": "Medium",
-      "package": "libc-bin 2.41-12+deb13u4",
+      "package": "libc-bin 2.41-12+deb13u5",
       "fix_state": "wont-fix",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00097,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-86805",
       "severity": "Medium",
-      "package": "libc6 2.41-12+deb13u4",
+      "package": "libc6 2.41-12+deb13u5",
       "fix_state": "wont-fix",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00097,
       "outcome": "reported"
     },
     {
@@ -2488,6 +2930,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00113,
       "outcome": "reported"
     },
     {
@@ -2499,6 +2943,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00104,
       "outcome": "reported"
     },
     {
@@ -2510,6 +2956,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00942,
       "outcome": "reported"
     },
     {
@@ -2521,6 +2969,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00942,
       "outcome": "reported"
     },
     {
@@ -2532,28 +2982,34 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00129,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-95818",
       "severity": "Low",
-      "package": "libc-bin 2.41-12+deb13u4",
+      "package": "libc-bin 2.41-12+deb13u5",
       "fix_state": "wont-fix",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00102,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-95818",
       "severity": "Low",
-      "package": "libc6 2.41-12+deb13u4",
+      "package": "libc6 2.41-12+deb13u5",
       "fix_state": "wont-fix",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00102,
       "outcome": "reported"
     },
     {
@@ -2565,6 +3021,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00057,
       "outcome": "reported"
     },
     {
@@ -2576,28 +3034,34 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00057,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-6368",
       "severity": "Low",
-      "package": "libc-bin 2.41-12+deb13u4",
+      "package": "libc-bin 2.41-12+deb13u5",
       "fix_state": "wont-fix",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00107,
       "outcome": "reported"
     },
     {
       "image": "scf-backend",
       "id": "CVE-2026-6368",
       "severity": "Low",
-      "package": "libc6 2.41-12+deb13u4",
+      "package": "libc6 2.41-12+deb13u5",
       "fix_state": "wont-fix",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00107,
       "outcome": "reported"
     },
     {
@@ -2609,6 +3073,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00542,
       "outcome": "reported"
     },
     {
@@ -2620,6 +3086,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00524,
       "outcome": "reported"
     },
     {
@@ -2631,6 +3099,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.005,
       "outcome": "reported"
     },
     {
@@ -2642,6 +3112,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00468,
       "outcome": "reported"
     },
     {
@@ -2653,6 +3125,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00468,
       "outcome": "reported"
     },
     {
@@ -2664,6 +3138,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.0043,
       "outcome": "reported"
     },
     {
@@ -2675,6 +3151,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.0043,
       "outcome": "reported"
     },
     {
@@ -2686,6 +3164,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.0043,
       "outcome": "reported"
     },
     {
@@ -2697,6 +3177,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.0043,
       "outcome": "reported"
     },
     {
@@ -2708,6 +3190,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.0043,
       "outcome": "reported"
     },
     {
@@ -2719,6 +3203,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.0043,
       "outcome": "reported"
     },
     {
@@ -2730,6 +3216,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.0043,
       "outcome": "reported"
     },
     {
@@ -2741,6 +3229,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.0043,
       "outcome": "reported"
     },
     {
@@ -2752,6 +3242,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.0043,
       "outcome": "reported"
     },
     {
@@ -2763,6 +3255,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00398,
       "outcome": "reported"
     },
     {
@@ -2774,6 +3268,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00398,
       "outcome": "reported"
     },
     {
@@ -2785,6 +3281,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00398,
       "outcome": "reported"
     },
     {
@@ -2796,6 +3294,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00398,
       "outcome": "reported"
     },
     {
@@ -2807,6 +3307,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00349,
       "outcome": "reported"
     },
     {
@@ -2818,6 +3320,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00349,
       "outcome": "reported"
     },
     {
@@ -2829,6 +3333,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00345,
       "outcome": "reported"
     },
     {
@@ -2840,6 +3346,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00341,
       "outcome": "reported"
     },
     {
@@ -2851,6 +3359,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00341,
       "outcome": "reported"
     },
     {
@@ -2862,6 +3372,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00325,
       "outcome": "reported"
     },
     {
@@ -2873,6 +3385,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00325,
       "outcome": "reported"
     },
     {
@@ -2884,6 +3398,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.0031,
       "outcome": "reported"
     },
     {
@@ -2897,6 +3413,8 @@
       ],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00302,
       "outcome": "reported"
     },
     {
@@ -2908,6 +3426,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00291,
       "outcome": "reported"
     },
     {
@@ -2923,6 +3443,8 @@
       ],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00271,
       "outcome": "reported"
     },
     {
@@ -2934,6 +3456,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00186,
       "outcome": "reported"
     },
     {
@@ -2945,6 +3469,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00147,
       "outcome": "reported"
     },
     {
@@ -2956,6 +3482,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00131,
       "outcome": "reported"
     },
     {
@@ -2967,6 +3495,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00113,
       "outcome": "reported"
     },
     {
@@ -2978,198 +3508,112 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00102,
       "outcome": "reported"
     },
     {
       "image": "scf-frontend",
       "id": "CVE-2026-124709",
       "severity": "High",
-      "package": "libcrypto3 3.5.9-r0",
+      "package": "libcrypto3 3.5.9-r1",
       "fix_state": "unknown",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00569,
+      "outcome": "accepted"
     },
     {
       "image": "scf-frontend",
       "id": "CVE-2026-124709",
       "severity": "High",
-      "package": "libssl3 3.5.9-r0",
+      "package": "libssl3 3.5.9-r1",
       "fix_state": "unknown",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
-    },
-    {
-      "image": "scf-frontend",
-      "id": "CVE-2026-95692",
-      "severity": "High",
-      "package": "libcrypto3 3.5.9-r0",
-      "fix_state": "fixed",
-      "fix_versions": [
-        "3.5.9-r1"
-      ],
-      "vex": [],
-      "ignored": false,
-      "outcome": "fixable"
-    },
-    {
-      "image": "scf-frontend",
-      "id": "CVE-2026-95692",
-      "severity": "High",
-      "package": "libssl3 3.5.9-r0",
-      "fix_state": "fixed",
-      "fix_versions": [
-        "3.5.9-r1"
-      ],
-      "vex": [],
-      "ignored": false,
-      "outcome": "fixable"
-    },
-    {
-      "image": "scf-frontend",
-      "id": "CVE-2026-107496",
-      "severity": "High",
-      "package": "libcrypto3 3.5.9-r0",
-      "fix_state": "fixed",
-      "fix_versions": [
-        "3.5.9-r1"
-      ],
-      "vex": [],
-      "ignored": false,
-      "outcome": "fixable"
-    },
-    {
-      "image": "scf-frontend",
-      "id": "CVE-2026-107496",
-      "severity": "High",
-      "package": "libssl3 3.5.9-r0",
-      "fix_state": "fixed",
-      "fix_versions": [
-        "3.5.9-r1"
-      ],
-      "vex": [],
-      "ignored": false,
-      "outcome": "fixable"
-    },
-    {
-      "image": "scf-frontend",
-      "id": "CVE-2026-95691",
-      "severity": "High",
-      "package": "libcrypto3 3.5.9-r0",
-      "fix_state": "fixed",
-      "fix_versions": [
-        "3.5.9-r1"
-      ],
-      "vex": [],
-      "ignored": false,
-      "outcome": "fixable"
-    },
-    {
-      "image": "scf-frontend",
-      "id": "CVE-2026-95691",
-      "severity": "High",
-      "package": "libssl3 3.5.9-r0",
-      "fix_state": "fixed",
-      "fix_versions": [
-        "3.5.9-r1"
-      ],
-      "vex": [],
-      "ignored": false,
-      "outcome": "fixable"
+      "known_exploited": false,
+      "epss": 0.00569,
+      "outcome": "accepted"
     },
     {
       "image": "scf-frontend",
       "id": "CVE-2026-107494",
       "severity": "High",
-      "package": "libcrypto3 3.5.9-r0",
+      "package": "libcrypto3 3.5.9-r1",
       "fix_state": "unknown",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.0029,
+      "outcome": "accepted"
     },
     {
       "image": "scf-frontend",
       "id": "CVE-2026-107494",
       "severity": "High",
-      "package": "libssl3 3.5.9-r0",
+      "package": "libssl3 3.5.9-r1",
       "fix_state": "unknown",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
-    },
-    {
-      "image": "scf-frontend",
-      "id": "CVE-2026-88823",
-      "severity": "High",
-      "package": "libcrypto3 3.5.9-r0",
-      "fix_state": "fixed",
-      "fix_versions": [
-        "3.5.9-r1"
-      ],
-      "vex": [],
-      "ignored": false,
-      "outcome": "fixable"
-    },
-    {
-      "image": "scf-frontend",
-      "id": "CVE-2026-88823",
-      "severity": "High",
-      "package": "libssl3 3.5.9-r0",
-      "fix_state": "fixed",
-      "fix_versions": [
-        "3.5.9-r1"
-      ],
-      "vex": [],
-      "ignored": false,
-      "outcome": "fixable"
+      "known_exploited": false,
+      "epss": 0.0029,
+      "outcome": "accepted"
     },
     {
       "image": "scf-frontend",
       "id": "CVE-2026-121482",
       "severity": "High",
-      "package": "libcrypto3 3.5.9-r0",
+      "package": "libcrypto3 3.5.9-r1",
       "fix_state": "unknown",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00263,
+      "outcome": "accepted"
     },
     {
       "image": "scf-frontend",
       "id": "CVE-2026-121482",
       "severity": "High",
-      "package": "libssl3 3.5.9-r0",
+      "package": "libssl3 3.5.9-r1",
       "fix_state": "unknown",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00263,
+      "outcome": "accepted"
     },
     {
       "image": "scf-frontend",
       "id": "CVE-2026-95690",
       "severity": "Medium",
-      "package": "libcrypto3 3.5.9-r0",
+      "package": "libcrypto3 3.5.9-r1",
       "fix_state": "unknown",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00351,
       "outcome": "reported"
     },
     {
       "image": "scf-frontend",
       "id": "CVE-2026-95690",
       "severity": "Medium",
-      "package": "libssl3 3.5.9-r0",
+      "package": "libssl3 3.5.9-r1",
       "fix_state": "unknown",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00351,
       "outcome": "reported"
     },
     {
@@ -3181,6 +3625,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00312,
       "outcome": "reported"
     },
     {
@@ -3192,6 +3638,8 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00312,
       "outcome": "reported"
     },
     {
@@ -3203,115 +3651,95 @@
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00312,
       "outcome": "reported"
-    },
-    {
-      "image": "scf-frontend",
-      "id": "CVE-2026-88822",
-      "severity": "Medium",
-      "package": "libcrypto3 3.5.9-r0",
-      "fix_state": "fixed",
-      "fix_versions": [
-        "3.5.9-r1"
-      ],
-      "vex": [],
-      "ignored": false,
-      "outcome": "reported"
-    },
-    {
-      "image": "scf-frontend",
-      "id": "CVE-2026-88822",
-      "severity": "Medium",
-      "package": "libssl3 3.5.9-r0",
-      "fix_state": "fixed",
-      "fix_versions": [
-        "3.5.9-r1"
-      ],
-      "vex": [],
-      "ignored": false,
-      "outcome": "reported"
-    },
-    {
-      "image": "scf-frontend",
-      "id": "CVE-2026-86144",
-      "severity": "High",
-      "package": "libxml2 2.13.9-r2",
-      "fix_state": "fixed",
-      "fix_versions": [
-        "2.13.9-r3"
-      ],
-      "vex": [],
-      "ignored": false,
-      "outcome": "fixable"
     },
     {
       "image": "scf-frontend",
       "id": "CVE-2026-84786",
       "severity": "High",
-      "package": "libcrypto3 3.5.9-r0",
+      "package": "libcrypto3 3.5.9-r1",
       "fix_state": "unknown",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00173,
+      "outcome": "accepted"
     },
     {
       "image": "scf-frontend",
       "id": "CVE-2026-84786",
       "severity": "High",
-      "package": "libssl3 3.5.9-r0",
+      "package": "libssl3 3.5.9-r1",
       "fix_state": "unknown",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00173,
+      "outcome": "accepted"
     },
     {
       "image": "scf-frontend",
       "id": "CVE-2026-107493",
       "severity": "High",
-      "package": "libcrypto3 3.5.9-r0",
+      "package": "libcrypto3 3.5.9-r1",
       "fix_state": "unknown",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00143,
+      "outcome": "accepted"
     },
     {
       "image": "scf-frontend",
       "id": "CVE-2026-107493",
       "severity": "High",
-      "package": "libssl3 3.5.9-r0",
+      "package": "libssl3 3.5.9-r1",
       "fix_state": "unknown",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
-      "outcome": "untriaged"
+      "known_exploited": false,
+      "epss": 0.00143,
+      "outcome": "accepted"
     },
     {
       "image": "scf-frontend",
       "id": "CVE-2026-35190",
       "severity": "Medium",
-      "package": "libcrypto3 3.5.9-r0",
+      "package": "libcrypto3 3.5.9-r1",
       "fix_state": "unknown",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00206,
       "outcome": "reported"
     },
     {
       "image": "scf-frontend",
       "id": "CVE-2026-35190",
       "severity": "Medium",
-      "package": "libssl3 3.5.9-r0",
+      "package": "libssl3 3.5.9-r1",
       "fix_state": "unknown",
       "fix_versions": [],
       "vex": [],
       "ignored": false,
+      "known_exploited": false,
+      "epss": 0.00206,
       "outcome": "reported"
     }
   ],
-  "blocked": true,
+  "blocked": false,
   "enforcing": false,
-  "enforce_from": "2026-12-14"
+  "enforce_from": "2026-12-14",
+  "policy": {
+    "accept_unfixed_until": "2027-05-21",
+    "epss_block_at": 0.1,
+    "in_force": true
+  }
 }
