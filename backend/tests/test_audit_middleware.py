@@ -13,6 +13,7 @@ Tests:
 import pytest
 import re
 import uuid
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from starlette.testclient import TestClient
@@ -234,3 +235,28 @@ class TestDetectActionSource:
     def test_no_user_returns_system(self):
         request = self._make_request()
         assert detect_action_source(request) == "system"
+
+    def test_oidc_auth_returns_ui(self):
+        """A self-hosted IdP (Keycloak) session is a person in the browser (#1269)."""
+        request = self._make_request(auth_method="oidc")
+        assert detect_action_source(request) == "ui"
+
+    def test_oidc_auth_with_mcp_ua_stays_ui(self):
+        request = self._make_request(auth_method="oidc", user_agent="MCP-Client/1.0")
+        assert detect_action_source(request) == "ui"
+
+    def test_every_auth_method_in_auth_py_has_a_source(self):
+        """A sign-in method added to auth.py must not fall through to 'system'.
+
+        That silent fall-through is how OIDC sessions came to be audited as
+        system actions (#1269).
+        """
+        auth_py = Path(__file__).resolve().parent.parent / "auth.py"
+        methods = set(re.findall(r'auth_method="([a-z_]+)"', auth_py.read_text()))
+        assert {"google", "oidc", "api_key", "user_api_key"} <= methods
+        sources = {m: detect_action_source(self._make_request(auth_method=m)) for m in methods}
+        assert sources == {
+            **{m: "ui" for m in methods},
+            "api_key": "api_key",
+            "user_api_key": "api_key",
+        }

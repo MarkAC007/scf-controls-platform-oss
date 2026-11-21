@@ -31,8 +31,10 @@ vi.mock('../../hooks/useOrganizationSettings', () => ({
 }))
 
 let admin = true
-vi.mock('../../hooks/useIsOrgAdmin', () => ({
-  useIsOrgAdmin: () => admin,
+// roleKnown false is the window before the membership lookup returns.
+let roleKnown = true
+vi.mock('../../hooks/useHasOrgRole', () => ({
+  useOrgRoleState: () => ({ allowed: roleKnown && admin, resolved: roleKnown }),
 }))
 
 vi.mock('react-hot-toast', () => ({
@@ -48,6 +50,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   settings = undefined
   admin = true
+  roleKnown = true
   mockUpdate.mockResolvedValue({} as never)
 })
 
@@ -108,6 +111,15 @@ describe('MeasurementReminderSettings', () => {
 
   it('words one day in the singular', () => {
     expect(reminderOptions(1)[0]).toEqual({ days: 1, label: 'In the last 1 day of the period' })
+  })
+
+  it('is read-only, without the administrator line, while the role is not yet known', () => {
+    roleKnown = false
+    settings = { isms_measurement_reminder_days: 7 }
+    render(<MeasurementReminderSettings organizationId={ORG} />)
+    expect(select()).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Save reminder timing' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/Only an organisation administrator/)).not.toBeInTheDocument()
   })
 
   it('is read-only below admin and offers no Save', () => {

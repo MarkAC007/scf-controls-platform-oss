@@ -40,8 +40,10 @@ vi.mock('../../hooks/useOrganizationSettings', () => ({
 // useIsOrgAdmin reads AuthContext; without this the render dies with
 // "useAuth must be used within AuthProvider" rather than testing anything.
 let admin = true
-vi.mock('../../hooks/useIsOrgAdmin', () => ({
-  useIsOrgAdmin: () => admin,
+// roleKnown false is the window before the membership lookup returns.
+let roleKnown = true
+vi.mock('../../hooks/useHasOrgRole', () => ({
+  useOrgRoleState: () => ({ allowed: roleKnown && admin, resolved: roleKnown }),
 }))
 
 vi.mock('react-hot-toast', () => ({
@@ -86,6 +88,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   settings = { evidence_assessment_engine: 'llm' }
   admin = true
+  roleKnown = true
   mockStatus.mockResolvedValue(status())
   mockUpdate.mockResolvedValue({} as never)
   mockRefetch.mockResolvedValue({})
@@ -198,6 +201,16 @@ describe('AssessmentEngineSettings', () => {
     await waitFor(() => expect(mockRefetch).toHaveBeenCalled())
     // The status is re-read too: the engine it reports has just changed.
     await waitFor(() => expect(mockStatus).toHaveBeenCalledTimes(2))
+  })
+
+  it('is read-only, without the administrator line, while the role is not yet known', async () => {
+    roleKnown = false
+    render(<AssessmentEngineSettings organizationId={ORG} />)
+
+    await screen.findByRole('radio', { name: /Claude \(LLM\)/ })
+    screen.getAllByRole('radio').forEach(r => expect(r).toBeDisabled())
+    expect(screen.queryByRole('button', { name: 'Save engine' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/organisation administrator/)).not.toBeInTheDocument()
   })
 
   it('is read-only below org admin', async () => {

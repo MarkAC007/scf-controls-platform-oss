@@ -179,11 +179,28 @@ function statusBadgeClass(status: string): string {
   return `task-badge task-status-badge task-status-${status}`;
 }
 
-function getDaysUntilDue(dueDate: string): number {
-  const today = new Date();
-  const due = new Date(dueDate);
-  const diffTime = due.getTime() - today.getTime();
-  return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Whole calendar days from today to the due date: 0 today, negative once the day is over.
+ * The due date is a calendar date, not an instant: only its YYYY-MM-DD part is read, and it is
+ * counted against today's date on the viewer's calendar, so no time zone moves it a day.
+ */
+export function getDaysUntilDue(dueDate: string): number {
+  if (!dueDate) return Number.NaN;
+  const [year, month, day] = dueDate.slice(0, 10).split('-').map(Number);
+  const now = new Date();
+  // Both dates as UTC midnights, so a daylight-saving change cannot make a day 23 or 25 hours.
+  const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  return Math.round((Date.UTC(year, month - 1, day) - today) / DAY_MS);
+}
+
+/**
+ * The one overdue rule, shared by the "Overdue" tile and the row flags: still open and due
+ * strictly before today. A task due today is not overdue; the API filter says the same.
+ */
+export function isTaskOverdue(task: { due_date: string; status: string }): boolean {
+  return !isClosedStatus(task.status) && getDaysUntilDue(task.due_date) < 0;
 }
 
 function getDueDateText(daysUntilDue: number, isCompleted: boolean): { text: string; cls: string } {
@@ -306,7 +323,7 @@ const taskDate = (iso: string) =>
 function MeasurementTaskRow({ task, canLog, onLog }: { task: MeasurementTask; canLog: boolean; onLog: () => void }) {
   const done = task.status === 'completed';
   const daysUntilDue = getDaysUntilDue(task.due_date);
-  const isOverdue = daysUntilDue < 0 && !done;
+  const isOverdue = isTaskOverdue(task);
   const dueInfo = getDueDateText(daysUntilDue, done);
   return (
     <div
@@ -603,7 +620,7 @@ export const TasksPage: React.FC<TasksPageProps> = ({
     in_progress: visibleRows?.filter(t => t.status === 'in_progress').length,
     completed: visibleRows?.filter(t => t.status === 'completed').length,
     wont_do: visibleRows?.filter(t => t.status === 'wont_do').length,
-    overdue: visibleRows?.filter(t => new Date(t.due_date) < new Date() && !isClosedStatus(t.status)).length,
+    overdue: visibleRows?.filter(isTaskOverdue).length,
   }), [visibleRows]);
 
   /** An unanswered count is a dash, not a zero. Zero is a claim. */
@@ -855,7 +872,7 @@ export const TasksPage: React.FC<TasksPageProps> = ({
                 }
                 const daysUntilDue = getDaysUntilDue(task.due_date);
                 const isCompleted = isClosedStatus(task.status);
-                const isOverdue = daysUntilDue < 0 && !isCompleted;
+                const isOverdue = isTaskOverdue(task);
                 const isExpanded = expandedId === task.id;
                 const dueInfo = getDueDateText(daysUntilDue, isCompleted);
                 const ownership = ownershipFor(task);

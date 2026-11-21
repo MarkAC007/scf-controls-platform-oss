@@ -716,6 +716,8 @@ export interface EvidenceGapsResponse {
   gaps: EvidenceGapItem[]
   /** Tracked evidence no in-scope control asks for (orphaned by scope changes). */
   tracked_not_required?: string[]
+  /** Required evidence that is tracked but names no collecting system. Counted as tracked, not as a gap. */
+  tracked_without_system?: string[]
 }
 
 // ============================================================================

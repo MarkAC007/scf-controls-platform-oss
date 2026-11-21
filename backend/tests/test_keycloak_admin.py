@@ -216,6 +216,133 @@ def test_trailing_slash_and_well_known_tail_are_tolerated(monkeypatch):
     assert keycloak_admin.admin_base_url() == "http://keycloak:8080"
 
 
+@pytest.mark.parametrize(
+    "configured_url, expected_base",
+    [
+        # No path at all, with and without the trailing slash.
+        ("http://keycloak:8080", "http://keycloak:8080"),
+        ("http://keycloak:8080/", "http://keycloak:8080"),
+        # Realm URL at the server root: the realm part is not part of the base.
+        ("http://keycloak:8080/realms/scf", "http://keycloak:8080"),
+        ("http://keycloak:8080/realms/scf/", "http://keycloak:8080"),
+        # KC_HTTP_RELATIVE_PATH: the prefix is kept, the realm part is not.
+        ("http://keycloak:8080/api/idp/realms/scf", "http://keycloak:8080/api/idp"),
+        ("http://keycloak:8080/api/idp/realms/scf/", "http://keycloak:8080/api/idp"),
+        ("http://keycloak:8080//api/idp//realms/scf//", "http://keycloak:8080/api/idp"),
+        (
+            "http://keycloak:8080/api/idp/realms/scf/.well-known/openid-configuration",
+            "http://keycloak:8080/api/idp",
+        ),
+        ("https://sso.example.invalid/auth/realms/customer", "https://sso.example.invalid/auth"),
+        # A prefix that is itself called `realms`, and a realm called `realms`.
+        ("http://keycloak:8080/realms/realms/scf", "http://keycloak:8080/realms"),
+        ("http://keycloak:8080/api/idp/realms/realms", "http://keycloak:8080/api/idp"),
+        # The server root under a prefix, with no realm part to drop.
+        ("http://keycloak:8080/api/idp", "http://keycloak:8080/api/idp"),
+        ("http://keycloak:8080/api/idp/", "http://keycloak:8080/api/idp"),
+        # Query and fragment never reach the base.
+        ("http://keycloak:8080/api/idp/realms/scf?x=1#y", "http://keycloak:8080/api/idp"),
+    ],
+)
+def test_base_url_keeps_a_path_prefix_and_drops_the_realm(
+    monkeypatch, configured_url, expected_base
+):
+    """#1285: `KC_HTTP_RELATIVE_PATH` puts the admin API under a prefix too."""
+    monkeypatch.setenv("OIDC_DISCOVERY_URL", configured_url)
+    assert keycloak_admin.admin_base_url() == expected_base
+
+
+@pytest.mark.parametrize(
+    "configured_url",
+    [
+        "http://keycloak:8080/api/idp/realms/scf",
+        "http://keycloak:8080/api/idp/realms/scf/",
+        "http://keycloak:8080/api/idp/realms/scf/.well-known/openid-configuration",
+    ],
+)
+def test_realm_is_unchanged_by_a_path_prefix(monkeypatch, configured_url):
+    monkeypatch.setenv("OIDC_DISCOVERY_URL", configured_url)
+    assert keycloak_admin.realm_name() == "scf"
+
+
+@pytest.mark.parametrize(
+    "configured_url, prefix",
+    [
+        ("http://keycloak:8080/realms/scf", ""),
+        ("http://keycloak:8080/realms/scf/", ""),
+        ("http://keycloak:8080/api/idp/realms/scf", "/api/idp"),
+        ("http://keycloak:8080/api/idp/realms/scf/", "/api/idp"),
+        (
+            "http://keycloak:8080/api/idp/realms/scf/.well-known/openid-configuration",
+            "/api/idp",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_env_configured_client_calls_under_the_prefix(
+    monkeypatch, configured, configured_url, prefix
+):
+    """#1285 end to end: token, lookup, create, password and delete all carry
+    the prefix exactly once, and the realm part is not doubled."""
+    monkeypatch.setenv("OIDC_DISCOVERY_URL", configured_url)
+    token_path = prefix + TOKEN_PATH
+    users_path = prefix + USERS_PATH
+    recorder = Recorder(
+        {
+            ("POST", token_path): token_response(),
+            ("GET", users_path): httpx.Response(200, json=[]),
+            ("POST", users_path): httpx.Response(
+                201,
+                headers={
+                    "location": f"http://keycloak:8080{users_path}/new-user-id"
+                },
+            ),
+            ("PUT", f"{users_path}/new-user-id/reset-password"): httpx.Response(204),
+            ("DELETE", f"{users_path}/new-user-id"): httpx.Response(204),
+        }
+    )
+    client = KeycloakAdminClient(transport=recorder.transport)
+
+    result = await keycloak_admin.provision_user("sam@example.com", client=client)
+    await keycloak_admin.delete_user(result.user_id, client=client)
+
+    assert result.user_id == "new-user-id"
+    assert result.created is True
+    assert [(r.method, r.url.path) for r in recorder.requests] == [
+        ("POST", token_path),
+        ("GET", users_path),
+        ("POST", users_path),
+        ("PUT", f"{users_path}/new-user-id/reset-password"),
+        ("DELETE", f"{users_path}/new-user-id"),
+    ]
+    assert {r.url.host for r in recorder.requests} == {"keycloak"}
+
+
+@pytest.mark.asyncio
+async def test_explicit_base_url_with_prefix_and_trailing_slash():
+    """A caller-supplied base is used as given, less its trailing slash."""
+    prefix = "/api/idp"
+    recorder = Recorder(
+        {
+            ("POST", prefix + TOKEN_PATH): token_response(),
+            ("GET", prefix + USERS_PATH): httpx.Response(200, json=[]),
+        }
+    )
+    client = KeycloakAdminClient(
+        base_url="http://keycloak:8080/api/idp/",
+        realm="scf",
+        username=FAKE_ADMIN_USER,
+        password=FAKE_ADMIN_PASSWORD,
+        transport=recorder.transport,
+    )
+
+    assert await client.find_user_by_email("sam@example.com") is None
+    assert [r.url.path for r in recorder.requests] == [
+        prefix + TOKEN_PATH,
+        prefix + USERS_PATH,
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Token
 # ---------------------------------------------------------------------------

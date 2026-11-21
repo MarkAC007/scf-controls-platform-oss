@@ -25,6 +25,15 @@ import {
 } from '../../data/apiClient'
 import type { Team, TeamAssignment, TeamDetail } from '../../types'
 
+// The viewer's role in the organisation, switchable per test. The suites above
+// the role-gating block run as 'admin'; that block (#1273) sets its own.
+const role = vi.hoisted(() => ({ rank: 'admin' as 'viewer' | 'editor' | 'admin' }))
+vi.mock('../../hooks/useHasOrgRole', () => {
+  const order = { viewer: 0, editor: 1, admin: 2 }
+  const has = (_org: unknown, min: 'viewer' | 'editor' | 'admin') => order[role.rank] >= order[min]
+  return { useHasOrgRole: has, useIsOrgEditor: (org: unknown) => has(org, 'editor') }
+})
+
 vi.mock('../../data/apiClient', () => ({
   apiClient: { get: vi.fn(), patch: vi.fn(), post: vi.fn() },
   listTeamAssignments: vi.fn(),
@@ -199,5 +208,26 @@ describe('EvidenceTaskList owning team', () => {
     // support, so an unresolved row says nothing rather than guessing.
     expect(screen.queryByText('No owning team')).not.toBeInTheDocument()
     expect(screen.queryByText('Inherited')).not.toBeInTheDocument()
+  })
+})
+
+// ── Role gating (#1273) ─────────────────────────────────────────────────────
+import { afterEach as afterEachRoleTest } from 'vitest'
+
+describe('EvidenceTaskList — who is offered "+ New Task"', () => {
+  afterEachRoleTest(() => { role.rank = 'admin' })
+
+  it('withholds it from a viewer, who still reads the tasks', async () => {
+    role.rank = 'viewer'
+    renderList()
+    expect(await screen.findByText('Collect the export')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '+ New Task' })).not.toBeInTheDocument()
+  })
+
+  it.each(['editor', 'admin'] as const)('offers it to an %s', async (rank) => {
+    role.rank = rank
+    renderList()
+    expect(await screen.findByText('Collect the export')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '+ New Task' })).toBeEnabled()
   })
 })

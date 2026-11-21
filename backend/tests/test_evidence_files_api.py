@@ -927,6 +927,149 @@ class TestDownloadTokenAuth:
         assert exc_info.value.status_code == 401
 
 
+class TestDownloadBearerAuth:
+    """Bearer auth on the download endpoint, through the real role checker (#1272).
+
+    The handler used to call the checker without its ``request`` argument and
+    swallow the resulting TypeError, so every bearer token answered 401. These
+    tests leave ``require_org_role`` and ``verify_org_membership`` unpatched and
+    stub only the token validation and the database rows underneath them.
+    """
+
+    CONTENT = [b"evidence-", b"bytes"]
+
+    @staticmethod
+    def _request(bearer="member-token"):
+        req = MagicMock()
+        req.headers = {"authorization": f"Bearer {bearer}"}
+        req.client = None
+        return req
+
+    @staticmethod
+    def _user(user_id):
+        from auth import User
+
+        return User(user_id="oidc-sub", email="member@example.com", auth_method="oidc", db_id=str(user_id))
+
+    @staticmethod
+    def _row(value):
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = value
+        return result
+
+    @staticmethod
+    async def _call(org_id, file_id, request, db, token=None, expires=None):
+        from api.evidence_files import download_evidence_file
+
+        return await download_evidence_file(
+            org_id=org_id,
+            evidence_id="ERL-001",
+            file_id=file_id,
+            request=request,
+            disposition="inline",
+            token=token,
+            expires=expires,
+            db=db,
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("role", ["viewer", "editor", "admin"])
+    @patch("api.evidence_files.create_audit_entry", new_callable=AsyncMock)
+    @patch("api.evidence_files.download_blob_stream")
+    @patch("auth._authenticate", new_callable=AsyncMock)
+    async def test_any_member_downloads_with_a_bearer_token(
+        self, mock_authenticate, mock_stream, mock_audit, role, mock_db, org_id, user_id
+    ):
+        """Viewer, editor and admin each get the whole file and a custody row in their name."""
+        mock_authenticate.return_value = self._user(user_id)
+        member = MagicMock()
+        member.role = role
+        mock_db.execute.side_effect = [
+            self._row(MagicMock()),  # the organisation exists
+            self._row(member),  # the caller's membership
+            self._row(TestDownloadTokenAuth._file(org_id)),
+        ]
+        mock_stream.return_value = iter(self.CONTENT)
+
+        result = await self._call(org_id, uuid4(), self._request(), mock_db)
+
+        assert result.status_code == 200
+        assert b"".join([chunk async for chunk in result.body_iterator]) == b"".join(self.CONTENT)
+        kwargs = mock_audit.await_args.kwargs
+        assert kwargs["changed_by_user_id"] == user_id
+        assert kwargs["new_value"].endswith("bearer)")
+
+    @pytest.mark.asyncio
+    @patch("api.evidence_files.download_blob_stream")
+    @patch("auth._authenticate", new_callable=AsyncMock)
+    async def test_member_of_another_organisation_is_refused(
+        self, mock_authenticate, mock_stream, mock_db, org_id, user_id
+    ):
+        """A valid token with no membership here answers 403 and reads nothing."""
+        mock_authenticate.return_value = self._user(user_id)
+        mock_db.execute.side_effect = [
+            self._row(MagicMock()),  # the organisation exists
+            self._row(None),  # no membership
+            self._row(None),  # no consultant relationship
+        ]
+
+        with pytest.raises(Exception) as exc_info:
+            await self._call(org_id, uuid4(), self._request(), mock_db)
+
+        assert exc_info.value.status_code == 403
+        assert mock_db.execute.await_count == 3  # the file was never looked up
+        mock_stream.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("api.evidence_files.download_blob_stream")
+    @patch("auth._authenticate", new_callable=AsyncMock)
+    async def test_unknown_organisation_answers_404(
+        self, mock_authenticate, mock_stream, mock_db, org_id, user_id
+    ):
+        mock_authenticate.return_value = self._user(user_id)
+        mock_db.execute.side_effect = [self._row(None)]
+
+        with pytest.raises(Exception) as exc_info:
+            await self._call(org_id, uuid4(), self._request(), mock_db)
+
+        assert exc_info.value.status_code == 404
+        assert exc_info.value.detail == "Organization not found"
+        mock_stream.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("api.evidence_files.download_blob_stream")
+    @patch("auth._authenticate", new_callable=AsyncMock)
+    async def test_invalid_bearer_is_refused_even_with_a_valid_signed_link(
+        self, mock_authenticate, mock_stream, mock_db, org_id, user_id
+    ):
+        """A rejected bearer token gets the checker's 401, not a fall-through to the link."""
+        from fastapi import HTTPException
+        from services.download_token import generate_download_token
+
+        mock_authenticate.side_effect = HTTPException(status_code=401, detail="Invalid API key.")
+        file_id = uuid4()
+        token, expires = generate_download_token(str(file_id), str(org_id), str(user_id))
+
+        with pytest.raises(HTTPException) as exc_info:
+            await self._call(org_id, file_id, self._request("garbage"), mock_db, token, expires)
+
+        assert exc_info.value.status_code == 401
+        assert exc_info.value.detail == "Invalid API key."
+        mock_db.execute.assert_not_awaited()
+        mock_stream.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("auth._authenticate", new_callable=AsyncMock)
+    async def test_unexpected_auth_error_is_not_swallowed(
+        self, mock_authenticate, mock_db, org_id
+    ):
+        """A failure that is not a refusal surfaces instead of reading as 'Not authenticated'."""
+        mock_authenticate.side_effect = RuntimeError("database is gone")
+
+        with pytest.raises(RuntimeError):
+            await self._call(org_id, uuid4(), self._request(), mock_db)
+
+
 # ---------------------------------------------------------------------------
 # Download token service tests
 # ---------------------------------------------------------------------------

@@ -99,7 +99,8 @@ export default function UserManagement({ organizationId }: UserManagementProps) 
   const [showRolesInfo, setShowRolesInfo] = useState(false)
   const [copiedOrgId, setCopiedOrgId] = useState(false)
 
-  // Who may CHANGE a member's type: an admin of this organisation. Gated on
+  // Who may invite, change a role, remove a member or CHANGE a member's type:
+  // an admin of this organisation (every one of those routes is admin-only). Gated on
   // the viewer's role, never on anybody's member_type — see the note on the
   // interface above. This is a courtesy that keeps a control that would 403
   // off a viewer's screen; the API is the boundary and refuses the write
@@ -268,18 +269,20 @@ export default function UserManagement({ organizationId }: UserManagementProps) 
         searchPlaceholder="Search users..."
         count={`${members.length} member${members.length !== 1 ? 's' : ''}`}
         actions={
-          <button
-            className="users-invite-btn"
-            onClick={() => setShowInviteModal(true)}
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-              <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-              <circle cx="8.5" cy="7" r="4" />
-              <line x1="20" y1="8" x2="20" y2="14" />
-              <line x1="23" y1="11" x2="17" y2="11" />
-            </svg>
-            Invite user
-          </button>
+          isOrgAdmin ? (
+            <button
+              className="users-invite-btn"
+              onClick={() => setShowInviteModal(true)}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                <circle cx="8.5" cy="7" r="4" />
+                <line x1="20" y1="8" x2="20" y2="14" />
+                <line x1="23" y1="11" x2="17" y2="11" />
+              </svg>
+              Invite user
+            </button>
+          ) : undefined
         }
       />
 
@@ -399,6 +402,9 @@ export default function UserManagement({ organizationId }: UserManagementProps) 
                       className={`role-select ${getRoleClassName(member.role)}`}
                       value={member.role}
                       onChange={(e) => handleRoleChange(member.user_id, e.target.value)}
+                      disabled={!isOrgAdmin}
+                      aria-label={`Role for ${member.user?.display_name || member.user?.email || 'this member'}`}
+                      title={isOrgAdmin ? undefined : 'Only an admin can change a role'}
                     >
                       <option value="admin">Admin</option>
                       <option value="editor">Editor</option>
@@ -442,6 +448,7 @@ export default function UserManagement({ organizationId }: UserManagementProps) 
                     {formatDate(member.joined_at)}
                   </td>
                   <td className="actions-cell">
+                    {isOrgAdmin && (
                     <button
                       className="btn-action btn-remove"
                       onClick={() => void handleRemoveMember(
@@ -456,6 +463,7 @@ export default function UserManagement({ organizationId }: UserManagementProps) 
                         <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
                       </svg>
                     </button>
+                    )}
                   </td>
                 </tr>
               ))

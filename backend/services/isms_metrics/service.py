@@ -1193,21 +1193,27 @@ def change_over(results: Sequence[Dict[str, Any]], metric: Optional[ObjectiveMet
 
     Computed results for a live metric, logged results for a logged one;
     nothing for a milestone or unset metric. Only results that measure the same thing as the
-    metric in force (``same_measure``). None with fewer than two.
+    metric in force (``same_measure``). None with fewer than two. A result is dated as the
+    trend dates it (``stored_series``): a logged entry on the period it covers, not the day
+    it was entered, so back-filled readings are not recent; a computed one on its day.
     """
     if metric is None or metric.kind not in ("live", "logged"):
         return None
     source = "computed" if metric.kind == "live" else "logged"
     since = date.fromordinal(today.toordinal() - CHANGE_DAYS)
+
+    def point_on(r):
+        return r.get("period_start") or r["measured_on"]
+
     usable = [
         r for r in results
         if r.get("same_measure", True) and r["source"] == source and r["unit"] == metric.unit
         and r["value"] is not None
-        and r["measured_on"] is not None and since <= r["measured_on"] <= today
+        and point_on(r) is not None and since <= point_on(r) <= today
     ]
     if len(usable) < 2:
         return None
-    ordered = sorted(usable, key=lambda r: (r["measured_on"], r["created_at"]))
+    ordered = sorted(usable, key=lambda r: (point_on(r), r["created_at"]))
     delta = float(Decimal(str(ordered[-1]["value"])) - Decimal(str(ordered[0]["value"])))
     return {"delta": delta, "days": CHANGE_DAYS, "text": wording.change_text(metric.unit, delta, CHANGE_DAYS)}
 

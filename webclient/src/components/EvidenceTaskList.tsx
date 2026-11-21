@@ -6,6 +6,7 @@ import { TaskEditModal } from './TaskEditModal';
 import { ModernCommentThread } from './ModernCommentThread';
 import { useOrgMemberTypes } from '../hooks/useOrgMemberTypes';
 import { useTaskTeamOwnership } from '../hooks/useTaskTeamOwnership';
+import { useIsOrgEditor } from '../hooks/useHasOrgRole';
 import TaskOwningTeamBadge from './TaskOwningTeamBadge';
 
 interface Task {
@@ -66,6 +67,8 @@ export const EvidenceTaskList: React.FC<EvidenceTaskListProps> = ({
   /** The one row showing its detail. Single-valued: opening one closes the last. */
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
+  // Creating a task needs the editor role (POST /api/evidence-tasks).
+  const canEdit = useIsOrgEditor(organizationId);
 
   /* Owning team (#822 phase 4). Every task here belongs to one evidence item,
      so the parent is known without asking the payload for it — but the
@@ -165,13 +168,15 @@ export const EvidenceTaskList: React.FC<EvidenceTaskListProps> = ({
         <span className="container-icon">{'✅'}</span>
         <span className="container-title">Evidence Tasks</span>
         <span className="container-count">{openTasks.length}</span>
-        <button
-          className="btn-create-task"
-          onClick={() => setShowCreateModal(true)}
-          disabled={disabled}
-        >
-          + New Task
-        </button>
+        {canEdit && (
+          <button
+            className="btn-create-task"
+            onClick={() => setShowCreateModal(true)}
+            disabled={disabled}
+          >
+            + New Task
+          </button>
+        )}
       </div>
 
       <div className="container-content">

@@ -30,6 +30,23 @@ import VendorRegistry from '../VendorRegistry'
 import type { Vendor } from '../../types'
 
 // ── Mock getVendors ─────────────────────────────────────────────────────────
+// The viewer's role in the organisation, switchable per test. The suites above
+// the role-gating block run as 'admin'; that block (#1273) sets its own.
+const role = vi.hoisted(() => ({ rank: 'admin' as 'viewer' | 'editor' | 'admin' | 'unknown' }))
+vi.mock('../../hooks/useHasOrgRole', () => {
+  const order: Record<string, number> = { viewer: 0, editor: 1, admin: 2 }
+  // 'unknown' is the window before the membership lookup returns: nothing is allowed yet.
+  const has = (_org: unknown, min: 'viewer' | 'editor' | 'admin') => order[role.rank] >= order[min]
+  return {
+    useHasOrgRole: has,
+    useIsOrgEditor: (org: unknown) => has(org, 'editor'),
+    useOrgRoleState: (org: unknown, min: 'viewer' | 'editor' | 'admin') => ({
+      allowed: has(org, min),
+      resolved: role.rank !== 'unknown',
+    }),
+  }
+})
+
 vi.mock('../../data/apiClient', () => ({
   getVendors: vi.fn(),
 }))
@@ -259,5 +276,53 @@ describe('VendorRegistry — Explorer chrome (Phase 3 Task 6)', () => {
       expect.objectContaining({ id: 'v-001' }),
       expect.objectContaining({ id: 'v-002' }),
     ]))
+  })
+})
+
+// ── Role gating (#1273) ─────────────────────────────────────────────────────
+import { afterEach as afterEachRoleTest } from 'vitest'
+
+describe('VendorRegistry — what each role is offered', () => {
+  afterEachRoleTest(() => { role.rank = 'admin' })
+
+  it('offers a viewer neither "+ Add Vendor" nor Delete', async () => {
+    role.rank = 'viewer'
+    renderRegistry()
+    expect(await screen.findByText('Acme Corp')).toBeInTheDocument()
+    expect(document.querySelector('.vendor-explorer-add-btn')).toBeNull()
+    expect(screen.queryByTitle('Delete vendor')).not.toBeInTheDocument()
+  })
+
+  it('offers an editor "+ Add Vendor" but not Delete, which the API keeps for admins', async () => {
+    role.rank = 'editor'
+    renderRegistry()
+    expect(await screen.findByText('Acme Corp')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '+ Add Vendor' })).toBeEnabled()
+    expect(screen.queryByTitle('Delete vendor')).not.toBeInTheDocument()
+  })
+
+  it('offers an admin both', async () => {
+    role.rank = 'admin'
+    renderRegistry()
+    expect(await screen.findByText('Acme Corp')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '+ Add Vendor' })).toBeEnabled()
+    expect(screen.getAllByTitle('Delete vendor')).toHaveLength(vendors.length)
+  })
+
+  it('names no missing role and offers no Add while the role is not yet known', async () => {
+    role.rank = 'unknown'
+    mockGetVendors.mockResolvedValue([])
+    renderRegistry()
+    expect(await screen.findByText('No vendors have been added yet.')).toBeInTheDocument()
+    expect(screen.queryByText(/needs the editor role/)).not.toBeInTheDocument()
+    expect(document.querySelector('.vendor-explorer-add-btn')).toBeNull()
+  })
+
+  it('does not invite a viewer to add the first vendor', async () => {
+    role.rank = 'viewer'
+    mockGetVendors.mockResolvedValue([])
+    renderRegistry()
+    expect(await screen.findByText(/Adding one needs the editor role/)).toBeInTheDocument()
+    expect(document.querySelector('.vendor-explorer-add-btn')).toBeNull()
   })
 })

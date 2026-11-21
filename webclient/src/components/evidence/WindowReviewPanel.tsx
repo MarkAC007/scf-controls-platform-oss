@@ -20,6 +20,7 @@ import {
 } from '../../data/apiClient'
 import type { EvidenceWindowAssessment } from '../../types'
 import { WindowVerdictReviewPanel } from './WindowVerdictReviewPanel'
+import { useOrgRoleState } from '../../hooks/useHasOrgRole'
 import { verdictPresentation } from './assessmentVerdict'
 
 interface WindowReviewPanelProps {
@@ -72,6 +73,10 @@ export function WindowReviewPanel({
   const [notes, setNotes] = useState('')
   const [submitting, setSubmitting] = useState<string | null>(null)
   const [submitError, setSubmitError] = useState<string | null>(null)
+  // The per-window review route requires the editor role. The buttons wait
+  // for the role; the "editor access is needed" line waits until the role is
+  // known to be missing.
+  const { allowed: canReview, resolved: roleResolved } = useOrgRoleState(orgId, 'editor')
 
   const fetchLatest = useCallback(async () => {
     setLoading(true)
@@ -374,7 +379,7 @@ export function WindowReviewPanel({
             placeholder="Optional reviewer notes (max 2000 chars)"
             maxLength={NOTES_MAX_LENGTH}
             rows={3}
-            disabled={submitting !== null}
+            disabled={!canReview || submitting !== null}
           />
           <div className="window-review-notes-counter">
             {notes.length} / {NOTES_MAX_LENGTH}
@@ -391,6 +396,13 @@ export function WindowReviewPanel({
           </p>
         )}
 
+        {roleResolved && !canReview && (
+          <div className="assessment-review-readonly" data-testid="window-review-readonly">
+            Editor access is needed to approve, reject or reset this review.
+          </div>
+        )}
+
+        {canReview && (
         <div className="window-review-actions">
           <button
             type="button"
@@ -431,6 +443,7 @@ export function WindowReviewPanel({
             </button>
           )}
         </div>
+        )}
       </div>
     </div>
   )

@@ -32,6 +32,13 @@ import {
 } from '../../data/apiClient'
 import type { Team, TeamAssignment, TeamDetail } from '../../types'
 
+// These suites exercise the page as an admin sees it; what a viewer or an
+// editor is offered is covered in the *.roleGating tests (#1273).
+vi.mock('../../hooks/useHasOrgRole', () => ({
+  useHasOrgRole: () => true,
+  useIsOrgEditor: () => true,
+}))
+
 vi.mock('../../data/apiClient', () => ({
   apiClient: { get: vi.fn(), patch: vi.fn(), post: vi.fn() },
   listTeamAssignments: vi.fn(),

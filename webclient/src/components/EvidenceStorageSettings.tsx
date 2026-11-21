@@ -29,6 +29,7 @@
  *     link would dead-end.
  */
 import { useCallback, useEffect, useState } from 'react'
+import { useOrgRoleState } from '../hooks/useHasOrgRole'
 import type { ReactNode } from 'react'
 
 import {
@@ -226,6 +227,10 @@ export default function EvidenceStorageSettings({
   organizationId,
   migrationPanel,
 }: EvidenceStorageSettingsProps) {
+  // Both reads below are admin-only on the API. A non-admin is shown the same
+  // explanation a 403 produces, without the two requests that would earn it.
+  // While the role is not yet known the card stays on "Loading…".
+  const { allowed: isAdmin, resolved: roleResolved } = useOrgRoleState(organizationId, 'admin')
   const [effective, setEffective] = useState<EvidenceStorageEffective | null>(null)
   const [configs, setConfigs] = useState<EvidenceStorageConfig[]>([])
   const [listUnavailable, setListUnavailable] = useState(false)
@@ -289,6 +294,7 @@ export default function EvidenceStorageSettings({
   }, [organizationId])
 
   useEffect(() => {
+    if (!isAdmin) return
     let cancelled = false
     setLoading(true)
     refresh().finally(() => {
@@ -297,7 +303,7 @@ export default function EvidenceStorageSettings({
     return () => {
       cancelled = true
     }
-  }, [refresh])
+  }, [refresh, isAdmin])
 
   const closePanels = () => {
     setEditor(null)
@@ -504,7 +510,7 @@ export default function EvidenceStorageSettings({
     }
   }
 
-  if (loading) {
+  if (!roleResolved || (isAdmin && loading)) {
     return (
       <div className="settings-card">
         <h2>Evidence storage</h2>
@@ -513,7 +519,7 @@ export default function EvidenceStorageSettings({
     )
   }
 
-  if (readOnly) {
+  if (!isAdmin || readOnly) {
     return (
       <div className="settings-card evidence-storage-settings">
         <h2>Evidence storage</h2>

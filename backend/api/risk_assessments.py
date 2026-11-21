@@ -25,7 +25,7 @@ from schemas import (
     ControlRiskMapping,
     SuccessResponse
 )
-from auth import require_org_role, OrgMembership
+from auth import require_org_role, OrgMembership, assert_user_in_org
 from services.audit_service import log_entity_changes, detect_action_source, get_request_id, RISK_ASSESSMENT_TRACKED_FIELDS
 from services.risk_acceptance import (
     STATE_APPROVED,
@@ -84,6 +84,19 @@ def enrich_risk_response(assessment: RiskAssessment, low_max: int = 4, medium_ma
         "acceptance_state": state_of_acceptance(assessment),
     }
     return data
+
+
+async def check_owner(db: AsyncSession, org_id: UUID, data: dict, current: Optional[UUID] = None) -> None:
+    """A newly named risk owner may be given work in this organisation (404 otherwise, as elsewhere).
+
+    The response carries the owner's name and email, so an unchecked id would
+    resolve any user UUID on the platform to an identity (#1271). An owner the
+    risk already has is not asked about again: the risk page may send it back
+    unchanged after that person has left the organisation.
+    """
+    owner_user_id = data.get("owner_user_id")
+    if owner_user_id is not None and owner_user_id != current:
+        await assert_user_in_org(owner_user_id, org_id, db)
 
 
 async def _load_thresholds(org_id: UUID, db: AsyncSession) -> tuple:
@@ -233,6 +246,7 @@ async def create_or_update_risk_assessment(
 
         # Update existing assessment
         update_data = assessment_data.model_dump(exclude_unset=True, exclude={'risk_code'})
+        await check_owner(db, org_id, update_data, assessment.owner_user_id)
         for key, value in update_data.items():
             setattr(assessment, key, value)
         # PIG R7: keep the recorded approval honest (see risk_acceptance).
@@ -252,6 +266,7 @@ async def create_or_update_risk_assessment(
         )
     else:
         # Create new assessment
+        await check_owner(db, org_id, assessment_data.model_dump())
         assessment = RiskAssessment(
             organization_id=org_id,
             created_by_user_id=UUID(current_user.db_id) if current_user and current_user.db_id else None,
@@ -326,6 +341,7 @@ async def update_risk_assessment(
 
     # Update fields
     update_data = assessment_update.model_dump(exclude_unset=True)
+    await check_owner(db, org_id, update_data, assessment.owner_user_id)
     for key, value in update_data.items():
         setattr(assessment, key, value)
     # PIG R7: keep the recorded approval honest (see risk_acceptance).
@@ -530,7 +546,8 @@ async def get_risk_summary(
     # The risk universe: the active SCF Risk Catalog (seeded table, empty until
     # loaded) + the organisation's own custom risks. Assessment rows whose code
     # is in neither (a risk retired from the catalogue, or a renumbered one)
-    # still exist but are not counted, so "unassessed" can never go negative.
+    # still exist but are not counted, here or in the level and stage tallies,
+    # so every figure in the summary covers the same risks.
     catalog_codes = set((await db.execute(
         select(SCFCatalogRisk.code).where(SCFCatalogRisk.status == "active")
     )).scalars().all())
@@ -550,17 +567,19 @@ async def get_risk_summary(
 
     # Calculate statistics
     assessed_risks = 0
-    in_universe = 0
+    in_universe = set()
     inherent_by_level = {"low": 0, "medium": 0, "high": 0, "critical": 0}
     residual_by_level = {"low": 0, "medium": 0, "high": 0, "critical": 0}
     by_status = {}
 
     for a in assessments:
-        if a.risk_code in universe:
-            in_universe += 1
-            # Count as assessed if inherent scores are set
-            if a.likelihood is not None and a.impact is not None:
-                assessed_risks += 1
+        if a.risk_code not in universe:
+            continue
+        in_universe.add(a.risk_code)
+
+        # Count as assessed if inherent scores are set
+        if a.likelihood is not None and a.impact is not None:
+            assessed_risks += 1
 
         # Inherent risk level
         inherent_level = a.get_inherent_risk_level(low_max, medium_max, high_max)
@@ -576,11 +595,17 @@ async def get_risk_summary(
         status = a.treatment_status or "identified"
         by_status[status] = by_status.get(status, 0) + 1
 
+    # A risk in the universe with no assessment row yet has not been worked on:
+    # it is at the first stage, so the stages add up to total_risks.
+    without_row = total_risks - len(in_universe)
+    if without_row:
+        by_status["identified"] = by_status.get("identified", 0) + without_row
+
     return RiskSummaryResponse(
         organization_id=org_id,
         total_risks=total_risks,
         assessed_risks=assessed_risks,
-        unassessed_risks=max(0, total_risks - in_universe),
+        unassessed_risks=total_risks - assessed_risks,
         inherent_low=inherent_by_level["low"],
         inherent_medium=inherent_by_level["medium"],
         inherent_high=inherent_by_level["high"],

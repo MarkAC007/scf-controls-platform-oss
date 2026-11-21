@@ -21,15 +21,19 @@
  * - The role read is ``organization_members.role``. Team membership grants no
  *   permissions (Issue #822) and must never appear in this file.
  *
- * Note for a future tidy-up: ``useIsOrgAdmin`` predates this hook and still
- * carries its own copy of the membership lookup. It could become
- * ``useHasOrgRole(orgId, 'admin')`` outright — deliberately not done here, to
- * keep this change off a file other work is touching.
+ * Three states, one lookup (#1273). The role is allowed, not allowed, or not
+ * yet known, and ``useOrgRoleState`` says which. The boolean hooks keep their
+ * signature and read ``false`` while it is not known. A component that SAYS
+ * something to an under-privileged user ("only an admin can ...") must wait
+ * for ``resolved`` before saying it, or an admin reads that notice on every
+ * page load. The membership lookup itself lives in ``orgRoleLookup``: one
+ * request per organisation and user, shared by every component and by
+ * ``useIsOrgAdmin``, with the answer remembered between mounts.
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useSyncExternalStore } from 'react'
 
 import { useAuth } from '../contexts/AuthContext'
-import { getOrgMemberships } from '../data/apiClient'
+import { ensureOrgRole, getKnownOrgRole, noteOrgRoleUser, subscribeOrgRoles } from './orgRoleLookup'
 
 export type OrgRole = 'viewer' | 'editor' | 'admin'
 
@@ -40,12 +44,22 @@ const ROLE_RANK: Record<string, number> = {
   admin: 2,
 }
 
-export function useHasOrgRole(
+export interface OrgRoleState {
+  /** Holds at least the role asked for. Always ``false`` while ``resolved`` is. */
+  allowed: boolean
+  /** ``false`` until the role is known: session, organisation or lookup still loading. */
+  resolved: boolean
+}
+
+const UNKNOWN: OrgRoleState = { allowed: false, resolved: false }
+const ALLOWED: OrgRoleState = { allowed: true, resolved: true }
+const REFUSED: OrgRoleState = { allowed: false, resolved: true }
+
+export function useOrgRoleState(
   organizationId: string | null | undefined,
   minRole: OrgRole,
-): boolean {
+): OrgRoleState {
   const { user, isPlatformAdmin, isAuthenticated, authReady } = useAuth()
-  const [hasRole, setHasRole] = useState(false)
 
   // API-key mode has no user profile at all (AuthContext sets user: null with
   // an authenticated session). That bearer token is the organisation's master
@@ -57,31 +71,32 @@ export function useHasOrgRole(
 
   // ``db_id`` is the database user id — ``id`` is the identity-provider
   // subject and will never match a member row.
-  const userDbId = user?.db_id
+  const userDbId = user?.db_id ? String(user.db_id) : undefined
+
+  // Neither of these needs a membership row, so neither waits for one.
+  const passes = apiKeyMode || isPlatformAdmin
+  const lookupOrg = !passes && organizationId && userDbId ? organizationId : undefined
+
+  const role = useSyncExternalStore(subscribeOrgRoles, () =>
+    lookupOrg && userDbId ? getKnownOrgRole(lookupOrg, userDbId) : undefined,
+  )
 
   useEffect(() => {
-    let cancelled = false
-    if (!organizationId || !userDbId) {
-      setHasRole(false)
-      return
-    }
-    getOrgMemberships(organizationId)
-      .then(members => {
-        if (cancelled) return
-        const mine = members.find(m => m.user_id === String(userDbId))
-        const rank = mine ? ROLE_RANK[mine.role] : undefined
-        setHasRole(rank !== undefined && rank >= ROLE_RANK[minRole])
-      })
-      .catch(err => {
-        console.error('Failed to resolve organisation role:', err)
-        if (!cancelled) setHasRole(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [organizationId, userDbId, minRole])
+    if (userDbId) noteOrgRoleUser(userDbId)
+    if (lookupOrg && userDbId) ensureOrgRole(lookupOrg, userDbId)
+  }, [lookupOrg, userDbId])
 
-  return apiKeyMode || hasRole || isPlatformAdmin
+  if (passes) return ALLOWED
+  if (role === undefined) return UNKNOWN
+  const rank = role === null ? undefined : ROLE_RANK[role]
+  return rank !== undefined && rank >= ROLE_RANK[minRole] ? ALLOWED : REFUSED
+}
+
+export function useHasOrgRole(
+  organizationId: string | null | undefined,
+  minRole: OrgRole,
+): boolean {
+  return useOrgRoleState(organizationId, minRole).allowed
 }
 
 /**

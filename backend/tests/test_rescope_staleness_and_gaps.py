@@ -252,15 +252,34 @@ class TestEvidenceGapsAreScopeAware:
         assert set(gap["capable_systems"]) == {"Okta", "Jira"}
         assert gap["recommended_action"].startswith("Okta is already active")
 
-    def test_tracked_without_collecting_system_is_still_a_gap(self, client_factory):
+    def test_tracked_without_collecting_system_is_tracked_not_a_gap(self, client_factory):
+        """#1278: the dashboard labels total_gaps "not yet tracked", so it must
+        be required minus tracked. A tracked item with no collecting system is
+        tracked; it is reported under its own name instead."""
         client, _ = client_factory([
-            [("IAC-01", ["E-IAC-01"])],
-            [_tracking("E-IAC-01", system=False)],
+            [("IAC-01", ["E-IAC-01", "E-IAC-02", "E-IAC-03"])],
+            [_tracking("E-IAC-01", system=False), _tracking("E-IAC-02"),
+             _tracking("E-IAC-03", is_tracked=False, system=False)],
             [],
         ])
         body = client.get(GAPS, headers=AUTH).json()
+        assert body["total_evidence"] == 3
+        assert body["total_tracked"] == 2
         assert body["total_gaps"] == 1
-        assert "collecting system" in body["gaps"][0]["recommended_action"]
+        assert body["total_tracked"] + body["total_gaps"] == body["total_evidence"]
+        assert [g["evidence_id"] for g in body["gaps"]] == ["E-IAC-03"]
+        assert body["coverage_percentage"] == 66.7
+        assert body["tracked_without_system"] == ["E-IAC-01"]
+
+    def test_tracked_without_system_lists_only_required_evidence(self, client_factory):
+        client, _ = client_factory([
+            [("IAC-01", ["E-IAC-01"])],
+            [_tracking("E-IAC-01"), _tracking("E-ORPHAN", system=False)],
+            [],
+        ])
+        body = client.get(GAPS, headers=AUTH).json()
+        assert body["tracked_without_system"] == []
+        assert body["tracked_not_required"] == ["E-ORPHAN"]
 
     def test_empty_scope_has_no_gaps_and_full_coverage(self, client_factory):
         client, _ = client_factory([[], [_tracking("E-X")], []])

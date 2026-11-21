@@ -5,7 +5,8 @@ Unit tests for the R4 notification triggers (#missing-notification-types).
 Covers:
 - evidence_rejected — per-file review endpoint and per-window review endpoint
   fire ``create_evidence_rejected_notifications`` only on ``rejected``.
-- control_ready_for_review — scoped-control PATCH fires
+- control_ready_for_review — scoped-control PATCH and POST (upsert, the
+  route the web client saves through) fire
   ``create_control_ready_for_review_notifications`` only when
   implementation_status genuinely transitions to ``ready_for_review``.
 - Recipient resolution — deduplicates and never includes the acting user.
@@ -348,6 +349,107 @@ class TestControlReadyForReviewTrigger:
         body = ScopedControlUpdate(implementation_status="implemented")
 
         await self._patch_control(control, body, membership, mock_db, org_id)
+
+        mock_notify.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Trigger (b) — control_ready_for_review via scoped-control POST (upsert, #1274)
+# ---------------------------------------------------------------------------
+
+@patch("api.scoped_controls.on_control_status", new_callable=AsyncMock)
+@patch("api.scoped_controls._deprecated_catalog_refusal", new_callable=AsyncMock, return_value=None)
+@patch("api.scoped_controls._exclusion_refusal", new_callable=AsyncMock, return_value=None)
+@patch("api.scoped_controls.create_control_ready_for_review_notifications", new_callable=AsyncMock)
+@patch("api.scoped_controls.log_entity_changes", new_callable=AsyncMock)
+class TestControlReadyForReviewUpsertTrigger:
+
+    def _make_control(self, org_id, *, implementation_status="in_progress"):
+        control = MagicMock()
+        control.id = uuid4()
+        control.organization_id = org_id
+        control.implementation_status = implementation_status
+        control.completion_date = None
+        return control
+
+    async def _post_control(self, existing, implementation_status, membership, mock_db, org_id):
+        from api.scoped_controls import create_or_update_scoped_control
+        from schemas import ScopedControlCreate
+
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = existing
+        mock_db.execute.return_value = mock_result
+
+        return await create_or_update_scoped_control(
+            org_id=org_id,
+            control_data=ScopedControlCreate(
+                scf_id="CTL0001", selected=True, implementation_status=implementation_status,
+            ),
+            request=MagicMock(),
+            membership=membership,
+            db=mock_db,
+        )
+
+    @pytest.mark.asyncio
+    async def test_upsert_transition_to_ready_for_review_notifies_admins(
+        self, mock_audit, mock_notify, mock_exclusion, mock_deprecated, mock_status,
+        membership, mock_db, org_id, user_id,
+    ):
+        control = self._make_control(org_id, implementation_status="in_progress")
+
+        await self._post_control(control, "ready_for_review", membership, mock_db, org_id)
+
+        mock_notify.assert_awaited_once()
+        kwargs = mock_notify.call_args.kwargs
+        assert kwargs["organization_id"] == org_id
+        assert kwargs["scoped_control_id"] == control.id
+        assert kwargs["scf_id"] == "CTL0001"
+        assert kwargs["actor_user_id"] == user_id
+        # Sent after the change is committed, as on PATCH.
+        mock_db.commit.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_upsert_resave_of_ready_for_review_does_not_renotify(
+        self, mock_audit, mock_notify, mock_exclusion, mock_deprecated, mock_status,
+        membership, mock_db, org_id,
+    ):
+        control = self._make_control(org_id, implementation_status="ready_for_review")
+
+        await self._post_control(control, "ready_for_review", membership, mock_db, org_id)
+
+        mock_notify.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_upsert_other_status_change_does_not_notify(
+        self, mock_audit, mock_notify, mock_exclusion, mock_deprecated, mock_status,
+        membership, mock_db, org_id,
+    ):
+        control = self._make_control(org_id, implementation_status="ready_for_review")
+
+        await self._post_control(control, "implemented", membership, mock_db, org_id)
+
+        mock_notify.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_upsert_create_as_ready_for_review_notifies_admins(
+        self, mock_audit, mock_notify, mock_exclusion, mock_deprecated, mock_status,
+        membership, mock_db, org_id, user_id,
+    ):
+        created = await self._post_control(None, "ready_for_review", membership, mock_db, org_id)
+
+        mock_notify.assert_awaited_once()
+        kwargs = mock_notify.call_args.kwargs
+        assert kwargs["organization_id"] == org_id
+        assert kwargs["scoped_control_id"] == created.id
+        assert kwargs["scf_id"] == "CTL0001"
+        assert kwargs["actor_user_id"] == user_id
+
+    @pytest.mark.asyncio
+    async def test_upsert_create_with_other_status_does_not_notify(
+        self, mock_audit, mock_notify, mock_exclusion, mock_deprecated, mock_status,
+        membership, mock_db, org_id,
+    ):
+        await self._post_control(None, "in_progress", membership, mock_db, org_id)
 
         mock_notify.assert_not_called()
 

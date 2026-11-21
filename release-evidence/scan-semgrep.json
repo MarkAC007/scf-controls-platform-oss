@@ -3,10 +3,10 @@
   "tool": "semgrep",
   "scanner": "Semgrep",
   "version": "1.184.0",
-  "commit": "1fc76d2618a9ea27b12821b6c88ee2176a8a3501",
+  "commit": "b322f1b12478506c28ce383d1209ad9a89cf8ec3",
   "workflow": "Semgrep SAST",
   "job": "Static Analysis",
-  "run_id": 44394793381,
+  "run_id": 44893019497,
   "run_attempt": 1,
   "event": "push",
   "job_conclusion": "success",
@@ -22,7 +22,7 @@
   },
   "totals": {
     "rules": 1074,
-    "suppressed_in_source": 31
+    "suppressed_in_source": 35
   },
   "reason": null
 }

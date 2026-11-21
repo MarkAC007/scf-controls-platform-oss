@@ -16,6 +16,23 @@ import {
 } from '../../data/apiClient'
 import { fetchFrameworks } from '../../data/catalogApi'
 
+// The viewer's role in the organisation, switchable per test. The suites above
+// the role-gating block run as 'admin'; that block (#1273) sets its own.
+const role = vi.hoisted(() => ({ rank: 'admin' as 'viewer' | 'editor' | 'admin' | 'unknown' }))
+vi.mock('../../hooks/useHasOrgRole', () => {
+  const order: Record<string, number> = { viewer: 0, editor: 1, admin: 2 }
+  // 'unknown' is the window before the membership lookup returns: nothing is allowed yet.
+  const has = (_org: unknown, min: 'viewer' | 'editor' | 'admin') => order[role.rank] >= order[min]
+  return {
+    useHasOrgRole: has,
+    useIsOrgEditor: (org: unknown) => has(org, 'editor'),
+    useOrgRoleState: (org: unknown, min: 'viewer' | 'editor' | 'admin') => ({
+      allowed: has(org, min),
+      resolved: role.rank !== 'unknown',
+    }),
+  }
+})
+
 vi.mock('../../data/apiClient', () => ({
   listEngagements: vi.fn(),
   createEngagement: vi.fn(),
@@ -190,5 +207,58 @@ describe('EngagementsPage auditors drawer', () => {
     const dialog = await screen.findByRole('dialog')
     expect(await within(dialog).findByText('External')).toBeInTheDocument()
     expect(within(dialog).getByText('Internal')).toBeInTheDocument()
+  })
+})
+
+// ── Role gating (#1273) ─────────────────────────────────────────────────────
+import { afterEach as afterEachRoleTest } from 'vitest'
+
+describe('EngagementsPage — what each role is offered', () => {
+  afterEachRoleTest(() => { role.rank = 'admin' })
+  const DRAFT: AuditEngagement = { ...ENGAGEMENT, id: 'eng-2', name: 'Draft engagement', status: 'draft' }
+
+  it('offers a viewer neither "+ New Engagement" nor Delete, and still lists the engagements', async () => {
+    role.rank = 'viewer'
+    vi.mocked(listEngagements).mockResolvedValue([ENGAGEMENT, DRAFT])
+    renderPage()
+    expect(await screen.findByText('Draft engagement')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '+ New Engagement' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: 'Review board' })).toHaveLength(2)
+  })
+
+  it('offers an editor "+ New Engagement" but not Delete, which the API keeps for admins', async () => {
+    role.rank = 'editor'
+    vi.mocked(listEngagements).mockResolvedValue([ENGAGEMENT, DRAFT])
+    renderPage()
+    expect(await screen.findByText('Draft engagement')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '+ New Engagement' })).toBeEnabled()
+    expect(screen.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument()
+  })
+
+  it('offers an admin both, Delete on a draft only', async () => {
+    role.rank = 'admin'
+    vi.mocked(listEngagements).mockResolvedValue([ENGAGEMENT, DRAFT])
+    renderPage()
+    expect(await screen.findByText('Draft engagement')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '+ New Engagement' })).toBeEnabled()
+    expect(screen.getAllByRole('button', { name: 'Delete' })).toHaveLength(1)
+  })
+
+  it('names no missing role and offers no New Engagement while the role is not yet known', async () => {
+    role.rank = 'unknown'
+    vi.mocked(listEngagements).mockResolvedValue([])
+    renderPage()
+    expect(await screen.findByText('No engagements yet')).toBeInTheDocument()
+    expect(screen.queryByText(/needs the editor role/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '+ New Engagement' })).not.toBeInTheDocument()
+  })
+
+  it('does not invite a viewer to create the first engagement', async () => {
+    role.rank = 'viewer'
+    vi.mocked(listEngagements).mockResolvedValue([])
+    renderPage()
+    expect(await screen.findByText('Creating an engagement needs the editor role.')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '+ New Engagement' })).not.toBeInTheDocument()
   })
 })

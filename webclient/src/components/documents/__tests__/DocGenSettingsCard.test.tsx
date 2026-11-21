@@ -19,6 +19,16 @@ import {
   type ProfilePreview,
 } from '../../../data/documentsApi'
 
+// The viewer's role in the organisation, switchable per test. The suites above
+// the role-gating block run as 'admin'; that block (#1273) sets its own.
+const role = vi.hoisted(() => ({ rank: 'admin' as 'viewer' | 'editor' | 'admin' | 'unknown' }))
+vi.mock('../../../hooks/useHasOrgRole', () => {
+  const order: Record<string, number> = { viewer: 0, editor: 1, admin: 2 }
+  // 'unknown' is the window before the membership lookup returns: nothing is allowed yet.
+  const has = (_org: unknown, min: 'viewer' | 'editor' | 'admin') => order[role.rank] >= order[min]
+  return { useHasOrgRole: has, useIsOrgEditor: (org: unknown) => has(org, 'editor') }
+})
+
 vi.mock('react-hot-toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 vi.mock('../../../data/documentsApi', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../data/documentsApi')>()
@@ -204,5 +214,28 @@ describe('describeProfileOutput', () => {
   it('says one per domain for the granular structure', () => {
     const granular = profile('granular', 'Granular') as unknown as Parameters<typeof describeProfileOutput>[0]
     expect(describeProfileOutput(granular)).toContain('a procedure per domain')
+  })
+})
+
+// ── Role gating (#1273) ─────────────────────────────────────────────────────
+import { afterEach as afterEachRoleTest } from 'vitest'
+
+describe('DocGenSettingsCard — who may switch document generation', () => {
+  afterEachRoleTest(() => { role.rank = 'admin' })
+  beforeEach(() => vi.clearAllMocks())
+
+  // 'unknown': the card has no notice to withhold, so the window before the
+  // role is known only has to keep the toggles off.
+  it.each(['unknown', 'viewer', 'editor'] as const)('holds both toggles disabled for a %s', async (rank) => {
+    role.rank = rank
+    renderCard([])
+    expect(await screen.findByRole('button', { name: 'Enable document generation' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /AI-augmented/i })).toBeDisabled()
+  })
+
+  it('leaves them live for an admin', async () => {
+    role.rank = 'admin'
+    renderCard([])
+    expect(await screen.findByRole('button', { name: 'Enable document generation' })).toBeEnabled()
   })
 })

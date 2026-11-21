@@ -27,6 +27,23 @@ import {
 } from '../../data/apiClient'
 import type { OrgFunction, Team, TeamDetail, TeamMember, TeamMembershipRole } from '../../types'
 
+// The viewer's role in the organisation, switchable per test. The suites above
+// the role-gating block run as 'admin'; that block (#1273) sets its own.
+const role = vi.hoisted(() => ({ rank: 'admin' as 'viewer' | 'editor' | 'admin' | 'unknown' }))
+vi.mock('../../hooks/useHasOrgRole', () => {
+  const order: Record<string, number> = { viewer: 0, editor: 1, admin: 2 }
+  // 'unknown' is the window before the membership lookup returns: nothing is allowed yet.
+  const has = (_org: unknown, min: 'viewer' | 'editor' | 'admin') => order[role.rank] >= order[min]
+  return {
+    useHasOrgRole: has,
+    useIsOrgEditor: (org: unknown) => has(org, 'editor'),
+    useOrgRoleState: (org: unknown, min: 'viewer' | 'editor' | 'admin') => ({
+      allowed: has(org, min),
+      resolved: role.rank !== 'unknown',
+    }),
+  }
+})
+
 vi.mock('../../data/apiClient', () => ({
   listFunctions: vi.fn(),
   listTeams: vi.fn(),
@@ -568,5 +585,57 @@ describe('TeamManagement business function chips', () => {
     expect(mockUpdateTeam).not.toHaveBeenCalled()
     expect(screen.queryByRole('button', { name: 'Remove Operations' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Save functions' })).not.toBeInTheDocument()
+  })
+})
+
+// ── Role gating (#1273) ─────────────────────────────────────────────────────
+import { afterEach as afterEachRoleTest } from 'vitest'
+
+describe('TeamManagement — what each role is offered', () => {
+  afterEachRoleTest(() => { role.rank = 'admin' })
+  beforeEach(() => vi.clearAllMocks())
+
+  it.each(['viewer', 'editor'] as const)('offers a %s no New team or Archive, and a read-only detail', async (rank) => {
+    role.rank = rank
+    primeLoad([team()])
+    const user = userEvent.setup()
+    render(<TeamManagement organizationId={ORG_ID} />, { wrapper: ConfirmProvider })
+
+    expect(await screen.findByText('Security Operations')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'New team' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Archive' })).not.toBeInTheDocument()
+    expect(screen.getByText(/Only an admin can create, change or archive a team/)).toBeInTheDocument()
+
+    // The detail still opens, with every control in it switched off.
+    await user.click(screen.getByRole('button', { name: /Security Operations/ }))
+    const detail = document.querySelector('.team-detail') as HTMLElement
+    const controls = Array.from(detail.querySelectorAll('button, select, input'))
+    expect(controls.length).toBeGreaterThan(0)
+    controls.forEach(control => expect(control).toBeDisabled())
+  })
+
+  it('withholds the controls but not the admin-only sentence while the role is not yet known', async () => {
+    role.rank = 'unknown'
+    primeLoad([team()])
+    render(<TeamManagement organizationId={ORG_ID} />, { wrapper: ConfirmProvider })
+
+    expect(await screen.findByText('Security Operations')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'New team' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Archive' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/Only an admin can create, change or archive a team/)).not.toBeInTheDocument()
+  })
+
+  it('offers an admin New team, Archive and a live detail', async () => {
+    role.rank = 'admin'
+    primeLoad([team()])
+    const user = userEvent.setup()
+    render(<TeamManagement organizationId={ORG_ID} />, { wrapper: ConfirmProvider })
+
+    expect(await screen.findByText('Security Operations')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'New team' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Archive' })).toBeEnabled()
+    expect(screen.queryByText(/Only an admin can create/)).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /Security Operations/ }))
+    expect(screen.getByLabelText('Add a member to Security Operations')).toBeEnabled()
   })
 })

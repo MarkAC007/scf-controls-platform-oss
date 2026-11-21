@@ -471,7 +471,7 @@ async def create_engagement(
             db=db, organization_id=org_id, entity_type='audit_engagement',
             entity_id=new_engagement.id, action='create', changed_by_user_id=user_id,
             old_values={}, new_values=new_values,
-            tracked_fields=ENGAGEMENT_TRACKED_FIELDS,
+            tracked_fields=set(ENGAGEMENT_TRACKED_FIELDS),
             action_source=detect_action_source(request),
             request_id=get_request_id(request),
         )
@@ -573,7 +573,7 @@ async def update_engagement(
             db=db, organization_id=org_id, entity_type='audit_engagement',
             entity_id=engagement.id, action='update', changed_by_user_id=user_id,
             old_values=old_values, new_values=new_values,
-            tracked_fields=ENGAGEMENT_TRACKED_FIELDS,
+            tracked_fields=set(ENGAGEMENT_TRACKED_FIELDS),
             action_source=detect_action_source(request),
             request_id=get_request_id(request),
         )
@@ -637,7 +637,7 @@ async def delete_engagement(
             db=db, organization_id=org_id, entity_type='audit_engagement',
             entity_id=engagement.id, action='delete', changed_by_user_id=user_id,
             old_values=old_values, new_values={},
-            tracked_fields=ENGAGEMENT_TRACKED_FIELDS,
+            tracked_fields=set(ENGAGEMENT_TRACKED_FIELDS),
             action_source=detect_action_source(request),
             request_id=get_request_id(request),
         )

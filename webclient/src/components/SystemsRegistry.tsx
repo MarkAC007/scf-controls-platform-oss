@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { getSystems, deleteSystem } from '../data/apiClient'
+import { useIsOrgEditor } from '../hooks/useHasOrgRole'
 import type { System, SystemType, SystemStatus, CollectionInterfacesFile, CollectionInterface } from '../types'
 import FilterSidebar, { FilterGroup, FilterSelect, defaultFiltersCollapsed } from './explorer/FilterSidebar'
 import ListToolbar from './explorer/ListToolbar'
@@ -109,6 +110,8 @@ export const SystemsRegistry: React.FC<SystemsRegistryProps> = ({
   const [searchQuery, setSearchQuery] = useState('')
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
   const [filtersCollapsed, setFiltersCollapsed] = useState(defaultFiltersCollapsed)
+  // Adding, editing and deleting a system all need the editor role on the API.
+  const canEdit = useIsOrgEditor(organizationId)
 
   useEffect(() => {
     loadSystems()
@@ -240,9 +243,11 @@ export const SystemsRegistry: React.FC<SystemsRegistryProps> = ({
               </span>
             }
             actions={
-              <button onClick={onAddSystem} className="system-explorer-add-btn">
-                + Add System
-              </button>
+              canEdit ? (
+                <button onClick={onAddSystem} className="system-explorer-add-btn">
+                  + Add System
+                </button>
+              ) : undefined
             }
           />
 
@@ -254,10 +259,12 @@ export const SystemsRegistry: React.FC<SystemsRegistryProps> = ({
                 <h3>No Systems Found</h3>
                 <p>
                   {systems.length === 0
-                    ? 'Add your first system to start tracking evidence collection capabilities.'
+                    ? canEdit
+                      ? 'Add your first system to start tracking evidence collection capabilities.'
+                      : 'No systems have been added yet. Adding one needs the editor role.'
                     : 'Try adjusting the filters to see more results.'}
                 </p>
-                {systems.length === 0 && (
+                {systems.length === 0 && canEdit && (
                   <button onClick={onAddSystem} className="system-explorer-add-btn">
                     Add Your First System
                   </button>
@@ -325,6 +332,7 @@ export const SystemsRegistry: React.FC<SystemsRegistryProps> = ({
                     </RowMeta>
 
                     {/* Edit / Delete actions — outside row-click with stopPropagation */}
+                    {canEdit && (
                     <RowMeta>
                       <div
                         className="system-row-actions"
@@ -373,6 +381,7 @@ export const SystemsRegistry: React.FC<SystemsRegistryProps> = ({
                         )}
                       </div>
                     </RowMeta>
+                    )}
                   </ExplorerListRow>
                 )
               })

@@ -5,6 +5,7 @@ import { useScopedControlsStats } from '../hooks/useScopedControlsQuery'
 import ThemeCard from './capability-posture/ThemeCard'
 import ThemeDetail from './capability-posture/ThemeDetail'
 import { formatAxisPercent } from './capability-posture/axisHelpers'
+import { headlineStats } from './capability-posture/headlineStats'
 import type { CapabilityThemeResponse, CapabilityThemeEvidencePosture } from '../types'
 
 interface CapabilityPostureProps {
@@ -33,28 +34,9 @@ export default function CapabilityPosture({ organizationId }: CapabilityPostureP
     return map
   }, [evidenceData])
 
-  const aggregateStats = useMemo(() => {
-    if (themes.length === 0) return null
-    let totalControls = 0
-    let totalAtRisk = 0
-    let compositeSum = 0
-    let compositeCount = 0
-
-    for (const t of themes) {
-      totalControls += t.total_controls
-      totalAtRisk += t.posture.at_risk
-      if (t.composite_score !== null) {
-        compositeSum += t.composite_score
-        compositeCount += 1
-      }
-    }
-
-    return {
-      overallKps: compositeCount > 0 ? compositeSum / compositeCount : null,
-      totalControls,
-      totalAtRisk,
-    }
-  }, [themes])
+  // #1279: the at-risk headline is the DISTINCT count from the same stats, for
+  // the same reason. The per-theme `N at risk` badges stay as they are.
+  const aggregateStats = useMemo(() => headlineStats(themes, scopedStats), [themes, scopedStats])
 
   const selectedThemeData: CapabilityThemeResponse | undefined = useMemo(
     () => themes.find((t) => t.theme_code === selectedTheme),
@@ -97,12 +79,12 @@ export default function CapabilityPosture({ organizationId }: CapabilityPostureP
             </div>
             <div className="kpi-glow"></div>
           </div>
-          {aggregateStats.totalAtRisk > 0 && (
+          {aggregateStats.atRisk !== null && aggregateStats.atRisk > 0 && (
             <div className="kpi-card">
               <div className="kpi-card-header">
                 <span className="kpi-label">AT RISK</span>
               </div>
-              <div className="kpi-value" style={{ color: 'var(--destructive)' }}>{aggregateStats.totalAtRisk}</div>
+              <div className="kpi-value" style={{ color: 'var(--destructive)' }}>{aggregateStats.atRisk}</div>
               <div className="kpi-glow"></div>
             </div>
           )}

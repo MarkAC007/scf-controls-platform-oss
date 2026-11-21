@@ -23,6 +23,8 @@ interface EvidenceFilePreviewModalProps {
   onDownload: (fileId: string) => void
   onDelete: (fileId: string) => Promise<void>
   isDeleting: boolean
+  /** Same meaning as on ``EvidenceFileList``: only ``false`` withholds Delete. */
+  canDelete?: boolean
 }
 
 // ---- Component ----
@@ -150,6 +152,7 @@ export function EvidenceFilePreviewModal({
   onDownload,
   onDelete,
   isDeleting,
+  canDelete,
 }: EvidenceFilePreviewModalProps) {
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [codeContent, setCodeContent] = useState<string | null>(null)
@@ -647,7 +650,7 @@ export function EvidenceFilePreviewModal({
         {/* Footer */}
         <div className="evidence-preview-footer">
           <div className="evidence-preview-footer-left">
-            {confirmDelete ? (
+            {canDelete === false ? null : confirmDelete ? (
               <>
                 <span className="evidence-files-confirm-label">Delete?</span>
                 <button

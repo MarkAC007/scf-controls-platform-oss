@@ -184,6 +184,50 @@ async def _serialize_task_with_evidence(
     }
 
 
+async def _task_response(
+    task: EvidenceCollectionTask,
+    db: AsyncSession,
+) -> dict:
+    """Build the body the write endpoints (create, update, complete) return.
+
+    One builder, carrying every field of `EvidenceCollectionTaskResponse`, so
+    no field can be left out and reported as its schema default: the three
+    endpoints each used to build their own dict without the type, priority,
+    title and description, and answered `priority: "medium"`, `title: null`
+    whatever was stored (#1283).
+    """
+    user = None
+    if task.assigned_user_id:
+        user_result = await db.execute(
+            select(DBUser).where(DBUser.id == task.assigned_user_id)
+        )
+        user = user_result.scalar_one_or_none()
+
+    return {
+        "id": task.id,
+        "evidence_tracking_id": task.evidence_tracking_id,
+        "task_type": task.task_type,
+        "title": task.title,
+        "description": task.description,
+        "priority": task.priority,
+        "due_date": task.due_date,
+        "status": task.status,
+        "assigned_user_id": task.assigned_user_id,
+        "owning_team_id": task.owning_team_id,
+        "completed_date": task.completed_date,
+        "completion_notes": task.completion_notes,
+        "dependencies": task.dependencies,
+        "attachments": task.attachments,
+        "auto_generated": task.auto_generated,
+        "created_at": task.created_at,
+        "assigned_user": {
+            "id": user.id,
+            "email": user.email,
+            "display_name": user.display_name
+        } if user else None
+    }
+
+
 @router.get("/api/evidence-tasks", response_model=List[dict])
 async def list_evidence_tasks(
     status_filter: Optional[str] = Query(None, pattern="^(not_started|in_progress|completed|wont_do)$"),
@@ -352,7 +396,6 @@ async def create_evidence_task(
     # validate here and no user to look up. The task's owner comes from the
     # owning team below, or is inherited from the parent evidence item's
     # accountable team when that is left to default.
-    user = None
 
     # Create task with enhanced fields
     # #822 phase 4. The create schema accepts an owning team, so the create
@@ -407,23 +450,7 @@ async def create_evidence_task(
     await db.commit()
     await db.refresh(task)
 
-    return {
-        "id": task.id,
-        "evidence_tracking_id": task.evidence_tracking_id,
-        "due_date": task.due_date,
-        "status": task.status,
-        "assigned_user_id": task.assigned_user_id,
-        "owning_team_id": task.owning_team_id,
-        "completed_date": task.completed_date,
-        "completion_notes": task.completion_notes,
-        "auto_generated": task.auto_generated,
-        "created_at": task.created_at,
-        "assigned_user": {
-            "id": user.id,
-            "email": user.email,
-            "display_name": user.display_name
-        } if user else None
-    }
+    return await _task_response(task, db)
 
 
 @router.get("/api/evidence-tasks/{task_id}", response_model=dict)
@@ -581,6 +608,7 @@ async def update_evidence_task(
             )
 
     # Update fields
+    previous_status = task.status
     if owning_team_supplied:
         task.owning_team_id = task_update.owning_team_id
     if task_update.due_date is not None:
@@ -599,6 +627,17 @@ async def update_evidence_task(
         task.completion_notes = task_update.completion_notes
     if task_update.completed_date is not None:
         task.completed_date = task_update.completed_date
+    elif task.status != previous_status:
+        # The completion date follows the status when the caller does not name
+        # one (#1268): "Mark completed" on the task page patches the status and
+        # nothing else, and used to leave a completed task with no date. A task
+        # moved out of completed loses its date, as a reopened deficiency does;
+        # completing it again stamps a fresh one. Unlike POST .../complete this
+        # does not move the evidence item's last collection date.
+        if task.status == 'completed':
+            task.completed_date = date.today()
+        elif previous_status == 'completed':
+            task.completed_date = None
     if assignee_supplied and task_update.assigned_user_id is None:
         # The clear, which is the only write this field still takes. A non-null
         # value that differed was rejected above; one that matched is a no-op and
@@ -636,31 +675,7 @@ async def update_evidence_task(
     await db.commit()
     await db.refresh(task)
 
-    # Get user data
-    user = None
-    if task.assigned_user_id:
-        user_result = await db.execute(
-            select(DBUser).where(DBUser.id == task.assigned_user_id)
-        )
-        user = user_result.scalar_one_or_none()
-
-    return {
-        "id": task.id,
-        "evidence_tracking_id": task.evidence_tracking_id,
-        "due_date": task.due_date,
-        "status": task.status,
-        "assigned_user_id": task.assigned_user_id,
-        "owning_team_id": task.owning_team_id,
-        "completed_date": task.completed_date,
-        "completion_notes": task.completion_notes,
-        "auto_generated": task.auto_generated,
-        "created_at": task.created_at,
-        "assigned_user": {
-            "id": user.id,
-            "email": user.email,
-            "display_name": user.display_name
-        } if user else None
-    }
+    return await _task_response(task, db)
 
 
 @router.delete("/api/evidence-tasks/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -779,31 +794,7 @@ async def complete_evidence_task(
     await db.commit()
     await db.refresh(task)
 
-    # Get user data
-    user = None
-    if task.assigned_user_id:
-        user_result = await db.execute(
-            select(DBUser).where(DBUser.id == task.assigned_user_id)
-        )
-        user = user_result.scalar_one_or_none()
-
-    return {
-        "id": task.id,
-        "evidence_tracking_id": task.evidence_tracking_id,
-        "due_date": task.due_date,
-        "status": task.status,
-        "assigned_user_id": task.assigned_user_id,
-        "owning_team_id": task.owning_team_id,
-        "completed_date": task.completed_date,
-        "completion_notes": task.completion_notes,
-        "auto_generated": task.auto_generated,
-        "created_at": task.created_at,
-        "assigned_user": {
-            "id": user.id,
-            "email": user.email,
-            "display_name": user.display_name
-        } if user else None
-    }
+    return await _task_response(task, db)
 
 
 @router.get("/api/users/me/dashboard", response_model=dict)

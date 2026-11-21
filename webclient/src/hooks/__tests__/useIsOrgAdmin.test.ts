@@ -14,6 +14,7 @@ import { renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useIsOrgAdmin } from '../useIsOrgAdmin'
+import { clearOrgRoleCache } from '../orgRoleLookup'
 
 const mockUseAuth = vi.fn()
 vi.mock('../../contexts/AuthContext', () => ({
@@ -27,6 +28,8 @@ vi.mock('../../data/apiClient', () => ({
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // The lookup is remembered across components; each case starts without one.
+  clearOrgRoleCache()
   mockGetOrgMemberships.mockResolvedValue([])
 })
 

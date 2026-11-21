@@ -175,7 +175,10 @@ vi.mock('../../hooks/useIsOrgAdmin', () => ({
   useIsOrgAdmin: () => roleState.isAdmin,
   default: () => roleState.isAdmin,
 }))
-vi.mock('../../hooks/useHasOrgRole', () => ({ useIsOrgEditor: () => true }))
+vi.mock('../../hooks/useHasOrgRole', () => ({
+  useIsOrgEditor: () => true,
+  useOrgRoleState: () => ({ allowed: true, resolved: true }),
+}))
 vi.mock('../../contexts/AuthContext', () => ({ useAuth: () => ({ user: { db_id: 'user-1' } }) }))
 
 vi.mock('../../contexts/OrganizationContext', () => ({
@@ -952,7 +955,8 @@ describe('RiskDetailPage — ordinary saves against an approval in force', () =>
     expect(screen.queryByRole('alertdialog')).toBeNull()
     expect(inherentLikelihood).toHaveValue('5')
     await waitFor(() => expect(onSave).toHaveBeenCalled())
-    expect(onSave.mock.calls[0][1]).toMatchObject({ residual_impact: 4, likelihood: 5, treatment_status: 'accepted' })
+    // #1275: only the two re-scored fields; the unchanged status is not resent.
+    expect(onSave.mock.calls[0][1]).toEqual({ residual_impact: 4, likelihood: 5 })
   })
 
   it('asks an admin before a status change away from Accepted withdraws the approval', async () => {
@@ -1169,5 +1173,88 @@ describe('RiskDetailPage — the pending autosave holds the acceptance decision'
     expect(record).toBeDisabled()
     await act(async () => { finishSave() })
     expect(record).toBeEnabled()
+  })
+})
+
+// ─── #1275: a save carries only what this person changed ─────────────────
+
+describe('RiskDetailPage — the debounced save sends only the changed fields', () => {
+  const props = (overrides: Partial<React.ComponentProps<typeof RiskDetailPage>>) => ({
+    assessment: baseAssessment,
+    riskCodes,
+    onSave: vi.fn().mockResolvedValue(undefined),
+    onBack: vi.fn(),
+    onPrev: vi.fn(),
+    onNext: vi.fn(),
+    position: null,
+    users,
+    ...overrides,
+  })
+
+  it('sends the one field typed in, not the rest of the form', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined)
+    renderPage({ onSave })
+    fireEvent.change(screen.getByLabelText('Treatment Plan'), { target: { value: 'New plan' } })
+    await waitFor(() => expect(onSave).toHaveBeenCalled())
+    // No notes key: a colleague's notes saved since this page loaded stay as they are.
+    expect(onSave.mock.calls).toEqual([['R-GV-1', { treatment_plan: 'New plan' }]])
+  })
+
+  it('sends the fields changed within one debounce window together, in one save', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined)
+    renderPage({ onSave })
+    fireEvent.change(screen.getByLabelText('Notes'), { target: { value: 'N' } })
+    fireEvent.change(screen.getByLabelText('Notes'), { target: { value: 'New notes' } })
+    fireEvent.change(screen.getByLabelText('Treatment Status'), { target: { value: 'accepted' } })
+    await waitFor(() => expect(onSave).toHaveBeenCalled())
+    await new Promise((resolve) => setTimeout(resolve, 600))
+    expect(onSave.mock.calls).toEqual([['R-GV-1', { notes: 'New notes', treatment_status: 'accepted' }]])
+  })
+
+  it('sends a cleared text field as null', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined)
+    renderPage({ onSave })
+    fireEvent.change(screen.getByLabelText('Notes'), { target: { value: '' } })
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith('R-GV-1', { notes: null }))
+  })
+
+  it('keeps a change whose save failed and sends it with the next save, newer values first', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined).mockRejectedValueOnce(new Error('offline'))
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
+    renderPage({ onSave })
+    fireEvent.change(screen.getByLabelText('Notes'), { target: { value: 'Unsaved notes' } })
+    fireEvent.change(screen.getByLabelText('Treatment Plan'), { target: { value: 'Plan v1' } })
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(logged).toHaveBeenCalled())
+    fireEvent.change(screen.getByLabelText('Treatment Plan'), { target: { value: 'Plan v2' } })
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(2))
+    expect(onSave.mock.calls[1]).toEqual(['R-GV-1', { notes: 'Unsaved notes', treatment_plan: 'Plan v2' }])
+    logged.mockRestore()
+  })
+
+  it('does not carry a failed change over to another risk', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined).mockRejectedValueOnce(new Error('offline'))
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const { rerender } = render(<RiskDetailPage {...props({ onSave })} />, { wrapper: confirmWrapper(queryWrapper()) })
+    fireEvent.change(screen.getByLabelText('Notes'), { target: { value: 'Unsaved notes' } })
+    await waitFor(() => expect(logged).toHaveBeenCalled())
+    rerender(<RiskDetailPage {...props({ onSave, assessment: customAssessment })} />)
+    fireEvent.change(screen.getByLabelText('Treatment Plan'), { target: { value: 'Plan for the custom risk' } })
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(2))
+    expect(onSave.mock.calls[1]).toEqual(['R-ORG-1', { treatment_plan: 'Plan for the custom risk' }])
+    logged.mockRestore()
+  })
+
+  it('saves a change to its own risk when the next risk is edited inside the debounce window', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined)
+    const { rerender } = render(<RiskDetailPage {...props({ onSave })} />, { wrapper: confirmWrapper(queryWrapper()) })
+    fireEvent.change(screen.getByLabelText('Notes'), { target: { value: 'Notes for R-GV-1' } })
+    rerender(<RiskDetailPage {...props({ onSave, assessment: customAssessment })} />)
+    fireEvent.change(screen.getByLabelText('Treatment Plan'), { target: { value: 'Plan for the custom risk' } })
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(2))
+    expect(onSave.mock.calls).toEqual([
+      ['R-GV-1', { notes: 'Notes for R-GV-1' }],
+      ['R-ORG-1', { treatment_plan: 'Plan for the custom risk' }],
+    ])
   })
 })

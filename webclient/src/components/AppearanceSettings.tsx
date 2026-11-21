@@ -15,6 +15,7 @@ import {
   updateOrganizationSettings,
 } from '../data/apiClient'
 import type { BusinessSizeKey } from '../types'
+import { useOrgRoleState } from '../hooks/useHasOrgRole'
 
 // Keys match the catalogue's right-sizing guidance, so the recorded size marks
 // the matching row on every control.
@@ -36,6 +37,10 @@ const ALLOWED_LOGO_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/svg+
 export default function AppearanceSettings({ organizationId }: AppearanceSettingsProps) {
   const queryClient = useQueryClient()
   const { data: logoUrl } = useOrgLogo(organizationId)
+  // Saving the details and changing the logo are admin-only on the API. The
+  // card stays read-only until the role is known, but only says "admin only"
+  // once it is known that the viewer is not one.
+  const { allowed: isAdmin, resolved: roleResolved } = useOrgRoleState(organizationId, 'admin')
 
   const logoFileInputRef = useRef<HTMLInputElement>(null)
   const [isUploadingLogo, setIsUploadingLogo] = useState(false)
@@ -177,6 +182,13 @@ export default function AppearanceSettings({ organizationId }: AppearanceSetting
     <div className="appearance-settings settings-card">
       <h2>Organisation Branding</h2>
 
+      {roleResolved && !isAdmin && (
+        <p className="appearance-hint" data-testid="branding-admin-only">
+          Only an organisation administrator can change these details or the logo.
+        </p>
+      )}
+      {/* One switch for every control on the card: a non-admin reads it, an admin edits it. */}
+      <fieldset disabled={!isAdmin} style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
       <section className="appearance-section">
         <h3>Organisation Details</h3>
         <p className="appearance-hint">
@@ -293,6 +305,7 @@ export default function AppearanceSettings({ organizationId }: AppearanceSetting
           </div>
         </div>
       </section>
+      </fieldset>
     </div>
   )
 }

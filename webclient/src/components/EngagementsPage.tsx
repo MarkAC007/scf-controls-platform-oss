@@ -37,6 +37,7 @@ import { fetchFrameworks, type FrameworkInfo } from '../data/catalogApi'
 import { useConfirm } from '../contexts/ConfirmContext'
 import { useModalDismiss } from '../hooks/useModalDismiss'
 import { useFocusTrap } from '../hooks/useFocusTrap'
+import { useHasOrgRole, useOrgRoleState } from '../hooks/useHasOrgRole'
 import DeprecatedBadge, { getCatalogLifecycle } from './DeprecatedBadge'
 import EngagementReviewWorkspace, {
   type ReviewFocus, type ReviewWorkspaceView,
@@ -1215,6 +1216,9 @@ export default function EngagementsPage({
   organizationId, onNavigateToControl, onNavigateToEvidence, openReview, onOpenReviewConsumed,
 }: EngagementsPageProps) {
   const confirm = useConfirm()
+  // The API takes a new engagement from an editor and a deletion from an admin only.
+  const { allowed: canEdit, resolved: roleResolved } = useOrgRoleState(organizationId, 'editor')
+  const canDelete = useHasOrgRole(organizationId, 'admin')
   const [review, setReview] = useState<{ engagement: AuditEngagement; view: ReviewWorkspaceView; focus: ReviewFocus | null } | null>(null)
   const [engagements, setEngagements] = useState<AuditEngagement[]>([])
   const [frameworks, setFrameworks] = useState<FrameworkInfo[]>([])
@@ -1344,12 +1348,14 @@ export default function EngagementsPage({
         searchPlaceholder="Search engagements…"
         count={`${engagements.length} engagement${engagements.length !== 1 ? 's' : ''}`}
         actions={
-          <button
-            onClick={() => setShowCreateDrawer(true)}
-            className="eng-new-btn"
-          >
-            + New Engagement
-          </button>
+          canEdit ? (
+            <button
+              onClick={() => setShowCreateDrawer(true)}
+              className="eng-new-btn"
+            >
+              + New Engagement
+            </button>
+          ) : undefined
         }
       />
 
@@ -1360,11 +1366,17 @@ export default function EngagementsPage({
         <div style={{ textAlign: 'center', padding: '80px 0', border: '2px dashed var(--border)', borderRadius: 12 }}>
           <div style={{ fontSize: 40, marginBottom: 12 }}>📋</div>
           <h3 style={{ margin: 0, color: 'var(--muted)', fontWeight: 600 }}>No engagements yet</h3>
-          <p style={{ color: 'var(--muted)', fontSize: 14, marginTop: 6 }}>Create your first engagement to start scoping an audit.</p>
-          <button onClick={() => setShowCreateDrawer(true)} style={{
-            marginTop: 16, padding: '9px 18px', borderRadius: 6, border: 'none',
-            background: 'var(--primary)', color: 'var(--primary-foreground)', fontSize: 14, fontWeight: 600, cursor: 'pointer',
-          }}>+ New Engagement</button>
+          <p style={{ color: 'var(--muted)', fontSize: 14, marginTop: 6 }}>
+            {canEdit
+              ? 'Create your first engagement to start scoping an audit.'
+              : roleResolved ? 'Creating an engagement needs the editor role.' : ''}
+          </p>
+          {canEdit && (
+            <button onClick={() => setShowCreateDrawer(true)} style={{
+              marginTop: 16, padding: '9px 18px', borderRadius: 6, border: 'none',
+              background: 'var(--primary)', color: 'var(--primary-foreground)', fontSize: 14, fontWeight: 600, cursor: 'pointer',
+            }}>+ New Engagement</button>
+          )}
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -1411,7 +1423,7 @@ export default function EngagementsPage({
                   <button onClick={() => setPresentEngagement(eng)} style={actionBtn}>Present</button>
                   <button onClick={() => setAuditorsEngagement(eng)} style={actionBtn}>Auditors</button>
                   <button onClick={() => setQueriesEngagement(eng)} style={actionBtn}>Queries</button>
-                  {eng.status === 'draft' && (
+                  {canDelete && eng.status === 'draft' && (
                     <button onClick={() => void handleDelete(eng)} disabled={deleting === eng.id} style={{
                       ...actionBtn, color: 'var(--error, #ef4444)',
                       cursor: deleting === eng.id ? 'not-allowed' : 'pointer', opacity: deleting === eng.id ? 0.6 : 1,

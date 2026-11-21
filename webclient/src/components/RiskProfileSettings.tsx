@@ -11,6 +11,7 @@ import { toast } from 'react-hot-toast'
 import { useRiskProfile } from '../contexts/RiskProfileContext'
 import { useAuth } from '../contexts/AuthContext'
 import { useOrganizationSettings } from '../hooks/useOrganizationSettings'
+import { useOrgRoleState } from '../hooks/useHasOrgRole'
 import { updateOrganizationSettings } from '../data/apiClient'
 import type { RiskLevel, RiskThresholds } from '../types'
 import { getRiskLevel, DEFAULT_RISK_THRESHOLDS } from '../types'
@@ -82,9 +83,11 @@ export default function RiskProfileSettings({ organizationId }: RiskProfileSetti
   const [isResetting, setIsResetting] = useState(false)
   const [hasChanges, setHasChanges] = useState(false)
 
-  // Determine if user has admin role (simplified - check org membership)
-  // In production this would come from the org context
-  const isAdmin = true // All authenticated users with org access can view; backend enforces admin for writes
+  // Any member can read the profile; saving it, resetting it and the trust
+  // portal settings are admin-only on the API. The form stays read-only until
+  // the role is known, but only says "admin only" once it is known that the
+  // viewer is not one.
+  const { allowed: isAdmin, resolved: roleResolved } = useOrgRoleState(organizationId, 'admin')
 
   // Sync form state from profile
   useEffect(() => {
@@ -193,6 +196,13 @@ export default function RiskProfileSettings({ organizationId }: RiskProfileSetti
 
   return (
     <div className="risk-profile-settings">
+      {roleResolved && !isAdmin && (
+        <p className="settings-card-sub" data-testid="risk-profile-admin-only">
+          Only an organisation administrator can change the risk profile or the trust portal.
+        </p>
+      )}
+      {/* One switch for every control below: a non-admin reads the settings, an admin edits them. */}
+      <fieldset disabled={!isAdmin} style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
       {/* Risk & Governance Settings Group — entirely the organization's record (workbench) */}
       <div className="settings-group surface-bench">
         <div className="settings-group-header">
@@ -625,6 +635,7 @@ export default function RiskProfileSettings({ organizationId }: RiskProfileSetti
           </div>
         </section>
       </div>
+      </fieldset>
     </div>
   )
 }

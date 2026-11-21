@@ -23,6 +23,7 @@ import type {
   WebhookDelivery,
 } from '../data/apiClient'
 import { useModalDismiss } from '../hooks/useModalDismiss'
+import { useOrgRoleState } from '../hooks/useHasOrgRole'
 
 interface WebhookManagementProps {
   organizationId: string
@@ -40,6 +41,11 @@ export default function WebhookManagement({
   organizationId,
   onNavigateToEvidenceWorkspace,
 }: WebhookManagementProps) {
+  // Every webhook-endpoint route, the list included, is admin-only on the API.
+  // A non-admin is told so and the list is never requested: an empty table
+  // would claim the organisation has no endpoints. Until the role is known
+  // the page says neither thing: an admin must not read the notice first.
+  const { allowed: isAdmin, resolved: roleResolved } = useOrgRoleState(organizationId, 'admin')
   const [endpoints, setEndpoints] = useState<WebhookEndpointResponse[]>([])
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
@@ -74,8 +80,9 @@ export default function WebhookManagement({
   }, [organizationId])
 
   useEffect(() => {
+    if (!isAdmin) return
     loadEndpoints()
-  }, [loadEndpoints])
+  }, [loadEndpoints, isAdmin])
 
   const handleRotateConfirm = async () => {
     if (!rotateConfirm) return
@@ -189,6 +196,39 @@ export default function WebhookManagement({
         ep.description?.toLowerCase().includes(searchQuery.toLowerCase())
       )
     : endpoints
+
+  if (!roleResolved) {
+    return (
+      <div className="api-keys-section surface-bench">
+        <div className="section-header" style={{ marginBottom: '16px' }}>
+          <h3 className="bench-header"><span className="container-title">Your Webhooks</span></h3>
+        </div>
+        <div style={{ textAlign: 'center', padding: '2rem' }}>
+          <div className="loading-spinner" />
+        </div>
+      </div>
+    )
+  }
+
+  if (!isAdmin) {
+    return (
+      <div className="api-keys-section surface-bench">
+        <div className="section-header" style={{ marginBottom: '16px' }}>
+          <h3 className="bench-header"><span className="container-title">Your Webhooks</span></h3>
+          <p>Webhook endpoints deliver evidence into this organisation automatically.</p>
+        </div>
+        <div
+          className="api-keys-table-container"
+          role="status"
+          data-testid="webhooks-admin-only"
+          style={{ textAlign: 'center', padding: '2rem', color: 'var(--muted)' }}
+        >
+          Only an admin of this organisation can see or manage its webhook endpoints,
+          so none are listed here. Ask an admin if you need one set up or changed.
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="api-keys-section surface-bench">

@@ -129,10 +129,31 @@ def is_enabled() -> bool:
     return True
 
 
-def admin_base_url() -> str:
-    """Scheme and host of the Keycloak server, with no path.
+def _path_segments(url: str) -> List[str]:
+    """Path segments of the configured URL, less a discovery-document tail.
 
-    `http://keycloak:8080/realms/scf` -> `http://keycloak:8080`.
+    A URL that points at the discovery *document* rather than the realm root is
+    tolerated by dropping `.well-known/openid-configuration`, so both spellings
+    give the same base URL and the same realm.
+    """
+    segments = [segment for segment in urlsplit(url).path.split("/") if segment]
+    if (
+        len(segments) >= 2
+        and segments[-1] == "openid-configuration"
+        and segments[-2] == ".well-known"
+    ):
+        segments = segments[:-2]
+    return segments
+
+
+def admin_base_url() -> str:
+    """Root of the Keycloak server: scheme, host and any path prefix.
+
+    `http://keycloak:8080/realms/scf` -> `http://keycloak:8080`. A Keycloak run
+    with `KC_HTTP_RELATIVE_PATH` serves the admin API and the master realm under
+    that path too, so the prefix is kept and only the `realms/<name>` tail is
+    dropped: `http://keycloak:8080/api/idp/realms/scf` ->
+    `http://keycloak:8080/api/idp` (#1285). Never ends in a slash.
     """
     url = _server_url()
     if not url:
@@ -145,7 +166,11 @@ def admin_base_url() -> str:
         raise KeycloakAdminError(
             "the configured Keycloak URL has no scheme and host", step="token"
         )
-    return urlunsplit((parts.scheme, parts.netloc, "", "", ""))
+    segments = _path_segments(url)
+    if len(segments) >= 2 and segments[-2] == "realms":
+        segments = segments[:-2]
+    path = "/" + "/".join(segments) if segments else ""
+    return urlunsplit((parts.scheme, parts.netloc, path, "", ""))
 
 
 def realm_name() -> str:
@@ -163,13 +188,7 @@ def realm_name() -> str:
         raise KeycloakAdminError(
             f"Keycloak realm is not configured (set {_URL_CONFIG_NAME})", step="token"
         )
-    segments = [segment for segment in urlsplit(url).path.split("/") if segment]
-    if (
-        len(segments) >= 2
-        and segments[-1] == "openid-configuration"
-        and segments[-2] == ".well-known"
-    ):
-        segments = segments[:-2]
+    segments = _path_segments(url)
     if not segments:
         raise KeycloakAdminError(
             "the configured Keycloak URL carries no realm path segment", step="token"
