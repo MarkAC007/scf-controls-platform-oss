@@ -7,6 +7,7 @@ import { render, cleanup, waitFor, screen } from '@testing-library/react'
 
 import { EvidenceFilePreviewModal } from '../EvidenceFilePreviewModal'
 import { makeEvidenceFile } from './evidenceFileFixture'
+import { makeEvidenceFileTypes } from './evidenceFileTypesFixture'
 
 const mockUseAssessmentPolling = vi.fn()
 vi.mock('../../../hooks/useAssessmentPolling', () => ({
@@ -20,6 +21,11 @@ vi.mock('../AssessmentReviewPanel', () => ({
 }))
 vi.mock('../ShadowVerdictPanel', () => ({
   ShadowVerdictPanel: () => <div data-testid="shadow-verdict-panel-stub" />,
+}))
+// #1309: the viewer is chosen from the server's file-type list. Supplied here
+// as already loaded so `fetch` below sees only the file download.
+vi.mock('../../../hooks/useEvidenceFileTypes', () => ({
+  useEvidenceFileTypes: () => ({ fileTypes: makeEvidenceFileTypes(), loading: false }),
 }))
 
 const SOURCE = [

@@ -17,9 +17,19 @@ WORKDIR /app
 ENV PYTHONPATH=/app
 
 # Install system dependencies (includes WeasyPrint rendering libs for PDF export).
-# zlib1g is already in the base image; naming it here installs Debian's
-# security update (1:1.3.dfsg+really1.3.1-1+deb13u1) over the base copy, which
-# has two High advisories the release scan gate blocks on.
+#
+# apt-get upgrade installs every update Debian has published for the packages
+# in the base image, on the day this layer is built (zlib1g, for one, had two
+# High advisories fixed by Debian before the base image was rebuilt). The
+# digest above pins Python and the Debian release, not these packages: the
+# release scan gate blocks a finding that has a fix. This is a deliberate
+# exception to the seven-day cooldown on dependency updates. The packages come
+# signed from the repositories of the base image's Debian release (the release
+# itself, its updates and its security updates), which carry security and bug
+# fixes, sometimes as a new upstream version, and never a new Debian release.
+# Two builds of one commit can therefore differ; the SBOM published with each
+# release records what the published image holds. A build that reuses a cached
+# layer keeps that layer's packages: the release and CI builds use no cache.
 #
 # Only what the app runs is installed: every extra package adds scanner
 # findings that have no fix. WeasyPrint 70 draws PDFs with Pango alone (no
@@ -28,12 +38,12 @@ ENV PYTHONPATH=/app
 # Postgres client tools are not installed: backups, health checks and the
 # keycloak schema step run in the postgres image, not this one.
 RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get upgrade -y && \
     apt-get install -y --no-install-recommends \
     libpango-1.0-0 \
     libpangoft2-1.0-0 \
     libffi-dev \
     fonts-inter \
-    zlib1g \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy the locked requirements first for better caching

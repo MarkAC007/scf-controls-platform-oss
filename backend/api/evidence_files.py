@@ -19,13 +19,14 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials
 from uuid import UUID
 from typing import List, Optional
+import asyncio
 import logging
 
 from sqlalchemy import select, and_, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
-from auth import require_org_role, OrgMembership, _current_org_role
+from auth import require_auth, require_org_role, OrgMembership, _current_org_role
 from database import get_db
 from models import (
     AuditEngagement,
@@ -56,6 +57,7 @@ from services.audit_service import (
     detect_action_source,
     EVIDENCE_FILE_TRACKED_FIELDS,
 )
+from services import evidence_file_types, evidence_preview_service
 from services.validation_service import run_validation
 from services.download_token import generate_download_token, verify_download_token
 from services.upload_ticket import mint_upload_ticket, verify_upload_ticket
@@ -89,6 +91,29 @@ router = APIRouter(tags=["evidence_files"])
 
 
 # ---------------------------------------------------------------------------
+# Accepted file types — the one list the page builds its upload control from
+# ---------------------------------------------------------------------------
+
+@router.get(
+    "/evidence-file-types",
+    summary="List accepted evidence file types",
+    description=(
+        "The content types an evidence upload may declare, with the file "
+        "extensions, a display label and how the viewer shows each one. The "
+        "page builds its upload control from this instead of keeping its own "
+        "list."
+    ),
+)
+async def list_evidence_file_types(_user=Depends(require_auth)):
+    """Accepted evidence file types. Requires a signed-in user.
+
+    Not organisation-scoped: the list is platform policy, the same for every
+    organisation, and holds nothing about any of them.
+    """
+    return evidence_file_types.public_listing()
+
+
+# ---------------------------------------------------------------------------
 # Upload URL generation
 # ---------------------------------------------------------------------------
 
@@ -112,6 +137,11 @@ async def get_upload_url(
     Returns URL, form fields, and the S3 key needed for the confirm step.
     """
     try:
+        # The name decides the stored type at confirm, so a name that says
+        # nothing is refused now and not quarantined later (#1309).
+        refusal = evidence_file_types.refusal_for_filename(request.filename)
+        if refusal:
+            raise ValueError(refusal)
         result = generate_upload_presigned_post(
             org_id=str(org_id),
             filename=request.filename,
@@ -544,14 +574,159 @@ async def download_evidence_file(
         disposition=disposition,
     )
 
-    disp = "attachment" if disposition == "attachment" else "inline"
+    media_type, disp = _served_as(evidence_file.content_type, disposition)
     content_disposition = f'{disp}; filename="{evidence_file.filename}"'
 
     return StreamingResponse(
         chunks,
-        media_type=evidence_file.content_type,
-        headers={"Content-Disposition": content_disposition},
+        media_type=media_type,
+        headers={
+            "Content-Disposition": content_disposition,
+            # The declared type is the type: a browser must not look inside a
+            # text file, decide it is HTML and run it under this origin.
+            "X-Content-Type-Options": "nosniff",
+        },
     )
+
+
+# ---------------------------------------------------------------------------
+# Preview — the inside of a file a browser cannot draw (Word, Excel,
+# PowerPoint, ZIP, email), read on the server and returned as plain data
+# ---------------------------------------------------------------------------
+
+#: How long a preview request waits for a free slot before it asks the caller
+#: to try again (429).
+PREVIEW_WAIT_TRIES = 15
+PREVIEW_WAIT_SECONDS = 0.2
+
+
+@router.get(
+    "/organizations/{org_id}/evidence/{evidence_id}/files/{file_id}/preview",
+    summary="Preview an evidence file the browser cannot show itself",
+    description=(
+        "Reads a Word, Excel, PowerPoint, ZIP or email file on the server and "
+        "returns its text as plain data for the viewer to draw. Other types "
+        "are shown from the download and return 415 here."
+    ),
+)
+async def preview_evidence_file(
+    org_id: UUID,
+    evidence_id: str,
+    file_id: UUID,
+    request: Request,
+    membership: OrgMembership = Depends(require_org_role("viewer")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Structured preview of one evidence file.
+    Requires: viewer role or higher in the file's organisation.
+
+    A preview shows what is in the file, so it is held to the same rules as a
+    download: the same refusal for a quarantined file, and the same custody
+    record.
+    """
+    result = await db.execute(
+        select(EvidenceFile).where(
+            and_(
+                EvidenceFile.organization_id == org_id,
+                EvidenceFile.evidence_id == evidence_id,
+                EvidenceFile.id == file_id,
+                EvidenceFile.is_deleted == False,
+            )
+        )
+    )
+    evidence_file = result.scalar_one_or_none()
+    if not evidence_file:
+        raise HTTPException(status_code=404, detail="Evidence file not found")
+
+    if is_download_blocked(evidence_file.scan_status):
+        raise HTTPException(
+            status_code=403,
+            detail="This file was quarantined by the malware scanner and cannot be previewed.",
+        )
+
+    if not evidence_preview_service.has_structured_preview(
+        evidence_file.content_type, evidence_file.filename,
+    ):
+        raise HTTPException(
+            status_code=415,
+            detail="This kind of file has no server-side preview; it is shown from the download.",
+        )
+
+    if (evidence_file.file_size_bytes or 0) > evidence_preview_service.PREVIEW_MAX_FILE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail="This file is too large to preview. Download it to open it.",
+        )
+
+    def _read() -> Optional[bytes]:
+        chunks = download_blob_stream(
+            evidence_file.s3_key,
+            org_id=str(org_id),
+            storage_config_id=(
+                str(evidence_file.storage_config_id)
+                if evidence_file.storage_config_id
+                else None
+            ),
+        )
+        if chunks is None:
+            return None
+        # The size on the record is what the uploader declared. Count what
+        # actually arrives and stop at the limit.
+        limit = evidence_preview_service.PREVIEW_MAX_FILE_BYTES
+        buffer = bytearray()
+        for chunk in chunks:
+            buffer.extend(chunk)
+            if len(buffer) > limit:
+                raise OverflowError
+        return bytes(buffer)
+
+    try:
+        data = await asyncio.to_thread(_read)
+    except StorageNotConfigured:
+        raise storage_not_configured()
+    except OverflowError:
+        raise HTTPException(
+            status_code=413,
+            detail="This file is too large to preview. Download it to open it.",
+        )
+    if data is None:
+        raise HTTPException(status_code=404, detail="Evidence file not found in storage")
+
+    await _log_download(
+        db=db,
+        request=request,
+        org_id=org_id,
+        evidence_file=evidence_file,
+        reader_user_id=getattr(getattr(membership, "user", None), "db_id", None),
+        auth_method="bearer",
+        disposition="preview",
+    )
+
+    try:
+        # Parsing is CPU-bound and the file is hostile until read: off the
+        # loop, and only a few at a time. A request that finds every slot
+        # taken waits a short while here, where waiting costs nothing.
+        for _ in range(PREVIEW_WAIT_TRIES):
+            try:
+                return await asyncio.to_thread(
+                    evidence_preview_service.build_preview_in_turn,
+                    data, evidence_file.content_type, evidence_file.filename,
+                )
+            except evidence_preview_service.PreviewBusy:
+                await asyncio.sleep(PREVIEW_WAIT_SECONDS)
+        raise HTTPException(
+            status_code=429,
+            detail="The server is busy building other previews. Try again in a moment.",
+            headers={"Retry-After": "5"},
+        )
+    except evidence_preview_service.PreviewNotAvailable:
+        raise HTTPException(
+            status_code=415,
+            detail="This kind of file has no server-side preview; it is shown from the download.",
+        )
+    except evidence_preview_service.EvidenceReadError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
 
 
 # ---------------------------------------------------------------------------
@@ -932,6 +1107,21 @@ async def _auditor_link_still_valid(db: AsyncSession, org_id: UUID, evidence_id:
     return covered is not None
 
 
+def _served_as(content_type: Optional[str], disposition: str) -> tuple[str, str]:
+    """The content type and disposition a download is actually sent with.
+
+    Downloads come from the application's own origin, so a file a browser
+    would run as a document (XML with an XHTML script in it, an email with an
+    HTML part) is a stored script if it is served as itself. Those types are
+    always sent as a plain-text attachment, whatever the caller asked for. The
+    viewer still reads them: it fetches the bytes and draws them as text.
+    """
+    if not evidence_file_types.is_inline_safe(content_type):
+        return "text/plain; charset=utf-8", "attachment"
+    disp = "attachment" if disposition == "attachment" else "inline"
+    return content_type or "application/octet-stream", disp
+
+
 def _proxy_download_url(
     org_id: UUID,
     evidence_id: str,
@@ -999,28 +1189,15 @@ def _to_response(evidence_file: EvidenceFile, download_url: str | None) -> Evide
     )
 
 
-_EXTENSION_CONTENT_TYPES = {
-    ".pdf": "application/pdf",
-    ".png": "image/png",
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".gif": "image/gif",
-    ".csv": "text/csv",
-    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    ".zip": "application/zip",
-    ".json": "application/json",
-    ".txt": "text/plain",
-    ".yml":  "text/yaml",
-    ".yaml": "text/yaml",
-    ".md": "text/markdown",
-    ".markdown": "text/markdown",
-}
+# Extension to content type. Defined once, in services/evidence_file_types.py.
+_EXTENSION_CONTENT_TYPES = evidence_file_types.EXTENSION_CONTENT_TYPES
 
 
 def _guess_content_type(filename: str) -> str:
-    """Guess content type from filename extension."""
-    for ext, ct in _EXTENSION_CONTENT_TYPES.items():
-        if filename.lower().endswith(ext):
-            return ct
-    return "application/octet-stream"
+    """Content type for a stored file name, by its extension.
+
+    The record's content type is taken from the name rather than from what the
+    uploader declared, so a file cannot be stored under a type its name does
+    not carry. A name with no accepted extension is opaque bytes.
+    """
+    return evidence_file_types.content_type_for_filename(filename) or "application/octet-stream"

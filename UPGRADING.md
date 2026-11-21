@@ -349,6 +349,36 @@ covering an external store.
 
 ### Version-specific notes
 
+- **The frontend image is now built on the slim nginx image
+  (`nginx:alpine-slim`), and the images take the distribution's published
+  package fixes when they are built.** It is the same nginx build. The slim
+  image leaves out nginx's optional modules (ACME, xslt, image filter, GeoIP,
+  njs) and the libraries they need, and it leaves out `curl` and
+  `update-ca-certificates`. The platform's own `nginx.conf` uses none of these,
+  so a standard install needs no action. Two cases do:
+
+  1. **Your `nginx.conf` has a `load_module` line for one of those modules**
+     (the ACME module, for an install where nginx gets its own certificates, is
+     the likely one). The frontend container will not start without the module.
+     In your checkout, change the last `FROM` line of `Dockerfile.frontend`
+     back to the full image,
+     `nginx:alpine@sha256:90b6bd2aec278b16b98221d64deb1d6d35d164567f507ab0716e6053878315aa`,
+     and carry that change as section 6 describes. Do not install Alpine's
+     `nginx-mod-*` packages instead: they are built for Alpine's own, older
+     nginx and will not load.
+  2. **You run `curl` inside the frontend container** (in a health check or a
+     script). Use `wget`, which the image still has.
+
+  The base images are still pinned by digest. The operating system packages
+  layered on them are now the ones the distribution had published when the
+  layer was built, so two builds of one release can differ in those packages.
+  The images published with a release are built without a cache, and the SBOM
+  published with the release describes them. An install that builds from
+  source keeps the packages from its first build of the release: Docker reuses
+  the layer. To take the fixes published since, run
+  `docker compose build --no-cache backend frontend`, then
+  `docker compose up -d`.
+
 - **The bundled PostgreSQL, Redis and Keycloak images, and the base images the
   backend and frontend are built from, are now pinned by digest.** Earlier
   releases named them by tag (`postgres:15-alpine`, `redis:7-alpine`,

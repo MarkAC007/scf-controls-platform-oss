@@ -11,13 +11,18 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, waitFor, cleanup, fireEvent } from '@testing-library/react'
 
 import { EvidenceFileUpload } from '../EvidenceFileUpload'
+import { resetEvidenceFileTypesCache } from '../../../hooks/useEvidenceFileTypes'
+import { makeEvidenceFileTypes } from './evidenceFileTypesFixture'
 
 vi.mock('../../../data/apiClient', () => ({
   getEvidenceUploadUrl: vi.fn(),
   confirmEvidenceUpload: vi.fn(),
+  // #1309: the accepted types, and the canonical name for each extension, now
+  // come from the server's file-type list rather than a copy in the component.
+  getEvidenceFileTypes: vi.fn(),
 }))
 
-import { getEvidenceUploadUrl } from '../../../data/apiClient'
+import { getEvidenceUploadUrl, getEvidenceFileTypes } from '../../../data/apiClient'
 
 function dropFile(container: HTMLElement, name: string, type: string) {
   const input = container.querySelector('input[type="file"]') as HTMLInputElement
@@ -26,15 +31,23 @@ function dropFile(container: HTMLElement, name: string, type: string) {
   fireEvent.change(input, { target: { files: [file] } })
 }
 
-function renderUpload() {
-  return render(
+async function renderUpload() {
+  const view = render(
     <EvidenceFileUpload orgId="org-1" evidenceId="ERL-001" onUploadComplete={vi.fn()} />,
   )
+  // Until the file-type list arrives the control defers to the server, so wait
+  // for it: the picker carries an accept attribute once it has loaded.
+  await waitFor(() =>
+    expect(view.container.querySelector('input[type="file"]')?.getAttribute('accept')).toBeTruthy(),
+  )
+  return view
 }
 
 describe('EvidenceFileUpload Markdown support', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    resetEvidenceFileTypesCache()
+    vi.mocked(getEvidenceFileTypes).mockResolvedValue(makeEvidenceFileTypes())
     vi.stubGlobal('crypto', {
       subtle: { digest: async () => new Uint8Array(32).fill(0xab).buffer },
     })
@@ -48,8 +61,8 @@ describe('EvidenceFileUpload Markdown support', () => {
     vi.unstubAllGlobals()
   })
 
-  it('offers .md and .markdown in the file picker', () => {
-    const { container } = renderUpload()
+  it('offers .md and .markdown in the file picker', async () => {
+    const { container } = await renderUpload()
     const accept = container.querySelector('input[type="file"]')?.getAttribute('accept') ?? ''
     expect(accept.split(',')).toEqual(expect.arrayContaining(['text/markdown', '.md', '.markdown']))
   })
@@ -60,7 +73,7 @@ describe('EvidenceFileUpload Markdown support', () => {
     ['runbook.md', 'text/markdown'],
     ['RUNBOOK.MARKDOWN', ''],
   ])('requests an upload URL for %s (browser type %j) as text/markdown', async (name, type) => {
-    const { container } = renderUpload()
+    const { container } = await renderUpload()
     dropFile(container, name, type)
 
     await waitFor(() => expect(getEvidenceUploadUrl).toHaveBeenCalledTimes(1))
@@ -71,7 +84,7 @@ describe('EvidenceFileUpload Markdown support', () => {
   })
 
   it('names Markdown among the allowed types when a file is refused', async () => {
-    const { container, findByText } = renderUpload()
+    const { container, findByText } = await renderUpload()
     dropFile(container, 'tool.exe', 'application/x-msdownload')
     expect(await findByText(/Markdown/)).toBeTruthy()
     expect(getEvidenceUploadUrl).not.toHaveBeenCalled()

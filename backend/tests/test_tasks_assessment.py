@@ -279,6 +279,10 @@ def _assessment_row(**overrides):
     return SimpleNamespace(**fields)
 
 
+#: Keyword arguments the task gave the extractor, most recent last.
+_EXTRACT_KWARGS: list = []
+
+
 def _run(monkeypatch, session, extracted=None, llm=None, force=False, context=None):
     """Drive the task eagerly with all I/O stubbed."""
     monkeypatch.setattr(ta, "_get_sync_session", lambda: session)
@@ -292,10 +296,11 @@ def _run(monkeypatch, session, extracted=None, llm=None, force=False, context=No
         ta, "download_evidence_bytes",
         lambda key, org_id=None, storage_config_id=None: b"bytes",
     )
-    monkeypatch.setattr(
-        ta, "extract_text_from_bytes",
-        lambda data, ct, fn: extracted or ExtractedContent(text="policy body", extraction_method="pdf"),
-    )
+    def fake_extract(data, ct, fn, **kwargs):
+        _EXTRACT_KWARGS.append(kwargs)
+        return extracted or ExtractedContent(text="policy body", extraction_method="pdf")
+
+    monkeypatch.setattr(ta, "extract_text_from_bytes", fake_extract)
     if llm is not None:
         monkeypatch.setattr(ta, "_call_llm", llm)
     return ta.assess_evidence_task.apply(
@@ -1443,3 +1448,370 @@ class TestJevPrimary:
         assert result.failed()
         assert any("Jev response could not be read" in p.get("summary", "") for _, p in session.updates)
         assert session.version_inserts == [] or session.last_version()["status"] == "error"
+
+
+# ---------------------------------------------------------------------------
+# Pictures and scanned documents (issue #1309)
+# ---------------------------------------------------------------------------
+
+def _picture(label="screen.png", media_type="image/png", data=b"\x89PNG-bytes"):
+    from services.evidence_readers import ImagePart
+
+    return ImagePart(media_type=media_type, data=data, label=label, width=640, height=480)
+
+
+def _picture_evidence(count=1, **overrides):
+    fields = dict(
+        text="[Picture: PNG image, 640 x 480 pixels]", extraction_method="image",
+        images=[_picture(f"shot-{index}.png") for index in range(count)], visual_only=True,
+    )
+    fields.update(overrides)
+    return ExtractedContent(**fields)
+
+
+class _RecordingClient:
+    """Stands in for the Anthropic client and keeps what it was asked."""
+
+    def __init__(self):
+        self.kwargs = None
+        message = MagicMock()
+        message.model = "claude-sonnet-4-6"
+        message.usage.input_tokens = 10
+        message.usage.output_tokens = 5
+        message.stop_reason = "end_turn"
+        stream = MagicMock()
+        stream.__enter__.return_value.get_final_message.return_value = message
+        self._stream = stream
+        self.messages = SimpleNamespace(stream=self._record)
+
+    def _record(self, **kwargs):
+        self.kwargs = kwargs
+        return self._stream
+
+
+def _call_with_client(monkeypatch, *args, **kwargs):
+    client = _RecordingClient()
+    monkeypatch.setattr(ta, "build_anthropic_client", lambda: client)
+    monkeypatch.setattr(ta, "get_secret", lambda name: "sk-test")
+    monkeypatch.setattr(ta, "extract_text", lambda message: "{}")
+    monkeypatch.setattr(ta, "resolve_model", lambda role: "claude-sonnet-4-6")
+    ta._call_llm(*args, **kwargs)
+    return client.kwargs
+
+
+class TestPicturesReachTheModel:
+    @pytest.mark.parametrize("media_type", ["image/png", "image/jpeg"])
+    def test_a_picture_is_sent_as_an_image_block_before_the_prompt(self, monkeypatch, media_type):
+        import base64
+
+        picture = _picture(media_type=media_type, data=b"raw-picture-bytes")
+        sent = _call_with_client(monkeypatch, "system", "the user prompt", images=[picture])
+
+        (message,) = sent["messages"]
+        assert message["role"] == "user"
+        label, image, prompt = message["content"]
+        assert label == {"type": "text", "text": "Picture 1: screen.png"}
+        assert image == {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": media_type,
+                "data": base64.standard_b64encode(b"raw-picture-bytes").decode("ascii"),
+            },
+        }
+        assert prompt == {"type": "text", "text": "the user prompt"}
+        # The system prompt and its cache marker are what they always were.
+        assert sent["system"] == [{
+            "type": "text", "text": "system", "cache_control": {"type": "ephemeral"},
+        }]
+
+    def test_several_pictures_are_sent_in_order(self, monkeypatch):
+        pictures = [_picture(f"Page {n} of 3") for n in (1, 2, 3)]
+        sent = _call_with_client(monkeypatch, "system", "prompt", images=pictures)
+        content = sent["messages"][0]["content"]
+        assert [block["type"] for block in content] == ["text", "image"] * 3 + ["text"]
+        assert [block["text"] for block in content[0:6:2]] == [
+            "Picture 1: Page 1 of 3", "Picture 2: Page 2 of 3", "Picture 3: Page 3 of 3",
+        ]
+
+    def test_a_text_file_is_sent_exactly_as_before(self, monkeypatch):
+        sent = _call_with_client(monkeypatch, "system", "the user prompt")
+        assert sent["messages"] == [{"role": "user", "content": "the user prompt"}]
+        sent = _call_with_client(monkeypatch, "system", "the user prompt", images=[])
+        assert sent["messages"] == [{"role": "user", "content": "the user prompt"}]
+
+    def test_the_task_hands_the_extractors_pictures_to_the_model(self, monkeypatch):
+        session = FakeSession()
+        llm = MagicMock(return_value=_llm_ok())
+        extracted = _picture_evidence(count=2)
+        outcome = _run(monkeypatch, session, extracted=extracted, llm=llm).result
+
+        assert outcome["status"] == "sufficient"
+        llm.assert_called_once()
+        assert llm.call_args.kwargs["images"] is extracted.images
+        _system, user_prompt = llm.call_args.args
+        assert "2 pictures are attached" in user_prompt
+        assert session.last_version()["status"] == "sufficient"
+
+    def test_a_text_file_still_calls_the_model_with_two_arguments(self, monkeypatch):
+        session = FakeSession()
+        llm = MagicMock(return_value=_llm_ok())
+        _run(monkeypatch, session, llm=llm)
+        assert llm.call_args.kwargs == {}
+        assert len(llm.call_args.args) == 2
+
+    def test_a_picture_that_cannot_be_read_is_unassessable_with_a_useful_suggestion(self, monkeypatch):
+        session = FakeSession()
+        llm = MagicMock()
+        _run(
+            monkeypatch, session, llm=llm,
+            extracted=ExtractedContent(
+                text="", extraction_method="image",
+                error="This picture could not be read: it is not a valid PNG, JPEG, GIF or WebP file.",
+            ),
+        )
+        llm.assert_not_called()
+        finding = session.last_findings()[0]
+        assert session.last_update()["status"] == "unassessable"
+        # The old advice told people to stop uploading pictures.
+        assert "text-extractable" not in finding["suggestion"]
+        assert "PDF, DOCX, CSV" not in finding["suggestion"]
+        assert "pictures and scanned PDFs included" in finding["suggestion"]
+
+
+class TestPicturePrompt:
+    @staticmethod
+    def _prompt(**kwargs):
+        return build_assessment_prompt(
+            control_context=_context(), extracted_text="[Picture: PNG image, 640 x 480 pixels]",
+            filename="screen.png", content_type="image/png", assessment_date="2026-11-21", **kwargs,
+        )
+
+    def test_the_model_is_told_it_is_looking_at_a_picture(self):
+        _system, prompt = self._prompt(picture_count=1, visual_only=True)
+        assert "this evidence is a picture file" in prompt
+        assert "1 picture is attached" in prompt
+        assert "read it directly" in prompt
+        assert "The text block above only describes the file." in prompt
+        # The note sits with the evidence, before the instructions.
+        assert prompt.index("picture file") < prompt.index("## Assessment Instructions")
+
+    def test_pictures_beside_text_are_described_as_part_of_the_evidence(self):
+        _system, prompt = self._prompt(picture_count=3, visual_only=False)
+        assert "3 pictures are attached" in prompt and "alongside the text above" in prompt
+        assert "picture file" not in prompt
+
+    def test_the_prompt_for_a_file_without_pictures_is_byte_for_byte_unchanged(self):
+        """Stored prompt hashes for text files must still match after this change."""
+        plain = build_assessment_prompt(
+            control_context=_context(), extracted_text="policy body", filename="p.pdf",
+            content_type="application/pdf", assessment_date="2026-11-21",
+        )
+        explicit = build_assessment_prompt(
+            control_context=_context(), extracted_text="policy body", filename="p.pdf",
+            content_type="application/pdf", assessment_date="2026-11-21",
+            truncated=False, picture_count=0, visual_only=False, truncation_note=None,
+        )
+        assert plain == explicit
+        assert "picture" not in plain[1].lower().replace("capture date of a screenshot", "")
+        assert "```\npolicy body\n```\n\n\n## Assessment Instructions" in plain[1]
+
+    def test_the_system_prompt_does_not_change_for_pictures(self):
+        with_pictures, _ = self._prompt(picture_count=2, visual_only=True)
+        without, _ = self._prompt()
+        assert with_pictures == without
+
+    def test_a_page_cap_is_disclosed_in_its_own_words(self):
+        note = "Only the first 10 of 42 pages of this scanned PDF were assessed."
+        _system, prompt = self._prompt(truncated=True, truncation_note=note, picture_count=10, visual_only=True)
+        assert note in prompt
+        assert "only the beginning of this document" not in prompt
+
+    def test_the_character_wording_is_kept_when_there_is_no_note(self):
+        _system, prompt = self._prompt(truncated=True)
+        assert "only the beginning of this document" in prompt
+
+
+class TestPictureTruncationDisclosure:
+    def test_the_finding_says_what_was_left_out(self, monkeypatch):
+        note = "Only the first 10 of 42 pages of this scanned PDF were assessed."
+        session = FakeSession()
+        _run(
+            monkeypatch, session, llm=MagicMock(return_value=_llm_ok()),
+            extracted=_picture_evidence(
+                count=10, extraction_method="pdf_scanned", truncated=True, truncation_note=note,
+                text="[Scanned PDF: 42 pages, no text layer. Pages 1 to 10 are attached as pictures.]",
+            ),
+        )
+        disclosure = [f for f in session.last_findings() if f.get(ta.TRUNCATION_FINDING_KEY)]
+        assert len(disclosure) == 1
+        assert disclosure[0]["message"].startswith(note)
+        assert "characters" not in disclosure[0]["message"]
+        assert session.last_update()["truncated"] is True
+
+    def test_text_truncation_wording_is_unchanged(self):
+        (finding,) = ta._with_truncation_finding([], True, 50_000)
+        assert finding["message"].startswith("Only the first 50,000 characters of this document")
+
+
+class TestPicturesAndTheTextOnlyEngine:
+    def test_jev_marks_a_picture_unassessable_and_says_why(self, monkeypatch):
+        ask = _jev_ok()
+        monkeypatch.setattr(jc, "ask", ask)
+        session = FakeSession(org_settings=_engine("jev"))
+        llm = MagicMock()
+        outcome = _run(monkeypatch, session, extracted=_picture_evidence(), llm=llm).result
+
+        assert outcome["status"] == "unassessable"
+        ask.assert_not_called()
+        llm.assert_not_called()
+        update = session.last_update()
+        assert update["status"] == "unassessable"
+        assert update["relevance_score"] is None
+        reason = session.last_findings()[0]["message"]
+        assert "reads text only" in reason and "picture or a scanned document" in reason
+        assert "switch the assessment engine" in session.last_findings()[0]["suggestion"]
+
+    def test_jev_still_reads_a_file_that_has_text_as_well_as_pictures(self, monkeypatch):
+        ask = _jev_ok()
+        monkeypatch.setattr(jc, "ask", ask)
+        session = FakeSession(org_settings=_engine("jev"))
+        mixed = _picture_evidence(text="readme text from a ZIP", extraction_method="zip", visual_only=False)
+        outcome = _run(monkeypatch, session, extracted=mixed, llm=MagicMock()).result
+        assert outcome["engine"] == "jev"
+        ask.assert_called_once()
+
+    @pytest.mark.parametrize("extracted", [
+        # as the extractor reports it to a text-only caller: counted, not prepared
+        ExtractedContent(text="log text from a ZIP", extraction_method="zip", pictures_left_out=2),
+        # and as any caller that did prepare them would
+        _picture_evidence(text="typed page of a PDF", extraction_method="pdf", visual_only=False),
+    ], ids=["counted", "prepared"])
+    def test_jev_says_so_when_a_file_it_read_also_holds_pictures(self, monkeypatch, extracted):
+        monkeypatch.setattr(jc, "ask", _jev_ok())
+        session = FakeSession(org_settings=_engine("jev"))
+        _run(monkeypatch, session, extracted=extracted, llm=MagicMock())
+
+        disclosures = [f for f in session.last_findings() if f.get(ta.TRUNCATION_FINDING_KEY)]
+        assert len(disclosures) == 1
+        assert "pictures or scanned pages" in disclosures[0]["message"]
+        assert "reads text only, so they were not assessed" in disclosures[0]["message"]
+
+    def test_jev_adds_no_picture_note_to_a_file_that_is_all_text(self, monkeypatch):
+        monkeypatch.setattr(jc, "ask", _jev_ok())
+        session = FakeSession(org_settings=_engine("jev"))
+        _run(monkeypatch, session, llm=MagicMock())
+        assert not [f for f in session.last_findings() if f.get(ta.TRUNCATION_FINDING_KEY)]
+
+    def test_a_cut_and_unseen_pictures_are_both_stated_in_one_finding(self):
+        extracted = ExtractedContent(
+            text="log text", extraction_method="zip", truncated=True,
+            truncation_note="Some files in this ZIP archive were read only in part or not at all: big.log.",
+            pictures_left_out=1,
+        )
+        with patch.object(ta.jev_assessment, "assess") as assess, \
+                patch.object(ta.jev_assessment, "terminal_findings", return_value=[]), \
+                patch.object(ta.jev_assessment, "terminal_summary", return_value="s"), \
+                patch.object(ta.jev_assessment, "terminal_ao_findings", return_value=[]):
+            assess.return_value = MagicMock(cost_cents=None)
+            verdict = ta._jev_primary_verdict(_context(), extracted, "b.zip", "application/zip", "2026-11-21", None, 0.0)
+        assert verdict.truncated is True
+        [finding] = verdict.findings
+        assert "big.log" in finding["message"] and "pictures or scanned pages" in finding["message"]
+
+    @pytest.mark.parametrize("engine,with_images", [("jev", False), ("llm", True), ("jev_shadow", True)])
+    def test_pictures_are_prepared_only_for_an_engine_that_looks_at_them(self, monkeypatch, engine, with_images):
+        monkeypatch.setattr(jc, "ask", _jev_ok())
+        _EXTRACT_KWARGS.clear()
+        session = FakeSession(org_settings=_engine(engine))
+        _run(monkeypatch, session, llm=MagicMock(return_value=_llm_ok()) if engine != "jev" else MagicMock())
+        assert _EXTRACT_KWARGS[0] == {"with_images": with_images}
+
+    def test_the_shadow_does_not_run_on_a_picture(self, monkeypatch):
+        ask = _jev_ok()
+        monkeypatch.setattr(jc, "ask", ask)
+        session = FakeSession(org_settings=_engine("jev_shadow"))
+        outcome = _run(
+            monkeypatch, session, extracted=_picture_evidence(),
+            llm=MagicMock(return_value=_llm_ok()),
+        ).result
+
+        # The LLM verdict stands; Jev is never shown a one-line description.
+        assert outcome["status"] == "sufficient"
+        ask.assert_not_called()
+        assert session.shadow_inserts == []
+
+    def test_the_shadow_of_a_cached_picture_verdict_is_skipped(self, monkeypatch):
+        ask = _jev_ok()
+        monkeypatch.setattr(jc, "ask", ask)
+        session = FakeSession(org_settings=_engine("jev_shadow"), prior_row=_prior_row())
+        outcome = _run(monkeypatch, session, extracted=_picture_evidence(), llm=MagicMock()).result
+        assert outcome["cached"] is True
+        assert outcome["shadow"] == "skipped"
+        ask.assert_not_called()
+
+
+class TestAssessmentLeavesHumanReviewAlone:
+    @pytest.mark.parametrize("extracted", [
+        None,
+        "picture",
+        ExtractedContent(text="", extraction_method="image", error="This picture could not be read."),
+    ])
+    def test_no_statement_touches_the_files_review_status(self, monkeypatch, extracted):
+        """Whether the AI could read a file never decides its human review."""
+        if extracted == "picture":
+            extracted = _picture_evidence()
+        session = FakeSession()
+        statements = []
+        original = session.execute
+
+        def recording(stmt, params=None):
+            statements.append(str(stmt))
+            return original(stmt, params)
+
+        session.execute = recording
+        _run(monkeypatch, session, extracted=extracted, llm=MagicMock(return_value=_llm_ok()))
+
+        writes = [s for s in statements if s.lstrip().upper().startswith(("UPDATE", "INSERT", "DELETE"))]
+        assert writes, "the task wrote nothing at all"
+        for sql in writes:
+            assert "evidence_files" not in sql.replace("evidence_file_id", "")
+            assert "review_status" not in sql
+
+
+class TestRealPicturesBecomeImageBlocks:
+    """From the bytes of a real file to the blocks the model is sent."""
+
+    SUPPORTED = {"image/png", "image/jpeg", "image/gif", "image/webp"}
+
+    @pytest.mark.parametrize("content_type,filename,builder", [
+        ("image/png", "screen.png", "png"),
+        ("image/jpeg", "photo.jpg", "jpeg"),
+        ("image/gif", "anim.gif", "gif"),
+        ("image/webp", "screen.webp", "webp"),
+        ("application/pdf", "scan.pdf", "scanned_pdf"),
+    ])
+    def test_extracted_picture_is_a_decodable_image_block(self, content_type, filename, builder):
+        import base64
+        import io
+
+        from PIL import Image
+
+        import evidence_samples as samples
+        from services.text_extraction_service import extract_text_from_bytes
+
+        extracted = extract_text_from_bytes(getattr(samples, builder)(), content_type, filename)
+        assert extracted.error is None and extracted.visual_only and extracted.images
+
+        content = ta._user_content("the prompt", extracted.images)
+        blocks = [block for block in content if block["type"] == "image"]
+        assert len(blocks) == len(extracted.images)
+        assert content[-1] == {"type": "text", "text": "the prompt"}
+        for block in blocks:
+            source = block["source"]
+            assert source["type"] == "base64"
+            assert source["media_type"] in self.SUPPORTED
+            # What is sent really is a picture of the declared kind.
+            picture = Image.open(io.BytesIO(base64.standard_b64decode(source["data"])))
+            assert Image.MIME[picture.format] == source["media_type"]
+            assert max(picture.size) <= 2000

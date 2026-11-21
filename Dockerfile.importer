@@ -8,6 +8,13 @@
 # pulled. Change the two together.
 FROM python:3.11-slim@sha256:07d4824036af339fa1b6ef769cc99d9c10a141769538b52b3b597c84f7a7b535
 
+# Take the updates Debian has published for the packages in the base image, as
+# Dockerfile.backend does and for the reason given there. The importer reads
+# the operator's workbook, which is a zip file, through the system zlib.
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get upgrade -y && \
+    rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 # Importer-only deps (pandas + openpyxl and what they depend on), locked by

@@ -102,8 +102,10 @@ Releases after v1.3.1 also carry the release's image scan evidence, signed the s
 
 - `sbom-scf-backend.cdx.json`, `sbom-scf-frontend.cdx.json`: a CycloneDX SBOM (software bill of
   materials) of each image, read from the digest in `release-images.json`.
-- `image-scan-gate.json`: the result of the vulnerability scan gate for that release: each Critical
-  or High finding, and whether it blocked, was fixed or was waived.
+- `image-scan-gate.json`: the result of the vulnerability scan gate for that release: every finding
+  and its outcome, including whether it would hold a release, was waived by a VEX statement, or has
+  no fix yet and was accepted. The rules, and what `accepted` means, are in `SECURITY.md` under
+  "Vulnerabilities in the release images".
 - `vex-*.json`: the OpenVEX documents the scan applied, which say why a waived finding does not
   affect the images. A release with no waivers has none.
 - `scan-gitleaks.json`, `scan-osv.json`, `scan-semgrep.json`, `scan-zap.json`, `scan-zizmor.json`:

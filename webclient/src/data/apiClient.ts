@@ -3582,6 +3582,82 @@ export interface EvidenceFileListResponse {
   total: number
 }
 
+// ---- Evidence file types (#1309) ----
+
+/** Which viewer a stored file gets. Chosen by the server per content type. */
+export type EvidenceFilePreviewMode =
+  | 'pdf'
+  | 'image'
+  | 'markdown'
+  | 'code'
+  | 'csv'
+  | 'structured'
+  | 'none'
+
+export interface EvidenceFileTypeInfo {
+  content_type: string
+  /** Shown to people. Unique per content type. */
+  label: string
+  /** Lower case, with the leading dot. */
+  extensions: string[]
+  preview: EvidenceFilePreviewMode
+  ai_readable: boolean
+}
+
+/**
+ * Everything the platform accepts as evidence. The one list: the upload
+ * control and the viewer read it rather than carrying a copy of their own.
+ */
+export interface EvidenceFileTypesResponse {
+  max_file_size_bytes: number
+  types: EvidenceFileTypeInfo[]
+}
+
+export async function getEvidenceFileTypes(): Promise<EvidenceFileTypesResponse> {
+  return apiFetch<EvidenceFileTypesResponse>('/evidence-file-types')
+}
+
+/**
+ * The server's reading of a file the browser cannot show by itself (Office
+ * documents, archives, email). Every string in it came out of an uploaded
+ * file and is untrusted: render as text only.
+ */
+export interface EvidenceFileStructuredPreview {
+  kind: 'document' | 'spreadsheet' | 'slides' | 'archive' | 'email'
+  truncated: boolean
+  note?: string | null
+  paragraphs?: string[]
+  sheets?: Array<{ name: string; rows: string[][]; truncated: boolean }>
+  slides?: Array<{ number: number; paragraphs: string[] }>
+  members?: Array<{
+    name: string
+    size_bytes: number
+    /** Null when the platform does not read this kind of member. */
+    label: string | null
+    readable: boolean
+    note: string | null
+  }>
+  headers?: {
+    from?: string | null
+    to?: string | null
+    cc?: string | null
+    subject?: string | null
+    date?: string | null
+  }
+  body?: string
+  attachments?: Array<{ name: string; content_type: string; size_bytes: number }>
+}
+
+export async function getEvidenceFilePreview(
+  orgId: string,
+  evidenceId: string,
+  fileId: string
+): Promise<EvidenceFileStructuredPreview> {
+  return apiFetch<EvidenceFileStructuredPreview>(
+    `/organizations/${orgId}/evidence/${evidenceId}/files/${fileId}/preview`
+  )
+}
+
 export async function reviewEvidenceFile(
   orgId: string,
   evidenceId: string,

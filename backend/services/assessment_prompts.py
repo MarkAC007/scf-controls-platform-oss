@@ -419,14 +419,48 @@ def assemble_control_context_sync(
     )
 
 
-def _truncation_notice(truncated: bool) -> str:
-    """Factual disclosure appended to the evidence block when text was cut."""
+def _truncation_notice(truncated: bool, note: Optional[str] = None) -> str:
+    """Factual disclosure appended to the evidence block when text was cut.
+
+    ``note`` says what was left out when it was not the tail of the text:
+    later pages of a scan, or files in an archive.
+    """
     if not truncated:
         return ""
+    if note:
+        return (
+            f"\n**Note:** {note} Judge what you can see, and do not treat the "
+            "absence of the rest as a gap in the evidence."
+        )
     return (
         "\n**Note:** the content above is only the beginning of this document; "
         "it was truncated to fit the assessment budget. Judge what you can see, "
         "and do not treat the absence of later material as a gap in the evidence."
+    )
+
+
+def _picture_notice(picture_count: int, visual_only: bool) -> str:
+    """Tell the model that pictures are attached and what they are.
+
+    Without this a picture file reaches the model as a one-line description
+    in the evidence block plus an unexplained image, and the model is left to
+    guess which of the two it is being asked about.
+    """
+    if picture_count <= 0:
+        return ""
+    many = picture_count != 1
+    attached = f"{picture_count} pictures are" if many else "1 picture is"
+    if visual_only:
+        return (
+            f"\n**Note:** this evidence is a picture file. {attached} attached to this "
+            f"message, in order. {'They are' if many else 'It is'} the evidence: read "
+            f"{'them' if many else 'it'} directly (a screenshot, a scan or a photograph) "
+            "and cite what is visible. The text block above only describes the file."
+        )
+    return (
+        f"\n**Note:** {attached} attached to this message, in order, alongside the "
+        "text above. They are part of the evidence: read them directly and cite what "
+        "is visible in them."
     )
 
 
@@ -480,11 +514,18 @@ def build_assessment_prompt(
     content_type: str,
     assessment_date: str = "",
     truncated: bool = False,
+    picture_count: int = 0,
+    visual_only: bool = False,
+    truncation_note: Optional[str] = None,
 ) -> tuple[str, str]:
     """Build the full assessment prompt.
 
     Returns (system_prompt, user_prompt) tuple.
     Also returns the prompt hash for audit trail.
+
+    ``picture_count`` is how many pictures the caller will attach to the user
+    message. For a file with none, the prompt is byte for byte what it was
+    before pictures were supported, so stored prompt hashes still match.
 
     ``truncated`` discloses to the model that it is seeing only the head of
     the document. Without it the model reads a cut-off policy as an incomplete
@@ -539,7 +580,7 @@ Respond with valid JSON matching the required schema. No prose outside the JSON.
 ```
 {extracted_text}
 ```
-{_truncation_notice(truncated)}
+{_truncation_notice(truncated, truncation_note)}{_picture_notice(picture_count, visual_only)}
 
 ## Assessment Instructions
 1. Answer EVERY assessment objective listed above — exactly one `ao_findings` entry per AO id, using the id verbatim. Do not invent, merge, split or omit ids, and do not answer an objective that is not listed. There are {len(ao_ids)} to answer.

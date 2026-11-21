@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { useState, useRef, useCallback, DragEvent, ChangeEvent } from 'react'
+import { useState, useRef, useCallback, useMemo, DragEvent, ChangeEvent } from 'react'
 import {
   getEvidenceUploadUrl,
   confirmEvidenceUpload,
   type EvidenceFileUploadUrlResponse,
   type EvidenceFileResponse,
+  type EvidenceFileTypesResponse,
 } from '../../data/apiClient'
+import { loadEvidenceFileTypes, useEvidenceFileTypes } from '../../hooks/useEvidenceFileTypes'
+import { acceptAttribute, listedTypeOfFile, uniqueLabels } from './evidenceFileTypes'
 import {
   PreparerAssertionForm,
   EMPTY_ASSERTIONS,
@@ -31,21 +34,15 @@ interface EvidenceFileUploadProps {
   orgId: string
   evidenceId: string
   onUploadComplete: () => void
+  /**
+   * Narrows the server's list to these content types. Omit to accept
+   * everything the server lists. It can only narrow: a type the server does
+   * not list is not made acceptable by naming it here.
+   */
   acceptedTypes?: string[]
+  /** Used only until the server's list has loaded, which states its own limit. */
   maxSizeMB?: number
 }
-
-const DEFAULT_ACCEPTED_TYPES = [
-  'application/pdf',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  'text/csv',
-  'image/png',
-  'image/jpeg',
-  'application/json',
-  'text/yaml',
-  'text/markdown',
-]
 
 // ---- Helpers ----
 
@@ -56,29 +53,54 @@ async function computeSha256(file: File): Promise<string> {
   return hashArray.map(b => b.toString(16).padStart(2, '0')).join('')
 }
 
-function formatMaxSize(mb: number): string {
-  return `${mb} MB`
+function formatMaxSize(bytes: number): string {
+  const mb = bytes / (1024 * 1024)
+  return `${Number.isInteger(mb) ? mb : mb.toFixed(1)} MB`
 }
 
-function friendlyType(mimeType: string): string {
-  if (mimeType.includes('pdf')) return 'PDF'
-  if (mimeType.includes('spreadsheet') || mimeType === 'text/csv') return 'spreadsheet'
-  if (mimeType.includes('word') || mimeType.includes('document')) return 'Word document'
-  if (mimeType.includes('image')) return 'image'
-  if (mimeType === 'application/json') return 'JSON'
-  if (mimeType === 'text/yaml') return 'YAML'
-  if (mimeType === 'text/markdown') return 'Markdown'
-  return mimeType
+/**
+ * What the upload control enforces, derived from the server's list.
+ *
+ * Null when the list has not arrived (still loading, or the request failed).
+ * The control then checks nothing but size and sends the browser's type: the
+ * server is the authority on what it accepts, and a guessed list here is how
+ * the old copy came to refuse files the server would have taken. A file the
+ * browser gives no type for cannot be sent that way and is held back with a
+ * reason.
+ */
+interface UploadRules {
+  accept: string
+  labels: string[]
+  maxSizeBytes: number
+  /** The canonical content type for a file, or null when it is not accepted. */
+  contentTypeOf: (file: File) => string | null
 }
 
-function normalizeContentType(file: File): string {
-  const ext = file.name.toLowerCase().split('.').pop()
-  if (ext === 'yaml' || ext === 'yml') return 'text/yaml'
-  // Browsers report .md as '', text/x-markdown or text/markdown; store one name.
-  if (ext === 'md' || ext === 'markdown') return 'text/markdown'
-  if (ext === 'json' && !file.type) return 'application/json'
-  return file.type
+function buildRules(
+  fileTypes: EvidenceFileTypesResponse | null,
+  acceptedTypes: string[] | undefined,
+): UploadRules | null {
+  if (!fileTypes) return null
+  const allowed = acceptedTypes
+    ? fileTypes.types.filter(t => acceptedTypes.includes(t.content_type))
+    : fileTypes.types
+  return {
+    accept: acceptAttribute(allowed),
+    labels: uniqueLabels(allowed),
+    maxSizeBytes: fileTypes.max_file_size_bytes,
+    contentTypeOf: (file) => {
+      // Identified against the whole list, then checked against the narrowed
+      // one, so a caller's narrowing cannot change what a file *is*.
+      const listed = listedTypeOfFile(fileTypes.types, file)
+      return listed && allowed.includes(listed) ? listed.content_type : null
+    },
+  }
 }
+
+const LIST_UNAVAILABLE =
+  'The list of accepted file types could not be loaded, and the browser does not say what kind of ' +
+  'file this is. Reload the page and try again.'
+
 
 // ---- Component ----
 
@@ -86,9 +108,18 @@ export function EvidenceFileUpload({
   orgId,
   evidenceId,
   onUploadComplete,
-  acceptedTypes = DEFAULT_ACCEPTED_TYPES,
+  acceptedTypes,
   maxSizeMB = 50,
 }: EvidenceFileUploadProps) {
+  const { fileTypes } = useEvidenceFileTypes()
+  // Keyed on the joined list so a caller passing a fresh array literal on every
+  // render does not rebuild the rules (and the upload callback) each time.
+  const acceptedKey = acceptedTypes?.join('\n')
+  const rules = useMemo(
+    () => buildRules(fileTypes, acceptedTypes),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [fileTypes, acceptedKey],
+  )
   const [state, setState] = useState<UploadState>({ phase: 'idle' })
   // Preparer assertions (#786, #802) live *beside* the upload state machine, not
   // in it. Uploads start the instant a file is dropped with no interaction in
@@ -104,19 +135,29 @@ export function EvidenceFileUpload({
   // Tracks whether the current upload was aborted mid-flight (cancel or error set before confirm)
   const uploadAbortedRef = useRef(false)
 
-  const maxSizeBytes = maxSizeMB * 1024 * 1024
+  const maxSizeBytes = rules?.maxSizeBytes ?? maxSizeMB * 1024 * 1024
 
   // ---- Validation ----
 
-  function validateFile(file: File): string | null {
-    if (!acceptedTypes.includes(normalizeContentType(file))) {
-      const friendly = acceptedTypes.map(friendlyType).join(', ')
-      return `File type not accepted. Allowed: ${friendly}`
+  /** The content type to upload as, or the reason the file is refused. */
+  function checkFile(
+    file: File,
+    active: UploadRules | null,
+  ): { contentType: string } | { error: string } {
+    if (!active && !file.type) {
+      // No list and no type from the browser (.yaml, .md, .log): there is
+      // nothing true to send, and a made-up type is refused by the server.
+      return { error: LIST_UNAVAILABLE }
     }
-    if (file.size > maxSizeBytes) {
-      return `File exceeds maximum size of ${formatMaxSize(maxSizeMB)}`
+    const contentType = active ? active.contentTypeOf(file) : file.type
+    if (contentType === null) {
+      return { error: `File type not accepted. Allowed: ${active!.labels.join(', ')}` }
     }
-    return null
+    const limit = active?.maxSizeBytes ?? maxSizeBytes
+    if (file.size > limit) {
+      return { error: `File exceeds maximum size of ${formatMaxSize(limit)}` }
+    }
+    return { contentType }
   }
 
   // ---- Upload flow ----
@@ -125,11 +166,24 @@ export function EvidenceFileUpload({
     uploadAbortedRef.current = false
     setState({ phase: 'validating' })
 
-    const validationError = validateFile(file)
-    if (validationError) {
-      setState({ phase: 'error', message: validationError, file })
+    // A file dropped before the list has arrived waits for it, so a `.yaml` or
+    // `.log` the browser gives no type for is still sent under its real one.
+    // If the list cannot be had, the server decides.
+    let active = rules
+    if (!active) {
+      try {
+        active = buildRules(await loadEvidenceFileTypes(), acceptedTypes)
+      } catch {
+        active = null
+      }
+    }
+
+    const checked = checkFile(file, active)
+    if ('error' in checked) {
+      setState({ phase: 'error', message: checked.error, file })
       return false
     }
+    const contentType = checked.contentType
 
     // Checked before the bytes move. The backend enforces the same two rules and
     // remains the authority; catching them here means a preparer is told while
@@ -158,7 +212,7 @@ export function EvidenceFileUpload({
     try {
       uploadInfo = await getEvidenceUploadUrl(evidenceId, {
         filename: file.name,
-        content_type: normalizeContentType(file),
+        content_type: contentType,
         file_size_bytes: file.size,
       }, orgId)
     } catch (err: unknown) {
@@ -225,7 +279,7 @@ export function EvidenceFileUpload({
         if (uploadInfo.provider === 'azure_blob') {
           xhr.setRequestHeader('x-ms-blob-type', 'BlockBlob')
         }
-        xhr.setRequestHeader('Content-Type', normalizeContentType(file))
+        xhr.setRequestHeader('Content-Type', contentType)
         xhr.send(file)
       } else {
         // S3 presigned POST: multipart FormData with fields + file
@@ -288,7 +342,7 @@ export function EvidenceFileUpload({
     }
     return true
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orgId, evidenceId, acceptedTypes, maxSizeBytes, onUploadComplete, assertions])
+  }, [orgId, evidenceId, rules, maxSizeBytes, onUploadComplete, assertions])
 
   const processFiles = useCallback(async (files: File[]) => {
     for (let i = 0; i < files.length; i++) {
@@ -381,7 +435,9 @@ export function EvidenceFileUpload({
   const isError = state.phase === 'error'
   const isComplete = state.phase === 'complete'
 
-  const acceptAttr = [...acceptedTypes, '.yml', '.yaml', '.json', '.md', '.markdown'].join(',')
+  // Omitted, not empty, until the list arrives: an empty accept would still be
+  // an attribute, and the picker must not filter on a list it does not have.
+  const acceptAttr = rules?.accept
 
   // ---- Render ----
 
@@ -447,9 +503,13 @@ export function EvidenceFileUpload({
               {isDragging ? 'Drop to upload' : 'Drag and drop a file, or click to browse'}
             </div>
             <div className="evidence-upload-constraints">
-              Accepted: PDF, DOCX, XLSX, CSV, PNG, JPEG, JSON, YAML
-              {' \u00B7 '}
-              Max {formatMaxSize(maxSizeMB)}
+              {rules && rules.labels.length > 0 && (
+                <>
+                  Accepted: {rules.labels.join(', ')}
+                  {' \u00B7 '}
+                </>
+              )}
+              Max {formatMaxSize(maxSizeBytes)}
             </div>
           </div>
         )}
