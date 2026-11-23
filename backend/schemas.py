@@ -2928,6 +2928,17 @@ class VendorBase(BaseModel):
     shared_responsibility_note: Optional[str] = Field(
         None, description="Who is responsible for what between us and the vendor"
     )
+    # #1321: the public subprocessor list. Readable by every caller; only a
+    # signed-in session may change them (api/vendors.py refuses API keys).
+    is_subprocessor: bool = Field(
+        False, description="Listed publicly as a subprocessor on the trust portal"
+    )
+    subprocessor_purpose: Optional[str] = Field(
+        None, max_length=255, description="Public: what the vendor does for us"
+    )
+    subprocessor_location: Optional[str] = Field(
+        None, max_length=255, description="Public: where the vendor processes the data"
+    )
 
 
 class VendorCreate(VendorBase):
@@ -2955,6 +2966,17 @@ class VendorUpdate(BaseModel):
     data_location: Optional[str] = Field(None, max_length=255)
     flow_down_requirements: Optional[str] = None
     shared_responsibility_note: Optional[str] = None
+    is_subprocessor: Optional[bool] = None
+    subprocessor_purpose: Optional[str] = Field(None, max_length=255)
+    subprocessor_location: Optional[str] = Field(None, max_length=255)
+
+    @field_validator("is_subprocessor")
+    @classmethod
+    def _switch_not_null(cls, v: Optional[bool]) -> bool:
+        # The column is NOT NULL: leave the key out to keep the value, never send null.
+        if v is None:
+            raise ValueError("is_subprocessor cannot be null; send true or false, or leave it out")
+        return v
 
 
 class VendorResponse(VendorBase):
@@ -4098,6 +4120,18 @@ class TrustPortalFramework(BaseModel):
     control_count: int = Field(description="Number of controls in scope for this framework")
 
 
+class TrustPortalSubprocessor(BaseModel):
+    """Public projection of a vendor listed as a subprocessor (#1321).
+
+    Exactly these three fields, built explicitly from the three public columns
+    (``name``, ``subprocessor_purpose``, ``subprocessor_location``), never from
+    the vendor row. An empty purpose or location is null.
+    """
+    name: str = Field(description="Vendor name")
+    purpose: Optional[str] = Field(None, description="What the subprocessor does for the organisation")
+    location: Optional[str] = Field(None, description="Where the subprocessor processes the data")
+
+
 class TrustPortalResponse(BaseModel):
     """Public trust portal response — safe for unauthenticated access."""
     organization_name: str
@@ -4110,6 +4144,10 @@ class TrustPortalResponse(BaseModel):
     show_axes: bool = Field(
         False,
         description="When true, consumers should render the four-axis (IC/M/EC/EQ) breakdown per theme.",
+    )
+    subprocessors: List[TrustPortalSubprocessor] = Field(
+        default_factory=list,
+        description="Vendors listed as subprocessors with a live status (active or approved), sorted by name.",
     )
 
 

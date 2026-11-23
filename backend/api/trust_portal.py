@@ -27,12 +27,14 @@ from models import (
     EvidenceFile,
     EvidenceAssessment,
     EvidenceWindowAssessment,
+    Vendor,
 )
 from catalog_models import CapabilityTheme, CapabilityThemeMapping, SCFCatalogControl
 from schemas import (
     TrustPortalResponse,
     TrustPortalThemeSummary,
     TrustPortalFramework,
+    TrustPortalSubprocessor,
     CapabilityThemePosture,
 )
 from api.capability_themes import (
@@ -130,6 +132,35 @@ _FRAMEWORK_QUERY = text("""
     GROUP BY fw_key
     ORDER BY control_count DESC
 """)
+
+
+# Vendor statuses that count as live for the public subprocessor list (#1321).
+# Prospect, under review, suspended and offboarded vendors never appear.
+SUBPROCESSOR_LIVE_STATUSES = ("active", "approved")
+
+
+def _build_subprocessor_query(org_id: UUID):
+    """The three public columns of the organisation's listed, live vendors.
+
+    Selects only ``name``, ``subprocessor_purpose`` and ``subprocessor_location``
+    so no other vendor column is ever loaded on the public path.
+    """
+    return (
+        select(Vendor.name, Vendor.subprocessor_purpose, Vendor.subprocessor_location)
+        .where(
+            Vendor.organization_id == org_id,
+            Vendor.is_subprocessor.is_(True),
+            Vendor.status.in_(SUBPROCESSOR_LIVE_STATUSES),
+        )
+        .order_by(func.lower(Vendor.name), Vendor.name)
+    )
+
+
+def _blank_to_none(value):
+    if value is None:
+        return None
+    value = value.strip()
+    return value or None
 
 
 def _posture_to_band(pct: float) -> str:
@@ -281,6 +312,19 @@ async def get_trust_portal(
         ))
 
     # ------------------------------------------------------------------
+    # 7b. Subprocessors: vendors listed publicly with a live status (#1321)
+    # ------------------------------------------------------------------
+    sub_result = await db.execute(_build_subprocessor_query(org_id))
+    subprocessors = [
+        TrustPortalSubprocessor(
+            name=row.name,
+            purpose=_blank_to_none(row.subprocessor_purpose),
+            location=_blank_to_none(row.subprocessor_location),
+        )
+        for row in sub_result.all()
+    ]
+
+    # ------------------------------------------------------------------
     # 8. Query last updated timestamp
     # ------------------------------------------------------------------
     # MAX across the four posture-meaningful activity surfaces so the public
@@ -335,6 +379,7 @@ async def get_trust_portal(
         last_updated=last_updated,
         generated_at=datetime.now(timezone.utc),
         show_axes=bool(settings.get("trust_portal_show_axes", True)),
+        subprocessors=subprocessors,
     )
 
     # ------------------------------------------------------------------

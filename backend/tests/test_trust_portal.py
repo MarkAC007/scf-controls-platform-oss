@@ -251,3 +251,42 @@ class TestRateLimitConfig:
 
     def test_decorator_is_callable(self):
         assert callable(rate_limit_trust_portal)
+
+
+# =============================================================================
+# Subprocessor list (#1321): exactly three public fields, defaulted key
+# =============================================================================
+
+class TestSubprocessorSchema:
+    """The public subprocessor entry is name, purpose and location only."""
+
+    def test_entry_has_exactly_three_fields(self):
+        from schemas import TrustPortalSubprocessor
+        assert set(TrustPortalSubprocessor.model_fields) == {"name", "purpose", "location"}
+
+    def test_response_defaults_to_an_empty_list(self):
+        resp = TrustPortalResponse(
+            organization_name="Test Org",
+            organization_slug="test-org",
+            description=None,
+            themes=[],
+            frameworks=[],
+            last_updated=datetime.now(timezone.utc),
+            generated_at=datetime.now(timezone.utc),
+        )
+        assert resp.subprocessors == []
+        assert resp.model_dump()["subprocessors"] == []
+
+    def test_a_body_cached_by_the_old_code_still_parses(self):
+        """Entries written before this key existed are served as an empty list."""
+        old_body = {
+            "organization_name": "Test Org",
+            "organization_slug": "test-org",
+            "description": None,
+            "themes": [],
+            "frameworks": [],
+            "last_updated": "2026-11-21T10:00:00+00:00",
+            "generated_at": "2026-11-21T10:00:00+00:00",
+            "show_axes": True,
+        }
+        assert TrustPortalResponse(**old_body).subprocessors == []

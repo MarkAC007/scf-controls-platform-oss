@@ -139,6 +139,10 @@ VENDOR_TRACKED_FIELDS: set = {
     'data_location',
     'flow_down_requirements',
     'shared_responsibility_note',
+    # #1321: who published the vendor on the trust portal, and when.
+    'is_subprocessor',
+    'subprocessor_purpose',
+    'subprocessor_location',
 }
 
 RISK_ASSESSMENT_TRACKED_FIELDS: set = {
@@ -563,7 +567,7 @@ _MCP_UA_PATTERN = re.compile(r'mcp|model.context.protocol', re.IGNORECASE)
 
 #: ``auth.User.auth_method`` values of an interactive browser sign-in: Google
 #: OAuth and a self-hosted OIDC provider such as Keycloak (#1269).
-_INTERACTIVE_AUTH_METHODS = frozenset({"google", "oidc"})
+INTERACTIVE_AUTH_METHODS = frozenset({"google", "oidc"})
 
 
 def detect_action_source(request: Request) -> str:
@@ -583,7 +587,7 @@ def detect_action_source(request: Request) -> str:
     user = getattr(request.state, "user", None)
     if user is not None:
         auth_method = getattr(user, "auth_method", None)
-        if auth_method in _INTERACTIVE_AUTH_METHODS:
+        if auth_method in INTERACTIVE_AUTH_METHODS:
             return "ui"
         if auth_method == "api_key":
             return "api_key"

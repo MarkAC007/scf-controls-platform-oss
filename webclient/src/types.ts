@@ -1280,6 +1280,10 @@ export interface Vendor {
   data_location?: string | null
   flow_down_requirements?: string | null
   shared_responsibility_note?: string | null
+  // #1321: public subprocessor listing on the trust portal (absent on older API responses)
+  is_subprocessor?: boolean
+  subprocessor_purpose?: string | null
+  subprocessor_location?: string | null
   created_at: string
   updated_at: string
   created_by_user_id?: string | null
@@ -1316,6 +1320,9 @@ export interface VendorInput {
   data_location?: string | null
   flow_down_requirements?: string | null
   shared_responsibility_note?: string | null
+  is_subprocessor?: boolean
+  subprocessor_purpose?: string | null
+  subprocessor_location?: string | null
 }
 
 /**
@@ -1340,6 +1347,10 @@ export interface VendorUpdate {
   data_location?: string | null
   flow_down_requirements?: string | null
   shared_responsibility_note?: string | null
+  // Omit to keep the stored value; null is refused by the API
+  is_subprocessor?: boolean
+  subprocessor_purpose?: string | null
+  subprocessor_location?: string | null
 }
 
 /**
