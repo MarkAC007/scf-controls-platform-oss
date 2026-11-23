@@ -1,11 +1,11 @@
 {
   "schema": 1,
-  "version": "1.8.0",
-  "released": "2026-11-21T21:22:19Z",
+  "version": "1.9.0",
+  "released": "2026-11-23T08:48:45Z",
   "min_upgradable_version": "0.0.0",
   "breaking": false,
   "required_stops": [],
-  "release_url": "https://github.com/MarkAC007/scf-controls-platform-oss/releases/tag/v1.8.0",
+  "release_url": "https://github.com/MarkAC007/scf-controls-platform-oss/releases/tag/v1.9.0",
   "summary": ".",
   "migration_range": [
     "20260119_000000_62bdef86f249_initial_schema",
@@ -116,7 +116,8 @@
     "20261110_150000_risk_threat_catalog",
     "20261116_110000_engagement_evidence_reviews",
     "20261117_120000_organization_auditors",
-    "20261118_090000_security_objectives_isms_metrics"
+    "20261118_090000_security_objectives_isms_metrics",
+    "20261122_190000_vendor_subprocessor_listing"
   ],
   "env_added": [],
   "min_compose_action": "rebuild"

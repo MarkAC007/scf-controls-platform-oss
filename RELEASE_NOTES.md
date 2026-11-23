@@ -1,22 +1,22 @@
-# v1.8.0
+# v1.9.0
 
 .
 
 ## What's new
 
-- Harden file readers after code and security review (PR 1309)
+- Publish a subprocessor list from vendors on the trust portal (PR 1322)
+- Scan gate accepts unfixed findings under a dated policy (PR 1320)
 
 ## Fixes and improvements
 
-- Add WebP, PowerPoint and email samples for the evidence file type tests
-- Add Security Objectives and ISMS Metrics pages
-- Drive the evidence file type tests from the deployed allowlist
-- Upload every accepted evidence file type and open it in the viewer
-- Override glob to ^14.0.2 under workbox-build in webclient
-- Update serialize-javascript in webclient
-- Update fast-uri to 3.1.9 in webclient
-- Bump vitest to 4.1.12 in webclient
+- Slim nginx base for the frontend, distribution upgrades at build (PR 1319)
+
+## Migrations
+
+- `subproc001` — Vendor subprocessor listing for the public trust portal.
+
+`scripts/upgrade.sh` runs these after its backup. A plain `docker compose up -d` refuses to migrate an existing database until `SCF_MIGRATE_ACK` is set, so read `UPGRADING.md` before upgrading a deployment you cannot restore.
 
 ## Upgrading
 
-- Run `scripts/upgrade.sh v1.8.0` (read `UPGRADING.md` first).
+- Run `scripts/upgrade.sh v1.9.0` (read `UPGRADING.md` first).

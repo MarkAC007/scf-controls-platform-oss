@@ -33,6 +33,9 @@ describe('auditFieldLabel', () => {
     ['attested_by_user_id', 'Attested By'],
     ['acceptance_expires_on', 'Acceptance Expires'],
     ['implementation_status', 'Status'],
+    ['is_subprocessor', 'Listed as Subprocessor'],
+    ['subprocessor_purpose', 'Public Purpose'],
+    ['subprocessor_location', 'Public Processing Location'],
   ])('labels %s as %s', (field, label) => {
     expect(auditFieldLabel(field)).toBe(label)
   })
@@ -102,6 +105,8 @@ describe('formatAuditField', () => {
     expect(formatAuditField('material_override', 'true')).toBe('Yes')
     expect(formatAuditField('in_scope', 'false')).toBe('No')
     expect(formatAuditField('material_override', 'null')).toBe('—')
+    expect(formatAuditField('is_subprocessor', 'true')).toBe('Yes')
+    expect(formatAuditField('is_subprocessor', 'false')).toBe('No')
   })
 
   it('reads a validation timestamp as the day the server recorded it', () => {

@@ -1,14 +1,14 @@
 # Source scans
 
-The scans that ran on commit `42ca6d5777227306c9053325a8f300d3c0f9fd21` of the private source repository, the commit this release was built from. Run ids refer to that repository's Actions runs: a reference for the maintainers, not a public link.
+The scans that ran on commit `a48ab3ed5bd81fbc7d284d4e03eeb373b774a9e3` of the private source repository, the commit this release was built from. Run ids refer to that repository's Actions runs: a reference for the maintainers, not a public link.
 
 | Scan | Version | Outcome | Counts | Totals | Run |
 | --- | --- | --- | --- | --- | --- |
-| gitleaks | 8.24.3 | pass | leaks 0 | rules 208 | Gitleaks Secret Scan / Detect Secrets, run 44944603032 attempt 1 (push) |
-| OSV-Scanner | 2.7.0 | pass | critical 0, high 0, medium 0, low 0, unrated 0 | packages 1312, blocking 0, waived 0, expired waivers 0 | CI / OSV Scan, run 44944603027 attempt 1 (push) |
-| Semgrep | 1.184.0 | reported | error 0, warning 19, note 0 | rules 1074, suppressed in source 35 | Semgrep SAST / Static Analysis, run 44944603088 attempt 1 (push) |
-| ZAP baseline | 2.17.0 | pass | high 0, medium 2, low 4, informational 4 | instances 34 | CI / Docker Build, run 44944603027 attempt 1 (push) |
-| zizmor | 1.32.0 | pass | high 0, medium 0, low 0, informational 0, unknown 0 | — | CI / Workflow Lint, run 44944603027 attempt 1 (push) |
+| gitleaks | 8.24.3 | pass | leaks 0 | rules 208 | Gitleaks Secret Scan / Detect Secrets, run 45136304532 attempt 1 (push) |
+| OSV-Scanner | 2.7.0 | pass | critical 0, high 0, medium 0, low 0, unrated 0 | packages 1312, blocking 0, waived 0, expired waivers 0 | CI / OSV Scan, run 45136304424 attempt 1 (push) |
+| Semgrep | 1.184.0 | reported | error 0, warning 19, note 0 | rules 1074, suppressed in source 35 | Semgrep SAST / Static Analysis, run 45136304459 attempt 1 (push) |
+| ZAP baseline | 2.17.0 | pass | high 0, medium 2, low 4, informational 4 | instances 34 | CI / Docker Build, run 45136304424 attempt 1 (push) |
+| zizmor | 1.32.0 | pass | high 0, medium 0, low 0, informational 0, unknown 0 | — | CI / Workflow Lint, run 45136304424 attempt 1 (push) |
 
 ## What each scan covers
 

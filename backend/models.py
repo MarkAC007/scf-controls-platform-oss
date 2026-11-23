@@ -2159,6 +2159,13 @@ class Vendor(Base):
     flow_down_requirements = Column(Text, nullable=True)
     shared_responsibility_note = Column(Text, nullable=True)
 
+    # #1321: the public subprocessor list on the trust portal. The switch is
+    # the decision to publish the name; purpose and location are the only
+    # text published beside it (description and data_location stay internal).
+    is_subprocessor = Column(Boolean, nullable=False, default=False, server_default="false")
+    subprocessor_purpose = Column(String(255), nullable=True)
+    subprocessor_location = Column(String(255), nullable=True)
+
     # Audit timestamps and user FKs
     created_at = Column(DateTime(timezone=False), server_default=func.now())
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now())

@@ -1106,6 +1106,27 @@ export default function VendorDetailPage({
       </section>
 
       {/* ================================================================
+          Trust Portal: public subprocessor listing (#1321)
+          ================================================================ */}
+      <section style={cardStyle}>
+        <h3 style={sectionHeading}>Trust Portal</h3>
+        <div style={gridStyle}>
+          <div>
+            <span style={fieldLabel}>Listed publicly as a subprocessor</span>
+            <p style={fieldValue}>{vendor.is_subprocessor ? 'Yes' : 'No'}</p>
+          </div>
+          <div>
+            <span style={fieldLabel}>Public purpose</span>
+            <p style={fieldValue}>{vendor.subprocessor_purpose || '-'}</p>
+          </div>
+          <div>
+            <span style={fieldLabel}>Public processing location</span>
+            <p style={fieldValue}>{vendor.subprocessor_location || '-'}</p>
+          </div>
+        </div>
+      </section>
+
+      {/* ================================================================
           Contact (from Overview tab — parity)
           ================================================================ */}
       <section style={cardStyle}>

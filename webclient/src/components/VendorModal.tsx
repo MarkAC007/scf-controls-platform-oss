@@ -45,6 +45,9 @@ export const VendorModal: React.FC<VendorModalProps> = ({
     data_location: '',
     flow_down_requirements: '',
     shared_responsibility_note: '',
+    is_subprocessor: false,
+    subprocessor_purpose: '',
+    subprocessor_location: '',
   })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -69,6 +72,9 @@ export const VendorModal: React.FC<VendorModalProps> = ({
         data_location: editVendor.data_location || '',
         flow_down_requirements: editVendor.flow_down_requirements || '',
         shared_responsibility_note: editVendor.shared_responsibility_note || '',
+        is_subprocessor: !!editVendor.is_subprocessor,
+        subprocessor_purpose: editVendor.subprocessor_purpose || '',
+        subprocessor_location: editVendor.subprocessor_location || '',
       })
     }
   }, [editVendor])
@@ -107,6 +113,9 @@ export const VendorModal: React.FC<VendorModalProps> = ({
       data_location: formData.data_location?.trim() || null,
       flow_down_requirements: formData.flow_down_requirements?.trim() || null,
       shared_responsibility_note: formData.shared_responsibility_note?.trim() || null,
+      is_subprocessor: !!formData.is_subprocessor,
+      subprocessor_purpose: formData.subprocessor_purpose?.trim() || null,
+      subprocessor_location: formData.subprocessor_location?.trim() || null,
     }
 
     try {
@@ -388,6 +397,67 @@ export const VendorModal: React.FC<VendorModalProps> = ({
                 rows={3}
                 disabled={loading}
               />
+            </div>
+
+            {/* Section divider - Trust Portal (#1321) */}
+            <div className="form-section-divider">
+              <span>Trust Portal</span>
+            </div>
+
+            {/* Public subprocessor listing */}
+            <div className="form-group">
+              <div className="toggle-row">
+                <label htmlFor="vendor-is-subprocessor" className="toggle-label">
+                  <span id="vendor-is-subprocessor-label" className="toggle-label-text">Listed publicly as a subprocessor</span>
+                  <span id="vendor-is-subprocessor-hint" className="toggle-label-hint">
+                    Turning this on publishes this vendor's name on your trust portal, with the
+                    purpose and location below. It shows only while the vendor is Active or Approved.
+                  </span>
+                </label>
+                <button
+                  id="vendor-is-subprocessor"
+                  type="button"
+                  role="switch"
+                  aria-checked={!!formData.is_subprocessor}
+                  aria-labelledby="vendor-is-subprocessor-label"
+                  aria-describedby="vendor-is-subprocessor-hint"
+                  className={`toggle-switch ${formData.is_subprocessor ? 'toggle-switch-on' : 'toggle-switch-off'}`}
+                  onClick={() => {
+                    setFormData(prev => ({ ...prev, is_subprocessor: !prev.is_subprocessor }))
+                    setError(null)
+                  }}
+                  disabled={loading}
+                >
+                  <span className="toggle-switch-thumb" />
+                </button>
+              </div>
+            </div>
+
+            <div className="form-row">
+              <div className="form-group">
+                <label htmlFor="vendor-subprocessor-purpose">Public purpose</label>
+                <input
+                  id="vendor-subprocessor-purpose"
+                  type="text"
+                  maxLength={255}
+                  value={formData.subprocessor_purpose || ''}
+                  onChange={(e) => handleChange('subprocessor_purpose', e.target.value)}
+                  placeholder="e.g., Cloud hosting"
+                  disabled={loading}
+                />
+              </div>
+              <div className="form-group">
+                <label htmlFor="vendor-subprocessor-location">Public processing location</label>
+                <input
+                  id="vendor-subprocessor-location"
+                  type="text"
+                  maxLength={255}
+                  value={formData.subprocessor_location || ''}
+                  onChange={(e) => handleChange('subprocessor_location', e.target.value)}
+                  placeholder="e.g., EU (Frankfurt)"
+                  disabled={loading}
+                />
+              </div>
             </div>
 
             {error && (

@@ -59,6 +59,10 @@ const FIELD_LABELS: Record<string, string> = {
   data_location: 'Data Location',
   flow_down_requirements: 'Flow-down Requirements',
   shared_responsibility_note: 'Shared Responsibility',
+  // Public subprocessor listing on the trust portal (#1321).
+  is_subprocessor: 'Listed as Subprocessor',
+  subprocessor_purpose: 'Public Purpose',
+  subprocessor_location: 'Public Processing Location',
   // Risk acceptance (PIG R7) and a custom risk's supporting document.
   owner_user_id: 'Owner',
   accepted_by: 'Accepted By',
@@ -199,7 +203,7 @@ export const UNKNOWN_MEMBER = 'Unknown member'
 const BASIS_FIELDS = new Set(['basis', 'basis_override'])
 
 /** Fields that store a JSON boolean. */
-const BOOLEAN_FIELDS = new Set(['selected', 'in_scope', 'material_override'])
+const BOOLEAN_FIELDS = new Set(['selected', 'in_scope', 'material_override', 'is_subprocessor'])
 
 /** Server timestamps, shown as the day the server recorded them. */
 const TIMESTAMP_FIELDS = new Set([

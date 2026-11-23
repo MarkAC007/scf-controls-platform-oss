@@ -44,7 +44,11 @@ from schemas import (
     DPSIAResultResponse,
 )
 from auth import require_org_role, OrgMembership
-from services.audit_service import log_entity_changes, detect_action_source, get_request_id, VENDOR_TRACKED_FIELDS
+from services.audit_service import (
+    log_entity_changes, detect_action_source, get_request_id, VENDOR_TRACKED_FIELDS,
+    INTERACTIVE_AUTH_METHODS,
+)
+from api.trust_portal import SUBPROCESSOR_LIVE_STATUSES
 from services.vendor import check_vendor_limit
 from services.vendor_research import (
     trigger_research,
@@ -61,6 +65,52 @@ from services.dpsia_assessment import (
 )
 
 router = APIRouter(tags=["vendors"])
+
+# #1321: the fields that publish a vendor on the public trust portal. Every
+# caller can read them; only a signed-in session may change them.
+_PUBLIC_LISTING_FIELDS = ("is_subprocessor", "subprocessor_purpose", "subprocessor_location")
+# What the guard compares against: the listing fields, plus the two other
+# values that decide what the public page shows for a vendor whose switch is on.
+_PUBLISHING_STATE_FIELDS = _PUBLIC_LISTING_FIELDS + ("name", "status")
+
+
+def _refuse_key_publishing(user, requested: dict, current: dict) -> None:
+    """403 when anything but a signed-in session changes what the trust portal shows.
+
+    Publishing a vendor's name is a person's decision in the web client. So a
+    caller that is not a browser sign-in (an API key, or any method added later
+    and not yet named in INTERACTIVE_AUTH_METHODS) may not:
+
+    * change the three listing fields;
+    * rename a vendor whose switch is on: the name is the published text;
+    * move a vendor whose switch is on into a live status: that publishes it.
+
+    It may still send any of them back unchanged (a read-modify-write client;
+    an empty string and null both mean "no text"), and may move a listed vendor
+    out of a live status, which only takes it off the page.
+    """
+    if getattr(user, "auth_method", None) in INTERACTIVE_AUTH_METHODS:
+        return
+    changed = [
+        f for f in _PUBLIC_LISTING_FIELDS
+        if f in requested and (requested[f] or None) != (current.get(f) or None)
+    ]
+    if current.get("is_subprocessor"):
+        if requested.get("name") is not None and requested["name"] != current.get("name"):
+            changed.append("name")
+        if (
+            requested.get("status") in SUBPROCESSOR_LIVE_STATUSES
+            and current.get("status") not in SUBPROCESSOR_LIVE_STATUSES
+        ):
+            changed.append("status")
+    if changed:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"API key callers cannot change {', '.join(changed)}. What the public trust "
+                "portal shows about a vendor is set by a signed-in user in the web client."
+            ),
+        )
 
 
 # =============================================================================
@@ -124,6 +174,10 @@ async def create_vendor(
     Enforces subscription tier vendor limits.
     """
     current_user = membership.user
+    _refuse_key_publishing(
+        current_user, vendor_data.model_dump(),
+        {"is_subprocessor": False, "subprocessor_purpose": None, "subprocessor_location": None},
+    )
 
     # Check subscription tier vendor limit
     can_create = await check_vendor_limit(org_id, db)
@@ -264,6 +318,10 @@ async def update_vendor(
                 status_code=409,
                 detail=f"Vendor with name '{update_data['name']}' already exists in this organisation"
             )
+
+    _refuse_key_publishing(
+        current_user, update_data, {f: getattr(vendor, f) for f in _PUBLISHING_STATE_FIELDS},
+    )
 
     # Update fields
     for key, value in update_data.items():
